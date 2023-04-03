@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{ElementBox, RenderContext};
+use gpui::{fonts::HighlightStyle, ElementBox, RenderContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -572,7 +572,7 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows, false, None)
+        self.chunks(0..self.transforms.summary().output_rows, false, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -582,6 +582,7 @@ impl BlockSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        suggestion_highlight: Option<HighlightStyle>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
@@ -614,6 +615,7 @@ impl BlockSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
+                suggestion_highlight,
             ),
             input_chunk: Default::default(),
             transforms: cursor,
@@ -989,6 +991,7 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::display_map::suggestion_map::SuggestionMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
@@ -1015,7 +1018,10 @@ mod tests {
     fn test_basic_blocks(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
 
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())
@@ -1026,9 +1032,10 @@ mod tests {
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot, 1.try_into().unwrap());
-        let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
+        let (fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (tab_map, tab_snapshot) = TabMap::new(suggestion_snapshot, 1.try_into().unwrap());
+        let (wrap_map, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -1170,12 +1177,14 @@ mod tests {
             buffer.snapshot(cx)
         });
 
-        let (folds_snapshot, fold_edits) =
+        let (fold_snapshot, fold_edits) =
             fold_map.read(buffer_snapshot, subscription.consume().into_inner());
-        let (tabs_snapshot, tab_edits) =
-            tab_map.sync(folds_snapshot, fold_edits, 4.try_into().unwrap());
+        let (suggestion_snapshot, suggestion_edits) =
+            suggestion_map.sync(fold_snapshot, fold_edits);
+        let (tab_snapshot, tab_edits) =
+            tab_map.sync(suggestion_snapshot, suggestion_edits, 4.try_into().unwrap());
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-            wrap_map.sync(tabs_snapshot, tab_edits, cx)
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
         let snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
@@ -1185,7 +1194,10 @@ mod tests {
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
 
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())
@@ -1195,9 +1207,10 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (_, tabs_snapshot) = TabMap::new(folds_snapshot, 1.try_into().unwrap());
-        let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
+        let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (_, tab_snapshot) = TabMap::new(suggestion_snapshot, 1.try_into().unwrap());
+        let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -1241,7 +1254,10 @@ mod tests {
             Some(rng.gen_range(0.0..=100.0))
         };
         let tab_size = 1.try_into().unwrap();
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())
@@ -1263,10 +1279,11 @@ mod tests {
         };
 
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot, tab_size);
+        let (fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (tab_map, tab_snapshot) = TabMap::new(suggestion_snapshot, tab_size);
         let (wrap_map, wraps_snapshot) =
-            WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
+            WrapMap::new(tab_snapshot, font_id, font_size, wrap_width, cx);
         let mut block_map = BlockMap::new(
             wraps_snapshot,
             buffer_start_header_height,
@@ -1317,12 +1334,14 @@ mod tests {
                         })
                         .collect::<Vec<_>>();
 
-                    let (folds_snapshot, fold_edits) =
+                    let (fold_snapshot, fold_edits) =
                         fold_map.read(buffer_snapshot.clone(), vec![]);
-                    let (tabs_snapshot, tab_edits) =
-                        tab_map.sync(folds_snapshot, fold_edits, tab_size);
+                    let (suggestion_snapshot, suggestion_edits) =
+                        suggestion_map.sync(fold_snapshot, fold_edits);
+                    let (tab_snapshot, tab_edits) =
+                        tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                        wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     let block_ids = block_map.insert(block_properties.clone());
@@ -1340,12 +1359,14 @@ mod tests {
                         })
                         .collect();
 
-                    let (folds_snapshot, fold_edits) =
+                    let (fold_snapshot, fold_edits) =
                         fold_map.read(buffer_snapshot.clone(), vec![]);
-                    let (tabs_snapshot, tab_edits) =
-                        tab_map.sync(folds_snapshot, fold_edits, tab_size);
+                    let (suggestion_snapshot, suggestion_edits) =
+                        suggestion_map.sync(fold_snapshot, fold_edits);
+                    let (tab_snapshot, tab_edits) =
+                        tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                        wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     block_map.remove(block_ids_to_remove);
@@ -1362,10 +1383,13 @@ mod tests {
                 }
             }
 
-            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
-            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, tab_size);
+            let (fold_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
+            let (suggestion_snapshot, suggestion_edits) =
+                suggestion_map.sync(fold_snapshot, fold_edits);
+            let (tab_snapshot, tab_edits) =
+                tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                wrap_map.sync(tab_snapshot, tab_edits, cx)
             });
             let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
             assert_eq!(
@@ -1475,6 +1499,7 @@ mod tests {
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
                         false,
+                        None,
                         None,
                     )
                     .map(|chunk| chunk.text)

@@ -90,14 +90,11 @@ impl View for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
-            Label::new(
-                "No problems in workspace".to_string(),
-                theme.empty_message.clone(),
-            )
-            .aligned()
-            .contained()
-            .with_style(theme.container)
-            .boxed()
+            Label::new("No problems in workspace", theme.empty_message.clone())
+                .aligned()
+                .contained()
+                .with_style(theme.container)
+                .boxed()
         } else {
             ChildView::new(&self.editor, cx).boxed()
         }
@@ -605,16 +602,16 @@ impl Item for ProjectDiagnosticsEditor {
         ))
     }
 
-    fn act_as_type(
-        &self,
+    fn act_as_type<'a>(
+        &'a self,
         type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &AppContext,
-    ) -> Option<AnyViewHandle> {
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&AnyViewHandle> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.into())
+            Some(self_handle)
         } else if type_id == TypeId::of::<Editor>() {
-            Some((&self.editor).into())
+            Some(&self.editor)
         } else {
             None
         }
@@ -697,7 +694,7 @@ pub(crate) fn render_summary(
     theme: &theme::ProjectDiagnostics,
 ) -> ElementBox {
     if summary.error_count == 0 && summary.warning_count == 0 {
-        Label::new("No problems".to_string(), text_style.clone()).boxed()
+        Label::new("No problems", text_style.clone()).boxed()
     } else {
         let icon_width = theme.tab_icon_width;
         let icon_spacing = theme.tab_icon_spacing;
@@ -808,15 +805,7 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // Create some diagnostics
         project.update(cx, |project, cx| {

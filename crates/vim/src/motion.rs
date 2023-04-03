@@ -36,6 +36,7 @@ pub enum Motion {
     Matching,
     FindForward { before: bool, text: Arc<str> },
     FindBackward { after: bool, text: Arc<str> },
+    NextLineStart,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -74,6 +75,7 @@ actions!(
         StartOfDocument,
         EndOfDocument,
         Matching,
+        NextLineStart,
     ]
 );
 impl_actions!(vim, [NextWordStart, NextWordEnd, PreviousWordStart]);
@@ -111,6 +113,7 @@ pub fn init(cx: &mut MutableAppContext) {
          &PreviousWordStart { ignore_punctuation }: &PreviousWordStart,
          cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
     );
+    cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx))
 }
 
 pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {
@@ -138,15 +141,43 @@ pub(crate) fn motion(motion: Motion, cx: &mut MutableAppContext) {
 impl Motion {
     pub fn linewise(&self) -> bool {
         use Motion::*;
-        matches!(
-            self,
-            Down | Up | StartOfDocument | EndOfDocument | CurrentLine
-        )
+        match self {
+            Down | Up | StartOfDocument | EndOfDocument | CurrentLine | NextLineStart => true,
+            EndOfLine
+            | NextWordEnd { .. }
+            | Matching
+            | FindForward { .. }
+            | Left
+            | Backspace
+            | Right
+            | StartOfLine
+            | NextWordStart { .. }
+            | PreviousWordStart { .. }
+            | FirstNonWhitespace
+            | FindBackward { .. } => false,
+        }
     }
 
     pub fn infallible(&self) -> bool {
         use Motion::*;
-        matches!(self, StartOfDocument | CurrentLine | EndOfDocument)
+        match self {
+            StartOfDocument | EndOfDocument | CurrentLine => true,
+            Down
+            | Up
+            | EndOfLine
+            | NextWordEnd { .. }
+            | Matching
+            | FindForward { .. }
+            | Left
+            | Backspace
+            | Right
+            | StartOfLine
+            | NextWordStart { .. }
+            | PreviousWordStart { .. }
+            | FirstNonWhitespace
+            | FindBackward { .. }
+            | NextLineStart => false,
+        }
     }
 
     pub fn inclusive(&self) -> bool {
@@ -160,7 +191,8 @@ impl Motion {
             | EndOfLine
             | NextWordEnd { .. }
             | Matching
-            | FindForward { .. } => true,
+            | FindForward { .. }
+            | NextLineStart => true,
             Left
             | Backspace
             | Right
@@ -214,6 +246,7 @@ impl Motion {
                 find_backward(map, point, *after, text.clone(), times),
                 SelectionGoal::None,
             ),
+            NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -542,4 +575,9 @@ fn find_backward(
             }
         })
         .unwrap_or(from)
+}
+
+fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
+    let new_row = (point.row() + times as u32).min(map.max_buffer_row());
+    map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
 }

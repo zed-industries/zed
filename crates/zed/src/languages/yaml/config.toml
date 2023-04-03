@@ -5,13 +5,7 @@ autoclose_before = ",]}"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
-    { start = "\"", end = "\"", close = true, newline = false },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
 ]
 
 increase_indent_pattern = ":\\s*[|>]?\\s*$"
-
-[overrides.string]
-brackets = [
-    { start = "{", end = "}", close = true, newline = true },
-    { start = "[", end = "]", close = true, newline = true },
-]

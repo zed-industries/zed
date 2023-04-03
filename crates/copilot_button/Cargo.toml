@@ -1,0 +1,22 @@
+[package]
+name = "copilot_button"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/copilot_button.rs"
+doctest = false
+
+[dependencies]
+copilot = { path = "../copilot" }
+editor = { path = "../editor" }
+context_menu = { path = "../context_menu" }
+gpui = { path = "../gpui" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }
+anyhow = "1.0"
+smol = "1.2.5"
+futures = "0.3"

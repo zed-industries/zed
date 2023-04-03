@@ -83,6 +83,10 @@ unsafe fn build_classes() {
             did_finish_launching as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(applicationShouldHandleReopen:hasVisibleWindows:),
+            should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+        );
+        decl.add_method(
             sel!(applicationDidBecomeActive:),
             did_become_active as extern "C" fn(&mut Object, Sel, id),
         );
@@ -96,6 +100,31 @@ unsafe fn build_classes() {
         );
         decl.add_method(
             sel!(handleGPUIMenuItem:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        // Add menu item handlers so that OS save panels have the correct key commands
+        decl.add_method(
+            sel!(cut:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(copy:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(paste:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(selectAll:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(undo:),
+            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(redo:),
             handle_menu_item as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
@@ -119,6 +148,7 @@ pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
+    reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
@@ -133,15 +163,16 @@ pub struct MacForegroundPlatformState {
 impl MacForegroundPlatform {
     pub fn new(foreground: Rc<executor::Foreground>) -> Self {
         Self(RefCell::new(MacForegroundPlatformState {
-            become_active: Default::default(),
-            resign_active: Default::default(),
-            quit: Default::default(),
-            event: Default::default(),
-            menu_command: Default::default(),
-            validate_menu_command: Default::default(),
-            will_open_menu: Default::default(),
-            open_urls: Default::default(),
-            finish_launching: Default::default(),
+            become_active: None,
+            resign_active: None,
+            reopen: None,
+            quit: None,
+            event: None,
+            menu_command: None,
+            validate_menu_command: None,
+            will_open_menu: None,
+            open_urls: None,
+            finish_launching: None,
             menu_actions: Default::default(),
             foreground,
         }))
@@ -193,11 +224,25 @@ impl MacForegroundPlatform {
     ) -> id {
         match item {
             MenuItem::Separator => NSMenuItem::separatorItem(nil),
-            MenuItem::Action { name, action } => {
+            MenuItem::Action {
+                name,
+                action,
+                os_action,
+            } => {
+                // TODO
                 let keystrokes = keystroke_matcher
                     .bindings_for_action_type(action.as_any().type_id())
                     .find(|binding| binding.action().eq(action.as_ref()))
                     .map(|binding| binding.keystrokes());
+                let selector = match os_action {
+                    Some(crate::OsAction::Cut) => selector("cut:"),
+                    Some(crate::OsAction::Copy) => selector("copy:"),
+                    Some(crate::OsAction::Paste) => selector("paste:"),
+                    Some(crate::OsAction::SelectAll) => selector("selectAll:"),
+                    Some(crate::OsAction::Undo) => selector("undo:"),
+                    Some(crate::OsAction::Redo) => selector("redo:"),
+                    None => selector("handleGPUIMenuItem:"),
+                };
 
                 let item;
                 if let Some(keystrokes) = keystrokes {
@@ -218,7 +263,7 @@ impl MacForegroundPlatform {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
                                 ns_string(name),
-                                selector("handleGPUIMenuItem:"),
+                                selector,
                                 ns_string(key_to_native(&keystroke.key).as_ref()),
                             )
                             .autorelease();
@@ -240,7 +285,7 @@ impl MacForegroundPlatform {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
                                 ns_string(&name),
-                                selector("handleGPUIMenuItem:"),
+                                selector,
                                 ns_string(""),
                             )
                             .autorelease();
@@ -249,7 +294,7 @@ impl MacForegroundPlatform {
                     item = NSMenuItem::alloc(nil)
                         .initWithTitle_action_keyEquivalent_(
                             ns_string(name),
-                            selector("handleGPUIMenuItem:"),
+                            selector,
                             ns_string(""),
                         )
                         .autorelease();
@@ -291,6 +336,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().quit = Some(callback);
+    }
+
+    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
@@ -548,8 +597,8 @@ impl platform::Platform for MacPlatform {
         Box::new(Window::open(id, options, executor, self.fonts()))
     }
 
-    fn key_window_id(&self) -> Option<usize> {
-        Window::key_window_id()
+    fn main_window_id(&self) -> Option<usize> {
+        Window::main_window_id()
     }
 
     fn add_status_item(&self) -> Box<dyn platform::Window> {
@@ -828,17 +877,37 @@ impl platform::Platform for MacPlatform {
     }
 
     fn restart(&self) {
-        #[cfg(debug_assertions)]
-        let path = std::env::current_exe();
+        use std::os::unix::process::CommandExt as _;
 
-        #[cfg(not(debug_assertions))]
-        let path = self.app_path().or_else(|_| std::env::current_exe());
+        let app_pid = std::process::id().to_string();
+        let app_path = self
+            .app_path()
+            .ok()
+            // When the app is not bundled, `app_path` returns the
+            // directory containing the executable. Disregard this
+            // and get the path to the executable itself.
+            .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+            .unwrap_or_else(|| std::env::current_exe().unwrap());
 
-        let command = path.and_then(|path| Command::new("/usr/bin/open").arg(path).spawn());
+        // Wait until this process has exited and then re-open this path.
+        let script = r#"
+            while kill -0 $0 2> /dev/null; do
+                sleep 0.1
+            done
+            open "$1"
+        "#;
 
-        match command {
-            Err(err) => log::error!("Unable to restart application {}", err),
-            Ok(_child) => self.quit(),
+        let restart_process = Command::new("/bin/bash")
+            .arg("-c")
+            .arg(script)
+            .arg(app_pid)
+            .arg(app_path)
+            .process_group(0)
+            .spawn();
+
+        match restart_process {
+            Ok(_) => self.quit(),
+            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
         }
     }
 }
@@ -879,6 +948,15 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         let platform = get_foreground_platform(this);
         let callback = platform.0.borrow_mut().finish_launching.take();
         if let Some(callback) = callback {
+            callback();
+        }
+    }
+}
+
+extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
+    if !has_open_windows {
+        let platform = unsafe { get_foreground_platform(this) };
+        if let Some(callback) = platform.0.borrow_mut().reopen.as_mut() {
             callback();
         }
     }

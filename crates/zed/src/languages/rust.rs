@@ -1,14 +1,15 @@
-use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::{io::BufReader, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};
+use util::fs::remove_matching;
+use util::github::{latest_github_release, GitHubLspBinaryVersion};
+use util::http::HttpClient;
 use util::ResultExt;
 
 pub struct RustLspAdapter;
@@ -42,7 +43,7 @@ impl LspAdapter for RustLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
@@ -60,29 +61,26 @@ impl LspAdapter for RustLspAdapter {
             )
             .await?;
 
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != destination_path {
-                            fs::remove_file(&entry_path).await.log_err();
-                        }
-                    }
-                }
-            }
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
 
-        Ok(destination_path)
+        Ok(LanguageServerBinary {
+            path: destination_path,
+            arguments: Default::default(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
-            last.ok_or_else(|| anyhow!("no cached binary"))
+            anyhow::Ok(LanguageServerBinary {
+                path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+                arguments: Default::default(),
+            })
         })()
         .await
         .log_err()
@@ -306,7 +304,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(Box::new(RustLspAdapter)),
+            Some(Arc::new(RustLspAdapter)),
         )
         .await;
         let grammar = language.grammar().unwrap();
@@ -392,7 +390,7 @@ mod tests {
         let language = language(
             "rust",
             tree_sitter_rust::language(),
-            Some(Box::new(RustLspAdapter)),
+            Some(Arc::new(RustLspAdapter)),
         )
         .await;
         let grammar = language.grammar().unwrap();

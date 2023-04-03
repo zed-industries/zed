@@ -1,4 +1,4 @@
-use gpui::{Menu, MenuItem};
+use gpui::{Menu, MenuItem, OsAction};
 
 #[cfg(target_os = "macos")]
 pub fn menus() -> Vec<Menu<'static>> {
@@ -6,363 +6,161 @@ pub fn menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Zed",
             items: vec![
-                MenuItem::Action {
-                    name: "About Zed…",
-                    action: Box::new(super::About),
-                },
-                MenuItem::Action {
-                    name: "Check for Updates",
-                    action: Box::new(auto_update::Check),
-                },
-                MenuItem::Separator,
-                MenuItem::Submenu(Menu {
+                MenuItem::action("About Zed…", super::About),
+                MenuItem::action("Check for Updates", auto_update::Check),
+                MenuItem::separator(),
+                MenuItem::submenu(Menu {
                     name: "Preferences",
                     items: vec![
-                        MenuItem::Action {
-                            name: "Open Settings",
-                            action: Box::new(super::OpenSettings),
-                        },
-                        MenuItem::Action {
-                            name: "Open Key Bindings",
-                            action: Box::new(super::OpenKeymap),
-                        },
-                        MenuItem::Action {
-                            name: "Open Default Settings",
-                            action: Box::new(super::OpenDefaultSettings),
-                        },
-                        MenuItem::Action {
-                            name: "Open Default Key Bindings",
-                            action: Box::new(super::OpenDefaultKeymap),
-                        },
-                        MenuItem::Action {
-                            name: "Select Theme",
-                            action: Box::new(theme_selector::Toggle),
-                        },
+                        MenuItem::action("Open Settings", super::OpenSettings),
+                        MenuItem::action("Open Key Bindings", super::OpenKeymap),
+                        MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
+                        MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
+                        MenuItem::action("Select Theme", theme_selector::Toggle),
                     ],
                 }),
-                MenuItem::Action {
-                    name: "Install CLI",
-                    action: Box::new(super::InstallCommandLineInterface),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Hide Zed",
-                    action: Box::new(super::Hide),
-                },
-                MenuItem::Action {
-                    name: "Hide Others",
-                    action: Box::new(super::HideOthers),
-                },
-                MenuItem::Action {
-                    name: "Show All",
-                    action: Box::new(super::ShowAll),
-                },
-                MenuItem::Action {
-                    name: "Quit",
-                    action: Box::new(super::Quit),
-                },
+                MenuItem::action("Install CLI", install_cli::Install),
+                MenuItem::separator(),
+                MenuItem::action("Hide Zed", super::Hide),
+                MenuItem::action("Hide Others", super::HideOthers),
+                MenuItem::action("Show All", super::ShowAll),
+                MenuItem::action("Quit", super::Quit),
             ],
         },
         Menu {
             name: "File",
             items: vec![
-                MenuItem::Action {
-                    name: "New",
-                    action: Box::new(workspace::NewFile),
-                },
-                MenuItem::Action {
-                    name: "New Window",
-                    action: Box::new(workspace::NewWindow),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Open…",
-                    action: Box::new(workspace::Open),
-                },
-                MenuItem::Action {
-                    name: "Open Recent...",
-                    action: Box::new(recent_projects::OpenRecent),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Add Folder to Project…",
-                    action: Box::new(workspace::AddFolderToProject),
-                },
-                MenuItem::Action {
-                    name: "Save",
-                    action: Box::new(workspace::Save),
-                },
-                MenuItem::Action {
-                    name: "Save As…",
-                    action: Box::new(workspace::SaveAs),
-                },
-                MenuItem::Action {
-                    name: "Save All",
-                    action: Box::new(workspace::SaveAll),
-                },
-                MenuItem::Action {
-                    name: "Close Editor",
-                    action: Box::new(workspace::CloseActiveItem),
-                },
-                MenuItem::Action {
-                    name: "Close Window",
-                    action: Box::new(workspace::CloseWindow),
-                },
+                MenuItem::action("New", workspace::NewFile),
+                MenuItem::action("New Window", workspace::NewWindow),
+                MenuItem::separator(),
+                MenuItem::action("Open…", workspace::Open),
+                MenuItem::action("Open Recent...", recent_projects::OpenRecent),
+                MenuItem::separator(),
+                MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
+                MenuItem::action("Save", workspace::Save),
+                MenuItem::action("Save As…", workspace::SaveAs),
+                MenuItem::action("Save All", workspace::SaveAll),
+                MenuItem::action("Close Editor", workspace::CloseActiveItem),
+                MenuItem::action("Close Window", workspace::CloseWindow),
             ],
         },
         Menu {
             name: "Edit",
             items: vec![
-                MenuItem::Action {
-                    name: "Undo",
-                    action: Box::new(editor::Undo),
-                },
-                MenuItem::Action {
-                    name: "Redo",
-                    action: Box::new(editor::Redo),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Cut",
-                    action: Box::new(editor::Cut),
-                },
-                MenuItem::Action {
-                    name: "Copy",
-                    action: Box::new(editor::Copy),
-                },
-                MenuItem::Action {
-                    name: "Paste",
-                    action: Box::new(editor::Paste),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Find",
-                    action: Box::new(search::buffer_search::Deploy { focus: true }),
-                },
-                MenuItem::Action {
-                    name: "Find In Project",
-                    action: Box::new(workspace::NewSearch),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Toggle Line Comment",
-                    action: Box::new(editor::ToggleComments::default()),
-                },
-                MenuItem::Action {
-                    name: "Emoji & Symbols",
-                    action: Box::new(editor::ShowCharacterPalette),
-                },
+                MenuItem::os_action("Undo", editor::Undo, OsAction::Undo),
+                MenuItem::os_action("Redo", editor::Redo, OsAction::Redo),
+                MenuItem::separator(),
+                MenuItem::os_action("Cut", editor::Cut, OsAction::Cut),
+                MenuItem::os_action("Copy", editor::Copy, OsAction::Copy),
+                MenuItem::os_action("Paste", editor::Paste, OsAction::Paste),
+                MenuItem::separator(),
+                MenuItem::action("Find", search::buffer_search::Deploy { focus: true }),
+                MenuItem::action("Find In Project", workspace::NewSearch),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Line Comment", editor::ToggleComments::default()),
+                MenuItem::action("Emoji & Symbols", editor::ShowCharacterPalette),
             ],
         },
         Menu {
             name: "Selection",
             items: vec![
-                MenuItem::Action {
-                    name: "Select All",
-                    action: Box::new(editor::SelectAll),
-                },
-                MenuItem::Action {
-                    name: "Expand Selection",
-                    action: Box::new(editor::SelectLargerSyntaxNode),
-                },
-                MenuItem::Action {
-                    name: "Shrink Selection",
-                    action: Box::new(editor::SelectSmallerSyntaxNode),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Add Cursor Above",
-                    action: Box::new(editor::AddSelectionAbove),
-                },
-                MenuItem::Action {
-                    name: "Add Cursor Below",
-                    action: Box::new(editor::AddSelectionBelow),
-                },
-                MenuItem::Action {
-                    name: "Select Next Occurrence",
-                    action: Box::new(editor::SelectNext {
+                MenuItem::os_action("Select All", editor::SelectAll, OsAction::SelectAll),
+                MenuItem::action("Expand Selection", editor::SelectLargerSyntaxNode),
+                MenuItem::action("Shrink Selection", editor::SelectSmallerSyntaxNode),
+                MenuItem::separator(),
+                MenuItem::action("Add Cursor Above", editor::AddSelectionAbove),
+                MenuItem::action("Add Cursor Below", editor::AddSelectionBelow),
+                MenuItem::action(
+                    "Select Next Occurrence",
+                    editor::SelectNext {
                         replace_newest: false,
-                    }),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Move Line Up",
-                    action: Box::new(editor::MoveLineUp),
-                },
-                MenuItem::Action {
-                    name: "Move Line Down",
-                    action: Box::new(editor::MoveLineDown),
-                },
-                MenuItem::Action {
-                    name: "Duplicate Selection",
-                    action: Box::new(editor::DuplicateLine),
-                },
+                    },
+                ),
+                MenuItem::separator(),
+                MenuItem::action("Move Line Up", editor::MoveLineUp),
+                MenuItem::action("Move Line Down", editor::MoveLineDown),
+                MenuItem::action("Duplicate Selection", editor::DuplicateLine),
             ],
         },
         Menu {
             name: "View",
             items: vec![
-                MenuItem::Action {
-                    name: "Zoom In",
-                    action: Box::new(super::IncreaseBufferFontSize),
-                },
-                MenuItem::Action {
-                    name: "Zoom Out",
-                    action: Box::new(super::DecreaseBufferFontSize),
-                },
-                MenuItem::Action {
-                    name: "Reset Zoom",
-                    action: Box::new(super::ResetBufferFontSize),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Toggle Left Sidebar",
-                    action: Box::new(workspace::ToggleLeftSidebar),
-                },
-                MenuItem::Submenu(Menu {
+                MenuItem::action("Zoom In", super::IncreaseBufferFontSize),
+                MenuItem::action("Zoom Out", super::DecreaseBufferFontSize),
+                MenuItem::action("Reset Zoom", super::ResetBufferFontSize),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Left Sidebar", workspace::ToggleLeftSidebar),
+                MenuItem::submenu(Menu {
                     name: "Editor Layout",
                     items: vec![
-                        MenuItem::Action {
-                            name: "Split Up",
-                            action: Box::new(workspace::SplitUp),
-                        },
-                        MenuItem::Action {
-                            name: "Split Down",
-                            action: Box::new(workspace::SplitDown),
-                        },
-                        MenuItem::Action {
-                            name: "Split Left",
-                            action: Box::new(workspace::SplitLeft),
-                        },
-                        MenuItem::Action {
-                            name: "Split Right",
-                            action: Box::new(workspace::SplitRight),
-                        },
+                        MenuItem::action("Split Up", workspace::SplitUp),
+                        MenuItem::action("Split Down", workspace::SplitDown),
+                        MenuItem::action("Split Left", workspace::SplitLeft),
+                        MenuItem::action("Split Right", workspace::SplitRight),
                     ],
                 }),
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Project Panel",
-                    action: Box::new(project_panel::ToggleFocus),
-                },
-                MenuItem::Action {
-                    name: "Command Palette",
-                    action: Box::new(command_palette::Toggle),
-                },
-                MenuItem::Action {
-                    name: "Diagnostics",
-                    action: Box::new(diagnostics::Deploy),
-                },
-                MenuItem::Separator,
+                MenuItem::separator(),
+                MenuItem::action("Project Panel", project_panel::ToggleFocus),
+                MenuItem::action("Command Palette", command_palette::Toggle),
+                MenuItem::action("Diagnostics", diagnostics::Deploy),
+                MenuItem::separator(),
             ],
         },
         Menu {
             name: "Go",
             items: vec![
-                MenuItem::Action {
-                    name: "Back",
-                    action: Box::new(workspace::GoBack { pane: None }),
-                },
-                MenuItem::Action {
-                    name: "Forward",
-                    action: Box::new(workspace::GoForward { pane: None }),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Go to File",
-                    action: Box::new(file_finder::Toggle),
-                },
-                MenuItem::Action {
-                    name: "Go to Symbol in Project",
-                    action: Box::new(project_symbols::Toggle),
-                },
-                MenuItem::Action {
-                    name: "Go to Symbol in Editor",
-                    action: Box::new(outline::Toggle),
-                },
-                MenuItem::Action {
-                    name: "Go to Definition",
-                    action: Box::new(editor::GoToDefinition),
-                },
-                MenuItem::Action {
-                    name: "Go to Type Definition",
-                    action: Box::new(editor::GoToTypeDefinition),
-                },
-                MenuItem::Action {
-                    name: "Find All References",
-                    action: Box::new(editor::FindAllReferences),
-                },
-                MenuItem::Action {
-                    name: "Go to Line/Column",
-                    action: Box::new(go_to_line::Toggle),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Next Problem",
-                    action: Box::new(editor::GoToDiagnostic),
-                },
-                MenuItem::Action {
-                    name: "Previous Problem",
-                    action: Box::new(editor::GoToPrevDiagnostic),
-                },
+                MenuItem::action("Back", workspace::GoBack { pane: None }),
+                MenuItem::action("Forward", workspace::GoForward { pane: None }),
+                MenuItem::separator(),
+                MenuItem::action("Go to File", file_finder::Toggle),
+                MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
+                MenuItem::action("Go to Symbol in Editor", outline::Toggle),
+                MenuItem::action("Go to Definition", editor::GoToDefinition),
+                MenuItem::action("Go to Type Definition", editor::GoToTypeDefinition),
+                MenuItem::action("Find All References", editor::FindAllReferences),
+                MenuItem::action("Go to Line/Column", go_to_line::Toggle),
+                MenuItem::separator(),
+                MenuItem::action("Next Problem", editor::GoToDiagnostic),
+                MenuItem::action("Previous Problem", editor::GoToPrevDiagnostic),
             ],
         },
         Menu {
             name: "Window",
             items: vec![
-                MenuItem::Action {
-                    name: "Minimize",
-                    action: Box::new(super::Minimize),
-                },
-                MenuItem::Action {
-                    name: "Zoom",
-                    action: Box::new(super::Zoom),
-                },
-                MenuItem::Separator,
+                MenuItem::action("Minimize", super::Minimize),
+                MenuItem::action("Zoom", super::Zoom),
+                MenuItem::separator(),
             ],
         },
         Menu {
             name: "Help",
             items: vec![
-                MenuItem::Action {
-                    name: "Command Palette",
-                    action: Box::new(command_palette::Toggle),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "View Telemetry Log",
-                    action: Box::new(crate::OpenTelemetryLog),
-                },
-                MenuItem::Action {
-                    name: "View Dependency Licenses",
-                    action: Box::new(crate::OpenLicenses),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Copy System Specs Into Clipboard",
-                    action: Box::new(feedback::CopySystemSpecsIntoClipboard),
-                },
-                MenuItem::Action {
-                    name: "File Bug Report",
-                    action: Box::new(feedback::FileBugReport),
-                },
-                MenuItem::Action {
-                    name: "Request Feature",
-                    action: Box::new(feedback::RequestFeature),
-                },
-                MenuItem::Separator,
-                MenuItem::Action {
-                    name: "Documentation",
-                    action: Box::new(crate::OpenBrowser {
+                MenuItem::action("Command Palette", command_palette::Toggle),
+                MenuItem::separator(),
+                MenuItem::action("View Telemetry", crate::OpenTelemetryLog),
+                MenuItem::action("View Dependency Licenses", crate::OpenLicenses),
+                MenuItem::action("Show Welcome", workspace::Welcome),
+                MenuItem::separator(),
+                MenuItem::action("Give us feedback", feedback::feedback_editor::GiveFeedback),
+                MenuItem::action(
+                    "Copy System Specs Into Clipboard",
+                    feedback::CopySystemSpecsIntoClipboard,
+                ),
+                MenuItem::action("File Bug Report", feedback::FileBugReport),
+                MenuItem::action("Request Feature", feedback::RequestFeature),
+                MenuItem::separator(),
+                MenuItem::action(
+                    "Documentation",
+                    crate::OpenBrowser {
                         url: "https://zed.dev/docs".into(),
-                    }),
-                },
-                MenuItem::Action {
-                    name: "Zed Twitter",
-                    action: Box::new(crate::OpenBrowser {
+                    },
+                ),
+                MenuItem::action(
+                    "Zed Twitter",
+                    crate::OpenBrowser {
                         url: "https://twitter.com/zeddotdev".into(),
-                    }),
-                },
+                    },
+                ),
             ],
         },
     ]

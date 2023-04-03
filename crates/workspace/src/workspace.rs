@@ -16,7 +16,7 @@ mod toolbar;
 
 pub use smallvec;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
@@ -34,20 +34,24 @@ use futures::{
 use gpui::{
     actions,
     elements::*,
-    geometry::vector::Vector2F,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel, RenderContext,
-    SizeConstraint, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowBounds,
+    Action, AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext,
+    ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel,
+    RenderContext, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowBounds,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp,
+    cmp, env,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -58,8 +62,9 @@ use crate::{
     notifications::simple_message_notification::{MessageNotification, OsOpen},
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
+use lazy_static::lazy_static;
 use log::{error, warn};
-use notifications::NotificationHandle;
+use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedItem, DB};
@@ -78,6 +83,17 @@ pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::ResultExt;
+
+lazy_static! {
+    static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
+    static ref ZED_WINDOW_POSITION: Option<Vector2F> = env::var("ZED_WINDOW_POSITION")
+        .ok()
+        .as_deref()
+        .and_then(parse_pixel_position_env_var);
+}
 
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
@@ -101,7 +117,8 @@ actions!(
         NewTerminal,
         NewSearch,
         Feedback,
-        Restart
+        Restart,
+        Welcome
     ]
 );
 
@@ -148,6 +165,67 @@ pub struct OpenProjectEntryInPane {
     project_entry: ProjectEntryId,
 }
 
+pub struct Toast {
+    id: usize,
+    msg: Cow<'static, str>,
+    click: Option<(Cow<'static, str>, Box<dyn Action>)>,
+}
+
+impl Toast {
+    pub fn new<I: Into<Cow<'static, str>>>(id: usize, msg: I) -> Self {
+        Toast {
+            id,
+            msg: msg.into(),
+            click: None,
+        }
+    }
+
+    pub fn new_action<I1: Into<Cow<'static, str>>, I2: Into<Cow<'static, str>>>(
+        id: usize,
+        msg: I1,
+        click_msg: I2,
+        action: impl Action,
+    ) -> Self {
+        Toast {
+            id,
+            msg: msg.into(),
+            click: Some((click_msg.into(), Box::new(action))),
+        }
+    }
+}
+
+impl PartialEq for Toast {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.msg == other.msg
+            && self.click.is_some() == other.click.is_some()
+    }
+}
+
+impl Clone for Toast {
+    fn clone(&self) -> Self {
+        Toast {
+            id: self.id,
+            msg: self.msg.to_owned(),
+            click: self
+                .click
+                .as_ref()
+                .map(|(msg, click)| (msg.to_owned(), click.boxed_clone())),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct DismissToast {
+    id: usize,
+}
+
+impl DismissToast {
+    pub fn new(id: usize) -> Self {
+        DismissToast { id }
+    }
+}
+
 pub type WorkspaceId = i64;
 
 impl_internal_actions!(
@@ -161,6 +239,8 @@ impl_internal_actions!(
         SplitWithItem,
         SplitWithProjectEntry,
         OpenProjectEntryInPane,
+        Toast,
+        DismissToast
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -170,21 +250,66 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     dock::init(cx);
     notifications::init(cx);
 
-    cx.add_global_action(open);
+    cx.add_global_action(|_: &Open, cx: &mut MutableAppContext| {
+        let mut paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        });
+
+        cx.spawn(|mut cx| async move {
+            if let Some(paths) = paths.recv().await.flatten() {
+                cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
+            }
+        })
+        .detach();
+    });
+    cx.add_action(|_, _: &Open, cx: &mut ViewContext<Workspace>| {
+        let mut paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        });
+
+        let handle = cx.handle().downgrade();
+        cx.spawn(|_, mut cx| async move {
+            if let Some(paths) = paths.recv().await.flatten() {
+                cx.update(|cx| {
+                    cx.dispatch_action_at(handle.window_id(), handle.id(), OpenPaths { paths })
+                })
+            }
+        })
+        .detach();
+    });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |action: &OpenPaths, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_paths(&action.paths, &app_state, cx).detach();
+                open_paths(&action.paths, &app_state, None, cx).detach();
             }
         }
     });
-    cx.add_global_action({
+    cx.add_async_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &NewFile, cx: &mut MutableAppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx).detach();
+        move |workspace, action: &OpenPaths, cx: &mut ViewContext<Workspace>| {
+            if !workspace.project().read(cx).is_local() {
+                cx.propagate_action();
+                return None;
             }
+
+            let app_state = app_state.upgrade()?;
+            let window_id = cx.window_id();
+            let action = action.clone();
+            let close = workspace.prepare_to_close(false, cx);
+
+            Some(cx.spawn_weak(|_, mut cx| async move {
+                let can_close = close.await?;
+                if can_close {
+                    cx.update(|cx| open_paths(&action.paths, &app_state, Some(window_id), cx))
+                        .await;
+                }
+                Ok(())
+            }))
         }
     });
 
@@ -192,7 +317,15 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut MutableAppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx).detach();
+                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
+            }
+        }
+    });
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewFile, cx: &mut MutableAppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
             }
         }
     });
@@ -235,7 +368,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(Workspace::activate_pane_at_index);
 
     cx.add_action(Workspace::split_pane_with_item);
-    cx.add_action(Workspace::split_pane_with_project_entry);
+    cx.add_async_action(Workspace::split_pane_with_project_entry);
 
     cx.add_async_action(
         |workspace: &mut Workspace,
@@ -257,6 +390,49 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 })
         },
     );
+
+    cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
+        cx.spawn(|workspace, mut cx| async move {
+            let err = install_cli::install_cli(&cx)
+                .await
+                .context("Failed to create CLI symlink");
+
+            cx.update(|cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if matches!(err, Err(_)) {
+                        err.notify_err(workspace, cx);
+                    } else {
+                        workspace.show_notification(1, cx, |cx| {
+                            cx.add_view(|_| {
+                                MessageNotification::new_message(
+                                    "Successfully installed the `zed` binary",
+                                )
+                            })
+                        });
+                    }
+                })
+            })
+        })
+        .detach();
+    });
+
+    cx.add_action(|workspace: &mut Workspace, alert: &Toast, cx| {
+        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
+        workspace.show_notification(alert.id, cx, |cx| {
+            cx.add_view(|_cx| match &alert.click {
+                Some((click_msg, action)) => MessageNotification::new_boxed_action(
+                    alert.msg.clone(),
+                    action.boxed_clone(),
+                    click_msg.clone(),
+                ),
+                None => MessageNotification::new_message(alert.msg.clone()),
+            })
+        })
+    });
+
+    cx.add_action(|workspace: &mut Workspace, alert: &DismissToast, cx| {
+        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
+    });
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -288,7 +464,7 @@ type FollowableItemBuilders = HashMap<
     TypeId,
     (
         FollowableItemBuilder,
-        fn(AnyViewHandle) -> Box<dyn FollowableItemHandle>,
+        fn(&AnyViewHandle) -> Box<dyn FollowableItemHandle>,
     ),
 >;
 pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
@@ -302,7 +478,7 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
                 },
-                |this| Box::new(this.downcast::<I>().unwrap()),
+                |this| Box::new(this.clone().downcast::<I>().unwrap()),
             ),
         );
     });
@@ -343,6 +519,7 @@ pub struct AppState {
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
     pub dock_default_item_factory: DockDefaultItemFactory,
+    pub background_actions: BackgroundActions,
 }
 
 impl AppState {
@@ -353,7 +530,7 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
-        let http_client = client::test::FakeHttpClient::with_404_response();
+        let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
@@ -365,7 +542,8 @@ impl AppState {
             user_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: |_, _, _| Default::default(),
-            dock_default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| None,
+            background_actions: || &[],
         })
     }
 }
@@ -453,6 +631,8 @@ pub struct Workspace {
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
+    background_actions: BackgroundActions,
+    _window_subscriptions: [Subscription; 3],
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<()>,
 }
@@ -482,12 +662,9 @@ impl Workspace {
         workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
         dock_default_factory: DockDefaultItemFactory,
+        background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.observe_fullscreen(|_, _, cx| cx.notify()).detach();
-
-        cx.observe_window_activation(Self::on_window_activation_changed)
-            .detach();
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&project, move |this, _, event, cx| {
             match event {
@@ -510,13 +687,21 @@ impl Workspace {
                     cx.blur();
                 }
 
+                project::Event::Closed => {
+                    let window_id = cx.window_id();
+                    cx.remove_window(window_id);
+                }
+
                 _ => {}
             }
             cx.notify()
         })
         .detach();
 
-        let center_pane = cx.add_view(|cx| Pane::new(None, cx));
+        let weak_handle = cx.weak_handle();
+
+        let center_pane =
+            cx.add_view(|cx| Pane::new(weak_handle.id(), None, background_actions, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -524,7 +709,12 @@ impl Workspace {
         .detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(dock_default_factory, cx);
+        let dock = Dock::new(
+            weak_handle.id(),
+            dock_default_factory,
+            background_actions,
+            cx,
+        );
         let dock_pane = dock.pane().clone();
 
         let fs = project.read(cx).fs().clone();
@@ -547,7 +737,6 @@ impl Workspace {
             }
         });
         let handle = cx.handle();
-        let weak_handle = cx.weak_handle();
 
         // All leader updates are enqueued and then processed in a single task, so
         // that each asynchronous operation can be run in order.
@@ -592,6 +781,28 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
+        let subscriptions = [
+            cx.observe_fullscreen(|_, _, cx| cx.notify()),
+            cx.observe_window_activation(Self::on_window_activation_changed),
+            cx.observe_window_bounds(move |_, mut bounds, display, cx| {
+                // Transform fixed bounds to be stored in terms of the containing display
+                if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                    if let Some(screen) = cx.platform().screen_by_id(display) {
+                        let screen_bounds = screen.bounds();
+                        window_bounds
+                            .set_origin_x(window_bounds.origin_x() - screen_bounds.origin_x());
+                        window_bounds
+                            .set_origin_y(window_bounds.origin_y() - screen_bounds.origin_y());
+                        bounds = WindowBounds::Fixed(window_bounds);
+                    }
+                }
+
+                cx.background()
+                    .spawn(DB.set_window_bounds(workspace_id, bounds, display))
+                    .detach_and_log_err(cx);
+            }),
+        ];
+
         let mut this = Workspace {
             modal: None,
             weak_self: weak_handle.clone(),
@@ -620,9 +831,11 @@ impl Workspace {
             window_edited: false,
             active_call,
             database_id: workspace_id,
+            background_actions,
             _observe_current_user,
             _apply_leader_updates,
             leader_updates_tx,
+            _window_subscriptions: subscriptions,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -631,6 +844,10 @@ impl Workspace {
             cx.defer(move |_, cx| {
                 Self::load_from_serialized_workspace(weak_handle, serialized_workspace, cx)
             });
+        } else if project.read(cx).is_local() {
+            if cx.global::<Settings>().default_dock_anchor != DockAnchor::Expanded {
+                Dock::show(&mut this, false, cx);
+            }
         }
 
         this
@@ -639,6 +856,7 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
+        requesting_window_id: Option<usize>,
         cx: &mut MutableAppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
@@ -684,64 +902,75 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let (bounds, display) = serialized_workspace
-                .as_ref()
-                .and_then(|sw| sw.bounds.zip(sw.display))
-                .and_then(|(mut bounds, display)| {
-                    // Stored bounds are relative to the containing display. So convert back to global coordinates if that screen still exists
-                    if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                        if let Some(screen) = cx.platform().screen_by_id(display) {
-                            let screen_bounds = screen.bounds();
-                            window_bounds
-                                .set_origin_x(window_bounds.origin_x() + screen_bounds.origin_x());
-                            window_bounds
-                                .set_origin_y(window_bounds.origin_y() + screen_bounds.origin_y());
-                            bounds = WindowBounds::Fixed(window_bounds);
-                        } else {
-                            // Screen no longer exists. Return none here.
-                            return None;
-                        }
-                    }
+            let window_bounds_override =
+                ZED_WINDOW_POSITION
+                    .zip(*ZED_WINDOW_SIZE)
+                    .map(|(position, size)| {
+                        WindowBounds::Fixed(RectF::new(
+                            cx.platform().screens()[0].bounds().origin() + position,
+                            size,
+                        ))
+                    });
 
-                    Some((bounds, display))
-                })
-                .unzip();
-
-            // Use the serialized workspace to construct the new window
-            let (_, workspace) = cx.add_window(
-                (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                |cx| {
+            let build_workspace =
+                |cx: &mut ViewContext<Workspace>,
+                 serialized_workspace: Option<SerializedWorkspace>| {
                     let mut workspace = Workspace::new(
                         serialized_workspace,
                         workspace_id,
                         project_handle,
                         app_state.dock_default_item_factory,
+                        app_state.background_actions,
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                    cx.observe_window_bounds(move |_, mut bounds, display, cx| {
-                        // Transform fixed bounds to be stored in terms of the containing display
-                        if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                            if let Some(screen) = cx.platform().screen_by_id(display) {
-                                let screen_bounds = screen.bounds();
-                                window_bounds.set_origin_x(
-                                    window_bounds.origin_x() - screen_bounds.origin_x(),
-                                );
-                                window_bounds.set_origin_y(
-                                    window_bounds.origin_y() - screen_bounds.origin_y(),
-                                );
-                                bounds = WindowBounds::Fixed(window_bounds);
-                            }
-                        }
-
-                        cx.background()
-                            .spawn(DB.set_window_bounds(workspace_id, bounds, display))
-                            .detach_and_log_err(cx);
-                    })
-                    .detach();
                     workspace
-                },
-            );
+                };
+
+            let workspace = if let Some(window_id) = requesting_window_id {
+                cx.update(|cx| {
+                    cx.replace_root_view(window_id, |cx| build_workspace(cx, serialized_workspace))
+                })
+            } else {
+                let (bounds, display) = if let Some(bounds) = window_bounds_override {
+                    (Some(bounds), None)
+                } else {
+                    serialized_workspace
+                        .as_ref()
+                        .and_then(|serialized_workspace| {
+                            let display = serialized_workspace.display?;
+                            let mut bounds = serialized_workspace.bounds?;
+
+                            // Stored bounds are relative to the containing display.
+                            // So convert back to global coordinates if that screen still exists
+                            if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                                if let Some(screen) = cx.platform().screen_by_id(display) {
+                                    let screen_bounds = screen.bounds();
+                                    window_bounds.set_origin_x(
+                                        window_bounds.origin_x() + screen_bounds.origin_x(),
+                                    );
+                                    window_bounds.set_origin_y(
+                                        window_bounds.origin_y() + screen_bounds.origin_y(),
+                                    );
+                                    bounds = WindowBounds::Fixed(window_bounds);
+                                } else {
+                                    // Screen no longer exists. Return none here.
+                                    return None;
+                                }
+                            }
+
+                            Some((bounds, display))
+                        })
+                        .unzip()
+                };
+
+                // Use the serialized workspace to construct the new window
+                cx.add_window(
+                    (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
+                    |cx| build_workspace(cx, serialized_workspace),
+                )
+                .1
+            };
 
             notify_if_database_failed(&workspace, &mut cx);
 
@@ -803,16 +1032,12 @@ impl Workspace {
         &self.project
     }
 
-    pub fn client(&self) -> &Arc<Client> {
+    pub fn client(&self) -> &Client {
         &self.client
     }
 
-    pub fn set_titlebar_item(
-        &mut self,
-        item: impl Into<AnyViewHandle>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.titlebar_item = Some(item.into());
+    pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.titlebar_item = Some(item);
         cx.notify();
     }
 
@@ -837,7 +1062,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(callback(self, cx)))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
+            let task = Self::new_local(Vec::new(), app_state.clone(), None, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -929,7 +1154,10 @@ impl Workspace {
                     if answer == Some(1) {
                         return anyhow::Ok(false);
                     } else {
-                        active_call.update(&mut cx, |call, cx| call.hang_up(cx))?;
+                        active_call
+                            .update(&mut cx, |call, cx| call.hang_up(cx))
+                            .await
+                            .log_err();
                     }
                 }
             }
@@ -1123,7 +1351,7 @@ impl Workspace {
         } else {
             let modal = add_view(self, cx);
             cx.focus(&modal);
-            self.modal = Some(modal.into());
+            self.modal = Some(modal.into_any());
             None
         }
     }
@@ -1259,7 +1487,7 @@ impl Workspace {
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
-                cx.focus(active_item.to_any());
+                cx.focus(active_item.as_any());
             }
         } else {
             cx.focus_self();
@@ -1291,7 +1519,7 @@ impl Workspace {
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
-                cx.focus(active_item.to_any());
+                cx.focus(active_item.as_any());
             }
         }
 
@@ -1306,16 +1534,34 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| Pane::new(None, cx));
+        let pane =
+            cx.add_view(|cx| Pane::new(self.weak_handle().id(), None, self.background_actions, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
         })
         .detach();
         self.panes.push(pane.clone());
-        cx.focus(pane.clone());
+        cx.focus(&pane);
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
+    }
+
+    pub fn add_item_to_center(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        if let Some(center_pane) = self.last_active_center_pane.clone() {
+            if let Some(center_pane) = center_pane.upgrade(cx) {
+                Pane::add_item(self, &center_pane, item, true, true, None, cx);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
@@ -1438,7 +1684,7 @@ impl Workspace {
     fn activate_pane_at_index(&mut self, action: &ActivatePane, cx: &mut ViewContext<Self>) {
         let panes = self.center.panes();
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-            cx.focus(pane);
+            cx.focus(&pane);
         } else {
             self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
         }
@@ -1449,7 +1695,7 @@ impl Workspace {
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
             let next_pane = panes[next_ix].clone();
-            cx.focus(next_pane);
+            cx.focus(&next_pane);
         }
     }
 
@@ -1458,7 +1704,7 @@ impl Workspace {
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
             let prev_pane = panes[prev_ix].clone();
-            cx.focus(prev_pane);
+            cx.focus(&prev_pane);
         }
     }
 
@@ -1475,7 +1721,7 @@ impl Workspace {
             self.active_item_path_changed(cx);
 
             if &pane == self.dock_pane() {
-                Dock::show(self, cx);
+                Dock::show(self, true, cx);
             } else {
                 self.last_active_center_pane = Some(pane.downgrade());
                 if self.dock.is_anchored_at(DockAnchor::Expanded) {
@@ -1555,13 +1801,17 @@ impl Workspace {
         }
 
         let item = pane.read(cx).active_item()?;
-        let new_pane = self.add_pane(cx);
-        if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
-            Pane::add_item(self, &new_pane, clone, true, true, None, cx);
-        }
-        self.center.split(&pane, &new_pane, direction).unwrap();
+        let maybe_pane_handle =
+            if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
+                let new_pane = self.add_pane(cx);
+                Pane::add_item(self, &new_pane, clone, true, true, None, cx);
+                self.center.split(&pane, &new_pane, direction).unwrap();
+                Some(new_pane)
+            } else {
+                None
+            };
         cx.notify();
-        Some(new_pane)
+        maybe_pane_handle
     }
 
     pub fn split_pane_with_item(&mut self, action: &SplitWithItem, cx: &mut ViewContext<Self>) {
@@ -1617,7 +1867,7 @@ impl Workspace {
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
-            cx.focus(self.panes.last().unwrap().clone());
+            cx.focus(self.panes.last().unwrap());
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             for removed_item in pane.read(cx).items() {
@@ -1794,24 +2044,15 @@ impl Workspace {
         None
     }
 
-    pub fn is_following(&self, peer_id: PeerId) -> bool {
+    pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
         self.follower_states_by_leader.contains_key(&peer_id)
     }
 
-    pub fn is_followed(&self, peer_id: PeerId) -> bool {
+    pub fn is_followed_by(&self, peer_id: PeerId) -> bool {
         self.leader_state.followers.contains(&peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
-        let project = &self.project.read(cx);
-        let mut worktree_root_names = String::new();
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
-            if i > 0 {
-                worktree_root_names.push_str(", ");
-            }
-            worktree_root_names.push_str(name);
-        }
-
         // TODO: There should be a better system in place for this
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen(cx.window_id());
@@ -1828,16 +2069,10 @@ impl Workspace {
             MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
                 Container::new(
                     Stack::new()
-                        .with_child(
-                            Label::new(worktree_root_names, theme.workspace.titlebar.title.clone())
-                                .aligned()
-                                .left()
-                                .boxed(),
-                        )
                         .with_children(
                             self.titlebar_item
                                 .as_ref()
-                                .map(|item| ChildView::new(item, cx).aligned().right().boxed()),
+                                .map(|item| ChildView::new(item, cx).boxed()),
                         )
                         .boxed(),
                 )
@@ -1924,7 +2159,7 @@ impl Workspace {
                 MouseEventHandler::<DisconnectedOverlay>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme;
                     Label::new(
-                        "Your connection to the remote project has been lost.".to_string(),
+                        "Your connection to the remote project has been lost.",
                         theme.workspace.disconnected_overlay.text.clone(),
                     )
                     .aligned()
@@ -1952,7 +2187,7 @@ impl Workspace {
             Some(
                 Flex::column()
                     .with_children(self.notifications.iter().map(|(_, _, notification)| {
-                        ChildView::new(notification.as_ref(), cx)
+                        ChildView::new(notification.as_any(), cx)
                             .contained()
                             .with_style(theme.notification)
                             .boxed()
@@ -2249,7 +2484,7 @@ impl Workspace {
             let active_item_was_focused = pane
                 .read(cx)
                 .active_item()
-                .map(|active_item| cx.is_child_focused(active_item.to_any()))
+                .map(|active_item| cx.is_child_focused(active_item.as_any()))
                 .unwrap_or_default();
 
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
@@ -2476,14 +2711,14 @@ impl Workspace {
                         cx.focus_self();
 
                         if let Some(active_pane) = active_pane {
-                            cx.focus(active_pane);
+                            cx.focus(&active_pane);
                         } else {
-                            cx.focus(workspace.panes.last().unwrap().clone());
+                            cx.focus(workspace.panes.last().unwrap());
                         }
                     } else {
                         let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
                         if let Some(old_center_handle) = old_center_handle {
-                            cx.focus(old_center_handle)
+                            cx.focus(&old_center_handle)
                         } else {
                             cx.focus_self()
                         }
@@ -2499,7 +2734,12 @@ impl Workspace {
                     // the focus the dock generates start generating alternating
                     // focus due to the deferred execution each triggering each other
                     cx.after_window_update(move |workspace, cx| {
-                        Dock::set_dock_position(workspace, serialized_workspace.dock_position, cx);
+                        Dock::set_dock_position(
+                            workspace,
+                            serialized_workspace.dock_position,
+                            true,
+                            cx,
+                        );
                     });
 
                     cx.notify();
@@ -2510,6 +2750,11 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        Self::new(None, 0, project, |_, _| None, || &[], cx)
     }
 }
 
@@ -2522,7 +2767,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                         indoc::indoc! {"
                             Failed to load any database file :(
                         "},
-                        OsOpen("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
+                        OsOpen::new("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
                         "Click to let us know about this error"
                     )
                 })
@@ -2544,7 +2789,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                                 "},
                                 backup_path
                             ),
-                            OsOpen(backup_path.to_string()),
+                            OsOpen::new(backup_path.to_string()),
                             "Click to show old database in finder",
                         )
                     })
@@ -2693,11 +2938,7 @@ impl View for Workspace {
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        let mut keymap = Self::default_keymap_context();
-        if self.active_pane() == self.dock_pane() {
-            keymap.set.insert("Dock".into());
-        }
-        keymap
+        Self::default_keymap_context()
     }
 }
 
@@ -2746,20 +2987,6 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-fn open(_: &Open, cx: &mut MutableAppContext) {
-    let mut paths = cx.prompt_for_paths(PathPromptOptions {
-        files: true,
-        directories: true,
-        multiple: true,
-    });
-    cx.spawn(|mut cx| async move {
-        if let Some(paths) = paths.recv().await.flatten() {
-            cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
-        }
-    })
-    .detach();
-}
-
 pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 
 pub fn activate_workspace_for_project(
@@ -2786,6 +3013,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
+    requesting_window_id: Option<usize>,
     cx: &mut MutableAppContext,
 ) -> Task<(
     ViewHandle<Workspace>,
@@ -2816,7 +3044,8 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.update(|cx| {
-                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
+                let task =
+                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx);
 
                 cx.spawn(|mut cx| async move {
                     let (workspace, items) = task.await;
@@ -2835,17 +3064,28 @@ pub fn open_paths(
     })
 }
 
-pub fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
+pub fn open_new(
+    app_state: &Arc<AppState>,
+    cx: &mut MutableAppContext,
+    init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
+) -> Task<()> {
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 
-        workspace.update(&mut cx, |_, cx| {
+        workspace.update(&mut cx, |workspace, cx| {
             if opened_paths.is_empty() {
-                cx.dispatch_action(NewFile);
+                init(workspace, cx)
             }
         })
     })
+}
+
+fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
+    let mut parts = value.split(',');
+    let width: usize = parts.next()?.parse().ok()?;
+    let height: usize = parts.next()?.parse().ok()?;
+    Some(vec2f(width as f32, height as f32))
 }
 
 #[cfg(test)]
@@ -2856,16 +3096,9 @@ mod tests {
 
     use super::*;
     use fs::FakeFs;
-    use gpui::{executor::Deterministic, TestAppContext, ViewContext};
+    use gpui::{executor::Deterministic, TestAppContext};
     use project::{Project, ProjectEntryId};
     use serde_json::json;
-
-    pub fn default_item_factory(
-        _workspace: &mut Workspace,
-        _cx: &mut ViewContext<Workspace>,
-    ) -> Option<Box<dyn ItemHandle>> {
-        unimplemented!()
-    }
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -2879,7 +3112,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                default_item_factory,
+                |_, _| None,
+                || &[],
                 cx,
             )
         });
@@ -2951,7 +3185,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                default_item_factory,
+                |_, _| None,
+                || &[],
                 cx,
             )
         });
@@ -3051,7 +3286,8 @@ mod tests {
                 Default::default(),
                 0,
                 project.clone(),
-                default_item_factory,
+                |_, _| None,
+                || &[],
                 cx,
             )
         });
@@ -3090,7 +3326,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         let item1 = cx.add_view(&workspace, |cx| {
@@ -3199,7 +3435,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         // Create several workspace items with single project entries, and two
@@ -3263,7 +3499,7 @@ mod tests {
         //Need to cause an effect flush in order to respect new focus
         workspace.update(cx, |workspace, cx| {
             workspace.add_item(Box::new(item_3_4.clone()), cx);
-            cx.focus(left_pane.clone());
+            cx.focus(&left_pane);
         });
 
         // When closing all of the items in the left pane, we should be prompted twice:
@@ -3308,7 +3544,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         let item = cx.add_view(&workspace, |cx| {
@@ -3427,7 +3663,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, default_item_factory, cx)
+            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
         });
 
         let item = cx.add_view(&workspace, |cx| {

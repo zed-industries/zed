@@ -1,0 +1,22 @@
+[package]
+name = "node_runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/node_runtime.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+util = { path = "../util" }
+async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
+async-tar = "0.4.2"
+futures = "0.3"
+anyhow = "1.0.38"
+parking_lot = "0.11.1"
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
+smol = "1.2.5"

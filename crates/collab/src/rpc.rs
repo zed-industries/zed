@@ -53,11 +53,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::watch;
+use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
-pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 lazy_static! {
@@ -186,7 +186,7 @@ impl Server {
             .add_request_handler(create_room)
             .add_request_handler(join_room)
             .add_request_handler(rejoin_room)
-            .add_message_handler(leave_room)
+            .add_request_handler(leave_room)
             .add_request_handler(call)
             .add_request_handler(cancel_call)
             .add_message_handler(decline_call)
@@ -270,8 +270,11 @@ impl Server {
                         let mut live_kit_room = String::new();
                         let mut delete_live_kit_room = false;
 
-                        if let Ok(mut refreshed_room) =
-                            app_state.db.refresh_room(room_id, server_id).await
+                        if let Some(mut refreshed_room) = app_state
+                            .db
+                            .refresh_room(room_id, server_id)
+                            .await
+                            .trace_err()
                         {
                             tracing::info!(
                                 room_id = room_id.0,
@@ -539,8 +542,13 @@ impl Server {
             // This arrangement ensures we will attempt to process earlier messages first, but fall
             // back to processing messages arrived later in the spirit of making progress.
             let mut foreground_message_handlers = FuturesUnordered::new();
+            let concurrent_handlers = Arc::new(Semaphore::new(256));
             loop {
-                let next_message = incoming_rx.next().fuse();
+                let next_message = async {
+                    let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
+                    let message = incoming_rx.next().await;
+                    (permit, message)
+                }.fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
                     _ = teardown.changed().fuse() => return Ok(()),
@@ -551,7 +559,8 @@ impl Server {
                         break;
                     }
                     _ = foreground_message_handlers.next() => {}
-                    message = next_message => {
+                    next_message = next_message => {
+                        let (permit, message) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
                             let span = tracing::info_span!("receive message", %user_id, %login, %connection_id, %address, type_name);
@@ -561,7 +570,10 @@ impl Server {
                                 let handle_message = (handler)(message, session.clone());
                                 drop(span_enter);
 
-                                let handle_message = handle_message.instrument(span);
+                                let handle_message = async move {
+                                    handle_message.await;
+                                    drop(permit);
+                                }.instrument(span);
                                 if is_background {
                                     executor.spawn_detached(handle_message);
                                 } else {
@@ -1090,8 +1102,14 @@ async fn rejoin_room(
     Ok(())
 }
 
-async fn leave_room(_message: proto::LeaveRoom, session: Session) -> Result<()> {
-    leave_room_for_session(&session).await
+async fn leave_room(
+    _: proto::LeaveRoom,
+    response: Response<proto::LeaveRoom>,
+    session: Session,
+) -> Result<()> {
+    leave_room_for_session(&session).await?;
+    response.send(proto::Ack {})?;
+    Ok(())
 }
 
 async fn call(
@@ -1312,6 +1330,7 @@ async fn join_project(
         .filter(|collaborator| collaborator.connection_id != session.connection_id)
         .map(|collaborator| collaborator.to_proto())
         .collect::<Vec<_>>();
+
     let worktrees = project
         .worktrees
         .iter()
@@ -1404,7 +1423,7 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
 
-    let project = session
+    let (room, project) = &*session
         .db()
         .await
         .leave_project(project_id, sender_id)
@@ -1415,7 +1434,9 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
         host_connection_id = %project.host_connection_id,
         "leave project"
     );
+
     project_left(&project, &session);
+    room_updated(&room, &session.peer);
 
     Ok(())
 }
@@ -1724,6 +1745,7 @@ async fn follow(
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
     let follower_id = session.connection_id;
+
     {
         let project_connection_ids = session
             .db()
@@ -1744,6 +1766,14 @@ async fn follow(
         .views
         .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
+
+    let room = session
+        .db()
+        .await
+        .follow(project_id, leader_id, follower_id)
+        .await?;
+    room_updated(&room, &session.peer);
+
     Ok(())
 }
 
@@ -1753,17 +1783,29 @@ async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
-    let project_connection_ids = session
+    let follower_id = session.connection_id;
+
+    if !session
         .db()
         .await
         .project_connection_ids(project_id, session.connection_id)
-        .await?;
-    if !project_connection_ids.contains(&leader_id) {
+        .await?
+        .contains(&leader_id)
+    {
         Err(anyhow!("no such peer"))?;
     }
+
     session
         .peer
         .forward_send(session.connection_id, leader_id, request)?;
+
+    let room = session
+        .db()
+        .await
+        .unfollow(project_id, leader_id, follower_id)
+        .await?;
+    room_updated(&room, &session.peer);
+
     Ok(())
 }
 
@@ -1833,7 +1875,7 @@ async fn fuzzy_search_users(
         1 | 2 => session
             .db()
             .await
-            .get_user_by_github_account(&query, None)
+            .get_user_by_github_login(&query)
             .await?
             .into_iter()
             .collect(),

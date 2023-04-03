@@ -1,1 +1,44 @@
-[{"Text":"The quick "},{"Mode":"Normal"},{"Selection":{"start":[0,9],"end":[0,9]}},{"Mode":"Normal"},{"Text":"The ver\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"The ver\nthe lquick brown\nfox jumps oazy dog"},{"Mode":"Normal"},{"Selection":{"start":[1,5],"end":[1,5]}},{"Mode":"Normal"},{"Text":"The ver\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"The quick brown\nfox jumps over\nthe og"},{"Mode":"Normal"},{"Selection":{"start":[2,4],"end":[2,4]}},{"Mode":"Normal"},{"Text":"uick brown\nfox jumps over\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[0,0],"end":[0,0]}},{"Mode":"Normal"},{"Text":"The ver\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Normal"},{"Text":"The quick brown\nazy dog"},{"Mode":"Normal"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Normal"}]
+{"Put":{"state":"The quick ˇbrown"}}
+{"Key":"v"}
+{"Key":"w"}
+{"Key":"x"}
+{"Get":{"state":"The quickˇ ","mode":"Normal"}}
+{"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog"}}
+{"Key":"v"}
+{"Key":"w"}
+{"Key":"j"}
+{"Key":"x"}
+{"Get":{"state":"The ˇver\nthe lazy dog","mode":"Normal"}}
+{"Key":"j"}
+{"Key":"p"}
+{"Get":{"state":"The ver\nthe lˇquick brown\nfox jumps oazy dog","mode":"Normal"}}
+{"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog"}}
+{"Key":"v"}
+{"Key":"w"}
+{"Key":"j"}
+{"Key":"x"}
+{"Get":{"state":"The ˇver\nthe lazy dog","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe ˇlazy dog"}}
+{"Key":"v"}
+{"Key":"w"}
+{"Key":"j"}
+{"Key":"x"}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe ˇog","mode":"Normal"}}
+{"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog"}}
+{"Key":"v"}
+{"Key":"b"}
+{"Key":"k"}
+{"Key":"x"}
+{"Get":{"state":"ˇuick brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps ˇover\nthe lazy dog"}}
+{"Key":"v"}
+{"Key":"b"}
+{"Key":"k"}
+{"Key":"x"}
+{"Get":{"state":"The ˇver\nthe lazy dog","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe ˇlazy dog"}}
+{"Key":"v"}
+{"Key":"b"}
+{"Key":"k"}
+{"Key":"x"}
+{"Get":{"state":"The quick brown\nˇazy dog","mode":"Normal"}}

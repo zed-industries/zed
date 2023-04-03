@@ -1,14 +1,20 @@
-use super::installation::latest_github_release;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::StreamExt;
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use smol::{fs, process};
+use std::ffi::{OsStr, OsString};
 use std::{any::Any, ops::Range, path::PathBuf, str, sync::Arc};
+use util::fs::remove_matching;
+use util::github::latest_github_release;
+use util::http::HttpClient;
 use util::ResultExt;
+
+fn server_binary_arguments() -> Vec<OsString> {
+    vec!["-mode=stdio".into()]
+}
 
 #[derive(Copy, Clone)]
 pub struct GoLspAdapter;
@@ -21,10 +27,6 @@ lazy_static! {
 impl super::LspAdapter for GoLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("gopls".into())
-    }
-
-    async fn server_args(&self) -> Vec<String> {
-        vec!["-mode=stdio".into()]
     }
 
     async fn fetch_latest_server_version(
@@ -47,7 +49,7 @@ impl super::LspAdapter for GoLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
@@ -55,20 +57,15 @@ impl super::LspAdapter for GoLspAdapter {
             let binary_path = container_dir.join(&format!("gopls_{version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {
-                    if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                        while let Some(entry) = entries.next().await {
-                            if let Some(entry) = entry.log_err() {
-                                let entry_path = entry.path();
-                                if entry_path.as_path() != binary_path
-                                    && entry.file_name() != "gobin"
-                                {
-                                    fs::remove_file(&entry_path).await.log_err();
-                                }
-                            }
-                        }
-                    }
+                    remove_matching(&container_dir, |entry| {
+                        entry != binary_path && entry.file_name() != Some(OsStr::new("gobin"))
+                    })
+                    .await;
 
-                    return Ok(binary_path.to_path_buf());
+                    return Ok(LanguageServerBinary {
+                        path: binary_path.to_path_buf(),
+                        arguments: server_binary_arguments(),
+                    });
                 }
             }
         } else if let Some(path) = this.cached_server_binary(container_dir.clone()).await {
@@ -102,10 +99,13 @@ impl super::LspAdapter for GoLspAdapter {
         let binary_path = container_dir.join(&format!("gopls_{version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
 
-        Ok(binary_path.to_path_buf())
+        Ok(LanguageServerBinary {
+            path: binary_path.to_path_buf(),
+            arguments: server_binary_arguments(),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_binary_path = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -122,7 +122,10 @@ impl super::LspAdapter for GoLspAdapter {
             }
 
             if let Some(path) = last_binary_path {
-                Ok(path)
+                Ok(LanguageServerBinary {
+                    path,
+                    arguments: server_binary_arguments(),
+                })
             } else {
                 Err(anyhow!("no cached binary"))
             }
@@ -314,7 +317,7 @@ mod tests {
         let language = language(
             "go",
             tree_sitter_go::language(),
-            Some(Box::new(GoLspAdapter)),
+            Some(Arc::new(GoLspAdapter)),
         )
         .await;
 

@@ -32,6 +32,7 @@ use mappings::mouse::{
 
 use procinfo::LocalProcessInfo;
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
+use util::truncate_and_trailoff;
 
 use std::{
     cmp::min,
@@ -1168,6 +1169,38 @@ impl Terminal {
 
             all_search_matches(&term, &searcher).collect()
         })
+    }
+
+    pub fn title(&self) -> String {
+        self.foreground_process_info
+            .as_ref()
+            .map(|fpi| {
+                format!(
+                    "{} — {}",
+                    truncate_and_trailoff(
+                        &fpi.cwd
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                        25
+                    ),
+                    truncate_and_trailoff(
+                        &{
+                            format!(
+                                "{}{}",
+                                fpi.name,
+                                if fpi.argv.len() >= 1 {
+                                    format!(" {}", (&fpi.argv[1..]).join(" "))
+                                } else {
+                                    "".to_string()
+                                }
+                            )
+                        },
+                        25
+                    )
+                )
+            })
+            .unwrap_or_else(|| "Terminal".to_string())
     }
 }
 

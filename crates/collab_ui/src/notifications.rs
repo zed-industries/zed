@@ -11,8 +11,8 @@ enum Button {}
 
 pub fn render_user_notification<V: View, A: Action + Clone>(
     user: Arc<User>,
-    title: &str,
-    body: Option<&str>,
+    title: &'static str,
+    body: Option<&'static str>,
     dismiss_action: A,
     buttons: Vec<(&'static str, Box<dyn Action>)>,
     cx: &mut RenderContext<V>,
@@ -24,7 +24,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
         .with_child(
             Flex::row()
                 .with_children(user.avatar.clone().map(|avatar| {
-                    Image::new(avatar)
+                    Image::from_data(avatar)
                         .with_style(theme.header_avatar)
                         .aligned()
                         .constrained()
@@ -83,7 +83,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 .named("contact notification header"),
         )
         .with_children(body.map(|body| {
-            Label::new(body.to_string(), theme.body_message.text.clone())
+            Label::new(body, theme.body_message.text.clone())
                 .contained()
                 .with_style(theme.body_message.container)
                 .boxed()
@@ -97,7 +97,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                         |(ix, (message, action))| {
                             MouseEventHandler::<Button>::new(ix, cx, |state, _| {
                                 let button = theme.button.style_for(state, false);
-                                Label::new(message.to_string(), button.text.clone())
+                                Label::new(message, button.text.clone())
                                     .contained()
                                     .with_style(button.container)
                                     .boxed()

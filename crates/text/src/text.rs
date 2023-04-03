@@ -1591,6 +1591,14 @@ impl BufferSnapshot {
         self.text_for_range(range).flat_map(str::chars)
     }
 
+    pub fn reversed_chars_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = char> + '_ {
+        self.reversed_chunks_in_range(range)
+            .flat_map(|chunk| chunk.chars().rev())
+    }
+
     pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
     where
         T: ToOffset,

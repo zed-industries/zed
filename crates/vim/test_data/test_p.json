@@ -1,1 +1,13 @@
-[{"Text":"The quick brown\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[1,6],"end":[1,6]}},{"Mode":"Normal"},{"Text":"The quick brown\nthe lazy dog\nfox jumps over"},{"Mode":"Normal"},{"Selection":{"start":[2,0],"end":[2,0]}},{"Mode":"Normal"},{"Text":"The quick brown\nfox jumps overjumps o\nthe lazy dog"},{"Mode":"Normal"},{"Selection":{"start":[1,20],"end":[1,20]}},{"Mode":"Normal"}]
+{"Put":{"state":"The quick brown\nfox juˇmps over\nthe lazy dog"}}
+{"Key":"d"}
+{"Key":"d"}
+{"Get":{"state":"The quick brown\nthe laˇzy dog","mode":"Normal"}}
+{"Key":"p"}
+{"Get":{"state":"The quick brown\nthe lazy dog\nˇfox jumps over","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox ˇjumps over\nthe lazy dog"}}
+{"Key":"v"}
+{"Key":"w"}
+{"Key":"y"}
+{"Put":{"state":"The quick brown\nfox jumps oveˇr\nthe lazy dog"}}
+{"Key":"p"}
+{"Get":{"state":"The quick brown\nfox jumps overjumps ˇo\nthe lazy dog","mode":"Normal"}}

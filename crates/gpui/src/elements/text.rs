@@ -15,7 +15,7 @@ use serde_json::json;
 use std::{borrow::Cow, ops::Range, sync::Arc};
 
 pub struct Text {
-    text: String,
+    text: Cow<'static, str>,
     style: TextStyle,
     soft_wrap: bool,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
@@ -28,9 +28,9 @@ pub struct LayoutState {
 }
 
 impl Text {
-    pub fn new(text: String, style: TextStyle) -> Self {
+    pub fn new<I: Into<Cow<'static, str>>>(text: I, style: TextStyle) -> Self {
         Self {
-            text,
+            text: text.into(),
             style,
             soft_wrap: true,
             highlights: Vec::new(),
@@ -280,7 +280,7 @@ mod tests {
         let (window_id, _) = cx.add_window(Default::default(), |_| TestView);
         let mut presenter = cx.build_presenter(window_id, Default::default(), Default::default());
         fonts::with_font_cache(cx.font_cache().clone(), || {
-            let mut text = Text::new("Hello\r\n".into(), Default::default()).with_soft_wrap(true);
+            let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
             let (_, state) = text.layout(
                 SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
                 &mut presenter.build_layout_context(Default::default(), false, cx),

@@ -1,1 +1,15 @@
-[{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[0,1],"end":[0,1]}},{"Mode":"Normal"},{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[0,6],"end":[0,6]}},{"Mode":"Normal"},{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[0,8],"end":[0,8]}},{"Mode":"Normal"},{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[1,1],"end":[1,1]}},{"Mode":"Normal"},{"Text":"The quick\nbrown"},{"Mode":"Normal"},{"Selection":{"start":[1,4],"end":[1,4]}},{"Mode":"Normal"}]
+{"Put":{"state":"ˇThe quick\nbrown"}}
+{"Key":"l"}
+{"Get":{"state":"Tˇhe quick\nbrown","mode":"Normal"}}
+{"Put":{"state":"The qˇuick\nbrown"}}
+{"Key":"l"}
+{"Get":{"state":"The quˇick\nbrown","mode":"Normal"}}
+{"Put":{"state":"The quicˇk\nbrown"}}
+{"Key":"l"}
+{"Get":{"state":"The quicˇk\nbrown","mode":"Normal"}}
+{"Put":{"state":"The quick\nˇbrown"}}
+{"Key":"l"}
+{"Get":{"state":"The quick\nbˇrown","mode":"Normal"}}
+{"Put":{"state":"The quick\nbrowˇn"}}
+{"Key":"l"}
+{"Get":{"state":"The quick\nbrowˇn","mode":"Normal"}}

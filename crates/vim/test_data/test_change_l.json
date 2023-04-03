@@ -1,1 +1,8 @@
-[{"Text":"Tet"},{"Mode":"Insert"},{"Selection":{"start":[0,2],"end":[0,2]}},{"Mode":"Insert"},{"Text":"Tes"},{"Mode":"Insert"},{"Selection":{"start":[0,3],"end":[0,3]}},{"Mode":"Insert"}]
+{"Put":{"state":"Teˇst"}}
+{"Key":"c"}
+{"Key":"l"}
+{"Get":{"state":"Teˇt","mode":"Insert"}}
+{"Put":{"state":"Tesˇt"}}
+{"Key":"c"}
+{"Key":"l"}
+{"Get":{"state":"Tesˇ","mode":"Insert"}}

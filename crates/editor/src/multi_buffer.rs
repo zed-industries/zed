@@ -1082,18 +1082,21 @@ impl MultiBuffer {
 
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         cursor.seek(&position, Bias::Right, &());
-        cursor.item().map(|excerpt| {
-            (
-                excerpt.id.clone(),
-                self.buffers
-                    .borrow()
-                    .get(&excerpt.buffer_id)
-                    .unwrap()
-                    .buffer
-                    .clone(),
-                excerpt.range.context.clone(),
-            )
-        })
+        cursor
+            .item()
+            .or_else(|| snapshot.excerpts.last())
+            .map(|excerpt| {
+                (
+                    excerpt.id.clone(),
+                    self.buffers
+                        .borrow()
+                        .get(&excerpt.buffer_id)
+                        .unwrap()
+                        .buffer
+                        .clone(),
+                    excerpt.range.context.clone(),
+                )
+            })
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
@@ -2191,7 +2194,11 @@ impl MultiBufferSnapshot {
 
     pub fn buffer_line_for_row(&self, row: u32) -> Option<(&BufferSnapshot, Range<Point>)> {
         let mut cursor = self.excerpts.cursor::<Point>();
-        cursor.seek(&Point::new(row, 0), Bias::Right, &());
+        let point = Point::new(row, 0);
+        cursor.seek(&point, Bias::Right, &());
+        if cursor.item().is_none() && *cursor.start() == point {
+            cursor.prev(&());
+        }
         if let Some(excerpt) = cursor.item() {
             let overshoot = row - cursor.start().row;
             let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
@@ -2924,6 +2931,10 @@ impl MultiBufferSnapshot {
 
     pub fn buffer_id_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<usize> {
         Some(self.excerpt(excerpt_id)?.buffer_id)
+    }
+
+    pub fn buffer_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<&BufferSnapshot> {
+        Some(&self.excerpt(excerpt_id)?.buffer)
     }
 
     fn excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<&'a Excerpt> {

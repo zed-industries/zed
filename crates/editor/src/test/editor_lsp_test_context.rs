@@ -39,7 +39,7 @@ impl<'a> EditorLspTestContext<'a> {
             pane::init(cx);
         });
 
-        let params = cx.update(AppState::test);
+        let app_state = cx.update(AppState::test);
 
         let file_name = format!(
             "file.{}",
@@ -56,24 +56,16 @@ impl<'a> EditorLspTestContext<'a> {
             }))
             .await;
 
-        let project = Project::test(params.fs.clone(), [], cx).await;
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
         project.update(cx, |project, _| project.languages().add(Arc::new(language)));
 
-        params
+        app_state
             .fs
             .as_fake()
             .insert_tree("/root", json!({ "dir": { file_name.clone(): "" }}))
             .await;
 
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         project
             .update(cx, |project, cx| {
                 project.find_or_create_local_worktree("/root", true, cx)
@@ -134,7 +126,7 @@ impl<'a> EditorLspTestContext<'a> {
                     (let_chain)
                     (await_expression)
                 ] @indent
-                
+
                 (_ "[" "]" @end) @indent
                 (_ "<" ">" @end) @indent
                 (_ "{" "}" @end) @indent

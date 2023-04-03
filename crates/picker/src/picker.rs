@@ -80,7 +80,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                     None
                 } else {
                     Some(
-                        Label::new("No matches".into(), theme.no_matches.label.clone())
+                        Label::new("No matches", theme.no_matches.label.clone())
                             .contained()
                             .with_style(theme.no_matches.container)
                             .boxed(),
@@ -102,7 +102,10 @@ impl<D: PickerDelegate> View for Picker<D> {
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
                                 })
-                                .on_down(MouseButton::Left, move |_, cx| {
+                                // Capture mouse events
+                                .on_down(MouseButton::Left, |_, _| {})
+                                .on_up(MouseButton::Left, |_, _| {})
+                                .on_click(MouseButton::Left, move |_, cx| {
                                     cx.dispatch_action(SelectIndex(ix))
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
@@ -126,7 +129,7 @@ impl<D: PickerDelegate> View for Picker<D> {
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
-        cx.set.insert("menu".into());
+        cx.add_identifier("menu");
         cx
     }
 
@@ -205,6 +208,11 @@ impl<D: PickerDelegate> Picker<D> {
         self.query_editor.read(cx).text(cx)
     }
 
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
+        self.query_editor
+            .update(cx, |editor, cx| editor.set_text(query, cx));
+    }
+
     fn on_query_editor_event(
         &mut self,
         _: ViewHandle<Editor>,
@@ -249,9 +257,13 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = 0;
-            delegate.update(cx, |delegate, cx| delegate.set_selected_index(0, cx));
-            self.list_state.scroll_to(ScrollTarget::Show(index));
+            delegate.update(cx, |delegate, cx| {
+                if delegate.match_count() > 0 {
+                    delegate.set_selected_index(0, cx);
+                    self.list_state.scroll_to(ScrollTarget::Show(0));
+                }
+            });
+
             cx.notify();
         }
     }
@@ -259,53 +271,56 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn select_index(&mut self, action: &SelectIndex, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let index = action.0;
-            self.confirmed = true;
             delegate.update(cx, |delegate, cx| {
-                delegate.set_selected_index(index, cx);
-                delegate.confirm(cx);
+                if delegate.match_count() > 0 {
+                    self.confirmed = true;
+                    delegate.set_selected_index(index, cx);
+                    delegate.confirm(cx);
+                }
             });
         }
     }
 
     pub fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = delegate.update(cx, |delegate, cx| {
+            delegate.update(cx, |delegate, cx| {
                 let match_count = delegate.match_count();
-                let index = if match_count > 0 { match_count - 1 } else { 0 };
-                delegate.set_selected_index(index, cx);
-                index
+                if match_count > 0 {
+                    let index = match_count - 1;
+                    delegate.set_selected_index(index, cx);
+                    self.list_state.scroll_to(ScrollTarget::Show(index));
+                }
             });
-            self.list_state.scroll_to(ScrollTarget::Show(index));
             cx.notify();
         }
     }
 
     pub fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = delegate.update(cx, |delegate, cx| {
-                let mut selected_index = delegate.selected_index();
-                if selected_index + 1 < delegate.match_count() {
-                    selected_index += 1;
-                    delegate.set_selected_index(selected_index, cx);
+            delegate.update(cx, |delegate, cx| {
+                let next_index = delegate.selected_index() + 1;
+                if next_index < delegate.match_count() {
+                    delegate.set_selected_index(next_index, cx);
+                    self.list_state.scroll_to(ScrollTarget::Show(next_index));
                 }
-                selected_index
             });
-            self.list_state.scroll_to(ScrollTarget::Show(index));
+
             cx.notify();
         }
     }
 
     pub fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
-            let index = delegate.update(cx, |delegate, cx| {
+            delegate.update(cx, |delegate, cx| {
                 let mut selected_index = delegate.selected_index();
                 if selected_index > 0 {
                     selected_index -= 1;
                     delegate.set_selected_index(selected_index, cx);
+                    self.list_state
+                        .scroll_to(ScrollTarget::Show(selected_index));
                 }
-                selected_index
             });
-            self.list_state.scroll_to(ScrollTarget::Show(index));
+
             cx.notify();
         }
     }

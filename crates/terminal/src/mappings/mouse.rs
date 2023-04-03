@@ -186,6 +186,9 @@ pub fn mouse_moved_report(point: Point, e: &MouseMovedEvent, mode: TermMode) -> 
 }
 
 pub fn mouse_side(pos: Vector2F, cur_size: TerminalSize) -> alacritty_terminal::index::Direction {
+    if cur_size.cell_width as usize == 0 {
+        return Side::Right;
+    }
     let x = pos.0.x() as usize;
     let cell_x = x.saturating_sub(cur_size.cell_width as usize) % cur_size.cell_width as usize;
     let half_cell_width = (cur_size.cell_width / 2.0) as usize;

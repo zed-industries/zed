@@ -7,15 +7,12 @@ use crate::{
 use anyhow::anyhow;
 use call::ActiveCall;
 use client::{
-    self, proto::PeerId, test::FakeHttpClient, Client, Connection, Credentials,
-    EstablishConnectionError, UserStore,
+    self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
-use gpui::{
-    executor::Deterministic, test::EmptyView, ModelHandle, Task, TestAppContext, ViewHandle,
-};
+use gpui::{executor::Deterministic, test::EmptyView, ModelHandle, TestAppContext, ViewHandle};
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -31,6 +28,7 @@ use std::{
     },
 };
 use theme::ThemeRegistry;
+use util::http::FakeHttpClient;
 use workspace::Workspace;
 
 mod integration_tests;
@@ -105,11 +103,7 @@ impl TestServer {
         });
 
         let http = FakeHttpClient::with_404_response();
-        let user_id = if let Ok(Some(user)) = self
-            .app_state
-            .db
-            .get_user_by_github_account(name, None)
-            .await
+        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
         {
             user.id
         } else {
@@ -193,12 +187,13 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            languages: Arc::new(LanguageRegistry::new(Task::ready(()))),
+            languages: Arc::new(LanguageRegistry::test()),
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| unimplemented!(),
-            dock_default_item_factory: |_, _| unimplemented!(),
+            dock_default_item_factory: |_, _| None,
+            background_actions: || &[],
         });
 
         Project::init(&client);
@@ -468,15 +463,7 @@ impl TestClient {
         cx: &mut TestAppContext,
     ) -> ViewHandle<Workspace> {
         let (_, root_view) = cx.add_window(|_| EmptyView);
-        cx.add_view(&root_view, |cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        })
+        cx.add_view(&root_view, |cx| Workspace::test_new(project.clone(), cx))
     }
 }
 

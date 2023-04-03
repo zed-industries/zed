@@ -1,4 +1,7 @@
 pub mod channel;
+pub mod fs;
+pub mod github;
+pub mod http;
 pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -83,6 +86,24 @@ where
     }
 }
 
+pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_value_into(value, target);
+                } else {
+                    target.insert(key.clone(), value);
+                }
+            }
+        }
+
+        (source, target) => *target = source,
+    }
+}
+
 pub trait ResultExt {
     type Ok;
 
@@ -124,11 +145,15 @@ pub trait TryFutureExt {
     fn warn_on_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized;
+    fn unwrap(self) -> UnwrapFuture<Self>
+    where
+        Self: Sized;
 }
 
-impl<F, T> TryFutureExt for F
+impl<F, T, E> TryFutureExt for F
 where
-    F: Future<Output = anyhow::Result<T>>,
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
 {
     fn log_err(self) -> LogErrorFuture<Self>
     where
@@ -143,17 +168,25 @@ where
     {
         LogErrorFuture(self, log::Level::Warn)
     }
+
+    fn unwrap(self) -> UnwrapFuture<Self>
+    where
+        Self: Sized,
+    {
+        UnwrapFuture(self)
+    }
 }
 
 pub struct LogErrorFuture<F>(F, log::Level);
 
-impl<F, T> Future for LogErrorFuture<F>
+impl<F, T, E> Future for LogErrorFuture<F>
 where
-    F: Future<Output = anyhow::Result<T>>,
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
 {
     type Output = Option<T>;
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let level = self.1;
         let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
         match inner.poll(cx) {
@@ -164,6 +197,24 @@ where
                     None
                 }
             }),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub struct UnwrapFuture<F>(F);
+
+impl<F, T, E> Future for UnwrapFuture<F>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
+{
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
+        match inner.poll(cx) {
+            Poll::Ready(result) => Poll::Ready(result.unwrap()),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -237,7 +288,7 @@ macro_rules! iife {
     };
 }
 
-/// Async lImmediately invoked function expression. Good for using the ? operator
+/// Async Immediately invoked function expression. Good for using the ? operator
 /// in functions which do not return an Option or Result. Async version of above
 #[macro_export]
 macro_rules! async_iife {
@@ -250,6 +301,7 @@ pub trait RangeExt<T> {
     fn sorted(&self) -> Self;
     fn to_inclusive(&self) -> RangeInclusive<T>;
     fn overlaps(&self, other: &Range<T>) -> bool;
+    fn contains_inclusive(&self, other: &Range<T>) -> bool;
 }
 
 impl<T: Ord + Clone> RangeExt<T> for Range<T> {
@@ -262,10 +314,11 @@ impl<T: Ord + Clone> RangeExt<T> for Range<T> {
     }
 
     fn overlaps(&self, other: &Range<T>) -> bool {
-        self.contains(&other.start)
-            || self.contains(&other.end)
-            || other.contains(&self.start)
-            || other.contains(&self.end)
+        self.start < other.end && other.start < self.end
+    }
+
+    fn contains_inclusive(&self, other: &Range<T>) -> bool {
+        self.start <= other.start && other.end <= self.end
     }
 }
 
@@ -279,10 +332,11 @@ impl<T: Ord + Clone> RangeExt<T> for RangeInclusive<T> {
     }
 
     fn overlaps(&self, other: &Range<T>) -> bool {
-        self.contains(&other.start)
-            || self.contains(&other.end)
-            || other.contains(&self.start())
-            || other.contains(&self.end())
+        self.start() < &other.end && &other.start <= self.end()
+    }
+
+    fn contains_inclusive(&self, other: &Range<T>) -> bool {
+        self.start() <= &other.start && &other.end <= self.end()
     }
 }
 

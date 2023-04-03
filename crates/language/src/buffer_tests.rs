@@ -6,6 +6,7 @@ use gpui::{ModelHandle, MutableAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
+use regex::RegexBuilder;
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -17,6 +18,13 @@ use std::{
 use text::network::Network;
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
+
+lazy_static! {
+    static ref TRAILING_WHITESPACE_REGEX: Regex = RegexBuilder::new("[ \t]+$")
+        .multi_line(true)
+        .build()
+        .unwrap();
+}
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -72,31 +80,49 @@ fn test_select_language() {
 
     // matching file extension
     assert_eq!(
-        registry.language_for_path("zed/lib.rs").map(|l| l.name()),
+        registry
+            .language_for_path("zed/lib.rs")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         Some("Rust".into())
     );
     assert_eq!(
-        registry.language_for_path("zed/lib.mk").map(|l| l.name()),
+        registry
+            .language_for_path("zed/lib.mk")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
     );
 
     // matching filename
     assert_eq!(
-        registry.language_for_path("zed/Makefile").map(|l| l.name()),
+        registry
+            .language_for_path("zed/Makefile")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         Some("Make".into())
     );
 
     // matching suffix that is not the full file extension or filename
     assert_eq!(
-        registry.language_for_path("zed/cars").map(|l| l.name()),
+        registry
+            .language_for_path("zed/cars")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
-        registry.language_for_path("zed/a.cars").map(|l| l.name()),
+        registry
+            .language_for_path("zed/a.cars")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         None
     );
     assert_eq!(
-        registry.language_for_path("zed/sumk").map(|l| l.name()),
+        registry
+            .language_for_path("zed/sumk")
+            .now_or_never()
+            .and_then(|l| Some(l.ok()?.name())),
         None
     );
 }
@@ -208,6 +234,79 @@ async fn test_apply_diff(cx: &mut gpui::TestAppContext) {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
         assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
+    let text = [
+        "zero",     //
+        "one  ",    // 2 trailing spaces
+        "two",      //
+        "three   ", // 3 trailing spaces
+        "four",     //
+        "five    ", // 4 trailing spaces
+    ]
+    .join("\n");
+
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+
+    // Spawn a task to format the buffer's whitespace.
+    // Pause so that the foratting task starts running.
+    let format = buffer.read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    smol::future::yield_now().await;
+
+    // Edit the buffer while the normalization task is running.
+    let version_before_edit = buffer.read_with(cx, |buffer, _| buffer.version());
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            [
+                (Point::new(0, 1)..Point::new(0, 1), "EE"),
+                (Point::new(3, 5)..Point::new(3, 5), "EEE"),
+            ],
+            None,
+            cx,
+        );
+    });
+
+    let format_diff = format.await;
+    buffer.update(cx, |buffer, cx| {
+        let version_before_format = format_diff.base_version.clone();
+        buffer.apply_diff(format_diff, cx);
+
+        // The outcome depends on the order of concurrent taks.
+        //
+        // If the edit occurred while searching for trailing whitespace ranges,
+        // then the trailing whitespace region touched by the edit is left intact.
+        if version_before_format == version_before_edit {
+            assert_eq!(
+                buffer.text(),
+                [
+                    "zEEero",      //
+                    "one",         //
+                    "two",         //
+                    "threeEEE   ", //
+                    "four",        //
+                    "five",        //
+                ]
+                .join("\n")
+            );
+        }
+        // Otherwise, all trailing whitespace is removed.
+        else {
+            assert_eq!(
+                buffer.text(),
+                [
+                    "zEEero",   //
+                    "one",      //
+                    "two",      //
+                    "threeEEE", //
+                    "four",     //
+                    "five",     //
+                ]
+                .join("\n")
+            );
+        }
     });
 }
 
@@ -585,14 +684,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 moˇd y {
-                
+
                 }
             }
             let foo = 1;"},
         vec![indoc! {"
             mod x «{»
                 mod y {
-                
+
                 }
             «}»
             let foo = 1;"}],
@@ -602,7 +701,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y ˇ{
-                
+
                 }
             }
             let foo = 1;"},
@@ -610,14 +709,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             indoc! {"
                 mod x «{»
                     mod y {
-                    
+
                     }
                 «}»
                 let foo = 1;"},
             indoc! {"
                 mod x {
                     mod y «{»
-                    
+
                     «}»
                 }
                 let foo = 1;"},
@@ -628,7 +727,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }ˇ
             }
             let foo = 1;"},
@@ -636,14 +735,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             indoc! {"
                 mod x «{»
                     mod y {
-                    
+
                     }
                 «}»
                 let foo = 1;"},
             indoc! {"
                 mod x {
                     mod y «{»
-                    
+
                     «}»
                 }
                 let foo = 1;"},
@@ -654,14 +753,14 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }
             ˇ}
             let foo = 1;"},
         vec![indoc! {"
             mod x «{»
                 mod y {
-                
+
                 }
             «}»
             let foo = 1;"}],
@@ -671,7 +770,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }
             }
             let fˇoo = 1;"},
@@ -683,7 +782,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         indoc! {"
             mod x {
                 mod y {
-                
+
                 }
             }
             let foo = 1;ˇ"},
@@ -710,7 +809,6 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
         }"}],
     );
 
-    eprintln!("-----------------------");
     // Regression test: even though the parent node of the parentheses (the for loop) does
     // intersect the given range, the parentheses themselves do not contain the range, so
     // they should not be returned. Only the curly braces contain the range.
@@ -1527,42 +1625,34 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
             LanguageConfig {
                 name: "JavaScript".into(),
                 line_comment: Some("// ".into()),
-                brackets: vec![
-                    BracketPair {
-                        start: "{".into(),
-                        end: "}".into(),
-                        close: true,
-                        newline: false,
-                    },
-                    BracketPair {
-                        start: "'".into(),
-                        end: "'".into(),
-                        close: true,
-                        newline: false,
-                    },
-                ],
-                overrides: [
-                    (
-                        "element".into(),
-                        LanguageConfigOverride {
-                            line_comment: Override::Remove { remove: true },
-                            block_comment: Override::Set(("{/*".into(), "*/}".into())),
-                            ..Default::default()
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            newline: false,
                         },
-                    ),
-                    (
-                        "string".into(),
-                        LanguageConfigOverride {
-                            brackets: Override::Set(vec![BracketPair {
-                                start: "{".into(),
-                                end: "}".into(),
-                                close: true,
-                                newline: false,
-                            }]),
-                            ..Default::default()
+                        BracketPair {
+                            start: "'".into(),
+                            end: "'".into(),
+                            close: true,
+                            newline: false,
                         },
-                    ),
-                ]
+                    ],
+                    disabled_scopes_by_bracket_ix: vec![
+                        Vec::new(), //
+                        vec!["string".into()],
+                    ],
+                },
+                overrides: [(
+                    "element".into(),
+                    LanguageConfigOverride {
+                        line_comment: Override::Remove { remove: true },
+                        block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                        ..Default::default()
+                    },
+                )]
                 .into_iter()
                 .collect(),
                 ..Default::default()
@@ -1584,11 +1674,19 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
 
         let config = snapshot.language_scope_at(0).unwrap();
         assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
-        assert_eq!(config.brackets().len(), 2);
+        // Both bracket pairs are enabled
+        assert_eq!(
+            config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
 
         let string_config = snapshot.language_scope_at(3).unwrap();
-        assert_eq!(config.line_comment_prefix().unwrap().as_ref(), "// ");
-        assert_eq!(string_config.brackets().len(), 1);
+        assert_eq!(string_config.line_comment_prefix().unwrap().as_ref(), "// ");
+        // Second bracket pair is disabled
+        assert_eq!(
+            string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
+        );
 
         let element_config = snapshot.language_scope_at(10).unwrap();
         assert_eq!(element_config.line_comment_prefix(), None);
@@ -1596,7 +1694,11 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
             element_config.block_comment_delimiters(),
             Some((&"{/*".into(), &"*/}".into()))
         );
-        assert_eq!(element_config.brackets().len(), 2);
+        // Both bracket pairs are enabled
+        assert_eq!(
+            element_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, true]
+        );
 
         buffer
     });
@@ -1719,25 +1821,31 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             }
             30..=39 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
-                    let mut selections = Vec::new();
-                    for id in 0..rng.gen_range(1..=5) {
-                        let range = buffer.random_byte_range(0, &mut rng);
-                        selections.push(Selection {
-                            id,
-                            start: buffer.anchor_before(range.start),
-                            end: buffer.anchor_before(range.end),
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        });
+                    if rng.gen_bool(0.2) {
+                        log::info!("peer {} clearing active selections", replica_id);
+                        active_selections.remove(&replica_id);
+                        buffer.remove_active_selections(cx);
+                    } else {
+                        let mut selections = Vec::new();
+                        for id in 0..rng.gen_range(1..=5) {
+                            let range = buffer.random_byte_range(0, &mut rng);
+                            selections.push(Selection {
+                                id,
+                                start: buffer.anchor_before(range.start),
+                                end: buffer.anchor_before(range.end),
+                                reversed: false,
+                                goal: SelectionGoal::None,
+                            });
+                        }
+                        let selections: Arc<[Selection<Anchor>]> = selections.into();
+                        log::info!(
+                            "peer {} setting active selections: {:?}",
+                            replica_id,
+                            selections
+                        );
+                        active_selections.insert(replica_id, selections.clone());
+                        buffer.set_active_selections(selections, false, Default::default(), cx);
                     }
-                    let selections: Arc<[Selection<Anchor>]> = selections.into();
-                    log::info!(
-                        "peer {} setting active selections: {:?}",
-                        replica_id,
-                        selections
-                    );
-                    active_selections.insert(replica_id, selections.clone());
-                    buffer.set_active_selections(selections, false, Default::default(), cx);
                 });
                 mutation_count -= 1;
             }
@@ -1936,6 +2044,45 @@ fn test_contiguous_ranges() {
         )
         .collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
+    );
+}
+
+#[gpui::test(iterations = 500)]
+fn test_trailing_whitespace_ranges(mut rng: StdRng) {
+    // Generate a random multi-line string containing
+    // some lines with trailing whitespace.
+    let mut text = String::new();
+    for _ in 0..rng.gen_range(0..16) {
+        for _ in 0..rng.gen_range(0..36) {
+            text.push(match rng.gen_range(0..10) {
+                0..=1 => ' ',
+                3 => '\t',
+                _ => rng.gen_range('a'..'z'),
+            });
+        }
+        text.push('\n');
+    }
+
+    match rng.gen_range(0..10) {
+        // sometimes remove the last newline
+        0..=1 => drop(text.pop()), //
+
+        // sometimes add extra newlines
+        2..=3 => text.push_str(&"\n".repeat(rng.gen_range(1..5))),
+        _ => {}
+    }
+
+    let rope = Rope::from(text.as_str());
+    let actual_ranges = trailing_whitespace_ranges(&rope);
+    let expected_ranges = TRAILING_WHITESPACE_REGEX
+        .find_iter(&text)
+        .map(|m| m.range())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_ranges,
+        expected_ranges,
+        "wrong ranges for text lines:\n{:?}",
+        text.split("\n").collect::<Vec<_>>()
     );
 }
 

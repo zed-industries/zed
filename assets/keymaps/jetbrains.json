@@ -1,0 +1,78 @@
+[
+  {
+    "bindings": {
+      "cmd-shift-[": "pane::ActivatePrevItem",
+      "cmd-shift-]": "pane::ActivateNextItem"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl->": "zed::IncreaseBufferFontSize",
+      "ctrl-<": "zed::DecreaseBufferFontSize",
+      "cmd-d": "editor::DuplicateLine",
+      "cmd-pagedown": "editor::MovePageDown",
+      "cmd-pageup": "editor::MovePageUp",
+      "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",
+      "shift-enter": "editor::NewlineBelow",
+      "cmd--": "editor::Fold",
+      "cmd-=": "editor::UnfoldLines",
+      "alt-shift-g": "editor::SplitSelectionIntoLines",
+      "ctrl-g": [
+        "editor::SelectNext",
+        {
+          "replace_newest": false
+        }
+      ],
+      "cmd-/": [
+        "editor::ToggleComments",
+        {
+          "advance_downwards": true
+        }
+      ],
+      "shift-alt-up": "editor::MoveLineUp",
+      "shift-alt-down": "editor::MoveLineDown",
+      "cmd-[": "pane::GoBack",
+      "cmd-]": "pane::GoForward",
+      "alt-f7": "editor::FindAllReferences",
+      "cmd-alt-f7": "editor::FindAllReferences",
+      "cmd-b": "editor::GoToDefinition",
+      "cmd-alt-b": "editor::GoToDefinition",
+      "cmd-shift-b": "editor::GoToTypeDefinition",
+      "alt-enter": "editor::ToggleCodeActions",
+      "f2": "editor::GoToDiagnostic",
+      "cmd-f2": "editor::GoToPrevDiagnostic",
+      "ctrl-alt-shift-down": "editor::GoToHunk",
+      "ctrl-alt-shift-up": "editor::GoToPrevHunk",
+      "cmd-home": "editor::MoveToBeginning",
+      "cmd-end": "editor::MoveToEnd",
+      "cmd-shift-home": "editor::SelectToBeginning",
+      "cmd-shift-end": "editor::SelectToEnd"
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
+      "cmd-f12": "outline::Toggle",
+      "cmd-7": "outline::Toggle",
+      "cmd-shift-o": "file_finder::Toggle",
+      "cmd-l": "go_to_line::Toggle"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-shift-a": "command_palette::Toggle",
+      "cmd-alt-o": "project_symbols::Toggle",
+      "cmd-1": "workspace::ToggleLeftSidebar",
+      "cmd-6": "diagnostics::Deploy",
+      "alt-f12": "dock::FocusDock"
+    }
+  },
+  {
+    "context": "Dock",
+    "bindings": {
+      "alt-f12": "dock::HideDock"
+    }
+  }
+]

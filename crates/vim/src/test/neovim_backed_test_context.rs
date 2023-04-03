@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use collections::{HashMap, HashSet};
 use gpui::ContextHandle;
-use language::{OffsetRangeExt, Point};
+use language::OffsetRangeExt;
 use util::test::marked_text_offsets;
 
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
@@ -85,7 +85,7 @@ impl<'a> NeovimBackedTestContext<'a> {
                 let mut marked_text = unmarked_text.clone();
                 marked_text.insert(*cursor_offset, 'ˇ');
 
-                // None represents all keybindings being exempted for that initial state
+                // None represents all key bindings being exempted for that initial state
                 self.exemptions.insert(marked_text, None);
             }
         }
@@ -108,11 +108,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
     pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
         let context_handle = self.set_state(marked_text, Mode::Normal);
-
-        let selection = self.editor(|editor, cx| editor.selections.newest::<Point>(cx));
-        let text = self.buffer_text();
-        self.neovim.set_state(selection, &text).await;
-
+        self.neovim.set_state(marked_text).await;
         context_handle
     }
 

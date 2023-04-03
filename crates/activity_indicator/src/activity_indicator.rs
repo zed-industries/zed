@@ -33,6 +33,19 @@ struct LspStatus {
     status: LanguageServerBinaryStatus,
 }
 
+struct PendingWork<'a> {
+    language_server_name: &'a str,
+    progress_token: &'a str,
+    progress: &'a LanguageServerProgress,
+}
+
+#[derive(Default)]
+struct Content {
+    icon: Option<&'static str>,
+    message: String,
+    action: Option<Box<dyn Action>>,
+}
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ActivityIndicator::show_error_message);
     cx.add_action(ActivityIndicator::dismiss_error_message);
@@ -69,6 +82,8 @@ impl ActivityIndicator {
             if let Some(auto_updater) = auto_updater.as_ref() {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
+            cx.observe_active_labeled_tasks(|_, cx| cx.notify())
+                .detach();
 
             Self {
                 statuses: Default::default(),
@@ -130,7 +145,7 @@ impl ActivityIndicator {
     fn pending_language_server_work<'a>(
         &self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = (&'a str, &'a str, &'a LanguageServerProgress)> {
+    ) -> impl Iterator<Item = PendingWork<'a>> {
         self.project
             .read(cx)
             .language_server_statuses()
@@ -142,23 +157,29 @@ impl ActivityIndicator {
                     let mut pending_work = status
                         .pending_work
                         .iter()
-                        .map(|(token, progress)| (status.name.as_str(), token.as_str(), progress))
+                        .map(|(token, progress)| PendingWork {
+                            language_server_name: status.name.as_str(),
+                            progress_token: token.as_str(),
+                            progress,
+                        })
                         .collect::<SmallVec<[_; 4]>>();
-                    pending_work.sort_by_key(|(_, _, progress)| Reverse(progress.last_update_at));
+                    pending_work.sort_by_key(|work| Reverse(work.progress.last_update_at));
                     Some(pending_work)
                 }
             })
             .flatten()
     }
 
-    fn content_to_render(
-        &mut self,
-        cx: &mut RenderContext<Self>,
-    ) -> (Option<&'static str>, String, Option<Box<dyn Action>>) {
+    fn content_to_render(&mut self, cx: &mut RenderContext<Self>) -> Content {
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
-        if let Some((lang_server_name, progress_token, progress)) = pending_work.next() {
-            let mut message = lang_server_name.to_string();
+        if let Some(PendingWork {
+            language_server_name,
+            progress_token,
+            progress,
+        }) = pending_work.next()
+        {
+            let mut message = language_server_name.to_string();
 
             message.push_str(": ");
             if let Some(progress_message) = progress.message.as_ref() {
@@ -176,7 +197,11 @@ impl ActivityIndicator {
                 write!(&mut message, " + {} more", additional_work_count).unwrap();
             }
 
-            return (None, message, None);
+            return Content {
+                icon: None,
+                message,
+                action: None,
+            };
         }
 
         // Show any language server installation info.
@@ -199,19 +224,19 @@ impl ActivityIndicator {
         }
 
         if !downloading.is_empty() {
-            return (
-                Some(DOWNLOAD_ICON),
-                format!(
+            return Content {
+                icon: Some(DOWNLOAD_ICON),
+                message: format!(
                     "Downloading {} language server{}...",
                     downloading.join(", "),
                     if downloading.len() > 1 { "s" } else { "" }
                 ),
-                None,
-            );
+                action: None,
+            };
         } else if !checking_for_update.is_empty() {
-            return (
-                Some(DOWNLOAD_ICON),
-                format!(
+            return Content {
+                icon: Some(DOWNLOAD_ICON),
+                message: format!(
                     "Checking for updates to {} language server{}...",
                     checking_for_update.join(", "),
                     if checking_for_update.len() > 1 {
@@ -220,53 +245,61 @@ impl ActivityIndicator {
                         ""
                     }
                 ),
-                None,
-            );
+                action: None,
+            };
         } else if !failed.is_empty() {
-            return (
-                Some(WARNING_ICON),
-                format!(
+            return Content {
+                icon: Some(WARNING_ICON),
+                message: format!(
                     "Failed to download {} language server{}. Click to show error.",
                     failed.join(", "),
                     if failed.len() > 1 { "s" } else { "" }
                 ),
-                Some(Box::new(ShowErrorMessage)),
-            );
+                action: Some(Box::new(ShowErrorMessage)),
+            };
         }
 
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
-            match &updater.read(cx).status() {
-                AutoUpdateStatus::Checking => (
-                    Some(DOWNLOAD_ICON),
-                    "Checking for Zed updates…".to_string(),
-                    None,
-                ),
-                AutoUpdateStatus::Downloading => (
-                    Some(DOWNLOAD_ICON),
-                    "Downloading Zed update…".to_string(),
-                    None,
-                ),
-                AutoUpdateStatus::Installing => (
-                    Some(DOWNLOAD_ICON),
-                    "Installing Zed update…".to_string(),
-                    None,
-                ),
-                AutoUpdateStatus::Updated => (
-                    None,
-                    "Click to restart and update Zed".to_string(),
-                    Some(Box::new(workspace::Restart)),
-                ),
-                AutoUpdateStatus::Errored => (
-                    Some(WARNING_ICON),
-                    "Auto update failed".to_string(),
-                    Some(Box::new(DismissErrorMessage)),
-                ),
+            return match &updater.read(cx).status() {
+                AutoUpdateStatus::Checking => Content {
+                    icon: Some(DOWNLOAD_ICON),
+                    message: "Checking for Zed updates…".to_string(),
+                    action: None,
+                },
+                AutoUpdateStatus::Downloading => Content {
+                    icon: Some(DOWNLOAD_ICON),
+                    message: "Downloading Zed update…".to_string(),
+                    action: None,
+                },
+                AutoUpdateStatus::Installing => Content {
+                    icon: Some(DOWNLOAD_ICON),
+                    message: "Installing Zed update…".to_string(),
+                    action: None,
+                },
+                AutoUpdateStatus::Updated => Content {
+                    icon: None,
+                    message: "Click to restart and update Zed".to_string(),
+                    action: Some(Box::new(workspace::Restart)),
+                },
+                AutoUpdateStatus::Errored => Content {
+                    icon: Some(WARNING_ICON),
+                    message: "Auto update failed".to_string(),
+                    action: Some(Box::new(DismissErrorMessage)),
+                },
                 AutoUpdateStatus::Idle => Default::default(),
-            }
-        } else {
-            Default::default()
+            };
         }
+
+        if let Some(most_recent_active_task) = cx.active_labeled_tasks().last() {
+            return Content {
+                icon: None,
+                message: most_recent_active_task.to_string(),
+                action: None,
+            };
+        }
+
+        Default::default()
     }
 }
 
@@ -280,7 +313,11 @@ impl View for ActivityIndicator {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let (icon, message, action) = self.content_to_render(cx);
+        let Content {
+            icon,
+            message,
+            action,
+        } = self.content_to_render(cx);
 
         let mut element = MouseEventHandler::<Self>::new(0, cx, |state, cx| {
             let theme = &cx

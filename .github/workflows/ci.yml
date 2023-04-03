@@ -17,6 +17,26 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  rustfmt:
+    name: Check formatting
+    runs-on:
+      - self-hosted
+      - test
+    steps:
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup update stable
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+          submodules: 'recursive'
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
   tests:
     name: Run tests
     runs-on:

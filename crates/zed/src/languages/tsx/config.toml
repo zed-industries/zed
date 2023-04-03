@@ -6,18 +6,13 @@ brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
     { start = "(", end = ")", close = true, newline = true },
-    { start = "<", end = ">", close = false, newline = true },
-    { start = "\"", end = "\"", close = true, newline = false },
-    { start = "'", end = "'", close = true, newline = false },
-    { start = "`", end = "`", close = true, newline = false },
-    { start = "/*", end = " */", close = true, newline = false },
+    { start = "<", end = ">", close = false, newline = true, not_in = ["string", "comment"] },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "`", end = "`", close = true, newline = false, not_in = ["string"] },
+    { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 
 [overrides.element]
 line_comment = { remove = true }
 block_comment = ["{/* ", " */}"]
-
-[overrides.string]
-brackets = [
-    { start = "{", end = "}", close = true, newline = true },
-]

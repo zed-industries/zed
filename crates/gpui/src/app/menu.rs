@@ -11,7 +11,44 @@ pub enum MenuItem<'a> {
     Action {
         name: &'a str,
         action: Box<dyn Action>,
+        os_action: Option<OsAction>,
     },
+}
+
+impl<'a> MenuItem<'a> {
+    pub fn separator() -> Self {
+        Self::Separator
+    }
+
+    pub fn submenu(menu: Menu<'a>) -> Self {
+        Self::Submenu(menu)
+    }
+
+    pub fn action(name: &'a str, action: impl Action) -> Self {
+        Self::Action {
+            name,
+            action: Box::new(action),
+            os_action: None,
+        }
+    }
+
+    pub fn os_action(name: &'a str, action: impl Action, os_action: OsAction) -> Self {
+        Self::Action {
+            name,
+            action: Box::new(action),
+            os_action: Some(os_action),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum OsAction {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Undo,
+    Redo,
 }
 
 impl MutableAppContext {
@@ -40,9 +77,9 @@ pub(crate) fn setup_menu_handlers(foreground_platform: &dyn ForegroundPlatform, 
         let cx = app.0.clone();
         move |action| {
             let mut cx = cx.borrow_mut();
-            if let Some(key_window_id) = cx.cx.platform.key_window_id() {
-                if let Some(view_id) = cx.focused_view_id(key_window_id) {
-                    cx.handle_dispatch_action_from_effect(key_window_id, Some(view_id), action);
+            if let Some(main_window_id) = cx.cx.platform.main_window_id() {
+                if let Some(view_id) = cx.focused_view_id(main_window_id) {
+                    cx.handle_dispatch_action_from_effect(main_window_id, Some(view_id), action);
                     return;
                 }
             }

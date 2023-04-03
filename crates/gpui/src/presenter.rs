@@ -12,9 +12,9 @@ use crate::{
     text_layout::TextLayoutCache,
     Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
     AssetCache, ElementBox, Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent,
-    MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView, RenderContext, RenderParams,
-    SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    MouseRegion, MouseRegionId, MouseState, ParentId, ReadModel, ReadView, RenderContext,
+    RenderParams, SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -507,15 +507,18 @@ impl Presenter {
                 }
                 // Handle Down events if the MouseRegion has a Click or Drag handler. This makes the api more intuitive as you would
                 // not expect a MouseRegion to be transparent to Down events if it also has a Click handler.
-                // This behavior can be overridden by adding a Down handler that calls cx.propogate_event
+                // This behavior can be overridden by adding a Down handler
                 if let MouseEvent::Down(e) = &mouse_event {
-                    if valid_region
+                    let has_click = valid_region
                         .handlers
-                        .contains(MouseEvent::click_disc(), Some(e.button))
-                        || valid_region
-                            .handlers
-                            .contains(MouseEvent::drag_disc(), Some(e.button))
-                    {
+                        .contains(MouseEvent::click_disc(), Some(e.button));
+                    let has_drag = valid_region
+                        .handlers
+                        .contains(MouseEvent::drag_disc(), Some(e.button));
+                    let has_down = valid_region
+                        .handlers
+                        .contains(MouseEvent::down_disc(), Some(e.button));
+                    if !has_down && (has_click || has_drag) {
                         event_cx.handled = true;
                     }
                 }
@@ -523,14 +526,13 @@ impl Presenter {
                 // `event_consumed` should only be true if there are any handlers for this event.
                 let mut event_consumed = event_cx.handled;
                 if let Some(callbacks) = valid_region.handlers.get(&mouse_event.handler_key()) {
-                    event_consumed = true;
                     for callback in callbacks {
                         event_cx.handled = true;
                         event_cx.with_current_view(valid_region.id().view_id(), {
                             let region_event = mouse_event.clone();
                             |cx| callback(region_event, cx)
                         });
-                        event_consumed &= event_cx.handled;
+                        event_consumed |= event_cx.handled;
                         any_event_handled |= event_cx.handled;
                     }
                 }
@@ -603,6 +605,24 @@ pub struct LayoutContext<'a> {
 }
 
 impl<'a> LayoutContext<'a> {
+    pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
+        let view_id = self.view_stack.last().unwrap();
+
+        let region_id = MouseRegionId::new::<Tag>(*view_id, region_id);
+        MouseState {
+            hovered: self.hovered_region_ids.contains(&region_id),
+            clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
+                if ids.contains(&region_id) {
+                    Some(*button)
+                } else {
+                    None
+                }
+            }),
+            accessed_hovered: false,
+            accessed_clicked: false,
+        }
+    }
+
     fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
         let print_error = |view_id| {
             format!(
@@ -618,7 +638,7 @@ impl<'a> LayoutContext<'a> {
             (Some(layout_parent), Some(ParentId::View(app_parent))) => {
                 if layout_parent != app_parent {
                     panic!(
-                        "View {} was laid out with parent {} when it was constructed with parent {}", 
+                        "View {} was laid out with parent {} when it was constructed with parent {}",
                         print_error(view_id),
                         print_error(*layout_parent),
                         print_error(*app_parent))
@@ -1039,8 +1059,7 @@ pub struct ChildView {
 }
 
 impl ChildView {
-    pub fn new(view: impl Into<AnyViewHandle>, cx: &AppContext) -> Self {
-        let view = view.into();
+    pub fn new(view: &AnyViewHandle, cx: &AppContext) -> Self {
         let view_name = cx.view_ui_name(view.window_id(), view.id()).unwrap();
         Self {
             view: view.downgrade(),

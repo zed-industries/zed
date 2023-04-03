@@ -1,0 +1,27 @@
+[package]
+name = "welcome"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/welcome.rs"
+
+[features]
+test-support = []
+
+[dependencies]
+anyhow = "1.0.38"
+log = "0.4"
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+db = { path = "../db" }
+install_cli = { path = "../install_cli" }
+project = { path = "../project" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+theme_selector = { path = "../theme_selector" }
+util = { path = "../util" }
+picker = { path = "../picker" }
+workspace = { path = "../workspace" }

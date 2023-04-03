@@ -4,7 +4,7 @@ use super::{
     ToPoint, MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
@@ -14,7 +14,7 @@ use crate::{
     },
     mouse_context_menu::DeployMouseContextMenu,
     scroll::actions::Scroll,
-    EditorStyle,
+    EditorStyle, GutterHover, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -48,6 +48,9 @@ use std::{
     ops::{DerefMut, Range},
     sync::Arc,
 };
+use workspace::item::Item;
+
+enum FoldMarkers {}
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -212,6 +215,17 @@ impl EditorElement {
                     }
                 }),
         );
+
+        enum GutterHandlers {}
+        cx.scene.push_mouse_region(
+            MouseRegion::new::<GutterHandlers>(view.id(), view.id() + 1, gutter_bounds).on_hover(
+                |hover, cx| {
+                    cx.dispatch_action(GutterHover {
+                        hovered: hover.started,
+                    })
+                },
+            ),
+        )
     }
 
     fn mouse_down(
@@ -400,16 +414,7 @@ impl EditorElement {
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = if text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-            if point == target_point {
-                Some(point)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let point = position_to_display_point(position, text_bounds, position_map);
 
         cx.dispatch_action(UpdateGoToDefinitionLink {
             point,
@@ -418,6 +423,7 @@ impl EditorElement {
         });
 
         cx.dispatch_action(HoverAt { point });
+
         true
     }
 
@@ -568,8 +574,25 @@ impl EditorElement {
             }
         }
 
+        for (ix, fold_indicator) in layout.fold_indicators.iter_mut().enumerate() {
+            if let Some(indicator) = fold_indicator.as_mut() {
+                let position = vec2f(
+                    bounds.width() - layout.gutter_padding,
+                    ix as f32 * line_height - (scroll_top % line_height),
+                );
+                let centering_offset = vec2f(
+                    (layout.gutter_padding + layout.gutter_margin - indicator.size().x()) / 2.,
+                    (line_height - indicator.size().y()) / 2.,
+                );
+
+                let indicator_origin = bounds.origin() + position + centering_offset;
+
+                indicator.paint(indicator_origin, visible_bounds, cx);
+            }
+        }
+
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
-            let mut x = bounds.width() - layout.gutter_padding;
+            let mut x = 0.;
             let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
             y += (line_height - indicator.size().y()) / 2.;
@@ -676,6 +699,7 @@ impl EditorElement {
         let max_glyph_width = layout.position_map.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
+        let line_end_overshoot = 0.15 * layout.position_map.line_height;
 
         cx.scene.push_layer(Some(bounds));
 
@@ -688,12 +712,59 @@ impl EditorElement {
             },
         });
 
+        let fold_corner_radius =
+            self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
+        for (id, range, color) in layout.fold_ranges.iter() {
+            self.paint_highlighted_range(
+                range.clone(),
+                *color,
+                fold_corner_radius,
+                fold_corner_radius * 2.,
+                layout,
+                content_origin,
+                scroll_top,
+                scroll_left,
+                bounds,
+                cx,
+            );
+
+            for bound in range_to_bounds(
+                &range,
+                content_origin,
+                scroll_left,
+                scroll_top,
+                &layout.visible_display_row_range,
+                line_end_overshoot,
+                &layout.position_map,
+            ) {
+                cx.scene.push_cursor_region(CursorRegion {
+                    bounds: bound,
+                    style: CursorStyle::PointingHand,
+                });
+
+                let display_row = range.start.row();
+
+                let buffer_row = DisplayPoint::new(display_row, 0)
+                    .to_point(&layout.position_map.snapshot.display_snapshot)
+                    .row;
+
+                cx.scene.push_mouse_region(
+                    MouseRegion::new::<FoldMarkers>(self.view.id(), *id as usize, bound)
+                        .on_click(MouseButton::Left, move |_, cx| {
+                            cx.dispatch_action(UnfoldAt { buffer_row })
+                        })
+                        .with_notify_on_hover(true)
+                        .with_notify_on_click(true),
+                )
+            }
+        }
+
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
                 range.clone(),
                 *color,
                 0.,
-                0.15 * layout.position_map.line_height,
+                line_end_overshoot,
                 layout,
                 content_origin,
                 scroll_top,
@@ -704,9 +775,10 @@ impl EditorElement {
         }
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
+        let corner_radius = 0.15 * layout.position_map.line_height;
+
         for (replica_id, selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
-            let corner_radius = 0.15 * layout.position_map.line_height;
 
             for selection in selections {
                 self.paint_highlighted_range(
@@ -1145,12 +1217,17 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
+        is_singleton: bool,
         snapshot: &EditorSnapshot,
         cx: &LayoutContext,
-    ) -> Vec<Option<text_layout::Line>> {
+    ) -> (
+        Vec<Option<text_layout::Line>>,
+        Vec<Option<(FoldStatus, BufferRow, bool)>>,
+    ) {
         let style = &self.style;
         let include_line_numbers = snapshot.mode == EditorMode::Full;
         let mut line_number_layouts = Vec::with_capacity(rows.len());
+        let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
         for (ix, row) in snapshot
             .buffer_rows(rows.start)
@@ -1158,10 +1235,10 @@ impl EditorElement {
             .enumerate()
         {
             let display_row = rows.start + ix as u32;
-            let color = if active_rows.contains_key(&display_row) {
-                style.line_number_active
+            let (active, color) = if active_rows.contains_key(&display_row) {
+                (true, style.line_number_active)
             } else {
-                style.line_number
+                (false, style.line_number)
             };
             if let Some(buffer_row) = row {
                 if include_line_numbers {
@@ -1179,13 +1256,23 @@ impl EditorElement {
                             },
                         )],
                     )));
+                    fold_statuses.push(
+                        is_singleton
+                            .then(|| {
+                                snapshot
+                                    .fold_for_line(buffer_row)
+                                    .map(|fold_status| (fold_status, buffer_row, active))
+                            })
+                            .flatten(),
+                    )
                 }
             } else {
+                fold_statuses.push(None);
                 line_number_layouts.push(None);
             }
         }
 
-        line_number_layouts
+        (line_number_layouts, fold_statuses)
     }
 
     fn layout_lines(
@@ -1231,45 +1318,47 @@ impl EditorElement {
                 .collect()
         } else {
             let style = &self.style;
-            let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
-                let mut highlight_style = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(&style.syntax));
+            let chunks = snapshot
+                .chunks(rows.clone(), true, Some(style.theme.suggestion))
+                .map(|chunk| {
+                    let mut highlight_style = chunk
+                        .syntax_highlight_id
+                        .and_then(|id| id.style(&style.syntax));
 
-                if let Some(chunk_highlight) = chunk.highlight_style {
+                    if let Some(chunk_highlight) = chunk.highlight_style {
+                        if let Some(highlight_style) = highlight_style.as_mut() {
+                            highlight_style.highlight(chunk_highlight);
+                        } else {
+                            highlight_style = Some(chunk_highlight);
+                        }
+                    }
+
+                    let mut diagnostic_highlight = HighlightStyle::default();
+
+                    if chunk.is_unnecessary {
+                        diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
+                    }
+
+                    if let Some(severity) = chunk.diagnostic_severity {
+                        // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+                        if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+                            let diagnostic_style = super::diagnostic_style(severity, true, style);
+                            diagnostic_highlight.underline = Some(Underline {
+                                color: Some(diagnostic_style.message.text.color),
+                                thickness: 1.0.into(),
+                                squiggly: true,
+                            });
+                        }
+                    }
+
                     if let Some(highlight_style) = highlight_style.as_mut() {
-                        highlight_style.highlight(chunk_highlight);
+                        highlight_style.highlight(diagnostic_highlight);
                     } else {
-                        highlight_style = Some(chunk_highlight);
+                        highlight_style = Some(diagnostic_highlight);
                     }
-                }
 
-                let mut diagnostic_highlight = HighlightStyle::default();
-
-                if chunk.is_unnecessary {
-                    diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-                }
-
-                if let Some(severity) = chunk.diagnostic_severity {
-                    // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                    if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                        let diagnostic_style = super::diagnostic_style(severity, true, style);
-                        diagnostic_highlight.underline = Some(Underline {
-                            color: Some(diagnostic_style.message.text.color),
-                            thickness: 1.0.into(),
-                            squiggly: true,
-                        });
-                    }
-                }
-
-                if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(diagnostic_highlight);
-                } else {
-                    highlight_style = Some(diagnostic_highlight);
-                }
-
-                (chunk.text, highlight_style)
-            });
+                    (chunk.text, highlight_style)
+                });
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
@@ -1438,7 +1527,7 @@ impl EditorElement {
                     } else {
                         let text_style = self.style.text.clone();
                         Flex::row()
-                            .with_child(Label::new("…".to_string(), text_style).boxed())
+                            .with_child(Label::new("⋯", text_style).boxed())
                             .with_children(jump_icon)
                             .contained()
                             .with_padding_left(gutter_padding)
@@ -1606,15 +1695,32 @@ impl Element for EditorElement {
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
         let mut highlighted_ranges = Vec::new();
+        let mut fold_ranges = Vec::new();
         let mut show_scrollbars = false;
         let mut include_root = false;
+        let mut is_singleton = false;
         self.update_view(cx.app, |view, cx| {
+            is_singleton = view.is_singleton(cx);
+
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             highlighted_rows = view.highlighted_rows();
             let theme = cx.global::<Settings>().theme.as_ref();
             highlighted_ranges =
                 view.background_highlights_in_range(start_anchor..end_anchor, &display_map, theme);
+
+            fold_ranges.extend(
+                snapshot
+                    .folds_in_range(start_anchor..end_anchor)
+                    .map(|anchor| {
+                        let start = anchor.start.to_point(&snapshot.buffer_snapshot);
+                        (
+                            start.row,
+                            start.to_display_point(&snapshot.display_snapshot)
+                                ..anchor.end.to_display_point(&snapshot),
+                        )
+                    }),
+            );
 
             let mut remote_selections = HashMap::default();
             for (replica_id, line_mode, cursor_shape, selection) in display_map
@@ -1684,8 +1790,28 @@ impl Element for EditorElement {
                 .unwrap_or_default()
         });
 
-        let line_number_layouts =
-            self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
+        let fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)> = fold_ranges
+            .into_iter()
+            .map(|(id, fold)| {
+                let color = self
+                    .style
+                    .folds
+                    .ellipses
+                    .background
+                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize), false)
+                    .color;
+
+                (id, fold, color)
+            })
+            .collect();
+
+        let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
+            start_row..end_row,
+            &active_rows,
+            is_singleton,
+            &snapshot,
+            cx,
+        );
 
         let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
@@ -1755,7 +1881,7 @@ impl Element for EditorElement {
         let mut code_actions_indicator = None;
         let mut hover = None;
         let mut mode = EditorMode::Full;
-        cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
+        let mut fold_indicators = cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
             let newest_selection_head = view
                 .selections
                 .newest::<usize>(cx)
@@ -1769,14 +1895,25 @@ impl Element for EditorElement {
                         view.render_context_menu(newest_selection_head, style.clone(), cx);
                 }
 
+                let active = matches!(view.context_menu, Some(crate::ContextMenu::CodeActions(_)));
+
                 code_actions_indicator = view
-                    .render_code_actions_indicator(&style, cx)
+                    .render_code_actions_indicator(&style, active, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
             hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
             mode = view.mode;
+
+            view.render_fold_indicators(
+                fold_statuses,
+                &style,
+                view.gutter_hovered,
+                line_height,
+                gutter_margin,
+                cx,
+            )
         });
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
@@ -1800,6 +1937,18 @@ impl Element for EditorElement {
                 ),
                 cx,
             );
+        }
+
+        for fold_indicator in fold_indicators.iter_mut() {
+            if let Some(indicator) = fold_indicator.as_mut() {
+                indicator.layout(
+                    SizeConstraint::strict_along(
+                        Axis::Vertical,
+                        line_height * style.code_actions.vertical_scale,
+                    ),
+                    cx,
+                );
+            }
         }
 
         if let Some((_, hover_popovers)) = hover.as_mut() {
@@ -1845,12 +1994,14 @@ impl Element for EditorElement {
                 active_rows,
                 highlighted_rows,
                 highlighted_ranges,
+                fold_ranges,
                 line_number_layouts,
                 display_hunks,
                 blocks,
                 selections,
                 context_menu,
                 code_actions_indicator,
+                fold_indicators,
                 hover_popovers: hover,
             },
         )
@@ -1958,6 +2109,8 @@ impl Element for EditorElement {
     }
 }
 
+type BufferRow = u32;
+
 pub struct LayoutState {
     position_map: Arc<PositionMap>,
     gutter_size: Vector2F,
@@ -1972,6 +2125,7 @@ pub struct LayoutState {
     display_hunks: Vec<DisplayDiffHunk>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
+    fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
@@ -1979,6 +2133,7 @@ pub struct LayoutState {
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
     hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
+    fold_indicators: Vec<Option<ElementBox>>,
 }
 
 pub struct PositionMap {
@@ -2277,6 +2432,75 @@ impl HighlightedRange {
     }
 }
 
+pub fn position_to_display_point(
+    position: Vector2F,
+    text_bounds: RectF,
+    position_map: &PositionMap,
+) -> Option<DisplayPoint> {
+    if text_bounds.contains_point(position) {
+        let (point, target_point) = position_map.point_for_position(text_bounds, position);
+        if point == target_point {
+            Some(point)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+pub fn range_to_bounds(
+    range: &Range<DisplayPoint>,
+    content_origin: Vector2F,
+    scroll_left: f32,
+    scroll_top: f32,
+    visible_row_range: &Range<u32>,
+    line_end_overshoot: f32,
+    position_map: &PositionMap,
+) -> impl Iterator<Item = RectF> {
+    let mut bounds: SmallVec<[RectF; 1]> = SmallVec::new();
+
+    if range.start == range.end {
+        return bounds.into_iter();
+    }
+
+    let start_row = visible_row_range.start;
+    let end_row = visible_row_range.end;
+
+    let row_range = if range.end.column() == 0 {
+        cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
+    } else {
+        cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
+    };
+
+    let first_y =
+        content_origin.y() + row_range.start as f32 * position_map.line_height - scroll_top;
+
+    for (idx, row) in row_range.enumerate() {
+        let line_layout = &position_map.line_layouts[(row - start_row) as usize];
+
+        let start_x = if row == range.start.row() {
+            content_origin.x() + line_layout.x_for_index(range.start.column() as usize)
+                - scroll_left
+        } else {
+            content_origin.x() - scroll_left
+        };
+
+        let end_x = if row == range.end.row() {
+            content_origin.x() + line_layout.x_for_index(range.end.column() as usize) - scroll_left
+        } else {
+            content_origin.x() + line_layout.width() + line_end_overshoot - scroll_left
+        };
+
+        bounds.push(RectF::from_points(
+            vec2f(start_x, first_y + position_map.line_height * idx as f32),
+            vec2f(end_x, first_y + position_map.line_height * (idx + 1) as f32),
+        ))
+    }
+
+    bounds.into_iter()
+}
+
 pub fn scale_vertical_mouse_autoscroll_delta(delta: f32) -> f32 {
     delta.powf(1.5) / 100.0
 }
@@ -2310,7 +2534,9 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30., Default::default());
             let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
-            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &layout_cx)
+            element
+                .layout_line_numbers(0..6, &Default::default(), false, &snapshot, &layout_cx)
+                .0
         });
         assert_eq!(layouts.len(), 6);
     }

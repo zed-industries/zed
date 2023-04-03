@@ -264,12 +264,13 @@ impl ActiveCall {
         Ok(())
     }
 
-    pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+    pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        cx.notify();
         if let Some((room, _)) = self.room.take() {
-            room.update(cx, |room, cx| room.leave(cx))?;
-            cx.notify();
+            room.update(cx, |room, cx| room.leave(cx))
+        } else {
+            Task::ready(Ok(()))
         }
-        Ok(())
     }
 
     pub fn share_project(
@@ -281,6 +282,18 @@ impl ActiveCall {
             room.update(cx, |room, cx| room.share_project(project, cx))
         } else {
             Task::ready(Err(anyhow!("no active call")))
+        }
+    }
+
+    pub fn unshare_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if let Some((room, _)) = self.room.as_ref() {
+            room.update(cx, |room, cx| room.unshare_project(project, cx))
+        } else {
+            Err(anyhow!("no active call"))
         }
     }
 

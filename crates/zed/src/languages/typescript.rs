@@ -1,19 +1,40 @@
-use super::installation::{npm_install_packages, npm_package_latest_version};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter};
+use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use lsp::CodeActionKind;
+use node_runtime::NodeRuntime;
 use serde_json::json;
 use smol::fs;
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use util::http::HttpClient;
 use util::ResultExt;
 
-pub struct TypeScriptLspAdapter;
+fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec![
+        server_path.into(),
+        "--stdio".into(),
+        "--tsserver-path".into(),
+        "node_modules/typescript/lib".into(),
+    ]
+}
+
+pub struct TypeScriptLspAdapter {
+    node: Arc<NodeRuntime>,
+}
 
 impl TypeScriptLspAdapter {
-    const OLD_BIN_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
-    const NEW_BIN_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
+    const OLD_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.js";
+    const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
+
+    pub fn new(node: Arc<NodeRuntime>) -> Self {
+        TypeScriptLspAdapter { node }
+    }
 }
 
 struct Versions {
@@ -27,20 +48,16 @@ impl LspAdapter for TypeScriptLspAdapter {
         LanguageServerName("typescript-language-server".into())
     }
 
-    async fn server_args(&self) -> Vec<String> {
-        ["--stdio", "--tsserver-path", "node_modules/typescript/lib"]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    }
-
     async fn fetch_latest_server_version(
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(Versions {
-            typescript_version: npm_package_latest_version("typescript").await?,
-            server_version: npm_package_latest_version("typescript-language-server").await?,
+            typescript_version: self.node.npm_package_latest_version("typescript").await?,
+            server_version: self
+                .node
+                .npm_package_latest_version("typescript-language-server")
+                .await?,
         }) as Box<_>)
     }
 
@@ -49,46 +66,32 @@ impl LspAdapter for TypeScriptLspAdapter {
         versions: Box<dyn 'static + Send + Any>,
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let versions = versions.downcast::<Versions>().unwrap();
-        let version_dir = container_dir.join(&format!(
-            "typescript-{}:server-{}",
-            versions.typescript_version, versions.server_version
-        ));
-        fs::create_dir_all(&version_dir)
-            .await
-            .context("failed to create version directory")?;
-        let binary_path = version_dir.join(Self::NEW_BIN_PATH);
+        let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
-        if fs::metadata(&binary_path).await.is_err() {
-            npm_install_packages(
-                [
-                    ("typescript", versions.typescript_version.as_str()),
-                    (
-                        "typescript-language-server",
-                        versions.server_version.as_str(),
-                    ),
-                ],
-                &version_dir,
-            )
-            .await?;
-
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != version_dir {
-                            fs::remove_dir_all(&entry_path).await.log_err();
-                        }
-                    }
-                }
-            }
+        if fs::metadata(&server_path).await.is_err() {
+            self.node
+                .npm_install_packages(
+                    [
+                        ("typescript", versions.typescript_version.as_str()),
+                        (
+                            "typescript-language-server",
+                            versions.server_version.as_str(),
+                        ),
+                    ],
+                    &container_dir,
+                )
+                .await?;
         }
 
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            arguments: server_binary_arguments(&server_path),
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last_version_dir = None;
             let mut entries = fs::read_dir(&container_dir).await?;
@@ -99,12 +102,18 @@ impl LspAdapter for TypeScriptLspAdapter {
                 }
             }
             let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let old_bin_path = last_version_dir.join(Self::OLD_BIN_PATH);
-            let new_bin_path = last_version_dir.join(Self::NEW_BIN_PATH);
-            if new_bin_path.exists() {
-                Ok(new_bin_path)
-            } else if old_bin_path.exists() {
-                Ok(old_bin_path)
+            let old_server_path = last_version_dir.join(Self::OLD_SERVER_PATH);
+            let new_server_path = last_version_dir.join(Self::NEW_SERVER_PATH);
+            if new_server_path.exists() {
+                Ok(LanguageServerBinary {
+                    path: self.node.binary_path().await?,
+                    arguments: server_binary_arguments(&new_server_path),
+                })
+            } else if old_server_path.exists() {
+                Ok(LanguageServerBinary {
+                    path: self.node.binary_path().await?,
+                    arguments: server_binary_arguments(&old_server_path),
+                })
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",
@@ -114,6 +123,15 @@ impl LspAdapter for TypeScriptLspAdapter {
         })()
         .await
         .log_err()
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::REFACTOR,
+            CodeActionKind::REFACTOR_EXTRACT,
+            CodeActionKind::SOURCE,
+        ])
     }
 
     async fn label_for_completion(

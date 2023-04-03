@@ -10,10 +10,9 @@ use editor::{Anchor, Editor};
 use futures::AsyncReadExt;
 use gpui::{
     actions,
-    elements::{ChildView, Flex, Label, ParentElement},
+    elements::{ChildView, Flex, Label, ParentElement, Svg},
     serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -21,10 +20,10 @@ use postage::prelude::Stream;
 
 use project::Project;
 use serde::Serialize;
+use util::ResultExt;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    smallvec::SmallVec,
     AppState, Workspace,
 };
 
@@ -202,24 +201,28 @@ impl FeedbackEditor {
 impl FeedbackEditor {
     pub fn deploy(
         system_specs: SystemSpecs,
-        workspace: &mut Workspace,
+        _: &mut Workspace,
         app_state: Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        workspace
-            .with_local_workspace(&app_state, cx, |workspace, cx| {
-                let project = workspace.project().clone();
-                let markdown_language = project.read(cx).languages().language_for_name("Markdown");
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.create_buffer("", markdown_language, cx)
+        let markdown = app_state.languages.language_for_name("Markdown");
+        cx.spawn(|workspace, mut cx| async move {
+            let markdown = markdown.await.log_err();
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", markdown, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        let feedback_editor = cx
+                            .add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
+                        workspace.add_item(Box::new(feedback_editor), cx);
                     })
-                    .expect("creating buffers on a local workspace always succeeds");
-                let feedback_editor =
-                    cx.add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
-                workspace.add_item(Box::new(feedback_editor), cx);
-            })
-            .detach();
+                })
+                .await;
+        })
+        .detach();
     }
 }
 
@@ -247,7 +250,17 @@ impl Item for FeedbackEditor {
     fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
         Flex::row()
             .with_child(
-                Label::new("Feedback".to_string(), style.label.clone())
+                Svg::new("icons/feedback_16.svg")
+                    .with_color(style.label.text.color)
+                    .constrained()
+                    .with_width(style.type_icon_width)
+                    .aligned()
+                    .contained()
+                    .with_margin_right(style.spacing)
+                    .boxed(),
+            )
+            .with_child(
+                Label::new("Send Feedback", style.label.clone())
                     .aligned()
                     .contained()
                     .boxed(),
@@ -259,15 +272,9 @@ impl Item for FeedbackEditor {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn to_item_events(_: &Self::Event) -> SmallVec<[workspace::item::ItemEvent; 2]> {
-        SmallVec::new()
-    }
-
     fn is_singleton(&self, _: &AppContext) -> bool {
         true
     }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
 
     fn can_save(&self, _: &AppContext) -> bool {
         true
@@ -295,7 +302,7 @@ impl Item for FeedbackEditor {
         _: ModelHandle<Project>,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        unreachable!("reload should not have been called")
+        Task::Ready(Some(Ok(())))
     }
 
     fn clone_on_split(
@@ -322,34 +329,20 @@ impl Item for FeedbackEditor {
         ))
     }
 
-    fn serialized_item_kind() -> Option<&'static str> {
-        None
-    }
-
-    fn deserialize(
-        _: ModelHandle<Project>,
-        _: WeakViewHandle<Workspace>,
-        _: workspace::WorkspaceId,
-        _: workspace::ItemId,
-        _: &mut ViewContext<workspace::Pane>,
-    ) -> Task<anyhow::Result<ViewHandle<Self>>> {
-        unreachable!()
-    }
-
     fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
-    fn act_as_type(
-        &self,
+    fn act_as_type<'a>(
+        &'a self,
         type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &AppContext,
-    ) -> Option<AnyViewHandle> {
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&'a AnyViewHandle> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.into())
+            Some(self_handle)
         } else if type_id == TypeId::of::<Editor>() {
-            Some((&self.editor).into())
+            Some(&self.editor)
         } else {
             None
         }

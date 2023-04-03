@@ -3,11 +3,21 @@
     "theme": "One Dark",
     // The name of a font to use for rendering text in the editor
     "buffer_font_family": "Zed Mono",
+    // The OpenType features to enable for text in the editor.
+    "buffer_font_features": {
+        // Disable ligatures:
+        // "calt": false
+    },
     // The default font size for text in the editor
     "buffer_font_size": 15,
     // The factor to grow the active pane by. Defaults to 1.0
     // which gives the same size as all other panes.
     "active_pane_magnification": 1.0,
+    // Enable / disable copilot integration.
+    "enable_copilot_integration": true,
+    // Controls whether copilot provides suggestion immediately
+    // or waits for a `copilot::Toggle`
+    "copilot": "on",
     // Whether to enable vim modes and key bindings
     "vim_mode": false,
     // Whether to show the informational hover box when moving the mouse
@@ -20,13 +30,8 @@
     // Whether to pop the completions menu while typing in an editor without
     // explicitly requesting it.
     "show_completions_on_input": true,
-    // Whether the screen sharing icon is showed in the os status bar.
+    // Whether the screen sharing icon is shown in the os status bar.
     "show_call_status_icon": true,
-    // Whether new projects should start out 'online'. Online projects
-    // appear in the contacts panel under your name, so that your contacts
-    // can see which projects you are working on. Regardless of this
-    // setting, projects keep their last online status when you reopen them.
-    "projects_online_by_default": true,
     // Whether to use language servers to provide code intelligence.
     "enable_language_server": true,
     // When to automatically save edited buffers. This setting can
@@ -50,7 +55,13 @@
     //     "default_dock_anchor": "right"
     // 3. Position the dock full screen over the entire workspace"
     //     "default_dock_anchor": "expanded"
-    "default_dock_anchor": "right",
+    "default_dock_anchor": "bottom",
+    // Whether or not to remove any trailing whitespace from lines of a buffer
+    // before saving it.
+    "remove_trailing_whitespace_on_save": true,
+    // Whether or not to ensure there's a single newline at the end of a buffer
+    // when saving it.
+    "ensure_final_newline_on_save": true,
     // Whether or not to perform a buffer format before saving
     "format_on_save": "on",
     // How to perform a buffer format. This setting can take two values:
@@ -83,7 +94,7 @@
     "hard_tabs": false,
     // How many columns a tab should occupy.
     "tab_size": 4,
-    // Control what info Zed sends to our servers
+    // Control what info is collected by Zed.
     "telemetry": {
         // Send debug info like crash reports.
         "diagnostics": true,
@@ -114,7 +125,7 @@
     // Settings specific to the terminal
     "terminal": {
         // What shell to use when opening a terminal. May take 3 values:
-        // 1. Use the system's default terminal configuration (e.g. $TERM).
+        // 1. Use the system's default terminal configuration in /etc/passwd
         //      "shell": "system"
         // 2. A program:
         //      "shell": {
@@ -194,13 +205,9 @@
     // Different settings for specific languages.
     "languages": {
         "Plain Text": {
-            "soft_wrap": "preferred_line_length"
-        },
-        "C": {
-            "tab_size": 2
-        },
-        "C++": {
-            "tab_size": 2
+            "soft_wrap": "preferred_line_length",
+            // Copilot can be a little strange on non-code files
+            "copilot": "off"
         },
         "Elixir": {
             "tab_size": 2
@@ -210,10 +217,9 @@
             "hard_tabs": true
         },
         "Markdown": {
-            "soft_wrap": "preferred_line_length"
-        },
-        "Rust": {
-            "tab_size": 4
+            "soft_wrap": "preferred_line_length",
+            // Copilot can be a little strange on non-code files
+            "copilot": "off"
         },
         "JavaScript": {
             "tab_size": 2
@@ -226,6 +232,9 @@
         },
         "YAML": {
             "tab_size": 2
+        },
+        "JSON": {
+            "copilot": "off"
         }
     },
     // LSP Specific settings.

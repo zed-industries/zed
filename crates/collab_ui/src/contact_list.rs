@@ -1,3 +1,4 @@
+use super::collab_titlebar_item::LeaveCall;
 use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
@@ -18,22 +19,20 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{mem, sync::Arc};
 use theme::IconButton;
-use util::ResultExt;
 use workspace::{JoinProject, OpenSharedScreen};
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
-impl_internal_actions!(contact_list, [ToggleExpanded, Call, LeaveCall]);
+impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ContactList::remove_contact);
     cx.add_action(ContactList::respond_to_contact_request);
-    cx.add_action(ContactList::clear_filter);
+    cx.add_action(ContactList::cancel);
     cx.add_action(ContactList::select_next);
     cx.add_action(ContactList::select_prev);
     cx.add_action(ContactList::confirm);
     cx.add_action(ContactList::toggle_expanded);
     cx.add_action(ContactList::call);
-    cx.add_action(ContactList::leave_call);
 }
 
 #[derive(Clone, PartialEq)]
@@ -44,9 +43,6 @@ struct Call {
     recipient_user_id: u64,
     initial_project: Option<ModelHandle<Project>>,
 }
-
-#[derive(Copy, Clone, PartialEq)]
-struct LeaveCall;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
@@ -145,7 +141,10 @@ impl PartialEq for ContactEntry {
 pub struct RequestContact(pub u64);
 
 #[derive(Clone, Deserialize, PartialEq)]
-pub struct RemoveContact(pub u64);
+pub struct RemoveContact {
+    user_id: u64,
+    github_login: String,
+}
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct RespondToContactRequest {
@@ -298,17 +297,39 @@ impl ContactList {
         this
     }
 
+    pub fn editor_text(&self, cx: &AppContext) -> String {
+        self.filter_editor.read(cx).text(cx)
+    }
+
+    pub fn with_editor_text(self, editor_text: String, cx: &mut ViewContext<Self>) -> Self {
+        self.filter_editor
+            .update(cx, |picker, cx| picker.set_text(editor_text, cx));
+        self
+    }
+
     fn remove_contact(&mut self, request: &RemoveContact, cx: &mut ViewContext<Self>) {
-        let user_id = request.0;
+        let user_id = request.user_id;
+        let github_login = &request.github_login;
         let user_store = self.user_store.clone();
-        let prompt_message = "Are you sure you want to remove this contact?";
-        let mut answer = cx.prompt(PromptLevel::Warning, prompt_message, &["Remove", "Cancel"]);
+        let prompt_message = format!(
+            "Are you sure you want to remove \"{}\" from your contacts?",
+            github_login
+        );
+        let mut answer = cx.prompt(PromptLevel::Warning, &prompt_message, &["Remove", "Cancel"]);
+        let window_id = cx.window_id();
         cx.spawn(|_, mut cx| async move {
             if answer.next().await == Some(0) {
-                user_store
+                if let Err(e) = user_store
                     .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))
                     .await
-                    .unwrap();
+                {
+                    cx.prompt(
+                        window_id,
+                        PromptLevel::Info,
+                        &format!("Failed to remove contact: {}", e),
+                        &["Ok"],
+                    );
+                }
             }
         })
         .detach();
@@ -326,7 +347,7 @@ impl ContactList {
             .detach();
     }
 
-    fn clear_filter(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         let did_clear = self.filter_editor.update(cx, |editor, cx| {
             if editor.buffer().read(cx).len(cx) > 0 {
                 editor.set_text("", cx);
@@ -335,6 +356,7 @@ impl ContactList {
                 false
             }
         });
+
         if !did_clear {
             cx.emit(Event::Dismissed);
         }
@@ -729,7 +751,7 @@ impl ContactList {
     ) -> ElementBox {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
                     .left()
@@ -749,7 +771,7 @@ impl ContactList {
             )
             .with_children(if is_pending {
                 Some(
-                    Label::new("Calling".to_string(), theme.calling_indicator.text.clone())
+                    Label::new("Calling", theme.calling_indicator.text.clone())
                         .contained()
                         .with_style(theme.calling_indicator.container)
                         .aligned()
@@ -950,7 +972,7 @@ impl ContactList {
                             .boxed(),
                     )
                     .with_child(
-                        Label::new("Screen".into(), row.name.text.clone())
+                        Label::new("Screen", row.name.text.clone())
                             .aligned()
                             .left()
                             .contained()
@@ -980,6 +1002,7 @@ impl ContactList {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         enum Header {}
+        enum LeaveCallContactList {}
 
         let header_style = theme
             .header_row
@@ -992,9 +1015,9 @@ impl ContactList {
         };
         let leave_call = if section == Section::ActiveCall {
             Some(
-                MouseEventHandler::<LeaveCall>::new(0, cx, |state, _| {
+                MouseEventHandler::<LeaveCallContactList>::new(0, cx, |state, _| {
                     let style = theme.leave_call.style_for(state, false);
-                    Label::new("Leave Session".into(), style.text.clone())
+                    Label::new("Leave Call", style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()
@@ -1026,7 +1049,7 @@ impl ContactList {
                     .boxed(),
                 )
                 .with_child(
-                    Label::new(text.to_string(), header_style.text.clone())
+                    Label::new(text, header_style.text.clone())
                         .aligned()
                         .left()
                         .contained()
@@ -1059,6 +1082,7 @@ impl ContactList {
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
+        let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
         let mut element =
             MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, cx| {
@@ -1082,7 +1106,7 @@ impl ContactList {
                         };
                         Stack::new()
                             .with_child(
-                                Image::new(avatar)
+                                Image::from_data(avatar)
                                     .with_style(theme.contact_avatar)
                                     .aligned()
                                     .left()
@@ -1119,14 +1143,17 @@ impl ContactList {
                         .with_padding(Padding::uniform(2.))
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, move |_, cx| {
-                            cx.dispatch_action(RemoveContact(user_id))
+                            cx.dispatch_action(RemoveContact {
+                                user_id,
+                                github_login: github_login.clone(),
+                            })
                         })
                         .flex_float()
                         .boxed(),
                     )
                     .with_children(if calling {
                         Some(
-                            Label::new("Calling".to_string(), theme.calling_indicator.text.clone())
+                            Label::new("Calling", theme.calling_indicator.text.clone())
                                 .contained()
                                 .with_style(theme.calling_indicator.container)
                                 .aligned()
@@ -1175,7 +1202,7 @@ impl ContactList {
 
         let mut row = Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.contact_avatar)
                     .aligned()
                     .left()
@@ -1195,6 +1222,7 @@ impl ContactList {
             );
 
         let user_id = user.id;
+        let github_login = user.github_login.clone();
         let is_contact_request_pending = user_store.read(cx).is_contact_request_pending(&user);
         let button_spacing = theme.contact_button_spacing;
 
@@ -1256,7 +1284,10 @@ impl ContactList {
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, cx| {
-                    cx.dispatch_action(RemoveContact(user_id))
+                    cx.dispatch_action(RemoveContact {
+                        user_id,
+                        github_login: github_login.clone(),
+                    })
                 })
                 .flex_float()
                 .boxed(),
@@ -1283,12 +1314,6 @@ impl ContactList {
             })
             .detach_and_log_err(cx);
     }
-
-    fn leave_call(&mut self, _: &LeaveCall, cx: &mut ViewContext<Self>) {
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.hang_up(cx))
-            .log_err();
-    }
 }
 
 impl Entity for ContactList {
@@ -1302,7 +1327,7 @@ impl View for ContactList {
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
-        cx.set.insert("menu".into());
+        cx.add_identifier("menu");
         cx
     }
 
@@ -1314,7 +1339,7 @@ impl View for ContactList {
             .with_child(
                 Flex::row()
                     .with_child(
-                        ChildView::new(self.filter_editor.clone(), cx)
+                        ChildView::new(&self.filter_editor, cx)
                             .contained()
                             .with_style(theme.contact_list.user_query_editor.container)
                             .flex(1., true)
@@ -1334,7 +1359,7 @@ impl View for ContactList {
                         })
                         .with_tooltip::<AddContact, _>(
                             0,
-                            "Add contact".into(),
+                            "Search for new contact".into(),
                             None,
                             theme.tooltip.clone(),
                             cx,

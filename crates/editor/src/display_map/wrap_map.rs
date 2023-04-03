@@ -1,12 +1,13 @@
 use super::{
-    fold_map,
+    suggestion_map::SuggestionBufferRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     TextHighlights,
 };
 use crate::MultiBufferSnapshot;
 use gpui::{
-    fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task,
+    fonts::{FontId, HighlightStyle},
+    text_layout::LineWrapper,
+    Entity, ModelContext, ModelHandle, MutableAppContext, Task,
 };
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
@@ -64,7 +65,7 @@ pub struct WrapChunks<'a> {
 
 #[derive(Clone)]
 pub struct WrapBufferRows<'a> {
-    input_buffer_rows: fold_map::FoldBufferRows<'a>,
+    input_buffer_rows: SuggestionBufferRows<'a>,
     input_buffer_row: Option<u32>,
     output_row: u32,
     soft_wrapped: bool,
@@ -444,6 +445,7 @@ impl WrapSnapshot {
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
                     false,
                     None,
+                    None,
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
@@ -573,6 +575,7 @@ impl WrapSnapshot {
         rows: Range<u32>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        suggestion_highlight: Option<HighlightStyle>,
     ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -590,6 +593,7 @@ impl WrapSnapshot {
                 input_start..input_end,
                 language_aware,
                 text_highlights,
+                suggestion_highlight,
             ),
             input_chunk: Default::default(),
             output_position: output_start,
@@ -755,16 +759,24 @@ impl WrapSnapshot {
             let text = language::Rope::from(self.text().as_str());
             let input_buffer_rows = self.buffer_snapshot().buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
-            let mut prev_tab_row = 0;
+            let mut prev_fold_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                if tab_point.row() == prev_tab_row && display_row != 0 {
+                let suggestion_point = self
+                    .tab_snapshot
+                    .to_suggestion_point(tab_point, Bias::Left)
+                    .0;
+                let fold_point = self
+                    .tab_snapshot
+                    .suggestion_snapshot
+                    .to_fold_point(suggestion_point);
+                if fold_point.row() == prev_fold_row && display_row != 0 {
                     expected_buffer_rows.push(None);
                 } else {
-                    let fold_point = self.tab_snapshot.to_fold_point(tab_point, Bias::Left).0;
-                    let buffer_point = fold_point.to_buffer_point(&self.tab_snapshot.fold_snapshot);
+                    let buffer_point = fold_point
+                        .to_buffer_point(&self.tab_snapshot.suggestion_snapshot.fold_snapshot);
                     expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
-                    prev_tab_row = tab_point.row();
+                    prev_fold_row = fold_point.row();
                 }
 
                 assert_eq!(self.line_len(display_row), text.line_len(display_row));
@@ -1026,7 +1038,7 @@ fn consolidate_wrap_edits(edits: &mut Vec<WrapEdit>) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, tab_map::TabMap},
+        display_map::{fold_map::FoldMap, suggestion_map::SuggestionMap, tab_map::TabMap},
         MultiBuffer,
     };
     use gpui::test::observe;
@@ -1053,7 +1065,9 @@ mod tests {
             Some(rng.gen_range(0.0..=1000.0))
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
+        let family_id = font_cache
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -1074,14 +1088,14 @@ mod tests {
             }
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let (mut fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
-        log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
-        log::info!(
-            "Unwrapped text (unexpanded tabs): {:?}",
-            folds_snapshot.text()
-        );
-        log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
+        log::info!("Buffer text: {:?}", buffer_snapshot.text());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        log::info!("FoldMap text: {:?}", fold_snapshot.text());
+        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
+        log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
+        let (tab_map, _) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
         let mut line_wrapper = LineWrapper::new(font_id, font_size, font_system);
         let unwrapped_text = tabs_snapshot.text();
@@ -1124,15 +1138,28 @@ mod tests {
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    for (folds_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
+                    for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
+                        let (suggestion_snapshot, suggestion_edits) =
+                            suggestion_map.sync(fold_snapshot, fold_edits);
                         let (tabs_snapshot, tab_edits) =
-                            tab_map.sync(folds_snapshot, fold_edits, tab_size);
+                            tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
                         let (mut snapshot, wrap_edits) =
                             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
                         snapshot.verify_chunks(&mut rng);
                         edits.push((snapshot, wrap_edits));
                     }
+                }
+                40..=59 => {
+                    let (suggestion_snapshot, suggestion_edits) =
+                        suggestion_map.randomly_mutate(&mut rng);
+                    let (tabs_snapshot, tab_edits) =
+                        tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
+                    let (mut snapshot, wrap_edits) =
+                        wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
+                    snapshot.check_invariants();
+                    snapshot.verify_chunks(&mut rng);
+                    edits.push((snapshot, wrap_edits));
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
@@ -1145,14 +1172,15 @@ mod tests {
                 }
             }
 
-            log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
-            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
-            log::info!(
-                "Unwrapped text (unexpanded tabs): {:?}",
-                folds_snapshot.text()
-            );
-            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits, tab_size);
-            log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
+            log::info!("Buffer text: {:?}", buffer_snapshot.text());
+            let (fold_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
+            log::info!("FoldMap text: {:?}", fold_snapshot.text());
+            let (suggestion_snapshot, suggestion_edits) =
+                suggestion_map.sync(fold_snapshot, fold_edits);
+            log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
+            let (tabs_snapshot, tab_edits) =
+                tab_map.sync(suggestion_snapshot, suggestion_edits, tab_size);
+            log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
@@ -1199,7 +1227,7 @@ mod tests {
                 if tab_size.get() == 1
                     || !wrapped_snapshot
                         .tab_snapshot
-                        .fold_snapshot
+                        .suggestion_snapshot
                         .text()
                         .contains('\t')
                 {
@@ -1292,7 +1320,7 @@ mod tests {
         }
 
         pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-            self.chunks(wrap_row..self.max_point().row() + 1, false, None)
+            self.chunks(wrap_row..self.max_point().row() + 1, false, None, None)
                 .map(|h| h.text)
         }
 
@@ -1316,7 +1344,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, true, None)
+                    .chunks(start_row..end_row, true, None, None)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

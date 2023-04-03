@@ -1,1 +1,28 @@
-[{"Text":"Te"},{"Mode":"Insert"},{"Selection":{"start":[0,2],"end":[0,2]}},{"Mode":"Insert"},{"Text":"T test"},{"Mode":"Insert"},{"Selection":{"start":[0,1],"end":[0,1]}},{"Mode":"Insert"},{"Text":"Testtest"},{"Mode":"Insert"},{"Selection":{"start":[0,4],"end":[0,4]}},{"Mode":"Insert"},{"Text":"Test te\ntest"},{"Mode":"Insert"},{"Selection":{"start":[0,7],"end":[0,7]}},{"Mode":"Insert"},{"Text":"Test tes\ntest"},{"Mode":"Insert"},{"Selection":{"start":[0,8],"end":[0,8]}},{"Mode":"Insert"},{"Text":"Test test\n\ntest"},{"Mode":"Insert"},{"Selection":{"start":[1,0],"end":[1,0]}},{"Mode":"Insert"},{"Text":"Test te test"},{"Mode":"Insert"},{"Selection":{"start":[0,7],"end":[0,7]}},{"Mode":"Insert"}]
+{"Put":{"state":"Teˇst"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Teˇ","mode":"Insert"}}
+{"Put":{"state":"Tˇest test"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Tˇ test","mode":"Insert"}}
+{"Put":{"state":"Testˇ  test"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Testˇtest","mode":"Insert"}}
+{"Put":{"state":"Test teˇst\ntest"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Test teˇ\ntest","mode":"Insert"}}
+{"Put":{"state":"Test tesˇt\ntest"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Test tesˇ\ntest","mode":"Insert"}}
+{"Put":{"state":"Test test\nˇ\ntest"}}
+{"Key":"c"}
+{"Key":"w"}
+{"Get":{"state":"Test test\nˇ\ntest","mode":"Insert"}}
+{"Put":{"state":"Test teˇst-test test"}}
+{"Key":"c"}
+{"Key":"shift-w"}
+{"Get":{"state":"Test teˇ test","mode":"Insert"}}

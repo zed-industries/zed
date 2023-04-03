@@ -61,13 +61,10 @@ impl ForegroundPlatform {
 
 impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_become_active(&self, _: Box<dyn FnMut()>) {}
-
     fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
-
     fn on_quit(&self, _: Box<dyn FnMut()>) {}
-
+    fn on_reopen(&self, _: Box<dyn FnMut()>) {}
     fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
-
     fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -157,7 +154,7 @@ impl super::Platform for Platform {
         }))
     }
 
-    fn key_window_id(&self) -> Option<usize> {
+    fn main_window_id(&self) -> Option<usize> {
         None
     }
 

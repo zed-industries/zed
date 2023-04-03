@@ -1,13 +1,16 @@
-use super::installation::{latest_github_release, GitHubLspBinaryVersion};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use client::http::HttpClient;
 use futures::StreamExt;
 pub use language::*;
 use lsp::{CompletionItemKind, SymbolKind};
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
+use util::fs::remove_matching;
+use util::github::latest_github_release;
+use util::http::HttpClient;
 use util::ResultExt;
+
+use util::github::GitHubLspBinaryVersion;
 
 pub struct ElixirLspAdapter;
 
@@ -40,7 +43,7 @@ impl LspAdapter for ElixirLspAdapter {
         version: Box<dyn 'static + Send + Any>,
         http: Arc<dyn HttpClient>,
         container_dir: PathBuf,
-    ) -> Result<PathBuf> {
+    ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let zip_path = container_dir.join(format!("elixir-ls_{}.zip", version.name));
         let version_dir = container_dir.join(format!("elixir-ls_{}", version.name));
@@ -76,35 +79,27 @@ impl LspAdapter for ElixirLspAdapter {
                 Err(anyhow!("failed to unzip clangd archive"))?;
             }
 
-            if let Some(mut entries) = fs::read_dir(&container_dir).await.log_err() {
-                while let Some(entry) = entries.next().await {
-                    if let Some(entry) = entry.log_err() {
-                        let entry_path = entry.path();
-                        if entry_path.as_path() != version_dir {
-                            if let Ok(metadata) = fs::metadata(&entry_path).await {
-                                if metadata.is_file() {
-                                    fs::remove_file(&entry_path).await.log_err();
-                                } else {
-                                    fs::remove_dir_all(&entry_path).await.log_err();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            remove_matching(&container_dir, |entry| entry != version_dir).await;
         }
 
-        Ok(binary_path)
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            arguments: vec![],
+        })
     }
 
-    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<PathBuf> {
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
             let mut last = None;
             let mut entries = fs::read_dir(&container_dir).await?;
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
-            last.ok_or_else(|| anyhow!("no cached binary"))
+            last.map(|path| LanguageServerBinary {
+                path,
+                arguments: vec![],
+            })
+            .ok_or_else(|| anyhow!("no cached binary"))
         })()
         .await
         .log_err()

@@ -114,7 +114,7 @@ pub struct ConnectionState {
 
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
-pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl Peer {
     pub fn new(epoch: u32) -> Arc<Self> {

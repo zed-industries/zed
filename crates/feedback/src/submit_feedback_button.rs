@@ -34,7 +34,7 @@ impl View for SubmitFeedbackButton {
         enum SubmitFeedbackButton {}
         MouseEventHandler::<SubmitFeedbackButton>::new(0, cx, |state, _| {
             let style = theme.feedback.submit_button.style_for(state, false);
-            Label::new("Submit as Markdown".into(), style.text.clone())
+            Label::new("Submit as Markdown", style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()

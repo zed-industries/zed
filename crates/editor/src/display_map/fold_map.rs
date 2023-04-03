@@ -4,7 +4,7 @@ use crate::{
     ToOffset,
 };
 use collections::BTreeMap;
-use gpui::fonts::HighlightStyle;
+use gpui::{color::Color, fonts::HighlightStyle};
 use language::{Chunk, Edit, Point, TextSummary};
 use parking_lot::Mutex;
 use std::{
@@ -27,10 +27,6 @@ impl FoldPoint {
 
     pub fn row(self) -> u32 {
         self.0.row
-    }
-
-    pub fn column(self) -> u32 {
-        self.0.column
     }
 
     pub fn row_mut(&mut self) -> &mut u32 {
@@ -133,6 +129,7 @@ impl<'a> FoldMapWriter<'a> {
             folds: self.0.folds.clone(),
             buffer_snapshot: buffer,
             version: self.0.version.load(SeqCst),
+            ellipses_color: self.0.ellipses_color,
         };
         (snapshot, edits)
     }
@@ -182,6 +179,7 @@ impl<'a> FoldMapWriter<'a> {
             folds: self.0.folds.clone(),
             buffer_snapshot: buffer,
             version: self.0.version.load(SeqCst),
+            ellipses_color: self.0.ellipses_color,
         };
         (snapshot, edits)
     }
@@ -192,6 +190,7 @@ pub struct FoldMap {
     transforms: Mutex<SumTree<Transform>>,
     folds: SumTree<Fold>,
     version: AtomicUsize,
+    ellipses_color: Option<Color>,
 }
 
 impl FoldMap {
@@ -209,6 +208,7 @@ impl FoldMap {
                 },
                 &(),
             )),
+            ellipses_color: None,
             version: Default::default(),
         };
 
@@ -217,6 +217,7 @@ impl FoldMap {
             folds: this.folds.clone(),
             buffer_snapshot: this.buffer.lock().clone(),
             version: this.version.load(SeqCst),
+            ellipses_color: None,
         };
         (this, snapshot)
     }
@@ -233,6 +234,7 @@ impl FoldMap {
             folds: self.folds.clone(),
             buffer_snapshot: self.buffer.lock().clone(),
             version: self.version.load(SeqCst),
+            ellipses_color: self.ellipses_color,
         };
         (snapshot, edits)
     }
@@ -244,6 +246,15 @@ impl FoldMap {
     ) -> (FoldMapWriter, FoldSnapshot, Vec<FoldEdit>) {
         let (snapshot, edits) = self.read(buffer, edits);
         (FoldMapWriter(self), snapshot, edits)
+    }
+
+    pub fn set_ellipses_color(&mut self, color: Color) -> bool {
+        if self.ellipses_color != Some(color) {
+            self.ellipses_color = Some(color);
+            true
+        } else {
+            false
+        }
     }
 
     fn check_invariants(&self) {
@@ -370,7 +381,7 @@ impl FoldMap {
                     }
 
                     if fold.end > fold.start {
-                        let output_text = "…";
+                        let output_text = "⋯";
                         new_transforms.push(
                             Transform {
                                 summary: TransformSummary {
@@ -477,6 +488,7 @@ pub struct FoldSnapshot {
     folds: SumTree<Fold>,
     buffer_snapshot: MultiBufferSnapshot,
     pub version: usize,
+    pub ellipses_color: Option<Color>,
 }
 
 impl FoldSnapshot {
@@ -623,26 +635,20 @@ impl FoldSnapshot {
         cursor.item().map_or(false, |t| t.output_text.is_some())
     }
 
-    pub fn is_line_folded(&self, output_row: u32) -> bool {
-        let mut cursor = self.transforms.cursor::<FoldPoint>();
-        cursor.seek(&FoldPoint::new(output_row, 0), Bias::Right, &());
+    pub fn is_line_folded(&self, buffer_row: u32) -> bool {
+        let mut cursor = self.transforms.cursor::<Point>();
+        cursor.seek(&Point::new(buffer_row, 0), Bias::Right, &());
         while let Some(transform) = cursor.item() {
             if transform.output_text.is_some() {
                 return true;
             }
-            if cursor.end(&()).row() == output_row {
+            if cursor.end(&()).row == buffer_row {
                 cursor.next(&())
             } else {
                 break;
             }
         }
         false
-    }
-
-    pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
-        let start = start.to_offset(self);
-        self.chunks(start..self.len(), false, None)
-            .flat_map(|chunk| chunk.text.chars())
     }
 
     pub fn chunks<'a>(
@@ -739,6 +745,7 @@ impl FoldSnapshot {
             max_output_offset: range.end.0,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
+            ellipses_color: self.ellipses_color,
         }
     }
 
@@ -1029,6 +1036,7 @@ pub struct FoldChunks<'a> {
     max_output_offset: usize,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
+    ellipses_color: Option<Color>,
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
@@ -1058,7 +1066,10 @@ impl<'a> Iterator for FoldChunks<'a> {
             return Some(Chunk {
                 text: output_text,
                 syntax_highlight_id: None,
-                highlight_style: None,
+                highlight_style: self.ellipses_color.map(|color| HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
+                }),
                 diagnostic_severity: None,
                 is_unnecessary: false,
             });
@@ -1193,6 +1204,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 mod tests {
     use super::*;
     use crate::{MultiBuffer, ToPoint};
+    use collections::HashSet;
     use rand::prelude::*;
     use settings::Settings;
     use std::{cmp::Reverse, env, mem, sync::Arc};
@@ -1214,7 +1226,7 @@ mod tests {
             Point::new(0, 2)..Point::new(2, 2),
             Point::new(2, 4)..Point::new(4, 1),
         ]);
-        assert_eq!(snapshot2.text(), "aa…cc…eeeee");
+        assert_eq!(snapshot2.text(), "aa⋯cc⋯eeeee");
         assert_eq!(
             edits,
             &[
@@ -1241,7 +1253,7 @@ mod tests {
             buffer.snapshot(cx)
         });
         let (snapshot3, edits) = map.read(buffer_snapshot, subscription.consume().into_inner());
-        assert_eq!(snapshot3.text(), "123a…c123c…eeeee");
+        assert_eq!(snapshot3.text(), "123a⋯c123c⋯eeeee");
         assert_eq!(
             edits,
             &[
@@ -1261,12 +1273,12 @@ mod tests {
             buffer.snapshot(cx)
         });
         let (snapshot4, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
-        assert_eq!(snapshot4.text(), "123a…c123456eee");
+        assert_eq!(snapshot4.text(), "123a⋯c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), false);
         let (snapshot5, _) = map.read(buffer_snapshot.clone(), vec![]);
-        assert_eq!(snapshot5.text(), "123a…c123456eee");
+        assert_eq!(snapshot5.text(), "123a⋯c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), true);
@@ -1287,19 +1299,19 @@ mod tests {
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![5..8]);
             let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
-            assert_eq!(snapshot.text(), "abcde…ijkl");
+            assert_eq!(snapshot.text(), "abcde⋯ijkl");
 
             // Create an fold adjacent to the start of the first fold.
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![0..1, 2..5]);
             let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
-            assert_eq!(snapshot.text(), "…b…ijkl");
+            assert_eq!(snapshot.text(), "⋯b⋯ijkl");
 
             // Create an fold adjacent to the end of the first fold.
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![11..11, 8..10]);
             let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
-            assert_eq!(snapshot.text(), "…b…kl");
+            assert_eq!(snapshot.text(), "⋯b⋯kl");
         }
 
         {
@@ -1309,7 +1321,7 @@ mod tests {
             let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
             writer.fold(vec![0..2, 2..5]);
             let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-            assert_eq!(snapshot.text(), "…fghijkl");
+            assert_eq!(snapshot.text(), "⋯fghijkl");
 
             // Edit within one of the folds.
             let buffer_snapshot = buffer.update(cx, |buffer, cx| {
@@ -1317,7 +1329,7 @@ mod tests {
                 buffer.snapshot(cx)
             });
             let (snapshot, _) = map.read(buffer_snapshot, subscription.consume().into_inner());
-            assert_eq!(snapshot.text(), "12345…fghijkl");
+            assert_eq!(snapshot.text(), "12345⋯fghijkl");
         }
     }
 
@@ -1334,7 +1346,7 @@ mod tests {
             Point::new(3, 1)..Point::new(4, 1),
         ]);
         let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-        assert_eq!(snapshot.text(), "aa…eeeee");
+        assert_eq!(snapshot.text(), "aa⋯eeeee");
     }
 
     #[gpui::test]
@@ -1351,14 +1363,14 @@ mod tests {
             Point::new(3, 1)..Point::new(4, 1),
         ]);
         let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-        assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
+        assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, cx);
             buffer.snapshot(cx)
         });
         let (snapshot, _) = map.read(buffer_snapshot, subscription.consume().into_inner());
-        assert_eq!(snapshot.text(), "aa…eeeee");
+        assert_eq!(snapshot.text(), "aa⋯eeeee");
     }
 
     #[gpui::test]
@@ -1450,7 +1462,7 @@ mod tests {
 
             let mut expected_text: String = buffer_snapshot.text().to_string();
             for fold_range in map.merged_fold_ranges().into_iter().rev() {
-                expected_text.replace_range(fold_range.start..fold_range.end, "…");
+                expected_text.replace_range(fold_range.start..fold_range.end, "⋯");
             }
 
             assert_eq!(snapshot.text(), expected_text);
@@ -1572,10 +1584,13 @@ mod tests {
                 fold_row += 1;
             }
 
-            for fold_range in map.merged_fold_ranges() {
-                let fold_point =
-                    snapshot.to_fold_point(fold_range.start.to_point(&buffer_snapshot), Right);
-                assert!(snapshot.is_line_folded(fold_point.row()));
+            let fold_start_rows = map
+                .merged_fold_ranges()
+                .iter()
+                .map(|range| range.start.to_point(&buffer_snapshot).row)
+                .collect::<HashSet<_>>();
+            for row in fold_start_rows {
+                assert!(snapshot.is_line_folded(row));
             }
 
             for _ in 0..5 {
@@ -1655,7 +1670,7 @@ mod tests {
         ]);
 
         let (snapshot, _) = map.read(buffer_snapshot, vec![]);
-        assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
+        assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee\nffffff\n");
         assert_eq!(
             snapshot.buffer_rows(0).collect::<Vec<_>>(),
             [Some(0), Some(3), Some(5), Some(6)]

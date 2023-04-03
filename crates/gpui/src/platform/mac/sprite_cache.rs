@@ -85,16 +85,12 @@ impl SpriteCache {
     ) -> Option<GlyphSprite> {
         const SUBPIXEL_VARIANTS: u8 = 4;
 
-        let scale_factor = self.scale_factor;
-        let target_position = target_position * scale_factor;
-        let fonts = &self.fonts;
-        let atlases = &mut self.atlases;
+        let target_position = target_position * self.scale_factor;
         let subpixel_variant = (
-            (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
-                % SUBPIXEL_VARIANTS,
-            (target_position.y().fract() * SUBPIXEL_VARIANTS as f32).round() as u8
-                % SUBPIXEL_VARIANTS,
+            (target_position.x().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            (target_position.y().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         );
+
         self.glyphs
             .entry(GlyphDescriptor {
                 font_id,
@@ -107,16 +103,17 @@ impl SpriteCache {
                     subpixel_variant.0 as f32 / SUBPIXEL_VARIANTS as f32,
                     subpixel_variant.1 as f32 / SUBPIXEL_VARIANTS as f32,
                 );
-                let (glyph_bounds, mask) = fonts.rasterize_glyph(
+                let (glyph_bounds, mask) = self.fonts.rasterize_glyph(
                     font_id,
                     font_size,
                     glyph_id,
                     subpixel_shift,
-                    scale_factor,
+                    self.scale_factor,
                     RasterizationOptions::Alpha,
                 )?;
 
-                let (alloc_id, atlas_bounds) = atlases
+                let (alloc_id, atlas_bounds) = self
+                    .atlases
                     .upload(glyph_bounds.size(), &mask)
                     .expect("could not upload glyph");
                 Some(GlyphSprite {

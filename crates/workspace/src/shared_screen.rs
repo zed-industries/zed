@@ -1,23 +1,18 @@
 use crate::{
-    item::ItemEvent, persistence::model::ItemId, Item, ItemNavHistory, Pane, Workspace, WorkspaceId,
+    item::{Item, ItemEvent},
+    ItemNavHistory, WorkspaceId,
 };
-use anyhow::{anyhow, Result};
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    AppContext, Entity, ModelHandle, MouseButton, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Entity, MouseButton, RenderContext, Task, View, ViewContext,
 };
-use project::Project;
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{
-    path::PathBuf,
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 
 pub enum Event {
     Close,
@@ -113,7 +108,7 @@ impl Item for SharedScreen {
                 Svg::new("icons/disable_screen_sharing_12.svg")
                     .with_color(style.label.text.color)
                     .constrained()
-                    .with_width(style.icon_width)
+                    .with_width(style.type_icon_width)
                     .aligned()
                     .contained()
                     .with_margin_right(style.spacing)
@@ -130,12 +125,6 @@ impl Item for SharedScreen {
             .boxed()
     }
 
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
-
-    fn is_singleton(&self, _: &AppContext) -> bool {
-        false
-    }
-
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
         self.nav_history = Some(history);
     }
@@ -149,52 +138,9 @@ impl Item for SharedScreen {
         Some(Self::new(&track, self.peer_id, self.user.clone(), cx))
     }
 
-    fn can_save(&self, _: &AppContext) -> bool {
-        false
-    }
-
-    fn save(
-        &mut self,
-        _: ModelHandle<project::Project>,
-        _: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("Item::save called on SharedScreen")))
-    }
-
-    fn save_as(
-        &mut self,
-        _: ModelHandle<project::Project>,
-        _: PathBuf,
-        _: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("Item::save_as called on SharedScreen")))
-    }
-
-    fn reload(
-        &mut self,
-        _: ModelHandle<project::Project>,
-        _: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("Item::reload called on SharedScreen")))
-    }
-
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
             Event::Close => smallvec::smallvec!(ItemEvent::CloseItem),
         }
-    }
-
-    fn serialized_item_kind() -> Option<&'static str> {
-        None
-    }
-
-    fn deserialize(
-        _project: ModelHandle<Project>,
-        _workspace: WeakViewHandle<Workspace>,
-        _workspace_id: WorkspaceId,
-        _item_id: ItemId,
-        _cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<ViewHandle<Self>>> {
-        unreachable!("Shared screen can not be deserialized")
     }
 }

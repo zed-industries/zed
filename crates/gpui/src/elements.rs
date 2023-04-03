@@ -296,7 +296,10 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     paint,
                 }
             }
-            _ => panic!("invalid element lifecycle state"),
+            Lifecycle::Empty => panic!("invalid element lifecycle state"),
+            Lifecycle::Init { .. } => {
+                panic!("invalid element lifecycle state, paint called before layout")
+            }
         }
     }
 
@@ -363,6 +366,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     value
                 }
             }
+
             _ => panic!("invalid element lifecycle state"),
         }
     }
@@ -382,6 +386,12 @@ impl ElementBox {
     pub fn metadata<T: 'static>(&self) -> Option<&T> {
         let element = unsafe { &*self.0.element.as_ptr() };
         element.metadata().and_then(|m| m.downcast_ref())
+    }
+}
+
+impl Clone for ElementBox {
+    fn clone(&self) -> Self {
+        ElementBox(self.0.clone())
     }
 }
 

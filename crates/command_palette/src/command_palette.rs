@@ -1,4 +1,4 @@
-use collections::HashSet;
+use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -11,11 +11,6 @@ use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::cmp;
 use workspace::Workspace;
-
-#[derive(Default)]
-pub struct CommandPaletteFilter {
-    pub filtered_namespaces: HashSet<&'static str>,
-}
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(CommandPalette::toggle);
@@ -90,7 +85,7 @@ impl CommandPalette {
             .unwrap_or_else(|| workspace.id());
 
         cx.as_mut().defer(move |cx| {
-            let this = cx.add_view(workspace.clone(), |cx| Self::new(focused_view_id, cx));
+            let this = cx.add_view(&workspace, |cx| Self::new(focused_view_id, cx));
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.subscribe(&this, Self::on_event).detach();
@@ -134,7 +129,7 @@ impl View for CommandPalette {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
-        ChildView::new(self.picker.clone(), cx).boxed()
+        ChildView::new(&self.picker, cx).boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -257,7 +252,7 @@ impl PickerDelegate for CommandPalette {
                         .filter_map(|(modifier, label)| {
                             if modifier {
                                 Some(
-                                    Label::new(label.into(), key_style.label.clone())
+                                    Label::new(label, key_style.label.clone())
                                         .contained()
                                         .with_style(key_style.container)
                                         .boxed(),
@@ -352,9 +347,7 @@ mod tests {
         });
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| unimplemented!(), cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let editor = cx.add_view(&workspace, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);
@@ -362,7 +355,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            cx.focus(editor.clone());
+            cx.focus(&editor);
             workspace.add_item(Box::new(editor.clone()), cx)
         });
 

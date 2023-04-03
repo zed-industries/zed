@@ -49,9 +49,11 @@ pub trait Item: View {
     }
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item));
-    fn is_singleton(&self, cx: &AppContext) -> bool;
-    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>);
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    fn set_nav_history(&mut self, _: ItemNavHistory, _: &mut ViewContext<Self>) {}
     fn clone_on_split(&self, _workspace_id: WorkspaceId, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -64,23 +66,31 @@ pub trait Item: View {
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
-    fn can_save(&self, cx: &AppContext) -> bool;
+    fn can_save(&self, _cx: &AppContext) -> bool {
+        false
+    }
     fn save(
         &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
+        _project: ModelHandle<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save() must be implemented if can_save() returns true")
+    }
     fn save_as(
         &mut self,
-        project: ModelHandle<Project>,
-        abs_path: PathBuf,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
+        _project: ModelHandle<Project>,
+        _abs_path: PathBuf,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save_as() must be implemented if can_save() returns true")
+    }
     fn reload(
         &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>>;
+        _project: ModelHandle<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("reload() must be implemented if can_save() returns true")
+    }
     fn git_diff_recalc(
         &mut self,
         _project: ModelHandle<Project>,
@@ -88,7 +98,9 @@ pub trait Item: View {
     ) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
-    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]>;
+    fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        SmallVec::new()
+    }
     fn should_close_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -98,14 +110,14 @@ pub trait Item: View {
     fn is_edit_event(_: &Self::Event) -> bool {
         false
     }
-    fn act_as_type(
-        &self,
+    fn act_as_type<'a>(
+        &'a self,
         type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &AppContext,
-    ) -> Option<AnyViewHandle> {
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&AnyViewHandle> {
         if TypeId::of::<Self>() == type_id {
-            Some(self_handle.into())
+            Some(self_handle)
         } else {
             None
         }
@@ -124,15 +136,24 @@ pub trait Item: View {
 
     fn added_to_workspace(&mut self, _workspace: &mut Workspace, _cx: &mut ViewContext<Self>) {}
 
-    fn serialized_item_kind() -> Option<&'static str>;
+    fn serialized_item_kind() -> Option<&'static str> {
+        None
+    }
 
     fn deserialize(
-        project: ModelHandle<Project>,
-        workspace: WeakViewHandle<Workspace>,
-        workspace_id: WorkspaceId,
-        item_id: ItemId,
-        cx: &mut ViewContext<Pane>,
-    ) -> Task<Result<ViewHandle<Self>>>;
+        _project: ModelHandle<Project>,
+        _workspace: WeakViewHandle<Workspace>,
+        _workspace_id: WorkspaceId,
+        _item_id: ItemId,
+        _cx: &mut ViewContext<Pane>,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        unimplemented!(
+            "deserialize() must be implemented if serialized_item_kind() returns Some(_)"
+        )
+    }
+    fn show_toolbar(&self) -> bool {
+        true
+    }
 }
 
 pub trait ItemHandle: 'static + fmt::Debug {
@@ -166,7 +187,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool;
     fn id(&self) -> usize;
     fn window_id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
@@ -184,7 +205,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         project: ModelHandle<Project>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
-    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
+    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
         &self,
@@ -195,6 +216,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
+    fn show_toolbar(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle {
@@ -205,12 +227,12 @@ pub trait WeakItemHandle {
 
 impl dyn ItemHandle {
     pub fn downcast<T: View>(&self) -> Option<ViewHandle<T>> {
-        self.to_any().downcast()
+        self.as_any().clone().downcast()
     }
 
     pub fn act_as<T: View>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
         self.act_as_type(TypeId::of::<T>(), cx)
-            .and_then(|t| t.downcast())
+            .and_then(|t| t.clone().downcast())
     }
 }
 
@@ -491,8 +513,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.window_id()
     }
 
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -536,14 +558,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.update(cx, |item, cx| item.git_diff_recalc(project, cx))
     }
 
-    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
+    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
 
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
         if cx.has_global::<FollowableItemBuilders>() {
             let builders = cx.global::<FollowableItemBuilders>();
-            let item = self.to_any();
+            let item = self.as_any();
             Some(builders.get(&item.view_type())?.1(item))
         } else {
             None
@@ -573,17 +595,21 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     fn serialized_item_kind(&self) -> Option<&'static str> {
         T::serialized_item_kind()
     }
+
+    fn show_toolbar(&self, cx: &AppContext) -> bool {
+        self.read(cx).show_toolbar()
+    }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyViewHandle {
     fn from(val: Box<dyn ItemHandle>) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }
 
 impl From<&Box<dyn ItemHandle>> for AnyViewHandle {
     fn from(val: &Box<dyn ItemHandle>) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }
 

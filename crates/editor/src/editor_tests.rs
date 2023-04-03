@@ -1,22 +1,23 @@
-use drag_and_drop::DragAndDrop;
-use futures::StreamExt;
-use indoc::indoc;
-use std::{cell::RefCell, rc::Rc, time::Instant};
-use unindent::Unindent;
-
 use super::*;
 use crate::test::{
     assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
     editor_test_context::EditorTestContext, select_ranges,
 };
+use drag_and_drop::DragAndDrop;
+use futures::StreamExt;
 use gpui::{
     executor::Deterministic,
     geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
+    serde_json,
 };
-use language::{FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
+use indoc::indoc;
+use language::{BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegistry, Point};
+use parking_lot::Mutex;
 use project::FakeFs;
 use settings::EditorSettings;
+use std::{cell::RefCell, rc::Rc, time::Instant};
+use unindent::Unindent;
 use util::{
     assert_set_eq,
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
@@ -446,6 +447,7 @@ fn test_clone(cx: &mut gpui::MutableAppContext) {
                 Point::new(1, 0)..Point::new(2, 0),
                 Point::new(3, 0)..Point::new(4, 0),
             ],
+            true,
             cx,
         );
     });
@@ -482,7 +484,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::item::Item;
-    let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(None, cx));
+    let (_, pane) = cx.add_window(Default::default(), |cx| Pane::new(0, None, || &[], cx));
     let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
 
     cx.add_view(&pane, |cx| {
@@ -628,7 +630,7 @@ fn test_cancel(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_fold(cx: &mut gpui::MutableAppContext) {
+fn test_fold_action(cx: &mut gpui::MutableAppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(
         &"
@@ -668,10 +670,10 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
                         1
                     }
 
-                    fn b() {…
+                    fn b() {⋯
                     }
 
-                    fn c() {…
+                    fn c() {⋯
                     }
                 }
             "
@@ -682,7 +684,7 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
         assert_eq!(
             view.display_text(cx),
             "
-                impl Foo {…
+                impl Foo {⋯
                 }
             "
             .unindent(),
@@ -699,10 +701,10 @@ fn test_fold(cx: &mut gpui::MutableAppContext) {
                         1
                     }
 
-                    fn b() {…
+                    fn b() {⋯
                     }
 
-                    fn c() {…
+                    fn c() {⋯
                     }
                 }
             "
@@ -806,9 +808,10 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
                 Point::new(1, 2)..Point::new(1, 4),
                 Point::new(2, 4)..Point::new(2, 8),
             ],
+            true,
             cx,
         );
-        assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε\n");
 
         view.move_right(&MoveRight, cx);
         assert_eq!(
@@ -823,13 +826,13 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ…".len())]
+            &[empty_range(0, "ⓐⓑ⋯".len())]
         );
 
         view.move_down(&MoveDown, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(1, "ab…".len())]
+            &[empty_range(1, "ab⋯".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
@@ -855,28 +858,28 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(2, "αβ…".len())]
+            &[empty_range(2, "αβ⋯".len())]
         );
         view.move_right(&MoveRight, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(2, "αβ…ε".len())]
+            &[empty_range(2, "αβ⋯ε".len())]
         );
 
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(1, "ab…e".len())]
+            &[empty_range(1, "ab⋯e".len())]
         );
         view.move_up(&MoveUp, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ…ⓔ".len())]
+            &[empty_range(0, "ⓐⓑ⋯ⓔ".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ…".len())]
+            &[empty_range(0, "ⓐⓑ⋯".len())]
         );
         view.move_left(&MoveLeft, cx);
         assert_eq!(
@@ -2118,6 +2121,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
                 Point::new(2, 3)..Point::new(4, 1),
                 Point::new(7, 0)..Point::new(8, 4),
             ],
+            true,
             cx,
         );
         view.change_selections(None, cx, |s| {
@@ -2130,13 +2134,13 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         });
         assert_eq!(
             view.display_text(cx),
-            "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
+            "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i\njjjjj"
         );
 
         view.move_line_up(&MoveLineUp, cx);
         assert_eq!(
             view.display_text(cx),
-            "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
+            "aa⋯bbb\nccc⋯eeee\nggggg\n⋯i\njjjjj\nfffff"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2153,7 +2157,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         view.move_line_down(&MoveLineDown, cx);
         assert_eq!(
             view.display_text(cx),
-            "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
+            "ccc⋯eeee\naa⋯bbb\nfffff\nggggg\n⋯i\njjjjj"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2170,7 +2174,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         view.move_line_down(&MoveLineDown, cx);
         assert_eq!(
             view.display_text(cx),
-            "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
+            "ccc⋯eeee\nfffff\naa⋯bbb\nggggg\n⋯i\njjjjj"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2187,7 +2191,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         view.move_line_up(&MoveLineUp, cx);
         assert_eq!(
             view.display_text(cx),
-            "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
+            "ccc⋯eeee\naa⋯bbb\nggggg\n⋯i\njjjjj\nfffff"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2349,12 +2353,16 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
         e.paste(&Paste, cx);
         e.handle_input(") ", cx);
     });
-    cx.assert_editor_state(indoc! {"
-        ( one✅ 
-        three 
-        five ) ˇtwo one✅ four three six five ( one✅ 
-        three 
-        five ) ˇ"});
+    cx.assert_editor_state(
+        &([
+            "( one✅ ",
+            "three ",
+            "five ) ˇtwo one✅ four three six five ( one✅ ",
+            "three ",
+            "five ) ˇ",
+        ]
+        .join("\n")),
+    );
 
     // Cut with three selections, one of which is full-line.
     cx.set_state(indoc! {"
@@ -2585,6 +2593,7 @@ fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
                 Point::new(2, 3)..Point::new(4, 1),
                 Point::new(7, 0)..Point::new(8, 4),
             ],
+            true,
             cx,
         );
         view.change_selections(None, cx, |s| {
@@ -2595,14 +2604,14 @@ fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
                 DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
             ])
         });
-        assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+        assert_eq!(view.display_text(cx), "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i");
     });
 
     view.update(cx, |view, cx| {
         view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
         assert_eq!(
             view.display_text(cx),
-            "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
+            "aaaaa\nbbbbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
         );
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -2982,6 +2991,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                 Point::new(0, 21)..Point::new(0, 24),
                 Point::new(3, 20)..Point::new(3, 22),
             ],
+            true,
             cx,
         );
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
@@ -3002,20 +3012,23 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig {
-                brackets: vec![
-                    BracketPair {
-                        start: "{".to_string(),
-                        end: "}".to_string(),
-                        close: false,
-                        newline: true,
-                    },
-                    BracketPair {
-                        start: "(".to_string(),
-                        end: ")".to_string(),
-                        close: false,
-                        newline: true,
-                    },
-                ],
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".to_string(),
+                            end: "}".to_string(),
+                            close: false,
+                            newline: true,
+                        },
+                        BracketPair {
+                            start: "(".to_string(),
+                            end: ")".to_string(),
+                            close: false,
+                            newline: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -3059,38 +3072,41 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![
-                BracketPair {
-                    start: "{".to_string(),
-                    end: "}".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "(".to_string(),
-                    end: ")".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "/*".to_string(),
-                    end: " */".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "[".to_string(),
-                    end: "]".to_string(),
-                    close: false,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "\"".to_string(),
-                    end: "\"".to_string(),
-                    close: true,
-                    newline: false,
-                },
-            ],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".to_string(),
+                        end: ")".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".to_string(),
+                        end: "]".to_string(),
+                        close: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".to_string(),
+                        end: "\"".to_string(),
+                        close: true,
+                        newline: false,
+                    },
+                ],
+                ..Default::default()
+            },
             autoclose_before: "})]".to_string(),
             ..Default::default()
         },
@@ -3227,26 +3243,29 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         Language::new(
             LanguageConfig {
                 name: "HTML".into(),
-                brackets: vec![
-                    BracketPair {
-                        start: "<".into(),
-                        end: ">".into(),
-                        close: true,
-                        ..Default::default()
-                    },
-                    BracketPair {
-                        start: "{".into(),
-                        end: "}".into(),
-                        close: true,
-                        ..Default::default()
-                    },
-                    BracketPair {
-                        start: "(".into(),
-                        end: ")".into(),
-                        close: true,
-                        ..Default::default()
-                    },
-                ],
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "<".into(),
+                            end: ">".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "(".into(),
+                            end: ")".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
@@ -3265,26 +3284,29 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     let javascript_language = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            brackets: vec![
-                BracketPair {
-                    start: "/*".into(),
-                    end: " */".into(),
-                    close: true,
-                    ..Default::default()
-                },
-                BracketPair {
-                    start: "{".into(),
-                    end: "}".into(),
-                    close: true,
-                    ..Default::default()
-                },
-                BracketPair {
-                    start: "(".into(),
-                    end: ")".into(),
-                    close: true,
-                    ..Default::default()
-                },
-            ],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "/*".into(),
+                        end: " */".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
             autoclose_before: "})]>".into(),
             ..Default::default()
         },
@@ -3448,24 +3470,124 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+
+    let rust_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                brackets: serde_json::from_value(json!([
+                    { "start": "{", "end": "}", "close": true, "newline": true },
+                    { "start": "\"", "end": "\"", "close": true, "newline": false, "not_in": ["string"] },
+                ]))
+                .unwrap(),
+                autoclose_before: "})]>".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )
+        .with_override_query("(string_literal) @string")
+        .unwrap(),
+    );
+
+    let registry = Arc::new(LanguageRegistry::test());
+    registry.add(rust_language.clone());
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language_registry(registry);
+        buffer.set_language(Some(rust_language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            let x = ˇ
+        "#
+        .unindent(),
+    );
+
+    // Inserting a quotation mark. A closing quotation mark is automatically inserted.
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = "ˇ"
+        "#
+        .unindent(),
+    );
+
+    // Inserting another quotation mark. The cursor moves across the existing
+    // automatically-inserted quotation mark.
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = ""ˇ
+        "#
+        .unindent(),
+    );
+
+    // Reset
+    cx.set_state(
+        &r#"
+            let x = ˇ
+        "#
+        .unindent(),
+    );
+
+    // Inserting a quotation mark inside of a string. A second quotation mark is not inserted.
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\"", cx);
+        editor.handle_input(" ", cx);
+        editor.move_left(&Default::default(), cx);
+        editor.handle_input("\\", cx);
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = "\"ˇ "
+        "#
+        .unindent(),
+    );
+
+    // Inserting a closing quotation mark at the position of an automatically-inserted quotation
+    // mark. Nothing is inserted.
+    cx.update_editor(|editor, cx| {
+        editor.move_right(&Default::default(), cx);
+        editor.handle_input("\"", cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            let x = "\" "ˇ
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_surround_with_pair(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![
-                BracketPair {
-                    start: "{".to_string(),
-                    end: "}".to_string(),
-                    close: true,
-                    newline: true,
-                },
-                BracketPair {
-                    start: "/* ".to_string(),
-                    end: "*/".to_string(),
-                    close: true,
-                    ..Default::default()
-                },
-            ],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/* ".to_string(),
+                        end: "*/".to_string(),
+                        close: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -3603,12 +3725,15 @@ async fn test_delete_autoclose_pair(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     let language = Arc::new(Language::new(
         LanguageConfig {
-            brackets: vec![BracketPair {
-                start: "{".to_string(),
-                end: "}".to_string(),
-                close: true,
-                newline: true,
-            }],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "{".to_string(),
+                    end: "}".to_string(),
+                    close: true,
+                    newline: true,
+                }],
+                ..Default::default()
+            },
             autoclose_before: "}".to_string(),
             ..Default::default()
         },
@@ -4077,7 +4202,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let (_, editor) = cx.add_window(|cx| build_editor(buffer, cx));
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
 
-    let format = editor.update(cx, |editor, cx| editor.perform_format(project.clone(), cx));
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+    });
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -4109,7 +4236,9 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         futures::future::pending::<()>().await;
         unreachable!()
     });
-    let format = editor.update(cx, |editor, cx| editor.perform_format(project, cx));
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project, FormatTrigger::Manual, cx)
+    });
     cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
     cx.foreground().start_waiting();
     format.await.unwrap();
@@ -4174,6 +4303,121 @@ async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
         one
             .twoˇ
     "});
+}
+
+#[gpui::test]
+async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Set up a buffer white some trailing whitespace and no trailing newline.
+    cx.set_state(
+        &[
+            "one ",   //
+            "twoˇ",  //
+            "three ", //
+            "four",   //
+        ]
+        .join("\n"),
+    );
+
+    // Submit a format request.
+    let format = cx
+        .update_editor(|editor, cx| editor.format(&Format, cx))
+        .unwrap();
+
+    // Record which buffer changes have been sent to the language server
+    let buffer_changes = Arc::new(Mutex::new(Vec::new()));
+    cx.lsp
+        .handle_notification::<lsp::notification::DidChangeTextDocument, _>({
+            let buffer_changes = buffer_changes.clone();
+            move |params, _| {
+                buffer_changes.lock().extend(
+                    params
+                        .content_changes
+                        .into_iter()
+                        .map(|e| (e.range.unwrap(), e.text)),
+                );
+            }
+        });
+
+    // Handle formatting requests to the language server.
+    cx.lsp.handle_request::<lsp::request::Formatting, _, _>({
+        let buffer_changes = buffer_changes.clone();
+        move |_, _| {
+            // When formatting is requested, trailing whitespace has already been stripped,
+            // and the trailing newline has already been added.
+            assert_eq!(
+                &buffer_changes.lock()[1..],
+                &[
+                    (
+                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                        "".into()
+                    ),
+                    (
+                        lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                        "".into()
+                    ),
+                    (
+                        lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                        "\n".into()
+                    ),
+                ]
+            );
+
+            // Insert blank lines between each line of the buffer.
+            async move {
+                Ok(Some(vec![
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
+                        new_text: "\n".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 0)),
+                        new_text: "\n".into(),
+                    },
+                ]))
+            }
+        }
+    });
+
+    // After formatting the buffer, the trailing whitespace is stripped,
+    // a newline is appended, and the edits provided by the language server
+    // have been applied.
+    format.await.unwrap();
+    cx.assert_editor_state(
+        &[
+            "one",   //
+            "",      //
+            "twoˇ", //
+            "",      //
+            "three", //
+            "four",  //
+            "",      //
+        ]
+        .join("\n"),
+    );
+
+    // Undoing the formatting undoes the trailing whitespace removal, the
+    // trailing newline, and the LSP edits.
+    cx.update_buffer(|buffer, cx| buffer.undo(cx));
+    cx.assert_editor_state(
+        &[
+            "one ",   //
+            "twoˇ",  //
+            "three ", //
+            "four",   //
+        ]
+        .join("\n"),
+    );
 }
 
 #[gpui::test]
@@ -5030,20 +5274,23 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig {
-                brackets: vec![
-                    BracketPair {
-                        start: "{".to_string(),
-                        end: "}".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                    BracketPair {
-                        start: "/* ".to_string(),
-                        end: " */".to_string(),
-                        close: true,
-                        newline: true,
-                    },
-                ],
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "{".to_string(),
+                            end: "}".to_string(),
+                            close: true,
+                            newline: true,
+                        },
+                        BracketPair {
+                            start: "/* ".to_string(),
+                            end: " */".to_string(),
+                            close: true,
+                            newline: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
@@ -5319,7 +5566,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     Settings::test_async(cx);
     let fs = FakeFs::new(cx.background());
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let (_, pane) = cx.add_window(|cx| Pane::new(None, cx));
+    let (_, pane) = cx.add_window(|cx| Pane::new(0, None, || &[], cx));
 
     let leader = pane.update(cx, |_, cx| {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
@@ -5588,11 +5835,11 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.assert_editor_state(
         &r#"
         ˇuse some::modified;
-    
-    
+
+
         fn main() {
             println!("hello there");
-    
+
             println!("around the");
             println!("world");
         }

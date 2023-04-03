@@ -42,6 +42,7 @@ impl View for ToggleDockButton {
 
         let workspace = workspace.unwrap();
         let dock_position = workspace.read(cx).dock.position;
+        let dock_pane = workspace.read(cx.app).dock_pane().clone();
 
         let theme = cx.global::<Settings>().theme.clone();
 
@@ -67,7 +68,6 @@ impl View for ToggleDockButton {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_up(MouseButton::Left, move |event, cx| {
-            let dock_pane = workspace.read(cx.app).dock_pane();
             let drop_index = dock_pane.read(cx.app).items_len() + 1;
             handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
         });

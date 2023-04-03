@@ -137,7 +137,7 @@
 ;; Constants
 
 ((identifier) @constant
- (#lua-match? @constant "^[A-Z][A-Z_0-9]*$"))
+ (#match? @constant "^[A-Z][A-Z_0-9]*$"))
 
 (vararg_expression) @constant
 
@@ -164,11 +164,17 @@
 
 (parameters (identifier) @parameter)
 
-(function_call name: (identifier) @function.call)
-(function_declaration name: (identifier) @function)
+(function_call
+  name: [
+    (identifier) @function
+    (dot_index_expression field: (identifier) @function)
+  ])
 
-(function_call name: (dot_index_expression field: (identifier) @function.call))
-(function_declaration name: (dot_index_expression field: (identifier) @function))
+(function_declaration
+  name: [
+    (identifier) @function.definition
+    (dot_index_expression field: (identifier) @function.definition)
+  ])
 
 (method_index_expression method: (identifier) @method)
 

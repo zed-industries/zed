@@ -108,7 +108,7 @@ impl ProjectSharedNotification {
         let theme = &cx.global::<Settings>().theme.project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
-                Image::new(avatar)
+                Image::from_data(avatar)
                     .with_style(theme.owner_avatar)
                     .aligned()
                     .boxed()
@@ -175,7 +175,7 @@ impl ProjectSharedNotification {
             .with_child(
                 MouseEventHandler::<Open>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
-                    Label::new("Open".to_string(), theme.open_button.text.clone())
+                    Label::new("Open", theme.open_button.text.clone())
                         .aligned()
                         .contained()
                         .with_style(theme.open_button.container)
@@ -194,7 +194,7 @@ impl ProjectSharedNotification {
             .with_child(
                 MouseEventHandler::<Dismiss>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
-                    Label::new("Dismiss".to_string(), theme.dismiss_button.text.clone())
+                    Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()
                         .contained()
                         .with_style(theme.dismiss_button.container)

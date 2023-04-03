@@ -1,7 +1,6 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub mod http;
 pub mod telemetry;
 pub mod user;
 
@@ -18,7 +17,6 @@ use gpui::{
     AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AppVersion,
     AsyncAppContext, Entity, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
 };
-use http::HttpClient;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
@@ -41,6 +39,7 @@ use telemetry::Telemetry;
 use thiserror::Error;
 use url::Url;
 use util::channel::ReleaseChannel;
+use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
@@ -66,16 +65,26 @@ pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-actions!(client, [Authenticate]);
+actions!(client, [SignIn, SignOut]);
 
 pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
     cx.add_global_action({
         let client = client.clone();
-        move |_: &Authenticate, cx| {
+        move |_: &SignIn, cx| {
             let client = client.clone();
             cx.spawn(
                 |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
             )
+            .detach();
+        }
+    });
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &SignOut, cx| {
+            let client = client.clone();
+            cx.spawn(|cx| async move {
+                client.disconnect(&cx);
+            })
             .detach();
         }
     });
@@ -120,7 +129,7 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http::Error),
+    Http(#[from] util::http::Error),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -168,6 +177,10 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn is_signed_out(&self) -> bool {
+        matches!(self, Self::SignedOut | Self::UpgradeRequired)
     }
 }
 
@@ -280,7 +293,7 @@ impl<T: Entity> PendingEntitySubscription<T> {
 
         state
             .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::Model(model.downgrade().into()));
+            .insert(id, WeakSubscriber::Model(model.downgrade().into_any()));
         drop(state);
         for message in messages {
             self.client.handle_message(message, cx);
@@ -447,7 +460,7 @@ impl Client {
         self.state
             .write()
             .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::View(cx.weak_handle().into()));
+            .insert(id, WeakSubscriber::View(cx.weak_handle().into_any()));
         Subscription::Entity {
             client: Arc::downgrade(self),
             id,
@@ -491,7 +504,7 @@ impl Client {
         let mut state = self.state.write();
         state
             .models_by_message_type
-            .insert(message_type_id, model.downgrade().into());
+            .insert(message_type_id, model.downgrade().into_any());
 
         let prev_handler = state.message_handlers.insert(
             message_type_id,
@@ -1152,11 +1165,9 @@ impl Client {
         })
     }
 
-    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
-        let conn_id = self.connection_id()?;
-        self.peer.disconnect(conn_id);
+    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
+        self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
-        Ok(())
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
@@ -1384,10 +1395,11 @@ pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{FakeHttpClient, FakeServer};
+    use crate::test::FakeServer;
     use gpui::{executor::Deterministic, TestAppContext};
     use parking_lot::Mutex;
     use std::future;
+    use util::http::FakeHttpClient;
 
     #[gpui::test(iterations = 10)]
     async fn test_reconnection(cx: &mut TestAppContext) {

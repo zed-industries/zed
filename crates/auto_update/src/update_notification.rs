@@ -78,7 +78,7 @@ impl View for UpdateNotification {
                 )
                 .with_child({
                     let style = theme.action_message.style_for(state, false);
-                    Text::new("View the release notes".to_string(), style.text.clone())
+                    Text::new("View the release notes", style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()

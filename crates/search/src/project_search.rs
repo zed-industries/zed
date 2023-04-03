@@ -189,7 +189,7 @@ impl View for ProjectSearchView {
                 "No results"
             };
             MouseEventHandler::<Status>::new(0, cx, |_, _| {
-                Label::new(text.to_string(), theme.search.results_status.clone())
+                Label::new(text, theme.search.results_status.clone())
                     .aligned()
                     .contained()
                     .with_background_color(theme.editor.background)
@@ -222,16 +222,16 @@ impl View for ProjectSearchView {
 }
 
 impl Item for ProjectSearchView {
-    fn act_as_type(
-        &self,
+    fn act_as_type<'a>(
+        &'a self,
         type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &gpui::AppContext,
-    ) -> Option<gpui::AnyViewHandle> {
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&'a AnyViewHandle> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.into())
+            Some(self_handle)
         } else if type_id == TypeId::of::<Editor>() {
-            Some((&self.results_editor).into())
+            Some(&self.results_editor)
         } else {
             None
         }
@@ -246,17 +246,17 @@ impl Item for ProjectSearchView {
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
-        cx: &gpui::AppContext,
+        cx: &AppContext,
     ) -> ElementBox {
-        let settings = cx.global::<Settings>();
-        let search_theme = &settings.theme.search;
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifying_glass_12.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
-                    .with_width(search_theme.tab_icon_width)
+                    .with_width(tab_theme.type_icon_width)
                     .aligned()
+                    .contained()
+                    .with_margin_right(tab_theme.spacing)
                     .boxed(),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
@@ -264,8 +264,6 @@ impl Item for ProjectSearchView {
 
                 Label::new(query_text, tab_theme.label.clone())
                     .aligned()
-                    .contained()
-                    .with_margin_left(search_theme.tab_icon_spacing)
                     .boxed()
             }))
             .boxed()
@@ -279,7 +277,7 @@ impl Item for ProjectSearchView {
         false
     }
 
-    fn can_save(&self, _: &gpui::AppContext) -> bool {
+    fn can_save(&self, _: &AppContext) -> bool {
         true
     }
 
@@ -540,7 +538,7 @@ impl ProjectSearchView {
 
             let range_to_select = match_ranges[new_index].clone();
             self.results_editor.update(cx, |editor, cx| {
-                editor.unfold_ranges([range_to_select.clone()], false, cx);
+                editor.unfold_ranges([range_to_select.clone()], false, true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range_to_select])
                 });
@@ -744,7 +742,7 @@ impl ProjectSearchBar {
 
     fn render_nav_button(
         &self,
-        icon: &str,
+        icon: &'static str,
         direction: Direction,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -770,7 +768,7 @@ impl ProjectSearchBar {
                 .search
                 .option_button
                 .style_for(state, false);
-            Label::new(icon.to_string(), style.text.clone())
+            Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()
@@ -792,7 +790,7 @@ impl ProjectSearchBar {
 
     fn render_option_button(
         &self,
-        icon: &str,
+        icon: &'static str,
         option: SearchOption,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -805,7 +803,7 @@ impl ProjectSearchBar {
                 .search
                 .option_button
                 .style_for(state, is_active);
-            Label::new(icon.to_string(), style.text.clone())
+            Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
                 .boxed()
@@ -932,7 +930,7 @@ impl ToolbarItemView for ProjectSearchBar {
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
             let query_editor = search.read(cx).query_editor.clone();
-            cx.reparent(query_editor);
+            cx.reparent(&query_editor);
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {

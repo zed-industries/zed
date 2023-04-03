@@ -10,6 +10,7 @@ mod tests;
 
 use axum::{http::StatusCode, response::IntoResponse};
 use db::Database;
+use executor::Executor;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 
@@ -91,6 +92,7 @@ impl std::error::Error for Error {}
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
+    pub database_max_connections: u32,
     pub api_token: String,
     pub invite_link_prefix: String,
     pub live_kit_server: Option<String>,
@@ -116,8 +118,8 @@ pub struct AppState {
 impl AppState {
     pub async fn new(config: Config) -> Result<Arc<Self>> {
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
-        db_options.max_connections(5);
-        let db = Database::new(db_options).await?;
+        db_options.max_connections(config.database_max_connections);
+        let db = Database::new(db_options, Executor::Production).await?;
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server
             .as_ref()

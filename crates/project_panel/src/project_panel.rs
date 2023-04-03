@@ -115,8 +115,8 @@ actions!(
     [
         ExpandSelectedEntry,
         CollapseSelectedEntry,
-        AddDirectory,
-        AddFile,
+        NewDirectory,
+        NewFile,
         Copy,
         CopyPath,
         RevealInFinder,
@@ -140,8 +140,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
-    cx.add_action(ProjectPanel::add_file);
-    cx.add_action(ProjectPanel::add_directory);
+    cx.add_action(ProjectPanel::new_file);
+    cx.add_action(ProjectPanel::new_directory);
     cx.add_action(ProjectPanel::rename);
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
@@ -305,8 +305,8 @@ impl ProjectPanel {
                     ));
                 }
             }
-            menu_entries.push(ContextMenuItem::item("New File", AddFile));
-            menu_entries.push(ContextMenuItem::item("New Folder", AddDirectory));
+            menu_entries.push(ContextMenuItem::item("New File", NewFile));
+            menu_entries.push(ContextMenuItem::item("New Folder", NewDirectory));
             menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::item("Copy", Copy));
@@ -531,11 +531,11 @@ impl ProjectPanel {
         });
     }
 
-    fn add_file(&mut self, _: &AddFile, cx: &mut ViewContext<Self>) {
+    fn new_file(&mut self, _: &NewFile, cx: &mut ViewContext<Self>) {
         self.add_entry(false, cx)
     }
 
-    fn add_directory(&mut self, _: &AddDirectory, cx: &mut ViewContext<Self>) {
+    fn new_directory(&mut self, _: &NewDirectory, cx: &mut ViewContext<Self>) {
         self.add_entry(true, cx)
     }
 
@@ -759,10 +759,12 @@ impl ProjectPanel {
                 if ix > 0 {
                     new_file_name.push(format!(" {}", ix));
                 }
-                new_path.push(new_file_name);
                 if let Some(extension) = extension.as_ref() {
-                    new_path.set_extension(&extension);
+                    new_file_name.push(".");
+                    new_file_name.push(extension);
                 }
+
+                new_path.push(new_file_name);
                 ix += 1;
             }
 
@@ -1107,7 +1109,7 @@ impl ProjectPanel {
                 .boxed(),
             )
             .with_child(if show_editor && editor.is_some() {
-                ChildView::new(editor.unwrap().clone(), cx)
+                ChildView::new(editor.as_ref().unwrap(), cx)
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
@@ -1262,59 +1264,94 @@ impl View for ProjectPanel {
         let padding = std::mem::take(&mut container_style.padding);
         let last_worktree_root_id = self.last_worktree_root_id;
 
-        Stack::new()
-            .with_child(
-                MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
-                    UniformList::new(
-                        self.list.clone(),
-                        self.visible_entries
-                            .iter()
-                            .map(|(_, worktree_entries)| worktree_entries.len())
-                            .sum(),
-                        cx,
-                        move |this, range, items, cx| {
-                            let theme = cx.global::<Settings>().theme.clone();
-                            let mut dragged_entry_destination =
-                                this.dragged_entry_destination.clone();
-                            this.for_each_visible_entry(range, cx, |id, details, cx| {
-                                items.push(Self::render_entry(
-                                    id,
-                                    details,
-                                    &this.filename_editor,
-                                    &mut dragged_entry_destination,
-                                    &theme.project_panel,
-                                    cx,
-                                ));
-                            });
-                            this.dragged_entry_destination = dragged_entry_destination;
-                        },
-                    )
-                    .with_padding_top(padding.top)
-                    .with_padding_bottom(padding.bottom)
-                    .contained()
-                    .with_style(container_style)
-                    .expanded()
-                    .boxed()
-                })
-                .on_down(MouseButton::Right, move |e, cx| {
-                    // When deploying the context menu anywhere below the last project entry,
-                    // act as if the user clicked the root of the last worktree.
-                    if let Some(entry_id) = last_worktree_root_id {
-                        cx.dispatch_action(DeployContextMenu {
-                            entry_id,
-                            position: e.position,
-                        })
-                    }
-                })
-                .boxed(),
-            )
-            .with_child(ChildView::new(&self.context_menu, cx).boxed())
-            .boxed()
+        let has_worktree = self.visible_entries.len() != 0;
+
+        if has_worktree {
+            Stack::new()
+                .with_child(
+                    MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
+                        UniformList::new(
+                            self.list.clone(),
+                            self.visible_entries
+                                .iter()
+                                .map(|(_, worktree_entries)| worktree_entries.len())
+                                .sum(),
+                            cx,
+                            move |this, range, items, cx| {
+                                let theme = cx.global::<Settings>().theme.clone();
+                                let mut dragged_entry_destination =
+                                    this.dragged_entry_destination.clone();
+                                this.for_each_visible_entry(range, cx, |id, details, cx| {
+                                    items.push(Self::render_entry(
+                                        id,
+                                        details,
+                                        &this.filename_editor,
+                                        &mut dragged_entry_destination,
+                                        &theme.project_panel,
+                                        cx,
+                                    ));
+                                });
+                                this.dragged_entry_destination = dragged_entry_destination;
+                            },
+                        )
+                        .with_padding_top(padding.top)
+                        .with_padding_bottom(padding.bottom)
+                        .contained()
+                        .with_style(container_style)
+                        .expanded()
+                        .boxed()
+                    })
+                    .on_down(MouseButton::Right, move |e, cx| {
+                        // When deploying the context menu anywhere below the last project entry,
+                        // act as if the user clicked the root of the last worktree.
+                        if let Some(entry_id) = last_worktree_root_id {
+                            cx.dispatch_action(DeployContextMenu {
+                                entry_id,
+                                position: e.position,
+                            })
+                        }
+                    })
+                    .boxed(),
+                )
+                .with_child(ChildView::new(&self.context_menu, cx).boxed())
+                .boxed()
+        } else {
+            Flex::column()
+                .with_child(
+                    MouseEventHandler::<Self>::new(2, cx, {
+                        let button_style = theme.open_project_button.clone();
+                        let context_menu_item_style =
+                            cx.global::<Settings>().theme.context_menu.item.clone();
+                        move |state, cx| {
+                            let button_style = button_style.style_for(state, false).clone();
+                            let context_menu_item =
+                                context_menu_item_style.style_for(state, true).clone();
+
+                            theme::ui::keystroke_label(
+                                "Open a project",
+                                &button_style,
+                                &context_menu_item.keystroke,
+                                Box::new(workspace::Open),
+                                cx,
+                            )
+                            .boxed()
+                        }
+                    })
+                    .on_click(MouseButton::Left, move |_, cx| {
+                        cx.dispatch_action(workspace::Open)
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .boxed(),
+                )
+                .contained()
+                .with_style(container_style)
+                .boxed()
+        }
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
         let mut cx = Self::default_keymap_context();
-        cx.set.insert("menu".into());
+        cx.add_identifier("menu");
         cx
     }
 }
@@ -1404,15 +1441,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -1504,15 +1533,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);
@@ -1533,7 +1554,7 @@ mod tests {
 
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
-        panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
         assert!(panel.read_with(cx, |panel, cx| panel.filename_editor.is_focused(cx)));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -1591,7 +1612,7 @@ mod tests {
         );
 
         select_path(&panel, "root1/b", cx);
-        panel.update(cx, |panel, cx| panel.add_file(&AddFile, cx));
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1690,7 +1711,7 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| panel.add_directory(&AddDirectory, cx));
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1779,6 +1800,80 @@ mod tests {
                 "          a-different-filename",
                 "    > C",
                 "      .dockerignore",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let settings = Settings::test(cx);
+            cx.set_global(settings);
+        });
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "one.two.txt": "",
+                "one.txt": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
+
+        panel.update(cx, |panel, cx| {
+            panel.select_next(&Default::default(), cx);
+            panel.select_next(&Default::default(), cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+
+        // Regression test - file name is created correctly when
+        // the copied file's name contains multiple dots.
+        panel.update(cx, |panel, cx| {
+            panel.copy(&Default::default(), cx);
+            panel.paste(&Default::default(), cx);
+        });
+        cx.foreground().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two copy.txt",
+                "      one.two.txt  <== selected",
+                "      one.txt",
+            ]
+        );
+
+        panel.update(cx, |panel, cx| {
+            panel.paste(&Default::default(), cx);
+        });
+        cx.foreground().run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root1",
+                "      one.two copy 1.txt",
+                "      one.two copy.txt",
+                "      one.two.txt  <== selected",
+                "      one.txt",
             ]
         );
     }

@@ -5,7 +5,7 @@ pub mod watched_json;
 use anyhow::{bail, Result};
 use gpui::{
     font_cache::{FamilyId, FontCache},
-    AssetSource,
+    fonts, AssetSource,
 };
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
@@ -18,17 +18,21 @@ use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use std::{collections::HashMap, fmt::Write as _, num::NonZeroU32, str, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use tree_sitter::Query;
-use util::ResultExt as _;
+use util::{RangeExt, ResultExt as _};
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
+pub use watched_json::watch_files;
 
 #[derive(Clone)]
 pub struct Settings {
+    pub buffer_font_family_name: String,
+    pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
+    pub enable_copilot_integration: bool,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
     pub cursor_blink: bool,
@@ -54,6 +58,72 @@ pub struct Settings {
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
+    pub base_keymap: BaseKeymap,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CopilotSettings {
+    #[default]
+    On,
+    Off,
+}
+
+impl From<CopilotSettings> for bool {
+    fn from(value: CopilotSettings) -> Self {
+        match value {
+            CopilotSettings::On => true,
+            CopilotSettings::Off => false,
+        }
+    }
+}
+
+impl CopilotSettings {
+    pub fn is_on(&self) -> bool {
+        <CopilotSettings as Into<bool>>::into(*self)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+pub enum BaseKeymap {
+    #[default]
+    VSCode,
+    JetBrains,
+    SublimeText,
+    Atom,
+    TextMate,
+}
+
+impl BaseKeymap {
+    pub const OPTIONS: [(&'static str, Self); 5] = [
+        ("VSCode (Default)", Self::VSCode),
+        ("Atom", Self::Atom),
+        ("JetBrains", Self::JetBrains),
+        ("Sublime Text", Self::SublimeText),
+        ("TextMate", Self::TextMate),
+    ];
+
+    pub fn asset_path(&self) -> Option<&'static str> {
+        match self {
+            BaseKeymap::JetBrains => Some("keymaps/jetbrains.json"),
+            BaseKeymap::SublimeText => Some("keymaps/sublime_text.json"),
+            BaseKeymap::Atom => Some("keymaps/atom.json"),
+            BaseKeymap::TextMate => Some("keymaps/textmate.json"),
+            BaseKeymap::VSCode => None,
+        }
+    }
+
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::OPTIONS.iter().map(|(name, _)| *name)
+    }
+
+    pub fn from_names(option: &str) -> BaseKeymap {
+        Self::OPTIONS
+            .iter()
+            .copied()
+            .find_map(|(name, value)| (name == option).then(|| value))
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -66,8 +136,17 @@ impl TelemetrySettings {
     pub fn metrics(&self) -> bool {
         self.metrics.unwrap()
     }
+
     pub fn diagnostics(&self) -> bool {
         self.diagnostics.unwrap()
+    }
+
+    pub fn set_metrics(&mut self, value: bool) {
+        self.metrics = Some(value);
+    }
+
+    pub fn set_diagnostics(&mut self, value: bool) {
+        self.diagnostics = Some(value);
     }
 }
 
@@ -94,8 +173,46 @@ pub struct EditorSettings {
     pub soft_wrap: Option<SoftWrap>,
     pub preferred_line_length: Option<u32>,
     pub format_on_save: Option<FormatOnSave>,
+    pub remove_trailing_whitespace_on_save: Option<bool>,
+    pub ensure_final_newline_on_save: Option<bool>,
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
+    pub copilot: Option<OnOff>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnOff {
+    On,
+    Off,
+}
+
+impl OnOff {
+    pub fn as_bool(&self) -> bool {
+        match self {
+            OnOff::On => true,
+            OnOff::Off => false,
+        }
+    }
+
+    pub fn from_bool(value: bool) -> OnOff {
+        match value {
+            true => OnOff::On,
+            false => OnOff::Off,
+        }
+    }
+}
+
+impl From<OnOff> for bool {
+    fn from(value: OnOff) -> bool {
+        value.as_bool()
+    }
+}
+
+impl From<bool> for OnOff {
+    fn from(value: bool) -> OnOff {
+        OnOff::from_bool(value)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -170,6 +287,7 @@ pub struct TerminalSettings {
     pub working_directory: Option<WorkingDirectory>,
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
+    pub font_features: Option<fonts::Features>,
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
@@ -273,11 +391,11 @@ impl Column for DockAnchor {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
-    pub projects_online_by_default: Option<bool>,
-    #[serde(default)]
     pub buffer_font_family: Option<String>,
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
+    #[serde(default)]
+    pub buffer_font_features: Option<fonts::Features>,
     #[serde(default)]
     pub active_pane_magnification: Option<f32>,
     #[serde(default)]
@@ -315,6 +433,10 @@ pub struct SettingsFileContent {
     pub telemetry: TelemetrySettings,
     #[serde(default)]
     pub auto_update: Option<bool>,
+    #[serde(default)]
+    pub base_keymap: Option<BaseKeymap>,
+    #[serde(default)]
+    pub enable_copilot_integration: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -341,10 +463,16 @@ impl Settings {
         )
         .unwrap();
 
+        let buffer_font_features = defaults.buffer_font_features.unwrap();
         Self {
             buffer_font_family: font_cache
-                .load_family(&[defaults.buffer_font_family.as_ref().unwrap()])
+                .load_family(
+                    &[defaults.buffer_font_family.as_ref().unwrap()],
+                    &buffer_font_features,
+                )
                 .unwrap(),
+            buffer_font_family_name: defaults.buffer_font_family.unwrap(),
+            buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             default_buffer_font_size: defaults.buffer_font_size.unwrap(),
@@ -361,9 +489,16 @@ impl Settings {
                 hard_tabs: required(defaults.editor.hard_tabs),
                 soft_wrap: required(defaults.editor.soft_wrap),
                 preferred_line_length: required(defaults.editor.preferred_line_length),
+                remove_trailing_whitespace_on_save: required(
+                    defaults.editor.remove_trailing_whitespace_on_save,
+                ),
+                ensure_final_newline_on_save: required(
+                    defaults.editor.ensure_final_newline_on_save,
+                ),
                 format_on_save: required(defaults.editor.format_on_save),
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
+                copilot: required(defaults.editor.copilot),
             },
             editor_overrides: Default::default(),
             git: defaults.git.unwrap(),
@@ -379,6 +514,8 @@ impl Settings {
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
             auto_update: defaults.auto_update.unwrap(),
+            base_keymap: Default::default(),
+            enable_copilot_integration: defaults.enable_copilot_integration.unwrap(),
         }
     }
 
@@ -389,11 +526,24 @@ impl Settings {
         theme_registry: &ThemeRegistry,
         font_cache: &FontCache,
     ) {
-        if let Some(value) = &data.buffer_font_family {
-            if let Some(id) = font_cache.load_family(&[value]).log_err() {
+        let mut family_changed = false;
+        if let Some(value) = data.buffer_font_family {
+            self.buffer_font_family_name = value;
+            family_changed = true;
+        }
+        if let Some(value) = data.buffer_font_features {
+            self.buffer_font_features = value;
+            family_changed = true;
+        }
+        if family_changed {
+            if let Some(id) = font_cache
+                .load_family(&[&self.buffer_font_family_name], &self.buffer_font_features)
+                .log_err()
+            {
                 self.buffer_font_family = id;
             }
         }
+
         if let Some(value) = &data.theme {
             if let Some(theme) = theme_registry.get(value).log_err() {
                 self.theme = theme;
@@ -416,11 +566,11 @@ impl Settings {
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
-
-        // Ensure terminal font is loaded, so we can request it in terminal_element layout
-        if let Some(terminal_font) = &data.terminal.font_family {
-            font_cache.load_family(&[terminal_font]).log_err();
-        }
+        merge(&mut self.base_keymap, data.base_keymap);
+        merge(
+            &mut self.enable_copilot_integration,
+            data.enable_copilot_integration,
+        );
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
@@ -444,6 +594,14 @@ impl Settings {
         self
     }
 
+    pub fn copilot_on(&self, language: Option<&str>) -> bool {
+        if self.enable_copilot_integration {
+            self.language_setting(language, |settings| settings.copilot.map(Into::into))
+        } else {
+            false
+        }
+    }
+
     pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
         self.language_setting(language, |settings| settings.tab_size)
     }
@@ -458,6 +616,18 @@ impl Settings {
 
     pub fn preferred_line_length(&self, language: Option<&str>) -> u32 {
         self.language_setting(language, |settings| settings.preferred_line_length)
+    }
+
+    pub fn remove_trailing_whitespace_on_save(&self, language: Option<&str>) -> bool {
+        self.language_setting(language, |settings| {
+            settings.remove_trailing_whitespace_on_save.clone()
+        })
+    }
+
+    pub fn ensure_final_newline_on_save(&self, language: Option<&str>) -> bool {
+        self.language_setting(language, |settings| {
+            settings.ensure_final_newline_on_save.clone()
+        })
     }
 
     pub fn format_on_save(&self, language: Option<&str>) -> FormatOnSave {
@@ -541,7 +711,12 @@ impl Settings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
-            buffer_font_family: cx.font_cache().load_family(&["Monaco"]).unwrap(),
+            buffer_font_family_name: "Monaco".to_string(),
+            buffer_font_features: Default::default(),
+            buffer_font_family: cx
+                .font_cache()
+                .load_family(&["Monaco"], &Default::default())
+                .unwrap(),
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
             default_buffer_font_size: 14.,
@@ -558,9 +733,12 @@ impl Settings {
                 hard_tabs: Some(false),
                 soft_wrap: Some(SoftWrap::None),
                 preferred_line_length: Some(80),
+                remove_trailing_whitespace_on_save: Some(true),
+                ensure_final_newline_on_save: Some(true),
                 format_on_save: Some(FormatOnSave::On),
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
+                copilot: Some(OnOff::On),
             },
             editor_overrides: Default::default(),
             journal_defaults: Default::default(),
@@ -579,6 +757,8 @@ impl Settings {
             },
             telemetry_overrides: Default::default(),
             auto_update: true,
+            base_keymap: Default::default(),
+            enable_copilot_integration: true,
         }
     }
 
@@ -655,13 +835,22 @@ pub fn settings_file_json_schema(
     serde_json::to_value(root_schema).unwrap()
 }
 
-/// Expects the key to be unquoted, and the value to be valid JSON
-/// (e.g. values should be unquoted for numbers and bools, quoted for strings)
-pub fn write_top_level_setting(
-    mut settings_content: String,
-    top_level_key: &str,
-    new_val: &str,
-) -> String {
+fn merge<T: Copy>(target: &mut T, value: Option<T>) {
+    if let Some(value) = value {
+        *target = value;
+    }
+}
+
+pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
+    Ok(serde_json::from_reader(
+        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
+    )?)
+}
+
+fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_value: &Value) {
+    const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
+    const LANGAUGES: &'static str = "languages";
+
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(tree_sitter_json::language()).unwrap();
     let tree = parser.parse(&settings_content, None).unwrap();
@@ -671,56 +860,91 @@ pub fn write_top_level_setting(
     let query = Query::new(
         tree_sitter_json::language(),
         "
-        (document
-            (object
-                (pair
-                    key: (string) @key
-                    value: (_) @value)))
-    ",
+            (pair
+                key: (string) @key
+                value: (_) @value)
+        ",
     )
     .unwrap();
 
+    let has_language_overrides = settings_content.contains(LANGUAGE_OVERRIDES);
+
+    let mut depth = 0;
+    let mut last_value_range = 0..0;
     let mut first_key_start = None;
-    let mut existing_value_range = None;
+    let mut existing_value_range = 0..settings_content.len();
     let matches = cursor.matches(&query, tree.root_node(), settings_content.as_bytes());
     for mat in matches {
         if mat.captures.len() != 2 {
             continue;
         }
 
-        let key = mat.captures[0];
-        let value = mat.captures[1];
+        let key_range = mat.captures[0].node.byte_range();
+        let value_range = mat.captures[1].node.byte_range();
 
-        first_key_start.get_or_insert_with(|| key.node.start_byte());
+        // Don't enter sub objects until we find an exact
+        // match for the current keypath
+        if last_value_range.contains_inclusive(&value_range) {
+            continue;
+        }
 
-        if let Some(key_text) = settings_content.get(key.node.byte_range()) {
-            if key_text == format!("\"{top_level_key}\"") {
-                existing_value_range = Some(value.node.byte_range());
+        last_value_range = value_range.clone();
+
+        if key_range.start > existing_value_range.end {
+            break;
+        }
+
+        first_key_start.get_or_insert_with(|| key_range.start);
+
+        let found_key = settings_content
+            .get(key_range.clone())
+            .map(|key_text| {
+                if key_path[depth] == LANGAUGES && has_language_overrides {
+                    return key_text == format!("\"{}\"", LANGUAGE_OVERRIDES);
+                } else {
+                    return key_text == format!("\"{}\"", key_path[depth]);
+                }
+            })
+            .unwrap_or(false);
+
+        if found_key {
+            existing_value_range = value_range;
+            // Reset last value range when increasing in depth
+            last_value_range = existing_value_range.start..existing_value_range.start;
+            depth += 1;
+
+            if depth == key_path.len() {
                 break;
+            } else {
+                first_key_start = None;
             }
         }
     }
 
-    match (first_key_start, existing_value_range) {
-        (None, None) => {
-            // No document, create a new object and overwrite
-            settings_content.clear();
-            write!(
-                settings_content,
-                "{{\n    \"{}\": {new_val}\n}}\n",
-                top_level_key
-            )
-            .unwrap();
+    // We found the exact key we want, insert the new value
+    if depth == key_path.len() {
+        let new_val = serde_json::to_string_pretty(new_value)
+            .expect("Could not serialize new json field to string");
+        settings_content.replace_range(existing_value_range, &new_val);
+    } else {
+        // We have key paths, construct the sub objects
+        let new_key = if has_language_overrides && key_path[depth] == LANGAUGES {
+            LANGUAGE_OVERRIDES
+        } else {
+            key_path[depth]
+        };
+
+        // We don't have the key, construct the nested objects
+        let mut new_value = serde_json::to_value(new_value).unwrap();
+        for key in key_path[(depth + 1)..].iter().rev() {
+            if has_language_overrides && key == &LANGAUGES {
+                new_value = serde_json::json!({ LANGUAGE_OVERRIDES.to_string(): new_value });
+            } else {
+                new_value = serde_json::json!({ key.to_string(): new_value });
+            }
         }
 
-        (_, Some(existing_value_range)) => {
-            // Existing theme key, overwrite
-            settings_content.replace_range(existing_value_range, &new_val);
-        }
-
-        (Some(first_key_start), None) => {
-            // No existing theme key, but other settings. Prepend new theme settings and
-            // match style of first key
+        if let Some(first_key_start) = first_key_start {
             let mut row = 0;
             let mut column = 0;
             for (ix, char) in settings_content.char_indices() {
@@ -735,142 +959,497 @@ pub fn write_top_level_setting(
                 }
             }
 
-            let content = format!(r#""{top_level_key}": {new_val},"#);
-            settings_content.insert_str(first_key_start, &content);
-
             if row > 0 {
+                // depth is 0 based, but division needs to be 1 based.
+                let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
+                let content = format!(r#""{new_key}": {new_val},"#);
+                settings_content.insert_str(first_key_start, &content);
+
                 settings_content.insert_str(
                     first_key_start + content.len(),
                     &format!("\n{:width$}", ' ', width = column),
                 )
             } else {
-                settings_content.insert_str(first_key_start + content.len(), " ")
+                let new_val = serde_json::to_string(&new_value).unwrap();
+                let mut content = format!(r#""{new_key}": {new_val},"#);
+                content.push(' ');
+                settings_content.insert_str(first_key_start, &content);
+            }
+        } else {
+            new_value = serde_json::json!({ new_key.to_string(): new_value });
+            let indent_prefix_len = 4 * depth;
+            let new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
+
+            settings_content.replace_range(existing_value_range, &new_val);
+            if depth == 0 {
+                settings_content.push('\n');
+            }
+        }
+    }
+}
+
+fn to_pretty_json(
+    value: &serde_json::Value,
+    indent_size: usize,
+    indent_prefix_len: usize,
+) -> String {
+    const SPACES: [u8; 32] = [b' '; 32];
+
+    debug_assert!(indent_size <= SPACES.len());
+    debug_assert!(indent_prefix_len <= SPACES.len());
+
+    let mut output = Vec::new();
+    let mut ser = serde_json::Serializer::with_formatter(
+        &mut output,
+        serde_json::ser::PrettyFormatter::with_indent(&SPACES[0..indent_size.min(SPACES.len())]),
+    );
+
+    value.serialize(&mut ser).unwrap();
+    let text = String::from_utf8(output).unwrap();
+
+    let mut adjusted_text = String::new();
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            adjusted_text.push_str(str::from_utf8(&SPACES[0..indent_prefix_len]).unwrap());
+        }
+        adjusted_text.push_str(line);
+        adjusted_text.push('\n');
+    }
+    adjusted_text.pop();
+    adjusted_text
+}
+
+pub fn update_settings_file(
+    mut text: String,
+    mut old_file_content: SettingsFileContent,
+    update: impl FnOnce(&mut SettingsFileContent),
+) -> String {
+    let mut new_file_content = old_file_content.clone();
+
+    update(&mut new_file_content);
+
+    if new_file_content.languages.len() != old_file_content.languages.len() {
+        for language in new_file_content.languages.keys() {
+            old_file_content
+                .languages
+                .entry(language.clone())
+                .or_default();
+        }
+        for language in old_file_content.languages.keys() {
+            new_file_content
+                .languages
+                .entry(language.clone())
+                .or_default();
+        }
+    }
+
+    let old_object = to_json_object(old_file_content);
+    let new_object = to_json_object(new_file_content);
+
+    fn apply_changes_to_json_text(
+        old_object: &serde_json::Map<String, Value>,
+        new_object: &serde_json::Map<String, Value>,
+        current_key_path: Vec<&str>,
+        json_text: &mut String,
+    ) {
+        for (key, old_value) in old_object.iter() {
+            // We know that these two are from the same shape of object, so we can just unwrap
+            let new_value = new_object.get(key).unwrap();
+
+            if old_value != new_value {
+                match new_value {
+                    Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+                        let mut key_path = current_key_path.clone();
+                        key_path.push(key);
+                        write_settings_key(json_text, &key_path, &new_value);
+                    }
+                    Value::Object(new_sub_object) => {
+                        let mut key_path = current_key_path.clone();
+                        key_path.push(key);
+                        if let Value::Object(old_sub_object) = old_value {
+                            apply_changes_to_json_text(
+                                old_sub_object,
+                                new_sub_object,
+                                key_path,
+                                json_text,
+                            );
+                        } else {
+                            unimplemented!("This function doesn't support changing values from simple values to objects yet");
+                        }
+                    }
+                    Value::Null | Value::Array(_) => {
+                        unimplemented!("We only support objects and simple values");
+                    }
+                }
             }
         }
     }
 
-    settings_content
+    apply_changes_to_json_text(&old_object, &new_object, vec![], &mut text);
+
+    text
 }
 
-fn merge<T: Copy>(target: &mut T, value: Option<T>) {
-    if let Some(value) = value {
-        *target = value;
+fn to_json_object(settings_file: SettingsFileContent) -> serde_json::Map<String, Value> {
+    let tmp = serde_json::to_value(settings_file).unwrap();
+    match tmp {
+        Value::Object(map) => map,
+        _ => unreachable!("SettingsFileContent represents a JSON map"),
     }
-}
-
-pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
-    Ok(serde_json::from_reader(
-        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
-    )?)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::write_top_level_setting;
+    use super::*;
     use unindent::Unindent;
+
+    fn assert_new_settings<S1: Into<String>, S2: Into<String>>(
+        old_json: S1,
+        update: fn(&mut SettingsFileContent),
+        expected_new_json: S2,
+    ) {
+        let old_json = old_json.into();
+        let old_content: SettingsFileContent = serde_json::from_str(&old_json).unwrap_or_default();
+        let new_json = update_settings_file(old_json, old_content, update);
+        pretty_assertions::assert_eq!(new_json, expected_new_json.into());
+    }
+
+    #[test]
+    fn test_update_language_overrides_copilot() {
+        assert_new_settings(
+            r#"
+                {
+                    "language_overrides": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.languages.insert(
+                    "Rust".into(),
+                    EditorSettings {
+                        copilot: Some(OnOff::On),
+                        ..Default::default()
+                    },
+                );
+            },
+            r#"
+                {
+                    "language_overrides": {
+                        "Rust": {
+                            "copilot": "on"
+                        },
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_copilot() {
+        assert_new_settings(
+            r#"
+                {
+                    "languages": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.editor.copilot = Some(OnOff::On);
+            },
+            r#"
+                {
+                    "copilot": "on",
+                    "languages": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_langauge_copilot() {
+        assert_new_settings(
+            r#"
+                {
+                    "languages": {
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.languages.insert(
+                    "Rust".into(),
+                    EditorSettings {
+                        copilot: Some(OnOff::On),
+                        ..Default::default()
+                    },
+                );
+            },
+            r#"
+                {
+                    "languages": {
+                        "Rust": {
+                            "copilot": "on"
+                        },
+                        "JSON": {
+                            "copilot": "off"
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_multiple_fields() {
+        assert_new_settings(
+            r#"
+                {
+                    "telemetry": {
+                        "metrics": false,
+                        "diagnostics": false
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.telemetry.set_diagnostics(true);
+                settings.telemetry.set_metrics(true);
+            },
+            r#"
+                {
+                    "telemetry": {
+                        "metrics": true,
+                        "diagnostics": true
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_weird_formatting() {
+        assert_new_settings(
+            r#"{
+                "telemetry":   { "metrics": false, "diagnostics": true }
+            }"#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"{
+                "telemetry":   { "metrics": false, "diagnostics": false }
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_other_fields() {
+        assert_new_settings(
+            r#"
+                {
+                    "telemetry": {
+                        "metrics": false,
+                        "diagnostics": true
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"
+                {
+                    "telemetry": {
+                        "metrics": false,
+                        "diagnostics": false
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_empty_telemetry() {
+        assert_new_settings(
+            r#"
+                {
+                    "telemetry": {}
+                }
+            "#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"
+                {
+                    "telemetry": {
+                        "diagnostics": false
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting_pre_existing() {
+        assert_new_settings(
+            r#"
+                {
+                    "telemetry": {
+                        "diagnostics": true
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| settings.telemetry.set_diagnostics(false),
+            r#"
+                {
+                    "telemetry": {
+                        "diagnostics": false
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_telemetry_setting() {
+        assert_new_settings(
+            "{}",
+            |settings| settings.telemetry.set_diagnostics(true),
+            r#"
+                {
+                    "telemetry": {
+                        "diagnostics": true
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_object_empty_doc() {
+        assert_new_settings(
+            "",
+            |settings| settings.telemetry.set_diagnostics(true),
+            r#"
+                {
+                    "telemetry": {
+                        "diagnostics": true
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
 
     #[test]
     fn test_write_theme_into_settings_with_theme() {
-        let settings = r#"
-            {
-                "theme": "One Dark"
-            }
-        "#
-        .unindent();
-
-        let new_settings = r#"
-            {
-                "theme": "summerfruit-light"
-            }
-        "#
-        .unindent();
-
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
-
-        assert_eq!(settings_after_theme, new_settings)
+        assert_new_settings(
+            r#"
+                {
+                    "theme": "One Dark"
+                }
+            "#
+            .unindent(),
+            |settings| settings.theme = Some("summerfruit-light".to_string()),
+            r#"
+                {
+                    "theme": "summerfruit-light"
+                }
+            "#
+            .unindent(),
+        );
     }
 
     #[test]
     fn test_write_theme_into_empty_settings() {
-        let settings = r#"
-            {
-            }
-        "#
-        .unindent();
-
-        let new_settings = r#"
-            {
-                "theme": "summerfruit-light"
-            }
-        "#
-        .unindent();
-
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
-
-        assert_eq!(settings_after_theme, new_settings)
+        assert_new_settings(
+            r#"
+                {
+                }
+            "#
+            .unindent(),
+            |settings| settings.theme = Some("summerfruit-light".to_string()),
+            r#"
+                {
+                    "theme": "summerfruit-light"
+                }
+            "#
+            .unindent(),
+        );
     }
 
     #[test]
-    fn test_write_theme_into_no_settings() {
-        let settings = "".to_string();
-
-        let new_settings = r#"
-            {
-                "theme": "summerfruit-light"
-            }
-        "#
-        .unindent();
-
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
-
-        assert_eq!(settings_after_theme, new_settings)
+    fn write_key_no_document() {
+        assert_new_settings(
+            "",
+            |settings| settings.theme = Some("summerfruit-light".to_string()),
+            r#"
+                {
+                    "theme": "summerfruit-light"
+                }
+            "#
+            .unindent(),
+        );
     }
 
     #[test]
     fn test_write_theme_into_single_line_settings_without_theme() {
-        let settings = r#"{ "a": "", "ok": true }"#.to_string();
-        let new_settings = r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#;
-
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
-
-        assert_eq!(settings_after_theme, new_settings)
+        assert_new_settings(
+            r#"{ "a": "", "ok": true }"#,
+            |settings| settings.theme = Some("summerfruit-light".to_string()),
+            r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#,
+        );
     }
 
     #[test]
     fn test_write_theme_pre_object_whitespace() {
-        let settings = r#"          { "a": "", "ok": true }"#.to_string();
-        let new_settings = r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#;
-
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
-
-        assert_eq!(settings_after_theme, new_settings)
+        assert_new_settings(
+            r#"          { "a": "", "ok": true }"#,
+            |settings| settings.theme = Some("summerfruit-light".to_string()),
+            r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#.unindent(),
+        );
     }
 
     #[test]
     fn test_write_theme_into_multi_line_settings_without_theme() {
-        let settings = r#"
-            {
-                "a": "b"
-            }
-        "#
-        .unindent();
-
-        let new_settings = r#"
-            {
-                "theme": "summerfruit-light",
-                "a": "b"
-            }
-        "#
-        .unindent();
-
-        let settings_after_theme =
-            write_top_level_setting(settings, "theme", "\"summerfruit-light\"");
-
-        assert_eq!(settings_after_theme, new_settings)
+        assert_new_settings(
+            r#"
+                {
+                    "a": "b"
+                }
+            "#
+            .unindent(),
+            |settings| settings.theme = Some("summerfruit-light".to_string()),
+            r#"
+                {
+                    "theme": "summerfruit-light",
+                    "a": "b"
+                }
+            "#
+            .unindent(),
+        );
     }
 }

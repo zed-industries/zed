@@ -518,6 +518,7 @@ dependencies = [
  "menu",
  "project",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "smol",
@@ -784,6 +785,7 @@ dependencies = [
  "gpui",
  "itertools",
  "language",
+ "outline",
  "project",
  "search",
  "settings",
@@ -794,7 +796,7 @@ dependencies = [
 [[package]]
 name = "bromberg_sl2"
 version = "0.6.0"
-source = "git+https://github.com/zed-industries/bromberg_sl2?rev=dac565a90e8f9245f48ff46225c915dc50f76920#dac565a90e8f9245f48ff46225c915dc50f76920"
+source = "git+https://github.com/zed-industries/bromberg_sl2?rev=950bc5482c216c395049ae33ae4501e08975f17f#950bc5482c216c395049ae33ae4501e08975f17f"
 dependencies = [
  "digest 0.9.0",
  "lazy_static",
@@ -1097,6 +1099,7 @@ dependencies = [
  "ipc-channel",
  "plist",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -1111,7 +1114,6 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "image",
- "isahc",
  "lazy_static",
  "log",
  "parking_lot 0.11.2",
@@ -1119,6 +1121,7 @@ dependencies = [
  "rand 0.8.5",
  "rpc",
  "serde",
+ "serde_derive",
  "settings",
  "smol",
  "sum_tree",
@@ -1188,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.5.4"
+version = "0.8.2"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -1228,6 +1231,7 @@ dependencies = [
  "sea-orm",
  "sea-query",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "sha-1 0.9.8",
@@ -1257,7 +1261,9 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_menu",
  "editor",
+ "feedback",
  "futures 0.3.25",
  "fuzzy",
  "gpui",
@@ -1267,6 +1273,7 @@ dependencies = [
  "postage",
  "project",
  "serde",
+ "serde_derive",
  "settings",
  "theme",
  "util",
@@ -1323,6 +1330,48 @@ dependencies = [
  "settings",
  "smallvec",
  "theme",
+]
+
+[[package]]
+name = "copilot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "client",
+ "collections",
+ "context_menu",
+ "futures 0.3.25",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "node_runtime",
+ "serde",
+ "serde_derive",
+ "settings",
+ "smol",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "copilot_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "context_menu",
+ "copilot",
+ "editor",
+ "futures 0.3.25",
+ "gpui",
+ "settings",
+ "smol",
+ "theme",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -1737,6 +1786,7 @@ dependencies = [
  "log",
  "parking_lot 0.11.2",
  "serde",
+ "serde_derive",
  "smol",
  "sqlez",
  "sqlez_macros",
@@ -1924,6 +1974,7 @@ dependencies = [
  "clock",
  "collections",
  "context_menu",
+ "copilot",
  "ctor",
  "db",
  "drag_and_drop",
@@ -1945,6 +1996,7 @@ dependencies = [
  "rand 0.8.5",
  "rpc",
  "serde",
+ "serde_derive",
  "settings",
  "smallvec",
  "smol",
@@ -2098,6 +2150,7 @@ dependencies = [
  "project",
  "search",
  "serde",
+ "serde_derive",
  "settings",
  "sysinfo",
  "theme",
@@ -2294,6 +2347,7 @@ dependencies = [
  "regex",
  "rope",
  "serde",
+ "serde_derive",
  "serde_json",
  "smol",
  "tempfile",
@@ -2580,9 +2634,9 @@ dependencies = [
 
 [[package]]
 name = "glob"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
+checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "globset"
@@ -2662,8 +2716,10 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "resvg",
+ "schemars",
  "seahash",
  "serde",
+ "serde_derive",
  "serde_json",
  "simplelog",
  "smallvec",
@@ -3018,6 +3074,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adab1eaa3408fb7f0c777a73e7465fd5656136fc93b670eb6df3c88c2c1344e3"
 
 [[package]]
+name = "install_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "instant"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3156,6 +3223,7 @@ dependencies = [
 name = "journal"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "dirs 4.0.0",
  "editor",
@@ -3261,6 +3329,7 @@ dependencies = [
  "regex",
  "rpc",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "similar",
@@ -3282,6 +3351,22 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+]
+
+[[package]]
+name = "language_selector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "picker",
+ "project",
+ "settings",
+ "theme",
+ "workspace",
 ]
 
 [[package]]
@@ -3440,6 +3525,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "serde",
+ "serde_derive",
  "serde_json",
  "sha2 0.10.6",
  "simplelog",
@@ -3460,6 +3546,7 @@ dependencies = [
  "prost-types 0.8.0",
  "reqwest",
  "serde",
+ "serde_derive",
  "sha2 0.10.6",
 ]
 
@@ -3500,6 +3587,7 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "serde",
+ "serde_derive",
  "serde_json",
  "smol",
  "unindent",
@@ -3863,6 +3951,23 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "memoffset 0.6.5",
+]
+
+[[package]]
+name = "node_runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "futures 0.3.25",
+ "gpui",
+ "parking_lot 0.11.2",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "smol",
+ "util",
 ]
 
 [[package]]
@@ -4419,6 +4524,7 @@ dependencies = [
  "bincode",
  "plugin_macros",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -4429,6 +4535,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde",
+ "serde_derive",
  "syn",
 ]
 
@@ -4440,6 +4547,7 @@ dependencies = [
  "bincode",
  "pollster",
  "serde",
+ "serde_derive",
  "serde_json",
  "smol",
  "wasi-common",
@@ -4577,12 +4685,15 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "ctor",
  "db",
+ "env_logger",
  "fs",
  "fsevent",
  "futures 0.3.25",
  "fuzzy",
  "git",
+ "glob",
  "gpui",
  "ignore",
  "language",
@@ -4591,11 +4702,13 @@ dependencies = [
  "lsp",
  "parking_lot 0.11.2",
  "postage",
+ "pretty_assertions",
  "pulldown-cmark",
  "rand 0.8.5",
  "regex",
  "rpc",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "sha2 0.10.6",
@@ -4961,6 +5074,7 @@ dependencies = [
  "settings",
  "smol",
  "text",
+ "util",
  "workspace",
 ]
 
@@ -5218,6 +5332,7 @@ dependencies = [
  "rand 0.8.5",
  "rsa",
  "serde",
+ "serde_derive",
  "smol",
  "smol-timeout",
  "tempdir",
@@ -5641,6 +5756,7 @@ dependencies = [
  "postage",
  "project",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
@@ -5827,8 +5943,10 @@ dependencies = [
  "gpui",
  "json_comments",
  "postage",
+ "pretty_assertions",
  "schemars",
  "serde",
+ "serde_derive",
  "serde_json",
  "serde_path_to_error",
  "sqlez",
@@ -6449,6 +6567,7 @@ dependencies = [
  "procinfo",
  "rand 0.8.5",
  "serde",
+ "serde_derive",
  "settings",
  "shellexpand",
  "smallvec",
@@ -6480,6 +6599,7 @@ dependencies = [
  "project",
  "rand 0.8.5",
  "serde",
+ "serde_derive",
  "settings",
  "shellexpand",
  "smallvec",
@@ -6539,6 +6659,7 @@ dependencies = [
  "indexmap",
  "parking_lot 0.11.2",
  "serde",
+ "serde_derive",
  "serde_json",
  "serde_path_to_error",
  "toml",
@@ -7441,11 +7562,15 @@ dependencies = [
  "dirs 3.0.2",
  "futures 0.3.25",
  "git2",
+ "isahc",
  "lazy_static",
  "log",
  "rand 0.8.5",
+ "serde",
  "serde_json",
+ "smol",
  "tempdir",
+ "url",
 ]
 
 [[package]]
@@ -7532,6 +7657,7 @@ dependencies = [
  "project",
  "search",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "tokio",
@@ -8012,6 +8138,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9193164d4de03a926d909d3bc7c30543cecb35400c02114792c2cae20d5e2dbb"
 
 [[package]]
+name = "welcome"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "install_cli",
+ "log",
+ "picker",
+ "project",
+ "settings",
+ "theme",
+ "theme_selector",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "wepoll-ffi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8286,6 +8432,7 @@ dependencies = [
  "futures 0.3.25",
  "gpui",
  "indoc",
+ "install_cli",
  "language",
  "lazy_static",
  "log",
@@ -8294,9 +8441,11 @@ dependencies = [
  "postage",
  "project",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
+ "terminal",
  "theme",
  "util",
  "uuid 1.2.2",
@@ -8356,7 +8505,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.75.0"
+version = "0.81.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -8377,7 +8526,10 @@ dependencies = [
  "collections",
  "command_palette",
  "context_menu",
+ "copilot",
+ "copilot_button",
  "ctor",
+ "db",
  "diagnostics",
  "easy-parallel",
  "editor",
@@ -8393,13 +8545,16 @@ dependencies = [
  "ignore",
  "image",
  "indexmap",
+ "install_cli",
  "isahc",
  "journal",
  "language",
+ "language_selector",
  "lazy_static",
  "libc",
  "log",
  "lsp",
+ "node_runtime",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",
@@ -8416,6 +8571,7 @@ dependencies = [
  "rust-embed",
  "search",
  "serde",
+ "serde_derive",
  "serde_json",
  "serde_path_to_error",
  "settings",
@@ -8457,6 +8613,7 @@ dependencies = [
  "util",
  "uuid 1.2.2",
  "vim",
+ "welcome",
  "workspace",
 ]
 

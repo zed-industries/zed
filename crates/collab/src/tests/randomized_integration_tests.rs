@@ -554,7 +554,7 @@ async fn apply_client_operation(
             }
 
             log::info!("{}: hanging up", client.username);
-            active_call.update(cx, |call, cx| call.hang_up(cx))?;
+            active_call.update(cx, |call, cx| call.hang_up(cx)).await?;
         }
 
         ClientOperation::InviteContactToCall { user_id } => {

@@ -47,12 +47,7 @@ impl ThemeSelector {
         let mut theme_names = registry
             .list(**cx.default_global::<StaffMode>())
             .collect::<Vec<_>>();
-        theme_names.sort_unstable_by(|a, b| {
-            a.is_light
-                .cmp(&b.is_light)
-                .reverse()
-                .then(a.name.cmp(&b.name))
-        });
+        theme_names.sort_unstable_by(|a, b| a.is_light.cmp(&b.is_light).then(a.name.cmp(&b.name)));
         let matches = theme_names
             .iter()
             .map(|meta| StringMatch {
@@ -261,7 +256,7 @@ impl View for ThemeSelector {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.picker.clone(), cx).boxed()
+        ChildView::new(&self.picker, cx).boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

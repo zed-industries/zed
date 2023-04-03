@@ -27,10 +27,12 @@ context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
+install_cli = { path = "../install_cli" }
 language = { path = "../language" }
 menu = { path = "../menu" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 async-recursion = "1.0.0"
@@ -41,9 +43,10 @@ lazy_static = "1.4"
 env_logger = "0.9.1"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
-postage = { version = "0.4.1", features = ["futures-traits"] }
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+postage = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+serde_json = { workspace = true }
 smallvec = { version = "1.6", features = ["union"] }
 indoc = "1.0.4"
 uuid = { version = "1.1.2", features = ["v4"] }

@@ -473,6 +473,7 @@ pub(crate) fn normal_replace(text: Arc<str>, cx: &mut MutableAppContext) {
 
 #[cfg(test)]
 mod test {
+    use gpui::TestAppContext;
     use indoc::indoc;
 
     use crate::{
@@ -515,15 +516,15 @@ mod test {
         .await;
     }
 
-    // #[gpui::test]
-    // async fn test_enter(cx: &mut gpui::TestAppContext) {
-    //     let mut cx = NeovimBackedTestContext::new(cx).await.binding(["enter"]);
-    //     cx.assert_all(indoc! {"
-    //         ˇThe qˇuick broˇwn
-    //         ˇfox jumps"
-    //     })
-    //     .await;
-    // }
+    #[gpui::test]
+    async fn test_enter(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["enter"]);
+        cx.assert_all(indoc! {"
+            ˇThe qˇuick broˇwn
+            ˇfox jumps"
+        })
+        .await;
+    }
 
     #[gpui::test]
     async fn test_k(cx: &mut gpui::TestAppContext) {
@@ -1030,7 +1031,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_percent(cx: &mut gpui::TestAppContext) {
+    async fn test_percent(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["%"]);
         cx.assert_all("ˇconsole.logˇ(ˇvaˇrˇ)ˇ;").await;
         cx.assert_all("ˇconsole.logˇ(ˇ'var', ˇ[ˇ1, ˇ2, 3ˇ]ˇ)ˇ;")

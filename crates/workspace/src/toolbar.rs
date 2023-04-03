@@ -20,16 +20,19 @@ pub trait ToolbarItemView: View {
     ) -> ToolbarItemLocation {
         current_location
     }
+
+    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut MutableAppContext) {}
 }
 
 trait ToolbarItemViewHandle {
     fn id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut MutableAppContext,
     ) -> ToolbarItemLocation;
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -42,6 +45,7 @@ pub enum ToolbarItemLocation {
 
 pub struct Toolbar {
     active_pane_item: Option<Box<dyn ItemHandle>>,
+    hidden: bool,
     pane: WeakViewHandle<Pane>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
@@ -67,7 +71,7 @@ impl View for Toolbar {
             match *position {
                 ToolbarItemLocation::Hidden => {}
                 ToolbarItemLocation::PrimaryLeft { flex } => {
-                    let left_item = ChildView::new(item.as_ref(), cx)
+                    let left_item = ChildView::new(item.as_any(), cx)
                         .aligned()
                         .contained()
                         .with_margin_right(spacing);
@@ -78,7 +82,7 @@ impl View for Toolbar {
                     }
                 }
                 ToolbarItemLocation::PrimaryRight { flex } => {
-                    let right_item = ChildView::new(item.as_ref(), cx)
+                    let right_item = ChildView::new(item.as_any(), cx)
                         .aligned()
                         .contained()
                         .with_margin_left(spacing)
@@ -91,7 +95,7 @@ impl View for Toolbar {
                 }
                 ToolbarItemLocation::Secondary => {
                     secondary_item = Some(
-                        ChildView::new(item.as_ref(), cx)
+                        ChildView::new(item.as_any(), cx)
                             .constrained()
                             .with_height(theme.height)
                             .boxed(),
@@ -211,6 +215,7 @@ impl Toolbar {
             active_pane_item: None,
             pane,
             items: Default::default(),
+            hidden: false,
         }
     }
 
@@ -243,6 +248,12 @@ impl Toolbar {
         cx: &mut ViewContext<Self>,
     ) {
         self.active_pane_item = pane_item.map(|item| item.boxed_clone());
+        self.hidden = self
+            .active_pane_item
+            .as_ref()
+            .map(|item| !item.show_toolbar(cx))
+            .unwrap_or(false);
+
         for (toolbar_item, current_location) in self.items.iter_mut() {
             let new_location = toolbar_item.set_active_pane_item(pane_item, cx);
             if new_location != *current_location {
@@ -252,10 +263,20 @@ impl Toolbar {
         }
     }
 
+    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext) {
+        for (toolbar_item, _) in self.items.iter_mut() {
+            toolbar_item.pane_focus_update(pane_focused, cx);
+        }
+    }
+
     pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<ViewHandle<T>> {
         self.items
             .iter()
-            .find_map(|(item, _)| item.to_any().downcast())
+            .find_map(|(item, _)| item.as_any().clone().downcast())
+    }
+
+    pub fn hidden(&self) -> bool {
+        self.hidden
     }
 }
 
@@ -264,8 +285,8 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
         self.id()
     }
 
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 
     fn set_active_pane_item(
@@ -277,10 +298,14 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
             this.set_active_pane_item(active_pane_item, cx)
         })
     }
+
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.pane_focus_update(pane_focused, cx));
+    }
 }
 
 impl From<&dyn ToolbarItemViewHandle> for AnyViewHandle {
     fn from(val: &dyn ToolbarItemViewHandle) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }

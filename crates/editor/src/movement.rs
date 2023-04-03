@@ -69,16 +69,11 @@ pub fn up_by_rows(
         goal_column = 0;
     }
 
-    let clip_bias = if point.column() == map.line_len(point.row()) {
-        Bias::Left
-    } else {
-        Bias::Right
-    };
-
-    (
-        map.clip_point(point, clip_bias),
-        SelectionGoal::Column(goal_column),
-    )
+    let mut clipped_point = map.clip_point(point, Bias::Left);
+    if clipped_point.row() < point.row() {
+        clipped_point = map.clip_point(point, Bias::Right);
+    }
+    (clipped_point, SelectionGoal::Column(goal_column))
 }
 
 pub fn down_by_rows(
@@ -105,16 +100,11 @@ pub fn down_by_rows(
         goal_column = map.column_to_chars(point.row(), point.column())
     }
 
-    let clip_bias = if point.column() == map.line_len(point.row()) {
-        Bias::Left
-    } else {
-        Bias::Right
-    };
-
-    (
-        map.clip_point(point, clip_bias),
-        SelectionGoal::Column(goal_column),
-    )
+    let mut clipped_point = map.clip_point(point, Bias::Right);
+    if clipped_point.row() > point.row() {
+        clipped_point = map.clip_point(point, Bias::Left);
+    }
+    (clipped_point, SelectionGoal::Column(goal_column))
 }
 
 pub fn line_beginning(
@@ -587,7 +577,10 @@ mod tests {
     #[gpui::test]
     fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
         cx.set_global(Settings::test(cx));
-        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let family_id = cx
+            .font_cache()
+            .load_family(&["Helvetica"], &Default::default())
+            .unwrap();
         let font_id = cx
             .font_cache()
             .select_font(family_id, &Default::default())

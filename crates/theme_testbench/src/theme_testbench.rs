@@ -11,12 +11,8 @@ use gpui::{
 };
 use project::Project;
 use settings::Settings;
-use smallvec::SmallVec;
 use theme::{ColorScheme, Layer, Style, StyleSet};
-use workspace::{
-    item::{Item, ItemEvent},
-    register_deserializable_item, Pane, Workspace,
-};
+use workspace::{item::Item, register_deserializable_item, Pane, Workspace};
 
 actions!(theme, [DeployThemeTestbench]);
 
@@ -308,51 +304,10 @@ impl Item for ThemeTestbench {
         style: &theme::Tab,
         _: &AppContext,
     ) -> gpui::ElementBox {
-        Label::new("Theme Testbench".into(), style.label.clone())
+        Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()
             .boxed()
-    }
-
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
-
-    fn is_singleton(&self, _: &AppContext) -> bool {
-        false
-    }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
-
-    fn can_save(&self, _: &AppContext) -> bool {
-        false
-    }
-
-    fn save(
-        &mut self,
-        _: gpui::ModelHandle<Project>,
-        _: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save should not have been called");
-    }
-
-    fn save_as(
-        &mut self,
-        _: gpui::ModelHandle<Project>,
-        _: std::path::PathBuf,
-        _: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save_as should not have been called");
-    }
-
-    fn reload(
-        &mut self,
-        _: gpui::ModelHandle<Project>,
-        _: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        gpui::Task::ready(Ok(()))
-    }
-
-    fn to_item_events(_: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
-        SmallVec::new()
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

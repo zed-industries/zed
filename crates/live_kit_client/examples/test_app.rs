@@ -20,6 +20,7 @@ fn main() {
             items: vec![MenuItem::Action {
                 name: "Quit",
                 action: Box::new(Quit),
+                os_action: None,
             }],
         }]);
 

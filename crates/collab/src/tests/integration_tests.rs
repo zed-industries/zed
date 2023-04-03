@@ -274,10 +274,14 @@ async fn test_basic_calls(
     }
 
     // User A leaves the room.
-    active_call_a.update(cx_a, |call, cx| {
-        call.hang_up(cx).unwrap();
-        assert!(call.room().is_none());
-    });
+    active_call_a
+        .update(cx_a, |call, cx| {
+            let hang_up = call.hang_up(cx);
+            assert!(call.room().is_none());
+            hang_up
+        })
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -557,6 +561,7 @@ async fn test_room_uniqueness(
     // Client C can successfully call client B after client B leaves the room.
     active_call_b
         .update(cx_b, |call, cx| call.hang_up(cx))
+        .await
         .unwrap();
     deterministic.run_until_parked();
     active_call_c
@@ -733,6 +738,14 @@ async fn test_server_restarts(
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
+    client_a
+        .fs
+        .insert_tree("/a", json!({ "a.txt": "a-contents" }))
+        .await;
+
+    // Invite client B to collaborate on a project
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
     let client_d = server.create_client(cx_d, "user_d").await;
@@ -753,19 +766,19 @@ async fn test_server_restarts(
     // User A calls users B, C, and D.
     active_call_a
         .update(cx_a, |call, cx| {
-            call.invite(client_b.user_id().unwrap(), None, cx)
+            call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
         })
         .await
         .unwrap();
     active_call_a
         .update(cx_a, |call, cx| {
-            call.invite(client_c.user_id().unwrap(), None, cx)
+            call.invite(client_c.user_id().unwrap(), Some(project_a.clone()), cx)
         })
         .await
         .unwrap();
     active_call_a
         .update(cx_a, |call, cx| {
-            call.invite(client_d.user_id().unwrap(), None, cx)
+            call.invite(client_d.user_id().unwrap(), Some(project_a.clone()), cx)
         })
         .await
         .unwrap();
@@ -821,7 +834,7 @@ async fn test_server_restarts(
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -928,6 +941,7 @@ async fn test_server_restarts(
     // User D hangs up.
     active_call_d
         .update(cx_d, |call, cx| call.hang_up(cx))
+        .await
         .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
@@ -993,7 +1007,7 @@ async fn test_server_restarts(
     client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
     client_b.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
     client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    deterministic.advance_clock(RECEIVE_TIMEOUT);
+    deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -1083,7 +1097,7 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b2.next().await.unwrap().is_none());
 
     // User B disconnects the client that is not on the call. Everything should be fine.
-    client_b1.disconnect(&cx_b1.to_async()).unwrap();
+    client_b1.disconnect(&cx_b1.to_async());
     deterministic.advance_clock(RECEIVE_TIMEOUT);
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
@@ -1091,7 +1105,10 @@ async fn test_calls_on_multiple_connections(
         .unwrap();
 
     // User B hangs up, and user A calls them again.
-    active_call_b2.update(cx_b2, |call, cx| call.hang_up(cx).unwrap());
+    active_call_b2
+        .update(cx_b2, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     active_call_a
         .update(cx_a, |call, cx| {
@@ -1126,7 +1143,10 @@ async fn test_calls_on_multiple_connections(
     assert!(incoming_call_b2.next().await.unwrap().is_some());
 
     // User A hangs up, causing both connections to stop ringing.
-    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert!(incoming_call_b1.next().await.unwrap().is_none());
     assert!(incoming_call_b2.next().await.unwrap().is_none());
@@ -1363,7 +1383,10 @@ async fn test_unshare_project(
         .unwrap();
 
     // When client B leaves the room, the project becomes read-only.
-    active_call_b.update(cx_b, |call, cx| call.hang_up(cx).unwrap());
+    active_call_b
+        .update(cx_b, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
 
@@ -1392,7 +1415,10 @@ async fn test_unshare_project(
         .unwrap();
 
     // When client A (the host) leaves the room, the project gets unshared and guests are notified.
-    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     project_a.read_with(cx_a, |project, _| assert!(!project.is_shared()));
     project_c2.read_with(cx_c, |project, _| {
@@ -1441,15 +1467,7 @@ async fn test_host_disconnect(
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) = cx_b.add_window(|cx| {
-        Workspace::new(
-            Default::default(),
-            0,
-            project_b.clone(),
-            |_, _| unimplemented!(),
-            cx,
-        )
-    });
+    let (_, workspace_b) = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
@@ -1726,10 +1744,6 @@ async fn test_project_reconnect(
             vec![
                 "a.txt",
                 "b.txt",
-                "subdir1",
-                "subdir1/c.txt",
-                "subdir1/d.txt",
-                "subdir1/e.txt",
                 "subdir2",
                 "subdir2/f.txt",
                 "subdir2/g.txt",
@@ -1762,10 +1776,6 @@ async fn test_project_reconnect(
             vec![
                 "a.txt",
                 "b.txt",
-                "subdir1",
-                "subdir1/c.txt",
-                "subdir1/d.txt",
-                "subdir1/e.txt",
                 "subdir2",
                 "subdir2/f.txt",
                 "subdir2/g.txt",
@@ -1857,10 +1867,6 @@ async fn test_project_reconnect(
             vec![
                 "a.txt",
                 "b.txt",
-                "subdir1",
-                "subdir1/c.txt",
-                "subdir1/d.txt",
-                "subdir1/e.txt",
                 "subdir2",
                 "subdir2/f.txt",
                 "subdir2/g.txt",
@@ -2244,7 +2250,9 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     // Edit the buffer as the host and concurrently save as guest B.
-    let save_b = project_b.update(cx_b, |project, cx| project.save_buffer(buffer_b.clone(), cx));
+    let save_b = project_b.update(cx_b, |project, cx| {
+        project.save_buffer(buffer_b.clone(), cx)
+    });
     buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], None, cx));
     save_b.await.unwrap();
     assert_eq!(
@@ -2917,7 +2925,10 @@ async fn test_buffer_conflict_after_save(
         assert!(!buf.has_conflict());
     });
 
-    project_b.update(cx_b, |project, cx| project.save_buffer(buffer_b.clone(), cx))
+    project_b
+        .update(cx_b, |project, cx| {
+            project.save_buffer(buffer_b.clone(), cx)
+        })
         .await
         .unwrap();
     cx_a.foreground().forbid_parking();
@@ -3222,7 +3233,7 @@ async fn test_leaving_project(
     buffer_b2.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
 
     // Drop client B's connection and ensure client A and client C observe client B leaving.
-    client_b.disconnect(&cx_b.to_async()).unwrap();
+    client_b.disconnect(&cx_b.to_async());
     deterministic.advance_clock(RECONNECT_TIMEOUT);
     project_a.read_with(cx_a, |project, _| {
         assert_eq!(project.collaborators().len(), 1);
@@ -3879,9 +3890,11 @@ async fn test_formatting_buffer(
         })
         .await
         .unwrap();
+
+    // The edits from the LSP are applied, and a final newline is added.
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        "let honey = \"two\""
+        "let honey = \"two\"\n"
     );
 
     // Ensure buffer can be formatted using an external command. Notice how the
@@ -4691,15 +4704,7 @@ async fn test_collaborating_with_code_actions(
 
     // Join the project as client B.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let (_window_b, workspace_b) = cx_b.add_window(|cx| {
-        Workspace::new(
-            Default::default(),
-            0,
-            project_b.clone(),
-            |_, _| unimplemented!(),
-            cx,
-        )
-    });
+    let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -4922,15 +4927,7 @@ async fn test_collaborating_with_renames(
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let (_window_b, workspace_b) = cx_b.add_window(|cx| {
-        Workspace::new(
-            Default::default(),
-            0,
-            project_b.clone(),
-            |_, _| unimplemented!(),
-            cx,
-        )
-    });
+    let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "one.rs"), None, true, cx)
@@ -5464,7 +5461,10 @@ async fn test_contacts(
         [("user_b".to_string(), "online", "busy")]
     );
 
-    active_call_a.update(cx_a, |call, cx| call.hang_up(cx).unwrap());
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     assert_eq!(
         contacts(&client_a, cx_a),
@@ -5767,7 +5767,7 @@ async fn test_contact_requests(
         .is_empty());
 
     async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
-        client.disconnect(&cx.to_async()).unwrap();
+        client.disconnect(&cx.to_async());
         client.clear_contacts(cx).await;
         client
             .authenticate_and_connect(false, &cx.to_async())
@@ -5777,10 +5777,12 @@ async fn test_contact_requests(
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_following(
+async fn test_basic_following(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+    cx_d: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     cx_a.update(editor::init);
@@ -5789,8 +5791,15 @@ async fn test_following(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    let client_d = server.create_client(cx_d, "user_d").await;
     server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [
+            (&client_a, cx_a),
+            (&client_b, cx_b),
+            (&client_c, cx_c),
+            (&client_d, cx_d),
+        ])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
@@ -5822,8 +5831,10 @@ async fn test_following(
         .await
         .unwrap();
 
-    // Client A opens some editors.
     let workspace_a = client_a.build_workspace(&project_a, cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b);
+
+    // Client A opens some editors.
     let pane_a = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
     let editor_a1 = workspace_a
         .update(cx_a, |workspace, cx| {
@@ -5843,7 +5854,6 @@ async fn test_following(
         .unwrap();
 
     // Client B opens an editor.
-    let workspace_b = client_b.build_workspace(&project_b, cx_b);
     let editor_b1 = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
@@ -5853,28 +5863,183 @@ async fn test_following(
         .downcast::<Editor>()
         .unwrap();
 
-    let client_a_id = project_b.read_with(cx_b, |project, _| {
-        project.collaborators().values().next().unwrap().peer_id
-    });
-    let client_b_id = project_a.read_with(cx_a, |project, _| {
-        project.collaborators().values().next().unwrap().peer_id
-    });
+    let peer_id_a = client_a.peer_id().unwrap();
+    let peer_id_b = client_b.peer_id().unwrap();
+    let peer_id_c = client_c.peer_id().unwrap();
+    let peer_id_d = client_d.peer_id().unwrap();
 
-    // When client B starts following client A, all visible view states are replicated to client B.
+    // Client A updates their selections in those editors
     editor_a1.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([0..1]))
     });
     editor_a2.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([2..3]))
     });
+
+    // When client B starts following client A, all visible view states are replicated to client B.
     workspace_b
         .update(cx_b, |workspace, cx| {
             workspace
-                .toggle_follow(&ToggleFollow(client_a_id), cx)
+                .toggle_follow(&ToggleFollow(peer_id_a), cx)
                 .unwrap()
         })
         .await
         .unwrap();
+
+    cx_c.foreground().run_until_parked();
+    let active_call_c = cx_c.read(ActiveCall::global);
+    let project_c = client_c.build_remote_project(project_id, cx_c).await;
+    let workspace_c = client_c.build_workspace(&project_c, cx_c);
+    active_call_c
+        .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
+        .await
+        .unwrap();
+    drop(project_c);
+
+    // Client C also follows client A.
+    workspace_c
+        .update(cx_c, |workspace, cx| {
+            workspace
+                .toggle_follow(&ToggleFollow(peer_id_a), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    cx_d.foreground().run_until_parked();
+    let active_call_d = cx_d.read(ActiveCall::global);
+    let project_d = client_d.build_remote_project(project_id, cx_d).await;
+    let workspace_d = client_d.build_workspace(&project_d, cx_d);
+    active_call_d
+        .update(cx_d, |call, cx| call.set_location(Some(&project_d), cx))
+        .await
+        .unwrap();
+    drop(project_d);
+
+    // All clients see that clients B and C are following client A.
+    cx_c.foreground().run_until_parked();
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_a, project_id),
+                &[peer_id_b, peer_id_c],
+                "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // Client C unfollows client A.
+    workspace_c.update(cx_c, |workspace, cx| {
+        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+    });
+
+    // All clients see that clients B is following client A.
+    cx_c.foreground().run_until_parked();
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_a, project_id),
+                &[peer_id_b],
+                "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // Client C re-follows client A.
+    workspace_c.update(cx_c, |workspace, cx| {
+        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+    });
+
+    // All clients see that clients B and C are following client A.
+    cx_c.foreground().run_until_parked();
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_a, project_id),
+                &[peer_id_b, peer_id_c],
+                "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // Client D follows client C.
+    workspace_d
+        .update(cx_d, |workspace, cx| {
+            workspace
+                .toggle_follow(&ToggleFollow(peer_id_c), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // All clients see that D is following C
+    cx_d.foreground().run_until_parked();
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_c, project_id),
+                &[peer_id_d],
+                "checking followers for C as {name}"
+            );
+        });
+    }
+
+    // Client C closes the project.
+    cx_c.drop_last(workspace_c);
+
+    // Clients A and B see that client B is following A, and client C is not present in the followers.
+    cx_c.foreground().run_until_parked();
+    for (name, active_call, cx) in [("A", &active_call_a, &cx_a), ("B", &active_call_b, &cx_b)] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_a, project_id),
+                &[peer_id_b],
+                "checking followers for A as {name}"
+            );
+        });
+    }
+
+    // All clients see that no-one is following C
+    for (name, active_call, cx) in [
+        ("A", &active_call_a, &cx_a),
+        ("B", &active_call_b, &cx_b),
+        ("C", &active_call_c, &cx_c),
+        ("D", &active_call_d, &cx_d),
+    ] {
+        active_call.read_with(*cx, |call, cx| {
+            let room = call.room().unwrap().read(cx);
+            assert_eq!(
+                room.followers_for(peer_id_c, project_id),
+                &[],
+                "checking followers for C as {name}"
+            );
+        });
+    }
 
     let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
         workspace
@@ -6028,14 +6193,14 @@ async fn test_following(
     workspace_a
         .update(cx_a, |workspace, cx| {
             workspace
-                .toggle_follow(&ToggleFollow(client_b_id), cx)
+                .toggle_follow(&ToggleFollow(peer_id_b), cx)
                 .unwrap()
         })
         .await
         .unwrap();
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
-        Some(client_b_id)
+        Some(peer_id_b)
     );
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, cx| workspace
@@ -6107,12 +6272,105 @@ async fn test_following(
     );
 
     // Following interrupts when client B disconnects.
-    client_b.disconnect(&cx_b.to_async()).unwrap();
+    client_b.disconnect(&cx_b.to_async());
     deterministic.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
         None
     );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_join_call_after_screen_was_shared(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // Call users B and C from client A.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: Default::default(),
+            pending: vec!["user_b".to_string()]
+        }
+    );
+
+    // User B receives the call.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    let call_b = incoming_call_b.next().await.unwrap().unwrap();
+    assert_eq!(call_b.calling_user.github_login, "user_a");
+
+    // User A shares their screen
+    let display = MacOSDisplay::new();
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room().unwrap().update(cx, |room, cx| {
+                room.set_display_sources(vec![display.clone()]);
+                room.share_screen(cx)
+            })
+        })
+        .await
+        .unwrap();
+
+    client_b.user_store.update(cx_b, |user_store, _| {
+        user_store.clear_cache();
+    });
+
+    // User B joins the room
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    assert!(incoming_call_b.next().await.unwrap().is_none());
+
+    deterministic.run_until_parked();
+    assert_eq!(
+        room_participants(&room_a, cx_a),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![],
+        }
+    );
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec![],
+        }
+    );
+
+    // Ensure User B sees User A's screenshare.
+    room_b.read_with(cx_b, |room, _| {
+        assert_eq!(
+            room.remote_participants()
+                .get(&client_a.user_id().unwrap())
+                .unwrap()
+                .tracks
+                .len(),
+            1
+        );
+    });
 }
 
 #[gpui::test]

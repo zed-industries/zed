@@ -1,4 +1,5 @@
 mod persistence;
+pub mod terminal_button;
 pub mod terminal_element;
 
 use std::{
@@ -21,7 +22,7 @@ use gpui::{
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
 use settings::{Settings, TerminalBlink, WorkingDirectory};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use smol::Timer;
 use terminal::{
     alacritty_terminal::{
@@ -30,7 +31,7 @@ use terminal::{
     },
     Event, Terminal,
 };
-use util::{truncate_and_trailoff, ResultExt};
+use util::ResultExt;
 use workspace::{
     item::{Item, ItemEvent},
     notifications::NotifyResultExt,
@@ -177,8 +178,8 @@ impl TerminalView {
         }
     }
 
-    pub fn handle(&self) -> ModelHandle<Terminal> {
-        self.terminal.clone()
+    pub fn model(&self) -> &ModelHandle<Terminal> {
+        &self.terminal
     }
 
     pub fn has_new_content(&self) -> bool {
@@ -469,53 +470,50 @@ impl View for TerminalView {
         let mut context = Self::default_keymap_context();
 
         let mode = self.terminal.read(cx).last_content.mode;
-        context.map.insert(
-            "screen".to_string(),
-            (if mode.contains(TermMode::ALT_SCREEN) {
+        context.add_key(
+            "screen",
+            if mode.contains(TermMode::ALT_SCREEN) {
                 "alt"
             } else {
                 "normal"
-            })
-            .to_string(),
+            },
         );
 
         if mode.contains(TermMode::APP_CURSOR) {
-            context.set.insert("DECCKM".to_string());
+            context.add_identifier("DECCKM");
         }
         if mode.contains(TermMode::APP_KEYPAD) {
-            context.set.insert("DECPAM".to_string());
-        }
-        //Note the ! here
-        if !mode.contains(TermMode::APP_KEYPAD) {
-            context.set.insert("DECPNM".to_string());
+            context.add_identifier("DECPAM");
+        } else {
+            context.add_identifier("DECPNM");
         }
         if mode.contains(TermMode::SHOW_CURSOR) {
-            context.set.insert("DECTCEM".to_string());
+            context.add_identifier("DECTCEM");
         }
         if mode.contains(TermMode::LINE_WRAP) {
-            context.set.insert("DECAWM".to_string());
+            context.add_identifier("DECAWM");
         }
         if mode.contains(TermMode::ORIGIN) {
-            context.set.insert("DECOM".to_string());
+            context.add_identifier("DECOM");
         }
         if mode.contains(TermMode::INSERT) {
-            context.set.insert("IRM".to_string());
+            context.add_identifier("IRM");
         }
         //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
         if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
-            context.set.insert("LNM".to_string());
+            context.add_identifier("LNM");
         }
         if mode.contains(TermMode::FOCUS_IN_OUT) {
-            context.set.insert("report_focus".to_string());
+            context.add_identifier("report_focus");
         }
         if mode.contains(TermMode::ALTERNATE_SCROLL) {
-            context.set.insert("alternate_scroll".to_string());
+            context.add_identifier("alternate_scroll");
         }
         if mode.contains(TermMode::BRACKETED_PASTE) {
-            context.set.insert("bracketed_paste".to_string());
+            context.add_identifier("bracketed_paste");
         }
         if mode.intersects(TermMode::MOUSE_MODE) {
-            context.set.insert("any_mouse_reporting".to_string());
+            context.add_identifier("any_mouse_reporting");
         }
         {
             let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
@@ -527,9 +525,7 @@ impl View for TerminalView {
             } else {
                 "off"
             };
-            context
-                .map
-                .insert("mouse_reporting".to_string(), mouse_reporting.to_string());
+            context.add_key("mouse_reporting", mouse_reporting);
         }
         {
             let format = if mode.contains(TermMode::SGR_MOUSE) {
@@ -539,9 +535,7 @@ impl View for TerminalView {
             } else {
                 "normal"
             };
-            context
-                .map
-                .insert("mouse_format".to_string(), format.to_string());
+            context.add_key("mouse_format", format);
         }
         context
     }
@@ -554,46 +548,20 @@ impl Item for TerminalView {
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
     ) -> ElementBox {
-        let title = self
-            .terminal()
-            .read(cx)
-            .foreground_process_info
-            .as_ref()
-            .map(|fpi| {
-                format!(
-                    "{} — {}",
-                    truncate_and_trailoff(
-                        &fpi.cwd
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_default(),
-                        25
-                    ),
-                    truncate_and_trailoff(
-                        &{
-                            format!(
-                                "{}{}",
-                                fpi.name,
-                                if fpi.argv.len() >= 1 {
-                                    format!(" {}", (&fpi.argv[1..]).join(" "))
-                                } else {
-                                    "".to_string()
-                                }
-                            )
-                        },
-                        25
-                    )
-                )
-            })
-            .unwrap_or_else(|| "Terminal".to_string());
+        let title = self.terminal().read(cx).title();
 
         Flex::row()
             .with_child(
-                Label::new(title, tab_theme.label.clone())
+                gpui::elements::Svg::new("icons/terminal_12.svg")
+                    .with_color(tab_theme.label.text.color)
+                    .constrained()
+                    .with_width(tab_theme.type_icon_width)
                     .aligned()
                     .contained()
+                    .with_margin_right(tab_theme.spacing)
                     .boxed(),
             )
+            .with_child(Label::new(title, tab_theme.label.clone()).aligned().boxed())
             .boxed()
     }
 
@@ -616,43 +584,6 @@ impl Item for TerminalView {
         None
     }
 
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
-
-    fn is_singleton(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {}
-
-    fn can_save(&self, _cx: &gpui::AppContext) -> bool {
-        false
-    }
-
-    fn save(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save should not have been called");
-    }
-
-    fn save_as(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _abs_path: std::path::PathBuf,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        unreachable!("save_as should not have been called");
-    }
-
-    fn reload(
-        &mut self,
-        _project: gpui::ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> gpui::Task<gpui::anyhow::Result<()>> {
-        gpui::Task::ready(Ok(()))
-    }
-
     fn is_dirty(&self, _cx: &gpui::AppContext) -> bool {
         self.has_bell()
     }
@@ -667,10 +598,10 @@ impl Item for TerminalView {
 
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
-            Event::BreadcrumbsChanged => smallvec::smallvec![ItemEvent::UpdateBreadcrumbs],
-            Event::TitleChanged | Event::Wakeup => smallvec::smallvec![ItemEvent::UpdateTab],
-            Event::CloseTerminal => smallvec::smallvec![ItemEvent::CloseItem],
-            _ => smallvec::smallvec![],
+            Event::BreadcrumbsChanged => smallvec![ItemEvent::UpdateBreadcrumbs],
+            Event::TitleChanged | Event::Wakeup => smallvec![ItemEvent::UpdateTab],
+            Event::CloseTerminal => smallvec![ItemEvent::CloseItem],
+            _ => smallvec![],
         }
     }
 
@@ -680,8 +611,8 @@ impl Item for TerminalView {
 
     fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
         Some(vec![Text::new(
-            self.terminal().read(cx).breadcrumb_text.to_string(),
-            theme.breadcrumbs.text.clone(),
+            self.terminal().read(cx).breadcrumb_text.clone(),
+            theme.workspace.breadcrumbs.default.text.clone(),
         )
         .boxed()])
     }
@@ -692,7 +623,7 @@ impl Item for TerminalView {
 
     fn deserialize(
         project: ModelHandle<Project>,
-        _workspace: WeakViewHandle<Workspace>,
+        workspace: WeakViewHandle<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
         cx: &mut ViewContext<Pane>,
@@ -702,14 +633,25 @@ impl Item for TerminalView {
             let cwd = TERMINAL_DB
                 .get_working_directory(item_id, workspace_id)
                 .log_err()
-                .flatten();
+                .flatten()
+                .or_else(|| {
+                    cx.read(|cx| {
+                        let strategy = cx.global::<Settings>().terminal_strategy();
+                        workspace
+                            .upgrade(cx)
+                            .map(|workspace| {
+                                get_working_directory(workspace.read(cx), cx, strategy)
+                            })
+                            .flatten()
+                    })
+                });
 
             cx.update(|cx| {
                 let terminal = project.update(cx, |project, cx| {
                     project.create_terminal(cwd, window_id, cx)
                 })?;
 
-                Ok(cx.add_view(pane, |cx| TerminalView::new(terminal, workspace_id, cx)))
+                Ok(cx.add_view(&pane, |cx| TerminalView::new(terminal, workspace_id, cx)))
             })
         })
     }
@@ -1009,15 +951,7 @@ mod tests {
         let params = cx.update(AppState::test);
 
         let project = Project::test(params.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| unimplemented!(),
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         (project, workspace)
     }

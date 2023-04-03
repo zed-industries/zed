@@ -14,7 +14,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{Item as _, Project, ProjectPath};
+use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -529,7 +529,7 @@ impl Item for Editor {
     ) -> ElementBox {
         Flex::row()
             .with_child(
-                Label::new(self.title(cx).into(), style.label.clone())
+                Label::new(self.title(cx).to_string(), style.label.clone())
                     .aligned()
                     .boxed(),
             )
@@ -538,11 +538,7 @@ impl Item for Editor {
                 let description = path.to_string_lossy();
                 Some(
                     Label::new(
-                        if description.len() > MAX_TAB_TITLE_LEN {
-                            description[..MAX_TAB_TITLE_LEN].to_string() + "…"
-                        } else {
-                            description.into()
-                        },
+                        util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN),
                         style.description.text.clone(),
                     )
                     .contained()
@@ -608,13 +604,38 @@ impl Item for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         self.report_event("save editor", cx);
-        let format = self.perform_format(project.clone(), cx);
+        let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.as_mut().spawn(|mut cx| async move {
             format.await?;
-            project
-                .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
-                .await?;
+
+            if buffers.len() == 1 {
+                project
+                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))
+                    .await?;
+            } else {
+                // For multi-buffers, only save those ones that contain changes. For clean buffers
+                // we simulate saving by calling `Buffer::did_save`, so that language servers or
+                // other downstream listeners of save events get notified.
+                let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
+                    buffer.read_with(&cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
+                });
+
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.save_buffers(dirty_buffers, cx)
+                    })
+                    .await?;
+                for buffer in clean_buffers {
+                    buffer.update(&mut cx, |buffer, cx| {
+                        let version = buffer.saved_version().clone();
+                        let fingerprint = buffer.saved_version_fingerprint();
+                        let mtime = buffer.saved_mtime();
+                        buffer.did_save(version, fingerprint, mtime, cx);
+                    });
+                }
+            }
+
             Ok(())
         })
     }
@@ -726,11 +747,15 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
-        let mut breadcrumbs = vec![Label::new(filename, theme.breadcrumbs.text.clone()).boxed()];
+        let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
+        let mut breadcrumbs = vec![filename_label.boxed()];
         breadcrumbs.extend(symbols.into_iter().map(|symbol| {
-            Text::new(symbol.text, theme.breadcrumbs.text.clone())
-                .with_highlights(symbol.highlight_ranges)
-                .boxed()
+            Text::new(
+                symbol.text,
+                theme.workspace.breadcrumbs.default.text.clone(),
+            )
+            .with_highlights(symbol.highlight_ranges)
+            .boxed()
         }));
         Some(breadcrumbs)
     }
@@ -810,7 +835,7 @@ impl Item for Editor {
                         .context("Project item at stored path was not a buffer")?;
 
                     Ok(cx.update(|cx| {
-                        cx.add_view(pane, |cx| {
+                        cx.add_view(&pane, |cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor
@@ -886,7 +911,7 @@ impl SearchableItem for Editor {
         matches: Vec<Range<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.unfold_ranges([matches[index].clone()], false, cx);
+        self.unfold_ranges([matches[index].clone()], false, true, cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges([matches[index].clone()])
         });

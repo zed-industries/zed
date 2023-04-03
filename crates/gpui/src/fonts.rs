@@ -11,7 +11,8 @@ pub use font_kit::{
     properties::{Properties, Stretch, Style, Weight},
 };
 use ordered_float::OrderedFloat;
-use serde::{de, Deserialize};
+use schemars::JsonSchema;
+use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::{cell::RefCell, sync::Arc};
 
@@ -19,6 +20,44 @@ use std::{cell::RefCell, sync::Arc};
 pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Features {
+    pub calt: Option<bool>,
+    pub case: Option<bool>,
+    pub cpsp: Option<bool>,
+    pub frac: Option<bool>,
+    pub liga: Option<bool>,
+    pub onum: Option<bool>,
+    pub ordn: Option<bool>,
+    pub pnum: Option<bool>,
+    pub ss01: Option<bool>,
+    pub ss02: Option<bool>,
+    pub ss03: Option<bool>,
+    pub ss04: Option<bool>,
+    pub ss05: Option<bool>,
+    pub ss06: Option<bool>,
+    pub ss07: Option<bool>,
+    pub ss08: Option<bool>,
+    pub ss09: Option<bool>,
+    pub ss10: Option<bool>,
+    pub ss11: Option<bool>,
+    pub ss12: Option<bool>,
+    pub ss13: Option<bool>,
+    pub ss14: Option<bool>,
+    pub ss15: Option<bool>,
+    pub ss16: Option<bool>,
+    pub ss17: Option<bool>,
+    pub ss18: Option<bool>,
+    pub ss19: Option<bool>,
+    pub ss20: Option<bool>,
+    pub subs: Option<bool>,
+    pub sups: Option<bool>,
+    pub swsh: Option<bool>,
+    pub titl: Option<bool>,
+    pub tnum: Option<bool>,
+    pub zero: Option<bool>,
+}
 
 #[derive(Clone, Debug)]
 pub struct TextStyle {
@@ -71,6 +110,8 @@ thread_local! {
 struct TextStyleJson {
     color: Color,
     family: String,
+    #[serde(default)]
+    features: Features,
     weight: Option<WeightJson>,
     size: f32,
     #[serde(default)]
@@ -107,12 +148,13 @@ impl TextStyle {
         font_family_name: impl Into<Arc<str>>,
         font_size: f32,
         font_properties: Properties,
+        font_features: Features,
         underline: Underline,
         color: Color,
         font_cache: &FontCache,
     ) -> Result<Self> {
         let font_family_name = font_family_name.into();
-        let font_family_id = font_cache.load_family(&[&font_family_name])?;
+        let font_family_id = font_cache.load_family(&[&font_family_name], &font_features)?;
         let font_id = font_cache.select_font(font_family_id, &font_properties)?;
         Ok(Self {
             color,
@@ -175,6 +217,7 @@ impl TextStyle {
                     json.family,
                     json.size,
                     font_properties,
+                    json.features,
                     underline_from_json(json.underline),
                     json.color,
                     font_cache,
@@ -253,7 +296,9 @@ impl Default for TextStyle {
                 .expect("TextStyle::default can only be called within a call to with_font_cache");
 
             let font_family_name = Arc::from("Courier");
-            let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
+            let font_family_id = font_cache
+                .load_family(&[&font_family_name], &Default::default())
+                .unwrap();
             let font_id = font_cache
                 .select_font(font_family_id, &Default::default())
                 .unwrap();

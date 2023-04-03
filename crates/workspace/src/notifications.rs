@@ -16,7 +16,7 @@ pub trait Notification: View {
 
 pub trait NotificationHandle {
     fn id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
 }
 
 impl<T: Notification> NotificationHandle for ViewHandle<T> {
@@ -24,14 +24,14 @@ impl<T: Notification> NotificationHandle for ViewHandle<T> {
         self.id()
     }
 
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 }
 
 impl From<&dyn NotificationHandle> for AnyViewHandle {
     fn from(val: &dyn NotificationHandle) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }
 
@@ -97,7 +97,7 @@ impl Workspace {
             let notification = build_notification(cx);
             cx.subscribe(&notification, move |this, handle, event, cx| {
                 if handle.read(cx).should_dismiss_notification_on_event(event) {
-                    this.dismiss_notification(type_id, id, cx);
+                    this.dismiss_notification_internal(type_id, id, cx);
                 }
             })
             .detach();
@@ -107,7 +107,18 @@ impl Workspace {
         }
     }
 
-    fn dismiss_notification(&mut self, type_id: TypeId, id: usize, cx: &mut ViewContext<Self>) {
+    pub fn dismiss_notification<V: Notification>(&mut self, id: usize, cx: &mut ViewContext<Self>) {
+        let type_id = TypeId::of::<V>();
+
+        self.dismiss_notification_internal(type_id, id, cx)
+    }
+
+    fn dismiss_notification_internal(
+        &mut self,
+        type_id: TypeId,
+        id: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.notifications
             .retain(|(existing_type_id, existing_id, _)| {
                 if (*existing_type_id, *existing_id) == (type_id, id) {
@@ -121,6 +132,8 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
+
+    use std::borrow::Cow;
 
     use gpui::{
         actions,
@@ -139,7 +152,13 @@ pub mod simple_message_notification {
     actions!(message_notifications, [CancelMessageNotification]);
 
     #[derive(Clone, Default, Deserialize, PartialEq)]
-    pub struct OsOpen(pub String);
+    pub struct OsOpen(pub Cow<'static, str>);
+
+    impl OsOpen {
+        pub fn new<I: Into<Cow<'static, str>>>(url: I) -> Self {
+            OsOpen(url.into())
+        }
+    }
 
     impl_actions!(message_notifications, [OsOpen]);
 
@@ -147,15 +166,15 @@ pub mod simple_message_notification {
         cx.add_action(MessageNotification::dismiss);
         cx.add_action(
             |_workspace: &mut Workspace, open_action: &OsOpen, cx: &mut ViewContext<Workspace>| {
-                cx.platform().open_url(open_action.0.as_str());
+                cx.platform().open_url(open_action.0.as_ref());
             },
         )
     }
 
     pub struct MessageNotification {
-        message: String,
+        message: Cow<'static, str>,
         click_action: Option<Box<dyn Action>>,
-        click_message: Option<String>,
+        click_message: Option<Cow<'static, str>>,
     }
 
     pub enum MessageNotificationEvent {
@@ -167,23 +186,35 @@ pub mod simple_message_notification {
     }
 
     impl MessageNotification {
-        pub fn new_message<S: AsRef<str>>(message: S) -> MessageNotification {
+        pub fn new_message<S: Into<Cow<'static, str>>>(message: S) -> MessageNotification {
             Self {
-                message: message.as_ref().to_string(),
+                message: message.into(),
                 click_action: None,
                 click_message: None,
             }
         }
 
-        pub fn new<S1: AsRef<str>, A: Action, S2: AsRef<str>>(
+        pub fn new_boxed_action<S1: Into<Cow<'static, str>>, S2: Into<Cow<'static, str>>>(
+            message: S1,
+            click_action: Box<dyn Action>,
+            click_message: S2,
+        ) -> Self {
+            Self {
+                message: message.into(),
+                click_action: Some(click_action),
+                click_message: Some(click_message.into()),
+            }
+        }
+
+        pub fn new<S1: Into<Cow<'static, str>>, A: Action, S2: Into<Cow<'static, str>>>(
             message: S1,
             click_action: A,
             click_message: S2,
         ) -> Self {
             Self {
-                message: message.as_ref().to_string(),
+                message: message.into(),
                 click_action: Some(Box::new(click_action) as Box<dyn Action>),
-                click_message: Some(click_message.as_ref().to_string()),
+                click_message: Some(click_message.into()),
             }
         }
 
@@ -209,6 +240,8 @@ pub mod simple_message_notification {
                 .map(|action| action.boxed_clone());
             let click_message = self.click_message.as_ref().map(|message| message.clone());
             let message = self.message.clone();
+
+            let has_click_action = click_action.is_some();
 
             MouseEventHandler::<MessageNotificationTag>::new(0, cx, |state, cx| {
                 Flex::column()
@@ -243,6 +276,7 @@ pub mod simple_message_notification {
                                 .on_click(MouseButton::Left, move |_, cx| {
                                     cx.dispatch_action(CancelMessageNotification)
                                 })
+                                .with_cursor_style(CursorStyle::PointingHand)
                                 .aligned()
                                 .constrained()
                                 .with_height(
@@ -259,9 +293,13 @@ pub mod simple_message_notification {
                         let style = theme.action_message.style_for(state, false);
                         if let Some(click_message) = click_message {
                             Some(
-                                Text::new(click_message, style.text.clone())
-                                    .contained()
-                                    .with_style(style.container)
+                                Flex::row()
+                                    .with_child(
+                                        Text::new(click_message, style.text.clone())
+                                            .contained()
+                                            .with_style(style.container)
+                                            .boxed(),
+                                    )
                                     .boxed(),
                             )
                         } else {
@@ -272,11 +310,19 @@ pub mod simple_message_notification {
                     .contained()
                     .boxed()
             })
-            .with_cursor_style(CursorStyle::PointingHand)
+            // Since we're not using a proper overlay, we have to capture these extra events
+            .on_down(MouseButton::Left, |_, _| {})
+            .on_up(MouseButton::Left, |_, _| {})
             .on_click(MouseButton::Left, move |_, cx| {
                 if let Some(click_action) = click_action.as_ref() {
-                    cx.dispatch_any_action(click_action.boxed_clone())
+                    cx.dispatch_any_action(click_action.boxed_clone());
+                    cx.dispatch_action(CancelMessageNotification)
                 }
+            })
+            .with_cursor_style(if has_click_action {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::Arrow
             })
             .boxed()
         }

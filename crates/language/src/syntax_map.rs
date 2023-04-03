@@ -1,5 +1,6 @@
 use crate::{Grammar, InjectionConfig, Language, LanguageRegistry};
 use collections::HashMap;
+use futures::FutureExt;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::{
@@ -165,6 +166,7 @@ struct ParseStep {
     mode: ParseMode,
 }
 
+#[derive(Debug)]
 enum ParseStepLanguage {
     Loaded { language: Arc<Language> },
     Pending { name: Arc<str> },
@@ -381,11 +383,11 @@ impl SyntaxSnapshot {
                 cursor.next(text);
                 while let Some(layer) = cursor.item() {
                     let SyntaxLayerContent::Pending { language_name } = &layer.content else { unreachable!() };
-                    if {
-                        let language_registry = &registry;
-                        language_registry.language_for_name_or_extension(language_name)
-                    }
-                    .is_some()
+                    if registry
+                        .language_for_name_or_extension(language_name)
+                        .now_or_never()
+                        .and_then(|language| language.ok())
+                        .is_some()
                     {
                         resolved_injection_ranges.push(layer.range.to_offset(text));
                     }
@@ -514,15 +516,32 @@ impl SyntaxSnapshot {
                     let Some(grammar) = language.grammar() else { continue };
                     let tree;
                     let changed_ranges;
+
                     let mut included_ranges = step.included_ranges;
+                    for range in &mut included_ranges {
+                        range.start_byte -= step_start_byte;
+                        range.end_byte -= step_start_byte;
+                        range.start_point = (Point::from_ts_point(range.start_point)
+                            - step_start_point)
+                            .to_ts_point();
+                        range.end_point = (Point::from_ts_point(range.end_point)
+                            - step_start_point)
+                            .to_ts_point();
+                    }
+
                     if let Some(SyntaxLayerContent::Parsed { tree: old_tree, .. }) =
                         old_layer.map(|layer| &layer.content)
                     {
                         if let ParseMode::Combined {
-                            parent_layer_changed_ranges,
+                            mut parent_layer_changed_ranges,
                             ..
                         } = step.mode
                         {
+                            for range in &mut parent_layer_changed_ranges {
+                                range.start -= step_start_byte;
+                                range.end -= step_start_byte;
+                            }
+
                             included_ranges = splice_included_ranges(
                                 old_tree.included_ranges(),
                                 &parent_layer_changed_ranges,
@@ -534,7 +553,6 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            step_start_point,
                             included_ranges,
                             Some(old_tree.clone()),
                         );
@@ -551,7 +569,6 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            step_start_point,
                             included_ranges,
                             None,
                         );
@@ -1060,17 +1077,9 @@ fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
-    start_point: Point,
-    mut ranges: Vec<tree_sitter::Range>,
+    ranges: Vec<tree_sitter::Range>,
     old_tree: Option<Tree>,
 ) -> Tree {
-    for range in &mut ranges {
-        range.start_byte -= start_byte;
-        range.end_byte -= start_byte;
-        range.start_point = (Point::from_ts_point(range.start_point) - start_point).to_ts_point();
-        range.end_point = (Point::from_ts_point(range.end_point) - start_point).to_ts_point();
-    }
-
     PARSER.with(|parser| {
         let mut parser = parser.borrow_mut();
         let mut chunks = text.chunks_in_range(start_byte..text.len());
@@ -1108,7 +1117,10 @@ fn get_injections(
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
-            if let Some(language) = language_registry.language_for_name_or_extension(language_name)
+            if let Some(language) = language_registry
+                .language_for_name_or_extension(language_name)
+                .now_or_never()
+                .and_then(|language| language.ok())
             {
                 combined_injection_ranges.insert(language, Vec::new());
             }
@@ -1154,10 +1166,10 @@ fn get_injections(
             };
 
             if let Some(language_name) = language_name {
-                let language = {
-                    let language_name: &str = &language_name;
-                    language_registry.language_for_name_or_extension(language_name)
-                };
+                let language = language_registry
+                    .language_for_name_or_extension(&language_name)
+                    .now_or_never()
+                    .and_then(|language| language.ok());
                 let range = text.anchor_before(step_range.start)..text.anchor_after(step_range.end);
                 if let Some(language) = language {
                     if combined {
@@ -2208,6 +2220,37 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_combined_injections_inside_injections() {
+        let (_buffer, _syntax_map) = test_edit_sequence(
+            "Markdown",
+            &[
+                r#"
+                      here is some ERB code:
+
+                      ```erb
+                      <ul>
+                        <% people.each do |person| %>
+                          <li><%= person.name %></li>
+                        <% end %>
+                      </ul>
+                      ```
+                "#,
+                r#"
+                    here is some ERB code:
+
+                    ```erb
+                    <ul>
+                      <% people«2».each do |person| %>
+                        <li><%= person.name %></li>
+                      <% end %>
+                    </ul>
+                    ```
+                "#,
+            ],
+        );
+    }
+
     #[gpui::test(iterations = 50)]
     fn test_random_syntax_map_edits(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
@@ -2483,7 +2526,11 @@ mod tests {
         registry.add(Arc::new(html_lang()));
         registry.add(Arc::new(erb_lang()));
         registry.add(Arc::new(markdown_lang()));
-        let language = registry.language_for_name(language_name).unwrap();
+        let language = registry
+            .language_for_name(language_name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         let mut buffer = Buffer::new(0, 0, Default::default());
 
         let mut mutated_syntax_map = SyntaxMap::new();

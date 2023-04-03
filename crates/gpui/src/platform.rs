@@ -9,7 +9,10 @@ pub mod current {
 
 use crate::{
     executor,
-    fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
+    fonts::{
+        Features as FontFeatures, FontId, GlyphId, Metrics as FontMetrics,
+        Properties as FontProperties,
+    },
     geometry::{
         rect::{RectF, RectI},
         vector::Vector2F,
@@ -58,7 +61,7 @@ pub trait Platform: Send + Sync {
         options: WindowOptions,
         executor: Rc<executor::Foreground>,
     ) -> Box<dyn Window>;
-    fn key_window_id(&self) -> Option<usize>;
+    fn main_window_id(&self) -> Option<usize>;
 
     fn add_status_item(&self) -> Box<dyn Window>;
 
@@ -87,6 +90,10 @@ pub(crate) trait ForegroundPlatform {
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
+
+    /// Handle the application being re-activated with no windows open.
+    fn on_reopen(&self, callback: Box<dyn FnMut()>);
+
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>);
@@ -335,7 +342,7 @@ pub enum RasterizationOptions {
 
 pub trait FontSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
-    fn load_family(&self, name: &str) -> anyhow::Result<Vec<FontId>>;
+    fn load_family(&self, name: &str, features: &FontFeatures) -> anyhow::Result<Vec<FontId>>;
     fn select_font(
         &self,
         font_ids: &[FontId],

@@ -176,7 +176,10 @@
                 {
                     "focus": false
                 }
-            ]
+            ],
+            "alt-]": "copilot::NextSuggestion",
+            "alt-[": "copilot::PreviousSuggestion",
+            "alt-\\": "copilot::Toggle"
         }
     },
     {
@@ -228,6 +231,7 @@
                     "replace_newest": true
                 }
             ],
+            "cmd-k cmd-i": "editor::Hover",
             "cmd-/": [
                 "editor::ToggleComments",
                 {
@@ -248,7 +252,8 @@
             "alt-cmd-[": "editor::Fold",
             "alt-cmd-]": "editor::UnfoldLines",
             "ctrl-space": "editor::ShowCompletions",
-            "cmd-.": "editor::ToggleCodeActions"
+            "cmd-.": "editor::ToggleCodeActions",
+            "alt-cmd-r": "editor::RevealInFinder"
         }
     },
     {
@@ -352,7 +357,8 @@
             "cmd-shift-p": "command_palette::Toggle",
             "cmd-shift-m": "diagnostics::Deploy",
             "cmd-shift-e": "project_panel::ToggleFocus",
-            "cmd-alt-s": "workspace::SaveAll"
+            "cmd-alt-s": "workspace::SaveAll",
+            "cmd-k m": "language_selector::Toggle"
         }
     },
     // Bindings from Sublime Text
@@ -418,7 +424,7 @@
     {
         "bindings": {
             "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
-            "cmd-shift-c": "collab::ToggleCollaborationMenu",
+            "cmd-shift-c": "collab::ToggleContactsMenu",
             "cmd-alt-i": "zed::DebugElements"
         }
     },
@@ -456,7 +462,7 @@
         }
     },
     {
-        "context": "Dock",
+        "context": "Pane && docked",
         "bindings": {
             "shift-escape": "dock::HideDock",
             "cmd-escape": "dock::RemoveTabFromDock"
@@ -472,7 +478,8 @@
             "cmd-v": "project_panel::Paste",
             "cmd-alt-c": "project_panel::CopyPath",
             "f2": "project_panel::Rename",
-            "backspace": "project_panel::Delete"
+            "backspace": "project_panel::Delete",
+            "alt-cmd-r": "project_panel::RevealInFinder"
         }
     },
     {

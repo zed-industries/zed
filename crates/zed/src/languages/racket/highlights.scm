@@ -3,7 +3,7 @@
 [(string)
  (here_string)
  (byte_string)] @string
-(regex) @string.special
+(regex) @string.regex
 (escape_sequence) @escape
 
 [(comment)
@@ -19,7 +19,7 @@
 (quote . (symbol)) @constant
 
 (extension) @keyword
-(lang_name) @variable.builtin
+(lang_name) @variable.special
 
 ((symbol) @operator
  (#match? @operator "^(\\+|-|\\*|/|=|>|<|>=|<=)$"))
