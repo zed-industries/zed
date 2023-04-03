@@ -5858,7 +5858,7 @@ impl Project {
         &mut self,
         project_transaction: ProjectTransaction,
         peer_id: proto::PeerId,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> proto::ProjectTransaction {
         let mut serialized_transaction = proto::ProjectTransaction {
             buffer_ids: Default::default(),
@@ -5916,27 +5916,27 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         peer_id: proto::PeerId,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> u64 {
         let buffer_id = buffer.read(cx).remote_id();
         if let Some(project_id) = self.remote_id() {
             let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
             if shared_buffers.insert(buffer_id) {
-                let buffer = buffer.read(cx);
-                let state = buffer.to_proto();
-                let operations = buffer.serialize_ops(None, cx);
+                let buffer = buffer.clone();
+                let operations = buffer.read(cx).serialize_ops(None, cx);
                 let client = self.client.clone();
-                cx.background()
-                    .spawn(
-                        async move {
-                            let operations = operations.await;
+                cx.spawn(move |cx| async move {
+                    let operations = operations.await;
+                    let state = buffer.read_with(&cx, |buffer, _| buffer.to_proto());
 
-                            client.send(proto::CreateBufferForPeer {
-                                project_id,
-                                peer_id: Some(peer_id),
-                                variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
-                            })?;
+                    client.send(proto::CreateBufferForPeer {
+                        project_id,
+                        peer_id: Some(peer_id),
+                        variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
+                    })?;
 
+                    cx.background()
+                        .spawn(async move {
                             let mut chunks = split_operations(operations).peekable();
                             while let Some(chunk) = chunks.next() {
                                 let is_last = chunks.peek().is_none();
@@ -5952,12 +5952,11 @@ impl Project {
                                     )),
                                 })?;
                             }
-
                             anyhow::Ok(())
-                        }
-                        .log_err(),
-                    )
-                    .detach();
+                        })
+                        .await
+                })
+                .detach()
             }
         }
 
@@ -6231,7 +6230,12 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&envelope.payload.buffer_id)
-                .and_then(|buffer| buffer.upgrade(cx));
+                .and_then(|buffer| buffer.upgrade(cx))
+                .or_else(|| {
+                    this.incomplete_remote_buffers
+                        .get(&envelope.payload.buffer_id)
+                        .and_then(|b| b.clone())
+                });
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_save(version, fingerprint, mtime, cx);

@@ -4,7 +4,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
-use gpui::{AppContext, AsyncAppContext, ModelHandle};
+use gpui::{AppContext, AsyncAppContext, ModelHandle, MutableAppContext};
 use language::{
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -49,7 +49,7 @@ pub(crate) trait LspCommand: 'static + Sized {
         project: &mut Project,
         peer_id: PeerId,
         buffer_version: &clock::Global,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> <Self::ProtoRequest as proto::RequestMessage>::Response;
     async fn response_from_proto(
         self,
@@ -175,7 +175,7 @@ impl LspCommand for PrepareRename {
         _: &mut Project,
         _: PeerId,
         buffer_version: &clock::Global,
-        _: &AppContext,
+        _: &mut MutableAppContext,
     ) -> proto::PrepareRenameResponse {
         proto::PrepareRenameResponse {
             can_rename: range.is_some(),
@@ -296,7 +296,7 @@ impl LspCommand for PerformRename {
         project: &mut Project,
         peer_id: PeerId,
         _: &clock::Global,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> proto::PerformRenameResponse {
         let transaction = project.serialize_project_transaction_for_peer(response, peer_id, cx);
         proto::PerformRenameResponse {
@@ -391,7 +391,7 @@ impl LspCommand for GetDefinition {
         project: &mut Project,
         peer_id: PeerId,
         _: &clock::Global,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> proto::GetDefinitionResponse {
         let links = location_links_to_proto(response, project, peer_id, cx);
         proto::GetDefinitionResponse { links }
@@ -477,7 +477,7 @@ impl LspCommand for GetTypeDefinition {
         project: &mut Project,
         peer_id: PeerId,
         _: &clock::Global,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> proto::GetTypeDefinitionResponse {
         let links = location_links_to_proto(response, project, peer_id, cx);
         proto::GetTypeDefinitionResponse { links }
@@ -658,7 +658,7 @@ fn location_links_to_proto(
     links: Vec<LocationLink>,
     project: &mut Project,
     peer_id: PeerId,
-    cx: &AppContext,
+    cx: &mut MutableAppContext,
 ) -> Vec<proto::LocationLink> {
     links
         .into_iter()
@@ -787,7 +787,7 @@ impl LspCommand for GetReferences {
         project: &mut Project,
         peer_id: PeerId,
         _: &clock::Global,
-        cx: &AppContext,
+        cx: &mut MutableAppContext,
     ) -> proto::GetReferencesResponse {
         let locations = response
             .into_iter()
@@ -928,7 +928,7 @@ impl LspCommand for GetDocumentHighlights {
         _: &mut Project,
         _: PeerId,
         _: &clock::Global,
-        _: &AppContext,
+        _: &mut MutableAppContext,
     ) -> proto::GetDocumentHighlightsResponse {
         let highlights = response
             .into_iter()
@@ -1130,7 +1130,7 @@ impl LspCommand for GetHover {
         _: &mut Project,
         _: PeerId,
         _: &clock::Global,
-        _: &AppContext,
+        _: &mut MutableAppContext,
     ) -> proto::GetHoverResponse {
         if let Some(response) = response {
             let (start, end) = if let Some(range) = response.range {

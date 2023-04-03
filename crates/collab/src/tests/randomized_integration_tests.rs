@@ -132,7 +132,7 @@ async fn test_random_collaboration(
         )
         .await;
         if !applied {
-            skipped.store(false, SeqCst);
+            skipped.store(true, SeqCst);
         }
     }
 
