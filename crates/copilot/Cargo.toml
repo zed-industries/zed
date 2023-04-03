@@ -19,7 +19,6 @@ lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
 client = { path = "../client" }
-workspace = { path = "../workspace" }
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"
 anyhow = "1.0"
