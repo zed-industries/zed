@@ -522,6 +522,9 @@ impl Copilot {
         let language = snapshot.language_at(position);
         let language_name = language.map(|language| language.name());
         let language_name = language_name.as_deref();
+        let tab_size = settings.tab_size(language_name);
+        let hard_tabs = settings.hard_tabs(language_name);
+        let language_id = id_for_language(language);
 
         let path;
         let relative_path;
@@ -537,22 +540,23 @@ impl Copilot {
             relative_path = PathBuf::new();
         }
 
-        let params = request::GetCompletionsParams {
-            doc: request::GetCompletionsDocument {
-                source: snapshot.text(),
-                tab_size: settings.tab_size(language_name).into(),
-                indent_size: 1,
-                insert_spaces: !settings.hard_tabs(language_name),
-                uri,
-                path: path.to_string_lossy().into(),
-                relative_path: relative_path.to_string_lossy().into(),
-                language_id: id_for_language(language),
-                position: point_to_lsp(position),
-                version: 0,
-            },
-        };
         cx.background().spawn(async move {
-            let result = server.request::<R>(params).await?;
+            let result = server
+                .request::<R>(request::GetCompletionsParams {
+                    doc: request::GetCompletionsDocument {
+                        source: snapshot.text(),
+                        tab_size: tab_size.into(),
+                        indent_size: 1,
+                        insert_spaces: !hard_tabs,
+                        uri,
+                        path: path.to_string_lossy().into(),
+                        relative_path: relative_path.to_string_lossy().into(),
+                        language_id,
+                        position: point_to_lsp(position),
+                        version: 0,
+                    },
+                })
+                .await?;
             let completions = result
                 .completions
                 .into_iter()

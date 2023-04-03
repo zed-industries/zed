@@ -171,6 +171,11 @@ impl SuggestionMap {
 
         (snapshot.clone(), suggestion_edits)
     }
+
+    pub fn has_suggestion(&self) -> bool {
+        let snapshot = self.0.lock();
+        snapshot.suggestion.is_some()
+    }
 }
 
 #[derive(Clone)]
