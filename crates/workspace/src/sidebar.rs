@@ -23,7 +23,7 @@ pub trait SidebarItemHandle {
     fn id(&self) -> usize;
     fn should_show_badge(&self, cx: &AppContext) -> bool;
     fn is_focused(&self, cx: &AppContext) -> bool;
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
 }
 
 impl<T> SidebarItemHandle for ViewHandle<T>
@@ -42,14 +42,14 @@ where
         ViewHandle::is_focused(self, cx) || self.read(cx).contains_focused_view(cx)
     }
 
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 }
 
 impl From<&dyn SidebarItemHandle> for AnyViewHandle {
     fn from(val: &dyn SidebarItemHandle) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }
 
@@ -192,7 +192,7 @@ impl View for Sidebar {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.sidebar;
-            ChildView::new(active_item.to_any(), cx)
+            ChildView::new(active_item.as_any(), cx)
                 .contained()
                 .with_style(style.container)
                 .with_resize_handle::<ResizeHandleTag, _>(

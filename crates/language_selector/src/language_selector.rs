@@ -121,7 +121,7 @@ impl View for LanguageSelector {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.picker.clone(), cx).boxed()
+        ChildView::new(&self.picker, cx).boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

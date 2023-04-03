@@ -651,7 +651,7 @@ impl Item for TerminalView {
                     project.create_terminal(cwd, window_id, cx)
                 })?;
 
-                Ok(cx.add_view(pane, |cx| TerminalView::new(terminal, workspace_id, cx)))
+                Ok(cx.add_view(&pane, |cx| TerminalView::new(terminal, workspace_id, cx)))
             })
         })
     }

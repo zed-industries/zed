@@ -85,7 +85,7 @@ impl CommandPalette {
             .unwrap_or_else(|| workspace.id());
 
         cx.as_mut().defer(move |cx| {
-            let this = cx.add_view(workspace.clone(), |cx| Self::new(focused_view_id, cx));
+            let this = cx.add_view(&workspace, |cx| Self::new(focused_view_id, cx));
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |_, cx| {
                     cx.subscribe(&this, Self::on_event).detach();
@@ -129,7 +129,7 @@ impl View for CommandPalette {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
-        ChildView::new(self.picker.clone(), cx).boxed()
+        ChildView::new(&self.picker, cx).boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -355,7 +355,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            cx.focus(editor.clone());
+            cx.focus(&editor);
             workspace.add_item(Box::new(editor.clone()), cx)
         });
 

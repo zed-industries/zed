@@ -602,16 +602,16 @@ impl Item for ProjectDiagnosticsEditor {
         ))
     }
 
-    fn act_as_type(
-        &self,
+    fn act_as_type<'a>(
+        &'a self,
         type_id: TypeId,
-        self_handle: &ViewHandle<Self>,
-        _: &AppContext,
-    ) -> Option<AnyViewHandle> {
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&AnyViewHandle> {
         if type_id == TypeId::of::<Self>() {
-            Some(self_handle.into())
+            Some(self_handle)
         } else if type_id == TypeId::of::<Editor>() {
-            Some((&self.editor).into())
+            Some(&self.editor)
         } else {
             None
         }

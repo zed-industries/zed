@@ -51,7 +51,7 @@ impl View for FileFinder {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.picker.clone(), cx).boxed()
+        ChildView::new(&self.picker, cx).boxed()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -352,8 +352,8 @@ mod tests {
             let active_item = active_pane.read(cx).active_item().unwrap();
             assert_eq!(
                 active_item
-                    .to_any()
-                    .downcast::<Editor>()
+                    .as_any()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),

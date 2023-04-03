@@ -255,7 +255,7 @@ impl Dock {
                 }
             } else {
                 if focus {
-                    cx.focus(pane);
+                    cx.focus(&pane);
                 }
             }
         } else if let Some(last_active_center_pane) = workspace
@@ -264,7 +264,7 @@ impl Dock {
             .and_then(|pane| pane.upgrade(cx))
         {
             if focus {
-                cx.focus(last_active_center_pane);
+                cx.focus(&last_active_center_pane);
             }
         }
         cx.emit(crate::Event::DockAnchorChanged);
@@ -347,7 +347,7 @@ impl Dock {
 
                     enum DockResizeHandle {}
 
-                    let resizable = Container::new(ChildView::new(self.pane.clone(), cx).boxed())
+                    let resizable = Container::new(ChildView::new(&self.pane, cx).boxed())
                         .with_style(panel_style)
                         .with_resize_handle::<DockResizeHandle, _>(
                             resize_side as usize,

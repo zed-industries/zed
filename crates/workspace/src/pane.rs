@@ -413,7 +413,7 @@ impl Pane {
         mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<()> {
-        cx.focus(pane.clone());
+        cx.focus(&pane);
 
         let to_load = pane.update(cx, |pane, cx| {
             loop {
@@ -596,7 +596,7 @@ impl Pane {
             // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
                 if existing_item_index != insertion_index {
-                    cx.reparent(&item);
+                    cx.reparent(item.as_any());
                     let existing_item_is_active = existing_item_index == pane.active_item_index;
 
                     // If the caller didn't specify a destination and the added item is already
@@ -626,7 +626,7 @@ impl Pane {
             });
         } else {
             pane.update(cx, |pane, cx| {
-                cx.reparent(&item);
+                cx.reparent(item.as_any());
                 pane.items.insert(insertion_index, item);
                 if insertion_index <= pane.active_item_index {
                     pane.active_item_index += 1;
@@ -649,7 +649,7 @@ impl Pane {
     pub fn items_of_type<T: View>(&self) -> impl '_ + Iterator<Item = ViewHandle<T>> {
         self.items
             .iter()
-            .filter_map(|item| item.to_any().downcast())
+            .filter_map(|item| item.as_any().clone().downcast())
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemHandle>> {
@@ -1048,7 +1048,7 @@ impl Pane {
 
     pub fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
-            cx.focus(active_item);
+            cx.focus(active_item.as_any());
         }
     }
 
@@ -1091,7 +1091,7 @@ impl Pane {
             cx,
         );
 
-        cx.focus(to);
+        cx.focus(&to);
     }
 
     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
@@ -1556,7 +1556,7 @@ impl View for Pane {
                                                     ChildView::new(&toolbar, cx).expanded().boxed()
                                                 }))
                                                 .with_child(
-                                                    ChildView::new(active_item, cx)
+                                                    ChildView::new(active_item.as_any(), cx)
                                                         .flex(1., true)
                                                         .boxed(),
                                                 )
@@ -1615,14 +1615,14 @@ impl View for Pane {
                     self.last_focused_view_by_item.get(&active_item.id())
                 {
                     if let Some(last_focused_view) = weak_last_focused_view.upgrade(cx) {
-                        cx.focus(last_focused_view);
+                        cx.focus(&last_focused_view);
                         return;
                     } else {
                         self.last_focused_view_by_item.remove(&active_item.id());
                     }
                 }
 
-                cx.focus(active_item);
+                cx.focus(active_item.as_any());
             } else if focused != self.tab_bar_context_menu.handle {
                 self.last_focused_view_by_item
                     .insert(active_item.id(), focused.downgrade());
@@ -1676,7 +1676,7 @@ fn render_tab_bar_button<A: Action + Clone>(
             .boxed(),
         )
         .with_children(
-            context_menu.map(|menu| ChildView::new(menu, cx).aligned().bottom().right().boxed()),
+            context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right().boxed()),
         )
         .flex(1., false)
         .boxed()
@@ -2278,8 +2278,8 @@ mod tests {
                 .enumerate()
                 .map(|(ix, item)| {
                     let mut state = item
-                        .to_any()
-                        .downcast::<TestItem>()
+                        .as_any()
+                        .downcast_ref::<TestItem>()
                         .unwrap()
                         .read(cx)
                         .label

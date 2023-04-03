@@ -835,7 +835,7 @@ impl Item for Editor {
                         .context("Project item at stored path was not a buffer")?;
 
                     Ok(cx.update(|cx| {
-                        cx.add_view(pane, |cx| {
+                        cx.add_view(&pane, |cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor

@@ -213,13 +213,13 @@ fn downcast_matches<T: Any + Clone>(matches: &Vec<Box<dyn Any + Send>>) -> Vec<T
 
 impl From<Box<dyn SearchableItemHandle>> for AnyViewHandle {
     fn from(this: Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.as_any().clone()
     }
 }
 
 impl From<&Box<dyn SearchableItemHandle>> for AnyViewHandle {
     fn from(this: &Box<dyn SearchableItemHandle>) -> Self {
-        this.to_any()
+        this.as_any().clone()
     }
 }
 
@@ -234,7 +234,7 @@ impl Eq for Box<dyn SearchableItemHandle> {}
 pub trait WeakSearchableItemHandle: WeakItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
 
-    fn to_any(self) -> AnyWeakViewHandle;
+    fn into_any(self) -> AnyWeakViewHandle;
 }
 
 impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
@@ -242,8 +242,8 @@ impl<T: SearchableItem> WeakSearchableItemHandle for WeakViewHandle<T> {
         Some(Box::new(self.upgrade(cx)?))
     }
 
-    fn to_any(self) -> AnyWeakViewHandle {
-        self.into()
+    fn into_any(self) -> AnyWeakViewHandle {
+        self.into_any()
     }
 }
 

@@ -26,7 +26,7 @@ pub trait ToolbarItemView: View {
 
 trait ToolbarItemViewHandle {
     fn id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -71,7 +71,7 @@ impl View for Toolbar {
             match *position {
                 ToolbarItemLocation::Hidden => {}
                 ToolbarItemLocation::PrimaryLeft { flex } => {
-                    let left_item = ChildView::new(item.as_ref(), cx)
+                    let left_item = ChildView::new(item.as_any(), cx)
                         .aligned()
                         .contained()
                         .with_margin_right(spacing);
@@ -82,7 +82,7 @@ impl View for Toolbar {
                     }
                 }
                 ToolbarItemLocation::PrimaryRight { flex } => {
-                    let right_item = ChildView::new(item.as_ref(), cx)
+                    let right_item = ChildView::new(item.as_any(), cx)
                         .aligned()
                         .contained()
                         .with_margin_left(spacing)
@@ -95,7 +95,7 @@ impl View for Toolbar {
                 }
                 ToolbarItemLocation::Secondary => {
                     secondary_item = Some(
-                        ChildView::new(item.as_ref(), cx)
+                        ChildView::new(item.as_any(), cx)
                             .constrained()
                             .with_height(theme.height)
                             .boxed(),
@@ -272,7 +272,7 @@ impl Toolbar {
     pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<ViewHandle<T>> {
         self.items
             .iter()
-            .find_map(|(item, _)| item.to_any().downcast())
+            .find_map(|(item, _)| item.as_any().clone().downcast())
     }
 
     pub fn hidden(&self) -> bool {
@@ -285,8 +285,8 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
         self.id()
     }
 
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 
     fn set_active_pane_item(
@@ -306,6 +306,6 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
 
 impl From<&dyn ToolbarItemViewHandle> for AnyViewHandle {
     fn from(val: &dyn ToolbarItemViewHandle) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }

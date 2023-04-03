@@ -638,7 +638,7 @@ impl<'a> LayoutContext<'a> {
             (Some(layout_parent), Some(ParentId::View(app_parent))) => {
                 if layout_parent != app_parent {
                     panic!(
-                        "View {} was laid out with parent {} when it was constructed with parent {}", 
+                        "View {} was laid out with parent {} when it was constructed with parent {}",
                         print_error(view_id),
                         print_error(*layout_parent),
                         print_error(*app_parent))
@@ -1059,8 +1059,7 @@ pub struct ChildView {
 }
 
 impl ChildView {
-    pub fn new(view: impl Into<AnyViewHandle>, cx: &AppContext) -> Self {
-        let view = view.into();
+    pub fn new(view: &AnyViewHandle, cx: &AppContext) -> Self {
         let view_name = cx.view_ui_name(view.window_id(), view.id()).unwrap();
         Self {
             view: view.downgrade(),

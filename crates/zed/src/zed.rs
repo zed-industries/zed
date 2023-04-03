@@ -299,7 +299,7 @@ pub fn initialize_workspace(
 
     let collab_titlebar_item =
         cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, &app_state.user_store, cx));
-    workspace.set_titlebar_item(collab_titlebar_item, cx);
+    workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
     workspace.left_sidebar().update(cx, |sidebar, cx| {
@@ -1020,8 +1020,8 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
-                    .to_any()
-                    .downcast::<Editor>()
+                    .as_any()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),
@@ -1056,8 +1056,8 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
-                    .to_any()
-                    .downcast::<Editor>()
+                    .as_any()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),
@@ -1092,8 +1092,8 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
-                    .to_any()
-                    .downcast::<Editor>()
+                    .as_any()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),
@@ -1142,8 +1142,8 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
-                    .to_any()
-                    .downcast::<Editor>()
+                    .as_any()
+                    .downcast_ref::<Editor>()
                     .unwrap()
                     .read(cx)
                     .title(cx),

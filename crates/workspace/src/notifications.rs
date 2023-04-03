@@ -16,7 +16,7 @@ pub trait Notification: View {
 
 pub trait NotificationHandle {
     fn id(&self) -> usize;
-    fn to_any(&self) -> AnyViewHandle;
+    fn as_any(&self) -> &AnyViewHandle;
 }
 
 impl<T: Notification> NotificationHandle for ViewHandle<T> {
@@ -24,14 +24,14 @@ impl<T: Notification> NotificationHandle for ViewHandle<T> {
         self.id()
     }
 
-    fn to_any(&self) -> AnyViewHandle {
-        self.into()
+    fn as_any(&self) -> &AnyViewHandle {
+        self
     }
 }
 
 impl From<&dyn NotificationHandle> for AnyViewHandle {
     fn from(val: &dyn NotificationHandle) -> Self {
-        val.to_any()
+        val.as_any().clone()
     }
 }
 
