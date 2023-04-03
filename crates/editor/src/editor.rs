@@ -2922,9 +2922,11 @@ impl Editor {
     fn refresh_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
+
         if self.context_menu.is_some() {
             self.display_map
                 .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+            cx.notify();
         } else if let Some(text) = self
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
@@ -2938,11 +2940,12 @@ impl Editor {
                     cx,
                 )
             });
-        } else {
+            cx.notify();
+        } else if self.has_active_copilot_suggestion(cx) {
             self.display_map
                 .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+            cx.notify();
         }
-        cx.notify();
     }
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
