@@ -509,7 +509,7 @@ pub struct Editor {
     hover_state: HoverState,
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    pub copilot_state: CopilotState,
+    copilot_state: CopilotState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1255,6 +1255,7 @@ impl Editor {
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                cx.observe_global::<Settings, _>(Self::on_settings_changed),
             ],
         };
         this.end_selection(cx);
@@ -2772,8 +2773,8 @@ impl Editor {
 
     fn refresh_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let copilot = Copilot::global(cx)?;
-
-        if self.mode != EditorMode::Full {
+        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+            self.clear_copilot_suggestions(cx);
             return None;
         }
 
@@ -2789,19 +2790,12 @@ impl Editor {
         let language_name = snapshot
             .language_at(selection.start)
             .map(|language| language.name());
-
-        let copilot_enabled = cx.global::<Settings>().copilot_on(language_name.as_deref());
-
-        if !copilot_enabled {
+        if !cx.global::<Settings>().copilot_on(language_name.as_deref()) {
+            self.clear_copilot_suggestions(cx);
             return None;
         }
 
         self.refresh_active_copilot_suggestion(cx);
-
-        if !copilot.read(cx).status().is_authorized() {
-            return None;
-        }
-
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
@@ -6442,6 +6436,10 @@ impl Editor {
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
         cx.notify();
+    }
+
+    fn on_settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.refresh_copilot_suggestions(cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
