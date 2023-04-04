@@ -801,6 +801,8 @@ impl Fs for FakeFs {
     }
 
     async fn rename(&self, old_path: &Path, new_path: &Path, options: RenameOptions) -> Result<()> {
+        self.simulate_random_delay().await;
+
         let old_path = normalize_path(old_path);
         let new_path = normalize_path(new_path);
         let mut state = self.state.lock();
@@ -831,6 +833,8 @@ impl Fs for FakeFs {
     }
 
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()> {
+        self.simulate_random_delay().await;
+
         let source = normalize_path(source);
         let target = normalize_path(target);
         let mut state = self.state.lock();
@@ -866,6 +870,8 @@ impl Fs for FakeFs {
     }
 
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.simulate_random_delay().await;
+
         let path = normalize_path(path);
         let parent_path = path
             .parent()
@@ -901,6 +907,8 @@ impl Fs for FakeFs {
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.simulate_random_delay().await;
+
         let path = normalize_path(path);
         let parent_path = path
             .parent()
