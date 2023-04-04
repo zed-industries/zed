@@ -335,6 +335,7 @@ impl LanguageServer {
                     did_change_configuration: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
+                    workspace_folders: Some(true),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
