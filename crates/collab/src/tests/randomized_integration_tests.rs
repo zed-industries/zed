@@ -34,11 +34,13 @@ use std::{
 use util::ResultExt;
 
 lazy_static::lazy_static! {
+    static ref PLAN_LOAD_PATH: Option<PathBuf> = path_env_var("LOAD_PLAN");
+    static ref PLAN_SAVE_PATH: Option<PathBuf> = path_env_var("SAVE_PLAN");
     static ref LOADED_PLAN_JSON: Mutex<Option<Vec<u8>>> = Default::default();
-    static ref DID_SAVE_PLAN_JSON: AtomicBool = Default::default();
+    static ref PLAN: Mutex<Option<Arc<Mutex<TestPlan>>>> = Default::default();
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 100, on_failure = "on_failure")]
 async fn test_random_collaboration(
     cx: &mut TestAppContext,
     deterministic: Arc<Deterministic>,
@@ -52,9 +54,6 @@ async fn test_random_collaboration(
     let max_operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
-
-    let plan_load_path = path_env_var("LOAD_PLAN");
-    let plan_save_path = path_env_var("SAVE_PLAN");
 
     let mut server = TestServer::start(&deterministic).await;
     let db = server.app_state.db.clone();
@@ -103,7 +102,7 @@ async fn test_random_collaboration(
 
     let plan = Arc::new(Mutex::new(TestPlan::new(rng, users, max_operations)));
 
-    if let Some(path) = &plan_load_path {
+    if let Some(path) = &*PLAN_LOAD_PATH {
         let json = LOADED_PLAN_JSON
             .lock()
             .get_or_insert_with(|| {
@@ -113,6 +112,8 @@ async fn test_random_collaboration(
             .clone();
         plan.lock().deserialize(json);
     }
+
+    PLAN.lock().replace(plan.clone());
 
     let mut clients = Vec::new();
     let mut client_tasks = Vec::new();
@@ -142,225 +143,7 @@ async fn test_random_collaboration(
     deterministic.finish_waiting();
     deterministic.run_until_parked();
 
-    if let Some(path) = &plan_save_path {
-        if !DID_SAVE_PLAN_JSON.swap(true, SeqCst) {
-            eprintln!("saved test plan to path {:?}", path);
-            std::fs::write(path, plan.lock().serialize()).unwrap();
-        }
-    }
-
-    for (client, client_cx) in &clients {
-        for guest_project in client.remote_projects().iter() {
-            guest_project.read_with(client_cx, |guest_project, cx| {
-                let host_project = clients.iter().find_map(|(client, cx)| {
-                    let project = client
-                        .local_projects()
-                        .iter()
-                        .find(|host_project| {
-                            host_project.read_with(cx, |host_project, _| {
-                                host_project.remote_id() == guest_project.remote_id()
-                            })
-                        })?
-                        .clone();
-                    Some((project, cx))
-                });
-
-                if !guest_project.is_read_only() {
-                    if let Some((host_project, host_cx)) = host_project {
-                        let host_worktree_snapshots =
-                            host_project.read_with(host_cx, |host_project, cx| {
-                                host_project
-                                    .worktrees(cx)
-                                    .map(|worktree| {
-                                        let worktree = worktree.read(cx);
-                                        (worktree.id(), worktree.snapshot())
-                                    })
-                                    .collect::<BTreeMap<_, _>>()
-                            });
-                        let guest_worktree_snapshots = guest_project
-                            .worktrees(cx)
-                            .map(|worktree| {
-                                let worktree = worktree.read(cx);
-                                (worktree.id(), worktree.snapshot())
-                            })
-                            .collect::<BTreeMap<_, _>>();
-
-                        assert_eq!(
-                            guest_worktree_snapshots.keys().collect::<Vec<_>>(),
-                            host_worktree_snapshots.keys().collect::<Vec<_>>(),
-                            "{} has different worktrees than the host",
-                            client.username
-                        );
-
-                        for (id, host_snapshot) in &host_worktree_snapshots {
-                            let guest_snapshot = &guest_worktree_snapshots[id];
-                            assert_eq!(
-                                guest_snapshot.root_name(),
-                                host_snapshot.root_name(),
-                                "{} has different root name than the host for worktree {}",
-                                client.username,
-                                id
-                            );
-                            assert_eq!(
-                                guest_snapshot.abs_path(),
-                                host_snapshot.abs_path(),
-                                "{} has different abs path than the host for worktree {}",
-                                client.username,
-                                id
-                            );
-                            assert_eq!(
-                                guest_snapshot.entries(false).collect::<Vec<_>>(),
-                                host_snapshot.entries(false).collect::<Vec<_>>(),
-                                "{} has different snapshot than the host for worktree {:?} and project {:?}",
-                                client.username,
-                                host_snapshot.abs_path(),
-                                host_project.read_with(host_cx, |project, _| project.remote_id())
-                            );
-                            assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id(),
-                                "{} has different scan id than the host for worktree {:?} and project {:?}",
-                                client.username,
-                                host_snapshot.abs_path(),
-                                host_project.read_with(host_cx, |project, _| project.remote_id())
-                            );
-                        }
-                    }
-                }
-
-                guest_project.check_invariants(cx);
-            });
-        }
-
-        let buffers = client.buffers().clone();
-        for (guest_project, guest_buffers) in &buffers {
-            let project_id = if guest_project.read_with(client_cx, |project, _| {
-                project.is_local() || project.is_read_only()
-            }) {
-                continue;
-            } else {
-                guest_project
-                    .read_with(client_cx, |project, _| project.remote_id())
-                    .unwrap()
-            };
-            let guest_user_id = client.user_id().unwrap();
-
-            let host_project = clients.iter().find_map(|(client, cx)| {
-                let project = client
-                    .local_projects()
-                    .iter()
-                    .find(|host_project| {
-                        host_project.read_with(cx, |host_project, _| {
-                            host_project.remote_id() == Some(project_id)
-                        })
-                    })?
-                    .clone();
-                Some((client.user_id().unwrap(), project, cx))
-            });
-
-            let (host_user_id, host_project, host_cx) =
-                if let Some((host_user_id, host_project, host_cx)) = host_project {
-                    (host_user_id, host_project, host_cx)
-                } else {
-                    continue;
-                };
-
-            for guest_buffer in guest_buffers {
-                let buffer_id = guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
-                let host_buffer = host_project.read_with(host_cx, |project, cx| {
-                    project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
-                        panic!(
-                            "host does not have buffer for guest:{}, peer:{:?}, id:{}",
-                            client.username,
-                            client.peer_id(),
-                            buffer_id
-                        )
-                    })
-                });
-                let path = host_buffer
-                    .read_with(host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
-
-                assert_eq!(
-                    guest_buffer.read_with(client_cx, |buffer, _| buffer.deferred_ops_len()),
-                    0,
-                    "{}, buffer {}, path {:?} has deferred operations",
-                    client.username,
-                    buffer_id,
-                    path,
-                );
-                assert_eq!(
-                    guest_buffer.read_with(client_cx, |buffer, _| buffer.text()),
-                    host_buffer.read_with(host_cx, |buffer, _| buffer.text()),
-                    "{}, buffer {}, path {:?}, differs from the host's buffer",
-                    client.username,
-                    buffer_id,
-                    path
-                );
-
-                let host_file = host_buffer.read_with(host_cx, |b, _| b.file().cloned());
-                let guest_file = guest_buffer.read_with(client_cx, |b, _| b.file().cloned());
-                match (host_file, guest_file) {
-                    (Some(host_file), Some(guest_file)) => {
-                        assert_eq!(guest_file.path(), host_file.path());
-                        assert_eq!(guest_file.is_deleted(), host_file.is_deleted());
-                        assert_eq!(
-                            guest_file.mtime(),
-                            host_file.mtime(),
-                            "guest {} mtime does not match host {} for path {:?} in project {}",
-                            guest_user_id,
-                            host_user_id,
-                            guest_file.path(),
-                            project_id,
-                        );
-                    }
-                    (None, None) => {}
-                    (None, _) => panic!("host's file is None, guest's isn't"),
-                    (_, None) => panic!("guest's file is None, hosts's isn't"),
-                }
-
-                let host_diff_base =
-                    host_buffer.read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
-                let guest_diff_base = guest_buffer
-                    .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
-                assert_eq!(guest_diff_base, host_diff_base);
-
-                let host_saved_version =
-                    host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
-                let guest_saved_version =
-                    guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
-                assert_eq!(
-                    guest_saved_version, host_saved_version,
-                    "guest saved version does not match host's for path {path:?} in project {project_id}",
-                );
-
-                let host_saved_version_fingerprint =
-                    host_buffer.read_with(host_cx, |b, _| b.saved_version_fingerprint());
-                let guest_saved_version_fingerprint =
-                    guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
-                assert_eq!(
-                    guest_saved_version_fingerprint, host_saved_version_fingerprint,
-                    "guest's saved fingerprint does not match host's for path {path:?} in project {project_id}",
-                );
-
-                let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
-                let guest_saved_mtime = guest_buffer.read_with(client_cx, |b, _| b.saved_mtime());
-                assert_eq!(
-                    guest_saved_mtime, host_saved_mtime,
-                    "guest's saved mtime does not match host's for path {path:?} in project {project_id}",
-                );
-
-                let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
-                let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
-                assert_eq!(guest_is_dirty, host_is_dirty,
-                    "guest's dirty status does not match host's for path {path:?} in project {project_id}",
-                );
-
-                let host_has_conflict = host_buffer.read_with(host_cx, |b, _| b.has_conflict());
-                let guest_has_conflict = guest_buffer.read_with(client_cx, |b, _| b.has_conflict());
-                assert_eq!(guest_has_conflict, host_has_conflict,
-                    "guest's conflict status does not match host's for path {path:?} in project {project_id}",
-                );
-            }
-        }
-    }
+    check_consistency_between_clients(&clients);
 
     for (client, mut cx) in clients {
         cx.update(|cx| {
@@ -368,6 +151,15 @@ async fn test_random_collaboration(
             cx.set_global(Settings::test(cx));
             drop(client);
         });
+    }
+}
+
+fn on_failure() {
+    if let Some(plan) = PLAN.lock().clone() {
+        if let Some(path) = &*PLAN_SAVE_PATH {
+            eprintln!("saved test plan to path {:?}", path);
+            std::fs::write(path, plan.lock().serialize()).unwrap();
+        }
     }
 }
 
@@ -528,12 +320,13 @@ async fn apply_server_operation(
                 let Some(client_ix) = client_ix else { continue };
                 applied = true;
                 if let Err(err) = operation_channels[client_ix].unbounded_send(batch_id) {
-                    // panic!("error signaling user {}, client {}", user_id, client_ix);
+                    log::error!("error signaling user {user_id}: {err}");
                 }
             }
 
             if quiesce && applied {
                 deterministic.run_until_parked();
+                check_consistency_between_clients(&clients);
             }
 
             return applied;
@@ -994,6 +787,223 @@ async fn apply_client_operation(
         }
     }
     Ok(())
+}
+
+fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)]) {
+    for (client, client_cx) in clients {
+        for guest_project in client.remote_projects().iter() {
+            guest_project.read_with(client_cx, |guest_project, cx| {
+                let host_project = clients.iter().find_map(|(client, cx)| {
+                    let project = client
+                        .local_projects()
+                        .iter()
+                        .find(|host_project| {
+                            host_project.read_with(cx, |host_project, _| {
+                                host_project.remote_id() == guest_project.remote_id()
+                            })
+                        })?
+                        .clone();
+                    Some((project, cx))
+                });
+
+                if !guest_project.is_read_only() {
+                    if let Some((host_project, host_cx)) = host_project {
+                        let host_worktree_snapshots =
+                            host_project.read_with(host_cx, |host_project, cx| {
+                                host_project
+                                    .worktrees(cx)
+                                    .map(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        (worktree.id(), worktree.snapshot())
+                                    })
+                                    .collect::<BTreeMap<_, _>>()
+                            });
+                        let guest_worktree_snapshots = guest_project
+                            .worktrees(cx)
+                            .map(|worktree| {
+                                let worktree = worktree.read(cx);
+                                (worktree.id(), worktree.snapshot())
+                            })
+                            .collect::<BTreeMap<_, _>>();
+
+                        assert_eq!(
+                            guest_worktree_snapshots.values().map(|w| w.abs_path()).collect::<Vec<_>>(),
+                            host_worktree_snapshots.values().map(|w| w.abs_path()).collect::<Vec<_>>(),
+                            "{} has different worktrees than the host for project {:?}",
+                            client.username, guest_project.remote_id(),
+                        );
+
+                        for (id, host_snapshot) in &host_worktree_snapshots {
+                            let guest_snapshot = &guest_worktree_snapshots[id];
+                            assert_eq!(
+                                guest_snapshot.root_name(),
+                                host_snapshot.root_name(),
+                                "{} has different root name than the host for worktree {}, project {:?}",
+                                client.username,
+                                id,
+                                guest_project.remote_id(),
+                            );
+                            assert_eq!(
+                                guest_snapshot.abs_path(),
+                                host_snapshot.abs_path(),
+                                "{} has different abs path than the host for worktree {}, project: {:?}",
+                                client.username,
+                                id,
+                                guest_project.remote_id(),
+                            );
+                            assert_eq!(
+                                guest_snapshot.entries(false).collect::<Vec<_>>(),
+                                host_snapshot.entries(false).collect::<Vec<_>>(),
+                                "{} has different snapshot than the host for worktree {:?} and project {:?}",
+                                client.username,
+                                host_snapshot.abs_path(),
+                                guest_project.remote_id(),
+                            );
+                            assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id(),
+                                "{} has different scan id than the host for worktree {:?} and project {:?}",
+                                client.username,
+                                host_snapshot.abs_path(),
+                                guest_project.remote_id(),
+                            );
+                        }
+                    }
+                }
+
+                guest_project.check_invariants(cx);
+            });
+        }
+
+        let buffers = client.buffers().clone();
+        for (guest_project, guest_buffers) in &buffers {
+            let project_id = if guest_project.read_with(client_cx, |project, _| {
+                project.is_local() || project.is_read_only()
+            }) {
+                continue;
+            } else {
+                guest_project
+                    .read_with(client_cx, |project, _| project.remote_id())
+                    .unwrap()
+            };
+            let guest_user_id = client.user_id().unwrap();
+
+            let host_project = clients.iter().find_map(|(client, cx)| {
+                let project = client
+                    .local_projects()
+                    .iter()
+                    .find(|host_project| {
+                        host_project.read_with(cx, |host_project, _| {
+                            host_project.remote_id() == Some(project_id)
+                        })
+                    })?
+                    .clone();
+                Some((client.user_id().unwrap(), project, cx))
+            });
+
+            let (host_user_id, host_project, host_cx) =
+                if let Some((host_user_id, host_project, host_cx)) = host_project {
+                    (host_user_id, host_project, host_cx)
+                } else {
+                    continue;
+                };
+
+            for guest_buffer in guest_buffers {
+                let buffer_id = guest_buffer.read_with(client_cx, |buffer, _| buffer.remote_id());
+                let host_buffer = host_project.read_with(host_cx, |project, cx| {
+                    project.buffer_for_id(buffer_id, cx).unwrap_or_else(|| {
+                        panic!(
+                            "host does not have buffer for guest:{}, peer:{:?}, id:{}",
+                            client.username,
+                            client.peer_id(),
+                            buffer_id
+                        )
+                    })
+                });
+                let path = host_buffer
+                    .read_with(host_cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
+
+                assert_eq!(
+                    guest_buffer.read_with(client_cx, |buffer, _| buffer.deferred_ops_len()),
+                    0,
+                    "{}, buffer {}, path {:?} has deferred operations",
+                    client.username,
+                    buffer_id,
+                    path,
+                );
+                assert_eq!(
+                    guest_buffer.read_with(client_cx, |buffer, _| buffer.text()),
+                    host_buffer.read_with(host_cx, |buffer, _| buffer.text()),
+                    "{}, buffer {}, path {:?}, differs from the host's buffer",
+                    client.username,
+                    buffer_id,
+                    path
+                );
+
+                let host_file = host_buffer.read_with(host_cx, |b, _| b.file().cloned());
+                let guest_file = guest_buffer.read_with(client_cx, |b, _| b.file().cloned());
+                match (host_file, guest_file) {
+                    (Some(host_file), Some(guest_file)) => {
+                        assert_eq!(guest_file.path(), host_file.path());
+                        assert_eq!(guest_file.is_deleted(), host_file.is_deleted());
+                        assert_eq!(
+                            guest_file.mtime(),
+                            host_file.mtime(),
+                            "guest {} mtime does not match host {} for path {:?} in project {}",
+                            guest_user_id,
+                            host_user_id,
+                            guest_file.path(),
+                            project_id,
+                        );
+                    }
+                    (None, None) => {}
+                    (None, _) => panic!("host's file is None, guest's isn't"),
+                    (_, None) => panic!("guest's file is None, hosts's isn't"),
+                }
+
+                let host_diff_base =
+                    host_buffer.read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
+                let guest_diff_base = guest_buffer
+                    .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
+                assert_eq!(guest_diff_base, host_diff_base);
+
+                let host_saved_version =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
+                let guest_saved_version =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
+                assert_eq!(
+                    guest_saved_version, host_saved_version,
+                    "guest saved version does not match host's for path {path:?} in project {project_id}",
+                );
+
+                let host_saved_version_fingerprint =
+                    host_buffer.read_with(host_cx, |b, _| b.saved_version_fingerprint());
+                let guest_saved_version_fingerprint =
+                    guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
+                assert_eq!(
+                    guest_saved_version_fingerprint, host_saved_version_fingerprint,
+                    "guest's saved fingerprint does not match host's for path {path:?} in project {project_id}",
+                );
+
+                let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
+                let guest_saved_mtime = guest_buffer.read_with(client_cx, |b, _| b.saved_mtime());
+                assert_eq!(
+                    guest_saved_mtime, host_saved_mtime,
+                    "guest's saved mtime does not match host's for path {path:?} in project {project_id}",
+                );
+
+                let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
+                let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
+                assert_eq!(guest_is_dirty, host_is_dirty,
+                    "guest's dirty status does not match host's for path {path:?} in project {project_id}",
+                );
+
+                let host_has_conflict = host_buffer.read_with(host_cx, |b, _| b.has_conflict());
+                let guest_has_conflict = guest_buffer.read_with(client_cx, |b, _| b.has_conflict());
+                assert_eq!(guest_has_conflict, host_has_conflict,
+                    "guest's conflict status does not match host's for path {path:?} in project {project_id}",
+                );
+            }
+        }
+    }
 }
 
 struct TestPlan {
