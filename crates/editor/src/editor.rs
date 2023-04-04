@@ -2777,25 +2777,16 @@ impl Editor {
             self.clear_copilot_suggestions(cx);
             return None;
         }
+        self.refresh_active_copilot_suggestion(cx);
 
-        let selection = self.selections.newest_anchor();
         let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        let cursor = if selection.start == selection.end {
-            selection.start.bias_left(&snapshot)
-        } else {
-            return None;
-        };
-
-        let language_name = snapshot
-            .language_at(selection.start)
-            .map(|language| language.name());
+        let cursor = self.selections.newest_anchor().head();
+        let language_name = snapshot.language_at(cursor).map(|language| language.name());
         if !cx.global::<Settings>().copilot_on(language_name.as_deref()) {
             self.clear_copilot_suggestions(cx);
             return None;
         }
 
-        self.refresh_active_copilot_suggestion(cx);
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
@@ -2862,9 +2853,10 @@ impl Editor {
 
     fn refresh_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let cursor = self.selections.newest_anchor().head();
+        let selection = self.selections.newest_anchor();
+        let cursor = selection.head();
 
-        if self.context_menu.is_some() {
+        if self.context_menu.is_some() || selection.start != selection.end {
             self.display_map
                 .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
             cx.notify();
