@@ -2790,6 +2790,7 @@ impl Editor {
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
+            cx.background().timer(Duration::from_millis(75)).await;
             let (completion, completions_cycling) = copilot.update(&mut cx, |copilot, cx| {
                 (
                     copilot.completions(&buffer, buffer_position, cx),
