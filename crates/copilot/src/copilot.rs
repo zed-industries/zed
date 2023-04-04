@@ -18,6 +18,8 @@ use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
+use staff_mode::{not_staff_mode, staff_mode};
+
 use std::{
     ffi::OsString,
     ops::Range,
@@ -35,28 +37,57 @@ const COPILOT_NAMESPACE: &'static str = "copilot";
 actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
-    let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
-    cx.set_global(copilot.clone());
+    staff_mode(cx, {
+        move |cx| {
+            cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
+                filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
+                filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+            });
+
+            let copilot = cx.add_model({
+                let node_runtime = node_runtime.clone();
+                let http = client.http_client().clone();
+                move |cx| Copilot::start(http, node_runtime, cx)
+            });
+            cx.set_global(copilot.clone());
+
+            observe_namespaces(cx, copilot);
+
+            sign_in::init(cx);
+        }
+    });
+    not_staff_mode(cx, |cx| {
+        cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
+            filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+            filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
+        });
+    });
+
     cx.add_global_action(|_: &SignIn, cx| {
-        let copilot = Copilot::global(cx).unwrap();
-        copilot
-            .update(cx, |copilot, cx| copilot.sign_in(cx))
-            .detach_and_log_err(cx);
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .detach_and_log_err(cx);
+        }
     });
     cx.add_global_action(|_: &SignOut, cx| {
-        let copilot = Copilot::global(cx).unwrap();
-        copilot
-            .update(cx, |copilot, cx| copilot.sign_out(cx))
-            .detach_and_log_err(cx);
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_out(cx))
+                .detach_and_log_err(cx);
+        }
     });
 
     cx.add_global_action(|_: &Reinstall, cx| {
-        let copilot = Copilot::global(cx).unwrap();
-        copilot
-            .update(cx, |copilot, cx| copilot.reinstall(cx))
-            .detach();
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.reinstall(cx))
+                .detach();
+        }
     });
+}
 
+fn observe_namespaces(cx: &mut MutableAppContext, copilot: ModelHandle<Copilot>) {
     cx.observe(&copilot, |handle, cx| {
         let status = handle.read(cx).status();
         cx.update_global::<collections::CommandPaletteFilter, _, _>(
@@ -77,8 +108,6 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
         );
     })
     .detach();
-
-    sign_in::init(cx);
 }
 
 enum CopilotServer {

@@ -15,6 +15,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+staff_mode = { path = "../staff_mode" }
 lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }

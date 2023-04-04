@@ -20,6 +20,7 @@ fs = { path = "../fs" }
 anyhow = "1.0.38"
 futures = "0.3"
 theme = { path = "../theme" }
+staff_mode = { path = "../staff_mode" }
 util = { path = "../util" }
 json_comments = "0.2"
 postage = { workspace = true }
