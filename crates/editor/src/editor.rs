@@ -2881,11 +2881,9 @@ impl Editor {
     }
 
     fn hide_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let old_suggestion = self
-            .display_map
-            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
-
-        if old_suggestion.is_some() {
+        if self.has_active_copilot_suggestion(cx) {
+            self.display_map
+                .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
             cx.notify();
             true
         } else {

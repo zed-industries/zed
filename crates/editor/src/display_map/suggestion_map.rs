@@ -79,11 +79,7 @@ impl SuggestionMap {
         new_suggestion: Option<Suggestion<T>>,
         fold_snapshot: FoldSnapshot,
         fold_edits: Vec<FoldEdit>,
-    ) -> (
-        SuggestionSnapshot,
-        Vec<SuggestionEdit>,
-        Option<Suggestion<FoldOffset>>,
-    )
+    ) -> (SuggestionSnapshot, Vec<SuggestionEdit>)
     where
         T: ToPoint,
     {
@@ -103,8 +99,7 @@ impl SuggestionMap {
         let mut snapshot = self.0.lock();
 
         let mut patch = Patch::new(edits);
-        let old_suggestion = snapshot.suggestion.take();
-        if let Some(suggestion) = &old_suggestion {
+        if let Some(suggestion) = snapshot.suggestion.take() {
             patch = patch.compose([SuggestionEdit {
                 old: SuggestionOffset(suggestion.position.0)
                     ..SuggestionOffset(suggestion.position.0 + suggestion.text.len()),
@@ -124,7 +119,7 @@ impl SuggestionMap {
 
         snapshot.suggestion = new_suggestion;
         snapshot.version += 1;
-        (snapshot.clone(), patch.into_inner(), old_suggestion)
+        (snapshot.clone(), patch.into_inner())
     }
 
     pub fn sync(
@@ -594,7 +589,7 @@ mod tests {
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
         assert_eq!(suggestion_snapshot.text(), "abcdefghi");
 
-        let (suggestion_snapshot, _, _) = suggestion_map.replace(
+        let (suggestion_snapshot, _) = suggestion_map.replace(
             Some(Suggestion {
                 position: 3,
                 text: "123\n456".into(),
@@ -859,9 +854,7 @@ mod tests {
             };
 
             log::info!("replacing suggestion with {:?}", new_suggestion);
-            let (snapshot, edits, _) =
-                self.replace(new_suggestion, fold_snapshot, Default::default());
-            (snapshot, edits)
+            self.replace(new_suggestion, fold_snapshot, Default::default())
         }
     }
 }
