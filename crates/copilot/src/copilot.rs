@@ -18,7 +18,7 @@ use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
-use staff_mode::staff_mode;
+use staff_mode::{not_staff_mode, staff_mode};
 
 use std::{
     ffi::OsString,
@@ -37,8 +37,13 @@ const COPILOT_NAMESPACE: &'static str = "copilot";
 actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
-    staff_mode(cx, {
+    staff_mode::<staff_mode::Copilot, _>(cx, {
         move |cx| {
+            cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
+                filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
+                filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+            });
+
             let copilot = cx.add_model({
                 let node_runtime = node_runtime.clone();
                 let http = client.http_client().clone();
@@ -50,6 +55,12 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
 
             sign_in::init(cx);
         }
+    });
+    not_staff_mode::<staff_mode::Copilot, _>(cx, |cx| {
+        cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
+            filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+            filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
+        });
     });
 
     cx.add_global_action(|_: &SignIn, cx| {
