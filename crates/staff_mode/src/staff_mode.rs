@@ -31,6 +31,7 @@ pub fn staff_mode<F: FnMut(&mut MutableAppContext) + 'static>(
 }
 
 /// Immediately checks and runs the init function if the staff mode is not enabled.
+/// This is only included for symettry with staff_mode() above
 pub fn not_staff_mode<F: FnOnce(&mut MutableAppContext) + 'static>(
     cx: &mut MutableAppContext,
     init: F,
