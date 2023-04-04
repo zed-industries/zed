@@ -3951,6 +3951,19 @@ impl<'a, T: View> ViewContext<'a, T> {
         })
     }
 
+    pub fn observe_global<G, F>(&mut self, mut callback: F) -> Subscription
+    where
+        G: Any,
+        F: 'static + FnMut(&mut T, &mut ViewContext<T>),
+    {
+        let observer = self.weak_handle();
+        self.app.observe_global::<G, _>(move |cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| callback(observer, cx));
+            }
+        })
+    }
+
     pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
     where
         F: 'static + FnMut(&mut T, ViewHandle<V>, bool, &mut ViewContext<T>),

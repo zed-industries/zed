@@ -191,16 +191,8 @@ impl View for WelcomePage {
 
 impl WelcomePage {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let handle = cx.weak_handle();
-
-        let settings_subscription = cx.observe_global::<Settings, _>(move |cx| {
-            if let Some(handle) = handle.upgrade(cx) {
-                handle.update(cx, |_, cx| cx.notify())
-            }
-        });
-
         WelcomePage {
-            _settings_subscription: settings_subscription,
+            _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
         }
     }
 }

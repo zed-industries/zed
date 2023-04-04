@@ -228,13 +228,8 @@ impl CopilotButton {
 
         Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
 
-        let this_handle = cx.handle().downgrade();
-        cx.observe_global::<Settings, _>(move |cx| {
-            if let Some(handle) = this_handle.upgrade(cx) {
-                handle.update(cx, |_, cx| cx.notify())
-            }
-        })
-        .detach();
+        cx.observe_global::<Settings, _>(move |_, cx| cx.notify())
+            .detach();
 
         Self {
             popup_menu: menu,
