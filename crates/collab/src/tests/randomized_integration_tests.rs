@@ -624,7 +624,7 @@ async fn apply_client_operation(
             );
 
             ensure_project_shared(&project, client, cx).await;
-            if !client.fs.paths().await.contains(&new_root_path) {
+            if !client.fs.paths().contains(&new_root_path) {
                 client.fs.create_dir(&new_root_path).await.unwrap();
             }
             project
@@ -1350,7 +1350,6 @@ impl TestPlan {
             return None;
         }
 
-        let executor = cx.background();
         self.operation_ix += 1;
         let call = cx.read(ActiveCall::global);
         Some(loop {
@@ -1467,7 +1466,7 @@ impl TestPlan {
                                 .choose(&mut self.rng)
                                 .cloned() else { continue };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let mut paths = executor.block(client.fs.paths());
+                            let mut paths = client.fs.paths();
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || self.rng.gen() {
                                 Path::new("/").join(&self.next_root_dir_name(user_id))
@@ -1637,14 +1636,16 @@ impl TestPlan {
 
                 // Update a git index
                 91..=95 => {
-                    let repo_path = executor
-                        .block(client.fs.directories())
+                    let repo_path = client
+                        .fs
+                        .directories()
                         .choose(&mut self.rng)
                         .unwrap()
                         .clone();
 
-                    let mut file_paths = executor
-                        .block(client.fs.files())
+                    let mut file_paths = client
+                        .fs
+                        .files()
                         .into_iter()
                         .filter(|path| path.starts_with(&repo_path))
                         .collect::<Vec<_>>();
@@ -1673,7 +1674,7 @@ impl TestPlan {
                     let is_dir = self.rng.gen::<bool>();
                     let content;
                     let mut path;
-                    let dir_paths = cx.background().block(client.fs.directories());
+                    let dir_paths = client.fs.directories();
 
                     if is_dir {
                         content = String::new();
@@ -1683,7 +1684,7 @@ impl TestPlan {
                         content = Alphanumeric.sample_string(&mut self.rng, 16);
 
                         // Create a new file or overwrite an existing file
-                        let file_paths = cx.background().block(client.fs.files());
+                        let file_paths = client.fs.files();
                         if file_paths.is_empty() || self.rng.gen_bool(0.5) {
                             path = dir_paths.choose(&mut self.rng).unwrap().clone();
                             path.push(gen_file_name(&mut self.rng));
@@ -1789,7 +1790,7 @@ async fn simulate_client(
                             let fs = fs.clone();
                             let plan = plan.clone();
                             async move {
-                                let files = fs.files().await;
+                                let files = fs.files();
                                 let count = plan.lock().rng.gen_range::<usize, _>(1..3);
                                 let files = (0..count)
                                     .map(|_| files.choose(&mut plan.lock().rng).unwrap())

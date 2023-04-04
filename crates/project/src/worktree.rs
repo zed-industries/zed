@@ -3729,7 +3729,7 @@ mod tests {
     ) {
         let mut files = Vec::new();
         let mut dirs = Vec::new();
-        for path in fs.as_fake().paths().await {
+        for path in fs.as_fake().paths() {
             if path.starts_with(root_path) {
                 if fs.is_file(&path).await {
                     files.push(path);
