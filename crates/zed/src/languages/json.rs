@@ -8,6 +8,7 @@ use node_runtime::NodeRuntime;
 use serde_json::json;
 use settings::{keymap_file_json_schema, settings_file_json_schema};
 use smol::fs;
+use staff_mode::StaffMode;
 use std::{
     any::Any,
     ffi::OsString,
@@ -16,8 +17,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::{fs::remove_matching, http::HttpClient};
-use util::{paths, ResultExt, StaffMode};
+use util::{fs::remove_matching, http::HttpClient, paths, ResultExt};
 
 const SERVER_PATH: &'static str =
     "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";

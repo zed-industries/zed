@@ -38,9 +38,9 @@ use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
 use settings::watched_json::WatchedJsonFile;
-use theme::ThemeRegistry;
 #[cfg(debug_assertions)]
-use util::StaffMode;
+use staff_mode::StaffMode;
+use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,

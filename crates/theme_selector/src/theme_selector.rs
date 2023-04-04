@@ -5,9 +5,9 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, Settings};
+use staff_mode::StaffMode;
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
-use util::StaffMode;
 use workspace::{AppState, Workspace};
 
 pub struct ThemeSelector {

@@ -17,6 +17,7 @@ db = { path = "../db" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
+staff_mode = { path = "../staff_mode" }
 sum_tree = { path = "../sum_tree" }
 anyhow = "1.0.38"
 async-recursion = "0.3"

@@ -55,6 +55,7 @@ project_symbols = { path = "../project_symbols" }
 recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
+staff_mode = { path = "../staff_mode" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }

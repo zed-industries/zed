@@ -177,6 +177,7 @@ pub struct EditorSettings {
     pub ensure_final_newline_on_save: Option<bool>,
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
+    #[schemars(skip)]
     pub copilot: Option<OnOff>,
 }
 
@@ -436,6 +437,7 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
     #[serde(default)]
+    #[schemars(skip)]
     pub enable_copilot_integration: Option<bool>,
 }
 
@@ -779,6 +781,7 @@ pub fn settings_file_json_schema(
         settings.option_add_null_type = false;
     });
     let generator = SchemaGenerator::new(settings);
+
     let mut root_schema = generator.into_root_schema_for::<SettingsFileContent>();
 
     // Create a schema for a theme name.
@@ -791,6 +794,7 @@ pub fn settings_file_json_schema(
     // Create a schema for a 'languages overrides' object, associating editor
     // settings with specific langauges.
     assert!(root_schema.definitions.contains_key("EditorSettings"));
+
     let languages_object_schema = SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
         object: Some(Box::new(ObjectValidation {

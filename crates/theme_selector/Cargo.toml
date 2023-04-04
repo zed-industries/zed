@@ -15,6 +15,7 @@ gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 theme = { path = "../theme" }
 settings = { path = "../settings" }
+staff_mode = { path = "../staff_mode" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
