@@ -509,7 +509,7 @@ pub struct Editor {
     hover_state: HoverState,
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
-    pub copilot_state: CopilotState,
+    copilot_state: CopilotState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1255,6 +1255,7 @@ impl Editor {
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                cx.observe_global::<Settings, _>(Self::on_settings_changed),
             ],
         };
         this.end_selection(cx);
@@ -2772,33 +2773,17 @@ impl Editor {
 
     fn refresh_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let copilot = Copilot::global(cx)?;
-
-        if self.mode != EditorMode::Full {
+        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+            self.clear_copilot_suggestions(cx);
             return None;
         }
-
-        let selection = self.selections.newest_anchor();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        let cursor = if selection.start == selection.end {
-            selection.start.bias_left(&snapshot)
-        } else {
-            return None;
-        };
-
-        let language_name = snapshot
-            .language_at(selection.start)
-            .map(|language| language.name());
-
-        let copilot_enabled = cx.global::<Settings>().copilot_on(language_name.as_deref());
-
-        if !copilot_enabled {
-            return None;
-        }
-
         self.refresh_active_copilot_suggestion(cx);
 
-        if !copilot.read(cx).status().is_authorized() {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let cursor = self.selections.newest_anchor().head();
+        let language_name = snapshot.language_at(cursor).map(|language| language.name());
+        if !cx.global::<Settings>().copilot_on(language_name.as_deref()) {
+            self.clear_copilot_suggestions(cx);
             return None;
         }
 
@@ -2868,9 +2853,10 @@ impl Editor {
 
     fn refresh_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let cursor = self.selections.newest_anchor().head();
+        let selection = self.selections.newest_anchor();
+        let cursor = selection.head();
 
-        if self.context_menu.is_some() {
+        if self.context_menu.is_some() || selection.start != selection.end {
             self.display_map
                 .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
             cx.notify();
@@ -6442,6 +6428,10 @@ impl Editor {
 
     fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
         cx.notify();
+    }
+
+    fn on_settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.refresh_copilot_suggestions(cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {

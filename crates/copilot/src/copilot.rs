@@ -176,13 +176,6 @@ impl Entity for Copilot {
 }
 
 impl Copilot {
-    pub fn starting_task(&self) -> Option<Shared<Task<()>>> {
-        match self.server {
-            CopilotServer::Starting { ref task } => Some(task.clone()),
-            _ => None,
-        }
-    }
-
     pub fn global(cx: &AppContext) -> Option<ModelHandle<Self>> {
         if cx.has_global::<ModelHandle<Self>>() {
             Some(cx.global::<ModelHandle<Self>>().clone())
