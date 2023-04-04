@@ -6,9 +6,10 @@ use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use settings::Settings;
+use staff_mode::StaffMode;
 use std::sync::{Arc, Weak};
 use util::http::HttpClient;
-use util::{StaffMode, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 #[derive(Default, Debug)]
 pub struct User {

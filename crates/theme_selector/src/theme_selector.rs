@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, Settings};
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
-use util::StaffMode;
+use staff_mode::StaffMode;
 use workspace::{AppState, Workspace};
 
 pub struct ThemeSelector {
