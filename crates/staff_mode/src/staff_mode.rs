@@ -13,11 +13,11 @@ impl std::ops::Deref for StaffMode {
 
 /// Despite what the type system requires me to tell you, the init function will only be called a once
 /// as soon as we know that the staff mode is enabled.
-pub fn staff_mode<S: StaffModeConfiguration, F: FnMut(&mut MutableAppContext) + 'static>(
+pub fn staff_mode<F: FnMut(&mut MutableAppContext) + 'static>(
     cx: &mut MutableAppContext,
     mut init: F,
 ) {
-    if !S::staff_only() || **cx.default_global::<StaffMode>() {
+    if **cx.default_global::<StaffMode>() {
         init(cx)
     } else {
         let mut once = Some(());
@@ -31,21 +31,11 @@ pub fn staff_mode<S: StaffModeConfiguration, F: FnMut(&mut MutableAppContext) + 
 }
 
 /// Immediately checks and runs the init function if the staff mode is not enabled.
-pub fn not_staff_mode<S: StaffModeConfiguration, F: FnOnce(&mut MutableAppContext) + 'static>(
+pub fn not_staff_mode<F: FnOnce(&mut MutableAppContext) + 'static>(
     cx: &mut MutableAppContext,
     init: F,
 ) {
-    if !S::staff_only() || !**cx.default_global::<StaffMode>() {
+    if !**cx.default_global::<StaffMode>() {
         init(cx)
     }
 }
-
-pub trait StaffModeConfiguration {
-    fn staff_only() -> bool {
-        true
-    }
-}
-
-pub enum Copilot {}
-
-impl StaffModeConfiguration for Copilot {}

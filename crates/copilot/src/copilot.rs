@@ -37,7 +37,7 @@ const COPILOT_NAMESPACE: &'static str = "copilot";
 actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
 pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
-    staff_mode::<staff_mode::Copilot, _>(cx, {
+    staff_mode(cx, {
         move |cx| {
             cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
                 filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
@@ -56,7 +56,7 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
             sign_in::init(cx);
         }
     });
-    not_staff_mode::<staff_mode::Copilot, _>(cx, |cx| {
+    not_staff_mode(cx, |cx| {
         cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
             filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
             filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
