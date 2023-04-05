@@ -3,8 +3,12 @@ use std::env;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    pub static ref RELEASE_CHANNEL_NAME: String = env::var("ZED_RELEASE_CHANNEL")
-        .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").to_string());
+    pub static ref RELEASE_CHANNEL_NAME: String = if cfg!(debug_assertions) {
+        env::var("ZED_RELEASE_CHANNEL")
+            .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").to_string())
+    } else {
+        include_str!("../../zed/RELEASE_CHANNEL").to_string()
+    };
     pub static ref RELEASE_CHANNEL: ReleaseChannel = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => ReleaseChannel::Dev,
         "preview" => ReleaseChannel::Preview,

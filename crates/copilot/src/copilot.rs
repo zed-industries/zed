@@ -4,7 +4,6 @@ mod sign_in;
 use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::Client;
 use collections::HashMap;
 use futures::{future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
@@ -18,8 +17,6 @@ use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
-use staff_mode::{not_staff_mode, staff_mode};
-
 use std::{
     ffi::OsString,
     ops::Range,
@@ -27,7 +24,8 @@ use std::{
     sync::Arc,
 };
 use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+    channel::ReleaseChannel, fs::remove_matching, github::latest_github_release, http::HttpClient,
+    paths, ResultExt,
 };
 
 const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
@@ -36,33 +34,23 @@ actions!(copilot_auth, [SignIn, SignOut]);
 const COPILOT_NAMESPACE: &'static str = "copilot";
 actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
-pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
-    staff_mode(cx, {
-        move |cx| {
-            cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
-                filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
-                filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
-            });
-
-            let copilot = cx.add_model({
-                let node_runtime = node_runtime.clone();
-                let http = client.http_client().clone();
-                move |cx| Copilot::start(http, node_runtime, cx)
-            });
-            cx.set_global(copilot.clone());
-
-            observe_namespaces(cx, copilot);
-
-            sign_in::init(cx);
-        }
-    });
-    not_staff_mode(cx, |cx| {
+pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
+    // Disable Copilot for stable releases.
+    if *cx.global::<ReleaseChannel>() == ReleaseChannel::Stable {
         cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
             filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
             filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
         });
-    });
+        return;
+    }
 
+    let copilot = cx.add_model({
+        let node_runtime = node_runtime.clone();
+        move |cx| Copilot::start(http, node_runtime, cx)
+    });
+    cx.set_global(copilot.clone());
+
+    sign_in::init(cx);
     cx.add_global_action(|_: &SignIn, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot
@@ -85,29 +73,6 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
                 .detach();
         }
     });
-}
-
-fn observe_namespaces(cx: &mut MutableAppContext, copilot: ModelHandle<Copilot>) {
-    cx.observe(&copilot, |handle, cx| {
-        let status = handle.read(cx).status();
-        cx.update_global::<collections::CommandPaletteFilter, _, _>(
-            move |filter, _cx| match status {
-                Status::Disabled => {
-                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-                    filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
-                }
-                Status::Authorized => {
-                    filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
-                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
-                }
-                _ => {
-                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
-                }
-            },
-        );
-    })
-    .detach();
 }
 
 enum CopilotServer {

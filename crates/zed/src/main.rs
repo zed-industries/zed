@@ -160,7 +160,7 @@ fn main() {
         terminal_view::init(cx);
         theme_testbench::init(cx);
         recent_projects::init(cx);
-        copilot::init(client.clone(), node_runtime, cx);
+        copilot::init(http.clone(), node_runtime, cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
