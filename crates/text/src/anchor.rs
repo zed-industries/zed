@@ -1,4 +1,7 @@
-use crate::{BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint, ToPointUtf16};
+use crate::{
+    locator::Locator, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint,
+    ToPointUtf16,
+};
 use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
@@ -85,6 +88,20 @@ impl Anchor {
         D: TextDimension,
     {
         content.summary_for_anchor(self)
+    }
+
+    /// Returns true when the [Anchor] is located inside a visible fragment.
+    pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
+        if *self == Anchor::MIN || *self == Anchor::MAX {
+            true
+        } else {
+            let fragment_id = buffer.fragment_id_for_anchor(self);
+            let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>();
+            fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
+            fragment_cursor
+                .item()
+                .map_or(false, |fragment| fragment.visible)
+        }
     }
 }
 
