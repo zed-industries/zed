@@ -2489,6 +2489,8 @@ impl Editor {
                     );
                 });
             }
+
+            this.refresh_copilot_suggestions(cx);
         });
 
         let project = self.project.clone()?;
