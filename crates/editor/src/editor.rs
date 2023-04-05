@@ -6411,6 +6411,9 @@ impl Editor {
             multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
+                if self.has_active_copilot_suggestion(cx) {
+                    self.update_visible_copilot_suggestion(cx);
+                }
                 cx.emit(Event::BufferEdited);
             }
             multi_buffer::Event::ExcerptsAdded {

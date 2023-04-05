@@ -6026,12 +6026,41 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
         assert!(editor.has_active_copilot_suggestion(cx));
         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
         assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
+
+    // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
+    cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
         // Tabbing when there is an active suggestion inserts it.
         editor.tab(&Default::default(), cx);
         assert!(!editor.has_active_copilot_suggestion(cx));
         assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
         assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
+
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+
+        // Hide suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+    });
+
+    // If an edit occurs outside of this editor but no suggestion is being shown,
+    // we won't make it visible.
+    cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
     });
 }
 
