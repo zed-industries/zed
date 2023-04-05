@@ -3991,6 +3991,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
+            self.refresh_copilot_suggestions(cx);
             cx.emit(Event::Edited);
         }
     }
@@ -4005,6 +4006,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
+            self.refresh_copilot_suggestions(cx);
             cx.emit(Event::Edited);
         }
     }
