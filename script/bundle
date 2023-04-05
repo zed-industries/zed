@@ -121,7 +121,7 @@ rm ${dmg_source_directory}/Applications
 
 echo "Adding license agreement to DMG"
 npm install --global dmg-license minimist
-dmg-license script/terms/terms-of-use.json "${dmg_file_path}"
+dmg-license script/eula/eula.json "${dmg_file_path}"
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Notarizing DMG with Apple"
