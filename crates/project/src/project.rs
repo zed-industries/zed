@@ -4847,6 +4847,7 @@ impl Project {
 
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
+            this.shared_buffers.remove(&collaborator.peer_id);
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
             cx.notify();
