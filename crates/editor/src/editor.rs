@@ -3230,10 +3230,6 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
-        if self.accept_copilot_suggestion(cx) {
-            return;
-        }
-
         if self.move_to_next_snippet_tabstop(cx) {
             return;
         }
@@ -3263,8 +3259,8 @@ impl Editor {
             // If the selection is empty and the cursor is in the leading whitespace before the
             // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
+            let current_indent = snapshot.indent_size_for_line(cursor.row);
             if let Some(suggested_indent) = suggested_indents.get(&cursor.row).copied() {
-                let current_indent = snapshot.indent_size_for_line(cursor.row);
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
@@ -3281,6 +3277,16 @@ impl Editor {
                     }
                     continue;
                 }
+            }
+
+            // Accept copilot suggestion if there is only one selection and the cursor is
+            // in the leading whitespace.
+            if self.selections.count() == 1
+                && selection.start.column >= current_indent.len
+                && self.has_active_copilot_suggestion(cx)
+            {
+                self.accept_copilot_suggestion(cx);
+                return;
             }
 
             // Otherwise, insert a hard or soft tab.
@@ -3306,7 +3312,8 @@ impl Editor {
 
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
-            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections))
+            this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+            this.refresh_copilot_suggestions(cx);
         });
     }
 

@@ -5881,7 +5881,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
     );
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
     let (copilot, copilot_lsp) = Copilot::fake(cx);
     cx.update(|cx| cx.set_global(copilot));
@@ -5918,7 +5918,6 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
         &copilot_lsp,
         vec![copilot::request::Completion {
             text: "copilot1".into(),
-            position: lsp::Position::new(0, 5),
             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
             ..Default::default()
         }],
@@ -5962,7 +5961,6 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
         &copilot_lsp,
         vec![copilot::request::Completion {
             text: "one.copilot1".into(),
-            position: lsp::Position::new(0, 4),
             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
             ..Default::default()
         }],
@@ -5996,7 +5994,6 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
         &copilot_lsp,
         vec![copilot::request::Completion {
             text: "one.copilot2".into(),
-            position: lsp::Position::new(0, 5),
             range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
             ..Default::default()
         }],
@@ -6061,6 +6058,43 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
         assert!(!editor.has_active_copilot_suggestion(cx));
         assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
         assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
+    });
+
+    // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
+    cx.update_editor(|editor, cx| {
+        editor.set_text("fn foo() {\n  \n}", cx);
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
+        });
+    });
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "    let x = 4;".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+
+    cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
+
+        // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+
+        // Tabbing again accepts the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
     });
 }
 
