@@ -3279,7 +3279,7 @@ impl Editor {
                 }
             }
 
-            // Accept copilot suggestion if there is only one selection and the cursor is
+            // Accept copilot suggestion if there is only one selection and the cursor is not
             // in the leading whitespace.
             if self.selections.count() == 1
                 && selection.start.column >= current_indent.len
