@@ -1089,8 +1089,10 @@ impl Project {
     pub fn rejoined(
         &mut self,
         message: proto::RejoinedProject,
+        message_id: u32,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.language_server_statuses = message
