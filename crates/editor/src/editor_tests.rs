@@ -6098,6 +6098,65 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
     });
 }
 
+#[gpui::test]
+async fn test_copilot_completion_invalidation(
+    deterministic: Arc<Deterministic>,
+    cx: &mut gpui::TestAppContext,
+) {
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| cx.set_global(copilot));
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        one
+        twˇ
+        three
+    "});
+
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "two.foo()".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+        assert_eq!(editor.text(cx), "one\ntw\nthree\n");
+
+        editor.backspace(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+        assert_eq!(editor.text(cx), "one\nt\nthree\n");
+
+        editor.backspace(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+        assert_eq!(editor.text(cx), "one\n\nthree\n");
+
+        // Deleting across the original suggestion range invalidates it.
+        editor.backspace(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one\nthree\n");
+        assert_eq!(editor.text(cx), "one\nthree\n");
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point

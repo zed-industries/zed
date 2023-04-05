@@ -1037,6 +1037,11 @@ impl CopilotState {
         let completion = self.completions.get(self.active_completion_index)?;
         let excerpt_id = self.excerpt_id?;
         let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
+        if !completion.range.start.is_valid(completion_buffer)
+            || !completion.range.end.is_valid(completion_buffer)
+        {
+            return None;
+        }
 
         let mut completion_range = completion.range.to_offset(&completion_buffer);
         let prefix_len = Self::common_prefix(

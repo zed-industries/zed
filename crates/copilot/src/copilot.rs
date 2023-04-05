@@ -50,6 +50,27 @@ pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut 
     });
     cx.set_global(copilot.clone());
 
+    cx.observe(&copilot, |handle, cx| {
+        let status = handle.read(cx).status();
+        cx.update_global::<collections::CommandPaletteFilter, _, _>(
+            move |filter, _cx| match status {
+                Status::Disabled => {
+                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+                    filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
+                }
+                Status::Authorized => {
+                    filter.filtered_namespaces.remove(COPILOT_NAMESPACE);
+                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+                }
+                _ => {
+                    filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+                    filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
+                }
+            },
+        );
+    })
+    .detach();
+
     sign_in::init(cx);
     cx.add_global_action(|_: &SignIn, cx| {
         if let Some(copilot) = Copilot::global(cx) {
