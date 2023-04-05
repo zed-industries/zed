@@ -227,6 +227,7 @@ pub enum Lifecycle<T: Element> {
         paint: T::PaintState,
     },
 }
+
 pub struct ElementBox(ElementRc);
 
 #[derive(Clone)]
