@@ -10,7 +10,10 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures::{
+    future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _,
+    TryStreamExt,
+};
 use gpui::{
     actions,
     serde_json::{self, Value},
@@ -1187,6 +1190,14 @@ impl Client {
         &self,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
+        self.request_envelope(request)
+            .map_ok(|envelope| envelope.payload)
+    }
+
+    pub fn request_envelope<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
         let client_id = self.id;
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1195,7 +1206,7 @@ impl Client {
         );
         let response = self
             .connection_id()
-            .map(|conn_id| self.peer.request(conn_id, request));
+            .map(|conn_id| self.peer.request_envelope(conn_id, request));
         async move {
             let response = response?.await;
             log::debug!(

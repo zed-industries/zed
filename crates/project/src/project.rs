@@ -100,6 +100,7 @@ pub struct Project {
     next_language_server_id: usize,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
+    join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
@@ -425,6 +426,7 @@ impl Project {
             loading_buffers_by_path: Default::default(),
             loading_local_worktrees: Default::default(),
             buffer_snapshots: Default::default(),
+            join_project_response_message_id: 0,
             client_state: None,
             opened_buffer: watch::channel(),
             client_subscriptions: Vec::new(),
@@ -463,15 +465,15 @@ impl Project {
 
         let subscription = client.subscribe_to_entity(remote_id);
         let response = client
-            .request(proto::JoinProject {
+            .request_envelope(proto::JoinProject {
                 project_id: remote_id,
             })
             .await?;
         let this = cx.add_model(|cx| {
-            let replica_id = response.replica_id as ReplicaId;
+            let replica_id = response.payload.replica_id as ReplicaId;
 
             let mut worktrees = Vec::new();
-            for worktree in response.worktrees {
+            for worktree in response.payload.worktrees {
                 let worktree = cx.update(|cx| {
                     Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx)
                 });
@@ -487,6 +489,7 @@ impl Project {
                 loading_local_worktrees: Default::default(),
                 active_entry: None,
                 collaborators: Default::default(),
+                join_project_response_message_id: response.message_id,
                 _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 languages,
@@ -505,6 +508,7 @@ impl Project {
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
                 language_server_statuses: response
+                    .payload
                     .language_servers
                     .into_iter()
                     .map(|server| {
@@ -537,6 +541,7 @@ impl Project {
         let subscription = subscription.set_model(&this, &mut cx);
 
         let user_ids = response
+            .payload
             .collaborators
             .iter()
             .map(|peer| peer.user_id)
@@ -546,7 +551,7 @@ impl Project {
             .await?;
 
         this.update(&mut cx, |this, cx| {
-            this.set_collaborators_from_proto(response.collaborators, cx)?;
+            this.set_collaborators_from_proto(response.payload.collaborators, cx)?;
             this.client_subscriptions.push(subscription);
             anyhow::Ok(())
         })?;
@@ -4930,7 +4935,10 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
+            // Don't handle messages that were sent before the response to us joining the project
+            if envelope.message_id > this.join_project_response_message_id {
+                this.set_worktrees_from_proto(envelope.payload.worktrees, cx)?;
+            }
             Ok(())
         })
     }
