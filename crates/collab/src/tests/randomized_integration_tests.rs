@@ -120,8 +120,8 @@ async fn test_random_collaboration(
     let mut operation_channels = Vec::new();
 
     loop {
-        let Some((next_operation, skipped)) = plan.lock().next_server_operation(&clients) else { break };
-        let applied = apply_server_operation(
+        let Some((next_operation, applied)) = plan.lock().next_server_operation(&clients) else { break };
+        let did_apply = apply_server_operation(
             deterministic.clone(),
             &mut server,
             &mut clients,
@@ -132,8 +132,8 @@ async fn test_random_collaboration(
             cx,
         )
         .await;
-        if !applied {
-            skipped.store(true, SeqCst);
+        if did_apply {
+            applied.store(true, SeqCst);
         }
     }
 
@@ -1207,8 +1207,8 @@ impl TestPlan {
         // Format each operation as one line
         let mut json = Vec::new();
         json.push(b'[');
-        for (operation, skipped) in &self.stored_operations {
-            if skipped.load(SeqCst) {
+        for (operation, applied) in &self.stored_operations {
+            if !applied.load(SeqCst) {
                 continue;
             }
             if json.len() > 1 {
@@ -1228,17 +1228,17 @@ impl TestPlan {
         if self.replay {
             while let Some(stored_operation) = self.stored_operations.get(self.operation_ix) {
                 self.operation_ix += 1;
-                if let (StoredOperation::Server(operation), skipped) = stored_operation {
-                    return Some((operation.clone(), skipped.clone()));
+                if let (StoredOperation::Server(operation), applied) = stored_operation {
+                    return Some((operation.clone(), applied.clone()));
                 }
             }
             None
         } else {
             let operation = self.generate_server_operation(clients)?;
-            let skipped = Arc::new(AtomicBool::new(false));
+            let applied = Arc::new(AtomicBool::new(false));
             self.stored_operations
-                .push((StoredOperation::Server(operation.clone()), skipped.clone()));
-            Some((operation, skipped))
+                .push((StoredOperation::Server(operation.clone()), applied.clone()));
+            Some((operation, applied))
         }
     }
 
@@ -1263,27 +1263,27 @@ impl TestPlan {
                     StoredOperation::Client {
                         user_id, operation, ..
                     },
-                    skipped,
+                    applied,
                 ) = stored_operation
                 {
                     if user_id == &current_user_id {
-                        return Some((operation.clone(), skipped.clone()));
+                        return Some((operation.clone(), applied.clone()));
                     }
                 }
             }
             None
         } else {
             let operation = self.generate_client_operation(current_user_id, client, cx)?;
-            let skipped = Arc::new(AtomicBool::new(false));
+            let applied = Arc::new(AtomicBool::new(false));
             self.stored_operations.push((
                 StoredOperation::Client {
                     user_id: current_user_id,
                     batch_id: current_batch_id,
                     operation: operation.clone(),
                 },
-                skipped.clone(),
+                applied.clone(),
             ));
-            Some((operation, skipped))
+            Some((operation, applied))
         }
     }
 
@@ -1851,11 +1851,14 @@ async fn simulate_client(
     client.language_registry.add(Arc::new(language));
 
     while let Some(batch_id) = operation_rx.next().await {
-        let Some((operation, skipped)) = plan.lock().next_client_operation(&client, batch_id, &cx) else { break };
+        let Some((operation, applied)) = plan.lock().next_client_operation(&client, batch_id, &cx) else { break };
         match apply_client_operation(&client, operation, &mut cx).await {
-            Ok(()) => {}
-            Err(TestError::Inapplicable) => skipped.store(true, SeqCst),
+            Ok(()) => applied.store(true, SeqCst),
+            Err(TestError::Inapplicable) => {
+                log::info!("skipped operation");
+            }
             Err(TestError::Other(error)) => {
+                applied.store(true, SeqCst);
                 log::error!("{} error: {}", client.username, error);
             }
         }
