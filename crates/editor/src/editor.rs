@@ -53,7 +53,7 @@ pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
     Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
-    Point, Selection, SelectionGoal, TransactionId,
+    Point, Rope, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
@@ -1834,7 +1834,7 @@ impl Editor {
             return;
         }
 
-        if self.hide_copilot_suggestion(cx) {
+        if self.hide_copilot_suggestion(cx).is_some() {
             return;
         }
 
@@ -2865,14 +2865,8 @@ impl Editor {
     }
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let cursor = self.selections.newest_anchor().head();
-        if let Some(text) = self
-            .copilot_state
-            .text_for_active_completion(cursor, &snapshot)
-        {
+        if let Some(text) = self.hide_copilot_suggestion(cx) {
             self.insert_with_autoindent_mode(&text.to_string(), None, cx);
-            self.hide_copilot_suggestion(cx);
             true
         } else {
             false
@@ -2883,14 +2877,15 @@ impl Editor {
         self.display_map.read(cx).has_suggestion()
     }
 
-    fn hide_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    fn hide_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Rope> {
         if self.has_active_copilot_suggestion(cx) {
-            self.display_map
+            let old_suggestion = self
+                .display_map
                 .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
             cx.notify();
-            true
+            old_suggestion.map(|suggestion| suggestion.text)
         } else {
-            false
+            None
         }
     }
 
