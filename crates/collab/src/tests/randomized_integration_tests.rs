@@ -1854,13 +1854,14 @@ async fn simulate_client(
 
     while let Some(batch_id) = operation_rx.next().await {
         let Some((operation, applied)) = plan.lock().next_client_operation(&client, batch_id, &cx) else { break };
+        applied.store(true, SeqCst);
         match apply_client_operation(&client, operation, &mut cx).await {
-            Ok(()) => applied.store(true, SeqCst),
+            Ok(()) => {}
             Err(TestError::Inapplicable) => {
+                applied.store(false, SeqCst);
                 log::info!("skipped operation");
             }
             Err(TestError::Other(error)) => {
-                applied.store(true, SeqCst);
                 log::error!("{} error: {}", client.username, error);
             }
         }
