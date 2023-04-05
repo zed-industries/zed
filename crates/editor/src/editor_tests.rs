@@ -16,7 +16,7 @@ use language::{BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageRegist
 use parking_lot::Mutex;
 use project::FakeFs;
 use settings::EditorSettings;
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
 use unindent::Unindent;
 use util::{
     assert_set_eq,
@@ -4585,81 +4585,6 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
-
-    // Handle completion request passing a marked string specifying where the completion
-    // should be triggered from using '|' character, what range should be replaced, and what completions
-    // should be returned using '<' and '>' to delimit the range
-    async fn handle_completion_request<'a>(
-        cx: &mut EditorLspTestContext<'a>,
-        marked_string: &str,
-        completions: Vec<&'static str>,
-    ) {
-        let complete_from_marker: TextRangeMarker = '|'.into();
-        let replace_range_marker: TextRangeMarker = ('<', '>').into();
-        let (_, mut marked_ranges) = marked_text_ranges_by(
-            marked_string,
-            vec![complete_from_marker.clone(), replace_range_marker.clone()],
-        );
-
-        let complete_from_position =
-            cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
-        let replace_range =
-            cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
-
-        cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
-            let completions = completions.clone();
-            async move {
-                assert_eq!(params.text_document_position.text_document.uri, url.clone());
-                assert_eq!(
-                    params.text_document_position.position,
-                    complete_from_position
-                );
-                Ok(Some(lsp::CompletionResponse::Array(
-                    completions
-                        .iter()
-                        .map(|completion_text| lsp::CompletionItem {
-                            label: completion_text.to_string(),
-                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                                range: replace_range,
-                                new_text: completion_text.to_string(),
-                            })),
-                            ..Default::default()
-                        })
-                        .collect(),
-                )))
-            }
-        })
-        .next()
-        .await;
-    }
-
-    async fn handle_resolve_completion_request<'a>(
-        cx: &mut EditorLspTestContext<'a>,
-        edits: Option<Vec<(&'static str, &'static str)>>,
-    ) {
-        let edits = edits.map(|edits| {
-            edits
-                .iter()
-                .map(|(marked_string, new_text)| {
-                    let (_, marked_ranges) = marked_text_ranges(marked_string, false);
-                    let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
-                    lsp::TextEdit::new(replace_range, new_text.to_string())
-                })
-                .collect::<Vec<_>>()
-        });
-
-        cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
-            let edits = edits.clone();
-            async move {
-                Ok(lsp::CompletionItem {
-                    additional_text_edits: edits,
-                    ..Default::default()
-                })
-            }
-        })
-        .next()
-        .await;
-    }
 }
 
 #[gpui::test]
@@ -5956,6 +5881,223 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| cx.set_global(copilot));
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+
+    // When inserting, ensure autocompletion is favored over Copilot suggestions.
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec!["completion_a", "completion_b"],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
+
+        // Confirming a completion inserts it and hides the context menu, without showing
+        // the copilot suggestion afterwards.
+        editor
+            .confirm_completion(&Default::default(), cx)
+            .unwrap()
+            .detach();
+        assert!(!editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
+        assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
+    });
+
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
+
+    // When inserting, ensure autocompletion is favored over Copilot suggestions.
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec!["completion_a", "completion_b"],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.context_menu_visible());
+        assert!(!editor.has_active_copilot_suggestion(cx));
+
+        // When hiding the context menu, the Copilot suggestion becomes visible.
+        editor.hide_context_menu(cx);
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+    });
+
+    // Ensure existing completion is interpolated when inserting again.
+    cx.simulate_keystroke("c");
+    deterministic.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
+
+    // After debouncing, new Copilot completions should be requested.
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot2".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+
+        // Canceling should remove the active Copilot suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+
+        // After canceling, tabbing shouldn't insert the previously shown suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
+
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+    });
+
+    // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
+    cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+
+        // Tabbing when there is an active suggestion inserts it.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
+
+        // When undoing the previously active suggestion is shown again.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+
+        // Hide suggestion.
+        editor.cancel(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
+    });
+
+    // If an edit occurs outside of this editor but no suggestion is being shown,
+    // we won't make it visible.
+    cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
+    });
+
+    // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
+    cx.update_editor(|editor, cx| {
+        editor.set_text("fn foo() {\n  \n}", cx);
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
+        });
+    });
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "    let x = 4;".into(),
+            range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+
+    cx.update_editor(|editor, cx| editor.next_copilot_suggestion(&Default::default(), cx));
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
+
+        // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+
+        // Tabbing again accepts the suggestion.
+        editor.tab(&Default::default(), cx);
+        assert!(!editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
+        assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -5970,4 +6112,107 @@ fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ViewCo
         "Assert selections are {}",
         marked_text
     );
+}
+
+/// Handle completion request passing a marked string specifying where the completion
+/// should be triggered from using '|' character, what range should be replaced, and what completions
+/// should be returned using '<' and '>' to delimit the range
+fn handle_completion_request<'a>(
+    cx: &mut EditorLspTestContext<'a>,
+    marked_string: &str,
+    completions: Vec<&'static str>,
+) -> impl Future<Output = ()> {
+    let complete_from_marker: TextRangeMarker = '|'.into();
+    let replace_range_marker: TextRangeMarker = ('<', '>').into();
+    let (_, mut marked_ranges) = marked_text_ranges_by(
+        marked_string,
+        vec![complete_from_marker.clone(), replace_range_marker.clone()],
+    );
+
+    let complete_from_position =
+        cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
+    let replace_range =
+        cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+
+    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
+        let completions = completions.clone();
+        async move {
+            assert_eq!(params.text_document_position.text_document.uri, url.clone());
+            assert_eq!(
+                params.text_document_position.position,
+                complete_from_position
+            );
+            Ok(Some(lsp::CompletionResponse::Array(
+                completions
+                    .iter()
+                    .map(|completion_text| lsp::CompletionItem {
+                        label: completion_text.to_string(),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: replace_range,
+                            new_text: completion_text.to_string(),
+                        })),
+                        ..Default::default()
+                    })
+                    .collect(),
+            )))
+        }
+    });
+
+    async move {
+        request.next().await;
+    }
+}
+
+fn handle_resolve_completion_request<'a>(
+    cx: &mut EditorLspTestContext<'a>,
+    edits: Option<Vec<(&'static str, &'static str)>>,
+) -> impl Future<Output = ()> {
+    let edits = edits.map(|edits| {
+        edits
+            .iter()
+            .map(|(marked_string, new_text)| {
+                let (_, marked_ranges) = marked_text_ranges(marked_string, false);
+                let replace_range = cx.to_lsp_range(marked_ranges[0].clone());
+                lsp::TextEdit::new(replace_range, new_text.to_string())
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let mut request =
+        cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+            let edits = edits.clone();
+            async move {
+                Ok(lsp::CompletionItem {
+                    additional_text_edits: edits,
+                    ..Default::default()
+                })
+            }
+        });
+
+    async move {
+        request.next().await;
+    }
+}
+
+fn handle_copilot_completion_request(
+    lsp: &lsp::FakeLanguageServer,
+    completions: Vec<copilot::request::Completion>,
+    completions_cycling: Vec<copilot::request::Completion>,
+) {
+    lsp.handle_request::<copilot::request::GetCompletions, _, _>(move |_params, _cx| {
+        let completions = completions.clone();
+        async move {
+            Ok(copilot::request::GetCompletionsResult {
+                completions: completions.clone(),
+            })
+        }
+    });
+    lsp.handle_request::<copilot::request::GetCompletionsCycling, _, _>(move |_params, _cx| {
+        let completions_cycling = completions_cycling.clone();
+        async move {
+            Ok(copilot::request::GetCompletionsResult {
+                completions: completions_cycling.clone(),
+            })
+        }
+    });
 }

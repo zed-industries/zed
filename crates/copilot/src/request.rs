@@ -117,7 +117,7 @@ pub struct GetCompletionsResult {
     pub completions: Vec<Completion>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Completion {
     pub text: String,

@@ -7,7 +7,7 @@ mod wrap_map;
 use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
-use fold_map::FoldMap;
+use fold_map::{FoldMap, FoldOffset};
 use gpui::{
     color::Color,
     fonts::{FontId, HighlightStyle},
@@ -238,19 +238,22 @@ impl DisplayMap {
         &self,
         new_suggestion: Option<Suggestion<T>>,
         cx: &mut ModelContext<Self>,
-    ) where
+    ) -> Option<Suggestion<FoldOffset>>
+    where
         T: ToPoint,
     {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.suggestion_map.replace(new_suggestion, snapshot, edits);
+        let (snapshot, edits, old_suggestion) =
+            self.suggestion_map.replace(new_suggestion, snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+        old_suggestion
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {

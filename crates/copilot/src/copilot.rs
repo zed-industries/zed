@@ -1,4 +1,4 @@
-mod request;
+pub mod request;
 mod sign_in;
 
 use anyhow::{anyhow, Context, Result};
@@ -125,12 +125,8 @@ enum CopilotServer {
 
 #[derive(Clone, Debug)]
 enum SignInStatus {
-    Authorized {
-        _user: String,
-    },
-    Unauthorized {
-        _user: String,
-    },
+    Authorized,
+    Unauthorized,
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
         task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
@@ -236,6 +232,23 @@ impl Copilot {
                 server: CopilotServer::Disabled,
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(cx: &mut gpui::TestAppContext) -> (ModelHandle<Self>, lsp::FakeLanguageServer) {
+        let (server, fake_server) =
+            LanguageServer::fake("copilot".into(), Default::default(), cx.to_async());
+        let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
+        let this = cx.add_model(|cx| Self {
+            http: http.clone(),
+            node_runtime: NodeRuntime::new(http, cx.background().clone()),
+            server: CopilotServer::Started {
+                server: Arc::new(server),
+                status: SignInStatus::Authorized,
+                subscriptions_by_buffer_id: Default::default(),
+            },
+        });
+        (this, fake_server)
     }
 
     fn start_language_server(
@@ -617,14 +630,10 @@ impl Copilot {
     ) {
         if let CopilotServer::Started { status, .. } = &mut self.server {
             *status = match lsp_status {
-                request::SignInStatus::Ok { user }
-                | request::SignInStatus::MaybeOk { user }
-                | request::SignInStatus::AlreadySignedIn { user } => {
-                    SignInStatus::Authorized { _user: user }
-                }
-                request::SignInStatus::NotAuthorized { user } => {
-                    SignInStatus::Unauthorized { _user: user }
-                }
+                request::SignInStatus::Ok { .. }
+                | request::SignInStatus::MaybeOk { .. }
+                | request::SignInStatus::AlreadySignedIn { .. } => SignInStatus::Authorized,
+                request::SignInStatus::NotAuthorized { .. } => SignInStatus::Unauthorized,
                 request::SignInStatus::NotSignedIn => SignInStatus::SignedOut,
             };
             cx.notify();
