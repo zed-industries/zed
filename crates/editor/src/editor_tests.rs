@@ -6154,6 +6154,12 @@ async fn test_copilot_completion_invalidation(
         assert!(!editor.has_active_copilot_suggestion(cx));
         assert_eq!(editor.display_text(cx), "one\nthree\n");
         assert_eq!(editor.text(cx), "one\nthree\n");
+
+        // Undoing the deletion restores the suggestion.
+        editor.undo(&Default::default(), cx);
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+        assert_eq!(editor.text(cx), "one\n\nthree\n");
     });
 }
 
