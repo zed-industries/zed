@@ -2833,14 +2833,13 @@ impl Editor {
     }
 
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
-        if self.copilot_state.completions.is_empty() {
+        if !self.has_active_copilot_suggestion(cx) {
             self.refresh_copilot_suggestions(cx);
             return;
         }
 
         self.copilot_state.active_completion_index =
             (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
-
         self.update_visible_copilot_suggestion(cx);
     }
 
@@ -2849,7 +2848,7 @@ impl Editor {
         _: &copilot::PreviousSuggestion,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.copilot_state.completions.is_empty() {
+        if !self.has_active_copilot_suggestion(cx) {
             self.refresh_copilot_suggestions(cx);
             return;
         }
@@ -2860,7 +2859,6 @@ impl Editor {
             } else {
                 self.copilot_state.active_completion_index - 1
             };
-
         self.update_visible_copilot_suggestion(cx);
     }
 
