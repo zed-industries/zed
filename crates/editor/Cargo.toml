@@ -11,6 +11,7 @@ doctest = false
 [features]
 test-support = [
     "rand",
+    "copilot/test-support",
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
@@ -65,6 +66,7 @@ tree-sitter-javascript = { version = "*", optional = true }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259", optional = true }
 
 [dev-dependencies]
+copilot = { path = "../copilot", features = ["test-support"] }
 text = { path = "../text", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

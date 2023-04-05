@@ -95,6 +95,7 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -2799,7 +2800,7 @@ impl Editor {
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
-            cx.background().timer(Duration::from_millis(75)).await;
+            cx.background().timer(COPILOT_DEBOUNCE_TIMEOUT).await;
             let (completion, completions_cycling) = copilot.update(&mut cx, |copilot, cx| {
                 (
                     copilot.completions(&buffer, buffer_position, cx),
