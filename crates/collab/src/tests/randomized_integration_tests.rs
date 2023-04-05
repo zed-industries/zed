@@ -152,6 +152,8 @@ async fn test_random_collaboration(
             drop(client);
         });
     }
+
+    deterministic.run_until_parked();
 }
 
 fn on_failure() {
