@@ -1227,11 +1227,10 @@ impl Snapshot {
         let mut entries_by_path_edits = Vec::new();
         let mut entries_by_id_edits = Vec::new();
         for entry_id in update.removed_entries {
-            let entry = self
-                .entry_for_id(ProjectEntryId::from_proto(entry_id))
-                .ok_or_else(|| anyhow!("unknown entry {}", entry_id))?;
-            entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
-            entries_by_id_edits.push(Edit::Remove(entry.id));
+            if let Some(entry) = self.entry_for_id(ProjectEntryId::from_proto(entry_id)) {
+                entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
+                entries_by_id_edits.push(Edit::Remove(entry.id));
+            }
         }
 
         for entry in update.updated_entries {
