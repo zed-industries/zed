@@ -8,6 +8,17 @@ publish = false
 path = "src/copilot.rs"
 doctest = false
 
+[features]
+test-support = [
+    "client/test-support",
+    "collections/test-support",
+    "gpui/test-support",
+    "language/test-support",
+    "lsp/test-support",
+    "settings/test-support",
+    "util/test-support",
+]
+
 [dependencies]
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
@@ -30,6 +41,7 @@ smol = "1.2.5"
 futures = "0.3"
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
