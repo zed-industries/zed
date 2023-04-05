@@ -3282,7 +3282,7 @@ impl Editor {
             // Accept copilot suggestion if there is only one selection and the cursor is not
             // in the leading whitespace.
             if self.selections.count() == 1
-                && selection.start.column >= current_indent.len
+                && cursor.column >= current_indent.len
                 && self.has_active_copilot_suggestion(cx)
             {
                 self.accept_copilot_suggestion(cx);
