@@ -473,18 +473,22 @@ impl Client {
     pub fn subscribe_to_entity<T: Entity>(
         self: &Arc<Self>,
         remote_id: u64,
-    ) -> PendingEntitySubscription<T> {
+    ) -> Result<PendingEntitySubscription<T>> {
         let id = (TypeId::of::<T>(), remote_id);
-        self.state
-            .write()
-            .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::Pending(Default::default()));
 
-        PendingEntitySubscription {
-            client: self.clone(),
-            remote_id,
-            consumed: false,
-            _entity_type: PhantomData,
+        let mut state = self.state.write();
+        if state.entities_by_type_and_remote_id.contains_key(&id) {
+            return Err(anyhow!("already subscribed to entity"));
+        } else {
+            state
+                .entities_by_type_and_remote_id
+                .insert(id, WeakSubscriber::Pending(Default::default()));
+            Ok(PendingEntitySubscription {
+                client: self.clone(),
+                remote_id,
+                consumed: false,
+                _entity_type: PhantomData,
+            })
         }
     }
 
@@ -1605,14 +1609,17 @@ mod tests {
 
         let _subscription1 = client
             .subscribe_to_entity(1)
+            .unwrap()
             .set_model(&model1, &mut cx.to_async());
         let _subscription2 = client
             .subscribe_to_entity(2)
+            .unwrap()
             .set_model(&model2, &mut cx.to_async());
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = client
             .subscribe_to_entity(3)
+            .unwrap()
             .set_model(&model3, &mut cx.to_async());
         drop(subscription3);
 

@@ -463,7 +463,7 @@ impl Project {
     ) -> Result<ModelHandle<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
-        let subscription = client.subscribe_to_entity(remote_id);
+        let subscription = client.subscribe_to_entity(remote_id)?;
         let response = client
             .request_envelope(proto::JoinProject {
                 project_id: remote_id,
@@ -989,6 +989,11 @@ impl Project {
         if self.client_state.is_some() {
             return Err(anyhow!("project was already shared"));
         }
+        self.client_subscriptions.push(
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_model(&cx.handle(), &mut cx.to_async()),
+        );
 
         for open_buffer in self.opened_buffers.values_mut() {
             match open_buffer {
@@ -1024,12 +1029,6 @@ impl Project {
                 })
                 .log_err();
         }
-
-        self.client_subscriptions.push(
-            self.client
-                .subscribe_to_entity(project_id)
-                .set_model(&cx.handle(), &mut cx.to_async()),
-        );
 
         let (metadata_changed_tx, mut metadata_changed_rx) = mpsc::unbounded();
         self.client_state = Some(ProjectClientState::Local {
