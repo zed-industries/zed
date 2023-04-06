@@ -646,11 +646,12 @@ mod test {
         );
         cx.simulate_keystroke("p");
         cx.assert_state(
-            indoc! {"
+            &indoc! {"
                 The quick brown
-                the
+                the_
                 ˇfox jumps over
-                dog"},
+                dog"}
+            .replace("_", " "), // Hack for trailing whitespace
             Mode::Normal,
         );
     }
