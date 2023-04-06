@@ -9,7 +9,7 @@ use std::{
 
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
-    Axis, AppContext, Task, ViewContext,
+    AppContext, Axis, Task, ViewContext,
 };
 use language::{Bias, Point};
 use util::ResultExt;

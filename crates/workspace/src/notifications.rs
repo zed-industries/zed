@@ -1,7 +1,7 @@
 use std::{any::TypeId, ops::DerefMut};
 
 use collections::HashSet;
-use gpui::{AnyViewHandle, Entity, AppContext, View, ViewContext, ViewHandle};
+use gpui::{AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle};
 
 use crate::Workspace;
 
@@ -138,7 +138,7 @@ pub mod simple_message_notification {
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
-        impl_actions, Action, CursorStyle, Element, Entity, MouseButton, AppContext, View,
+        impl_actions, Action, AppContext, CursorStyle, Element, Entity, MouseButton, View,
         ViewContext,
     };
     use menu::Cancel;

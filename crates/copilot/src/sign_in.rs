@@ -1,6 +1,6 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    elements::*, geometry::rect::RectF, ClipboardItem, Element, Entity, AppContext, View,
+    elements::*, geometry::rect::RectF, AppContext, ClipboardItem, Element, Entity, View,
     ViewContext, ViewHandle, WindowKind, WindowOptions,
 };
 use settings::Settings;

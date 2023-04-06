@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::notifications::render_user_notification;
 use client::{ContactEventKind, User, UserStore};
 use gpui::{
-    elements::*, impl_internal_actions, Entity, ModelHandle, AppContext, RenderContext,
-    View, ViewContext,
+    elements::*, impl_internal_actions, AppContext, Entity, ModelHandle, RenderContext, View,
+    ViewContext,
 };
 use workspace::notifications::Notification;
 

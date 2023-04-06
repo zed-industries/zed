@@ -10,9 +10,7 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{
-    AsyncAppContext, Entity, ModelContext, ModelHandle, AppContext, Task, WeakModelHandle,
-};
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::LanguageRegistry;
 use live_kit_client::{LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate};
 use postage::stream::Stream;
@@ -70,10 +68,7 @@ impl Entity for Room {
         }
     }
 
-    fn app_will_quit(
-        &mut self,
-        cx: &mut AppContext,
-    ) -> Option<Pin<Box<dyn Future<Output = ()>>>> {
+    fn app_will_quit(&mut self, cx: &mut AppContext) -> Option<Pin<Box<dyn Future<Output = ()>>>> {
         if self.status.is_online() {
             let leave = self.leave_internal(cx);
             Some(

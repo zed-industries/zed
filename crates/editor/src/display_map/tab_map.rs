@@ -640,9 +640,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines_with_character_spanning_max_expansion_column(
-        cx: &mut gpui::AppContext,
-    ) {
+    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::AppContext) {
         let max_expansion_column = 8;
         let input = "abcdefg⋯hij";
 

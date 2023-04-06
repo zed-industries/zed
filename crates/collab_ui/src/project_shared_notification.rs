@@ -5,8 +5,8 @@ use gpui::{
     actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    CursorStyle, Entity, MouseButton, AppContext, RenderContext, View, ViewContext,
-    WindowBounds, WindowKind, WindowOptions,
+    AppContext, CursorStyle, Entity, MouseButton, RenderContext, View, ViewContext, WindowBounds,
+    WindowKind, WindowOptions,
 };
 use settings::Settings;
 use std::sync::Arc;

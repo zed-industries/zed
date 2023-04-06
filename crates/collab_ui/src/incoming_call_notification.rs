@@ -4,8 +4,8 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_internal_actions, CursorStyle, Entity, MouseButton, AppContext, RenderContext,
-    View, ViewContext, WindowBounds, WindowKind, WindowOptions,
+    impl_internal_actions, AppContext, CursorStyle, Entity, MouseButton, RenderContext, View,
+    ViewContext, WindowBounds, WindowKind, WindowOptions,
 };
 use settings::Settings;
 use util::ResultExt;

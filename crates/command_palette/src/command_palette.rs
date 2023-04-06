@@ -4,7 +4,7 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
     keymap_matcher::Keystroke,
-    Action, AnyViewHandle, Element, Entity, MouseState, AppContext, RenderContext, View,
+    Action, AnyViewHandle, AppContext, Element, Entity, MouseState, RenderContext, View,
     ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};

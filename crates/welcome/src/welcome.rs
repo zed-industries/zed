@@ -5,7 +5,7 @@ use std::sync::Arc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
-    Element, ElementBox, Entity, AppContext, Subscription, View, ViewContext,
+    AppContext, Element, ElementBox, Entity, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 

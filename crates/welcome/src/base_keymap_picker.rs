@@ -2,7 +2,7 @@ use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{ChildView, Element as _, Label},
-    AnyViewHandle, Entity, AppContext, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, BaseKeymap, Settings};

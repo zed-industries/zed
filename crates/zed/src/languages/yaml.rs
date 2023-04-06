@@ -99,10 +99,7 @@ impl LspAdapter for YamlLspAdapter {
         .log_err()
     }
 
-    fn workspace_configuration(
-        &self,
-        cx: &mut AppContext,
-    ) -> Option<BoxFuture<'static, Value>> {
+    fn workspace_configuration(&self, cx: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
         let settings = cx.global::<Settings>();
         Some(
             future::ready(serde_json::json!({

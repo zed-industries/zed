@@ -1,6 +1,5 @@
 use gpui::{
-    actions, geometry::vector::Vector2F, impl_internal_actions, Axis, AppContext,
-    ViewContext,
+    actions, geometry::vector::Vector2F, impl_internal_actions, AppContext, Axis, ViewContext,
 };
 use language::Bias;
 

@@ -6,7 +6,7 @@ pub mod submit_feedback_button;
 use std::sync::Arc;
 
 mod system_specs;
-use gpui::{actions, impl_actions, ClipboardItem, AppContext, PromptLevel, ViewContext};
+use gpui::{actions, impl_actions, AppContext, ClipboardItem, PromptLevel, ViewContext};
 use serde::Deserialize;
 use system_specs::SystemSpecs;
 use workspace::{AppState, Workspace};
