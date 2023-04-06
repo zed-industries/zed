@@ -735,11 +735,13 @@ async fn apply_client_operation(
             is_dir,
             content,
         } => {
-            client
+            if !client
                 .fs
-                .metadata(&path.parent().unwrap())
-                .await?
-                .ok_or(TestError::Inapplicable)?;
+                .directories()
+                .contains(&path.parent().unwrap().to_owned())
+            {
+                return Err(TestError::Inapplicable);
+            }
 
             if is_dir {
                 log::info!("{}: creating dir at {:?}", client.username, path);
@@ -761,13 +763,8 @@ async fn apply_client_operation(
             repo_path,
             contents,
         } => {
-            if !client
-                .fs
-                .metadata(&repo_path)
-                .await?
-                .map_or(false, |m| m.is_dir)
-            {
-                Err(TestError::Inapplicable)?;
+            if !client.fs.directories().contains(&repo_path) {
+                return Err(TestError::Inapplicable);
             }
 
             log::info!(
