@@ -5550,6 +5550,12 @@ impl Project {
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
 
+        let version = deserialize_version(envelope.payload.version);
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
+            .await;
+        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+
         let position = envelope
             .payload
             .position
@@ -5560,12 +5566,6 @@ impl Project {
                 })
             })
             .ok_or_else(|| anyhow!("invalid position"))?;
-
-        let version = deserialize_version(envelope.payload.version);
-        buffer
-            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
-            .await;
-        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
 
         let completions = this
             .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
