@@ -121,6 +121,7 @@ async fn test_random_collaboration(
 
     loop {
         let Some((next_operation, applied)) = plan.lock().next_server_operation(&clients) else { break };
+        applied.store(true, SeqCst);
         let did_apply = apply_server_operation(
             deterministic.clone(),
             &mut server,
@@ -132,8 +133,8 @@ async fn test_random_collaboration(
             cx,
         )
         .await;
-        if did_apply {
-            applied.store(true, SeqCst);
+        if !did_apply {
+            applied.store(false, SeqCst);
         }
     }
 
