@@ -16,7 +16,7 @@ use editor::{
     scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
     Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
 };
-use gpui::{actions, impl_actions, MutableAppContext, ViewContext};
+use gpui::{actions, impl_actions, AppContext, ViewContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use log::error;
 use serde::Deserialize;
@@ -50,7 +50,7 @@ actions!(
 
 impl_actions!(vim, [Scroll]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_after);
     cx.add_action(insert_first_non_whitespace);
     cx.add_action(insert_end_of_line);
@@ -94,7 +94,7 @@ pub fn normal_motion(
     motion: Motion,
     operator: Option<Operator>,
     times: usize,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) {
     Vim::update(cx, |vim, cx| {
         match operator {
@@ -110,7 +110,7 @@ pub fn normal_motion(
     });
 }
 
-pub fn normal_object(object: Object, cx: &mut MutableAppContext) {
+pub fn normal_object(object: Object, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         match vim.state.operator_stack.pop() {
             Some(Operator::Object { around }) => match vim.state.operator_stack.pop() {
@@ -129,7 +129,7 @@ pub fn normal_object(object: Object, cx: &mut MutableAppContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
+fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut AppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -424,7 +424,7 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
     }
 }
 
-pub(crate) fn normal_replace(text: Arc<str>, cx: &mut MutableAppContext) {
+pub(crate) fn normal_replace(text: Arc<str>, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {

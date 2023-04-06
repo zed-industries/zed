@@ -15,8 +15,8 @@ use std::{
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
-    AnyViewHandle, AppContext, ElementBox, ModelHandle, MutableAppContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, ElementBox, ModelHandle, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::{Autosave, Settings};
@@ -159,8 +159,8 @@ pub trait Item: View {
 pub trait ItemHandle: 'static + fmt::Debug {
     fn subscribe_to_item_events(
         &self,
-        cx: &mut MutableAppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
+        cx: &mut AppContext,
+        handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
@@ -174,7 +174,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn clone_on_split(
         &self,
         workspace_id: WorkspaceId,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
         &self,
@@ -182,35 +182,34 @@ pub trait ItemHandle: 'static + fmt::Debug {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
     );
-    fn deactivated(&self, cx: &mut MutableAppContext);
-    fn workspace_deactivated(&self, cx: &mut MutableAppContext);
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool;
+    fn deactivated(&self, cx: &mut AppContext);
+    fn workspace_deactivated(&self, cx: &mut AppContext);
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut AppContext) -> bool;
     fn id(&self) -> usize;
     fn window_id(&self) -> usize;
     fn as_any(&self) -> &AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>>;
+    fn save(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
         project: ModelHandle<Project>,
         abs_path: PathBuf,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>>;
-    fn reload(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext)
-        -> Task<Result<()>>;
+    fn reload(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>>;
     fn git_diff_recalc(
         &self,
         project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>>;
     fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
         &self,
-        cx: &mut MutableAppContext,
-        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+        cx: &mut AppContext,
+        callback: Box<dyn FnOnce(&mut AppContext)>,
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
@@ -239,8 +238,8 @@ impl dyn ItemHandle {
 impl<T: Item> ItemHandle for ViewHandle<T> {
     fn subscribe_to_item_events(
         &self,
-        cx: &mut MutableAppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut MutableAppContext)>,
+        cx: &mut AppContext,
+        handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription {
         cx.subscribe(self, move |_, event, cx| {
             for item_event in T::to_item_events(event) {
@@ -306,7 +305,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     fn clone_on_split(
         &self,
         workspace_id: WorkspaceId,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(workspace_id, cx))
@@ -493,15 +492,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         });
     }
 
-    fn deactivated(&self, cx: &mut MutableAppContext) {
+    fn deactivated(&self, cx: &mut AppContext) {
         self.update(cx, |this, cx| this.deactivated(cx));
     }
 
-    fn workspace_deactivated(&self, cx: &mut MutableAppContext) {
+    fn workspace_deactivated(&self, cx: &mut AppContext) {
         self.update(cx, |this, cx| this.workspace_deactivated(cx));
     }
 
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) -> bool {
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut AppContext) -> bool {
         self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
@@ -529,7 +528,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).can_save(cx)
     }
 
-    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
+    fn save(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(project, cx))
     }
 
@@ -537,23 +536,19 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         &self,
         project: ModelHandle<Project>,
         abs_path: PathBuf,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
     }
 
-    fn reload(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<()>> {
+    fn reload(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
     fn git_diff_recalc(
         &self,
         project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.git_diff_recalc(project, cx))
     }
@@ -574,8 +569,8 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn on_release(
         &self,
-        cx: &mut MutableAppContext,
-        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+        cx: &mut AppContext,
+        callback: Box<dyn FnOnce(&mut AppContext)>,
     ) -> gpui::Subscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
@@ -651,7 +646,7 @@ pub trait FollowableItem: Item {
         project: ModelHandle<Project>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>>;
     fn add_event_to_update_proto(
         &self,
@@ -672,7 +667,7 @@ pub trait FollowableItem: Item {
 
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext);
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut AppContext);
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -684,7 +679,7 @@ pub trait FollowableItemHandle: ItemHandle {
         &self,
         project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>>;
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
 }
@@ -699,7 +694,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         })
     }
 
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut MutableAppContext) {
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut AppContext) {
         self.update(cx, |this, cx| {
             this.set_leader_replica_id(leader_replica_id, cx)
         })
@@ -726,7 +721,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         &self,
         project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
     }
@@ -745,8 +740,8 @@ pub(crate) mod test {
     use super::{Item, ItemEvent};
     use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext,
-        RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext, Task,
+        View, ViewContext, ViewHandle, WeakViewHandle,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use smallvec::SmallVec;
@@ -812,7 +807,7 @@ pub(crate) mod test {
     }
 
     impl TestProjectItem {
-        pub fn new(id: u64, path: &str, cx: &mut MutableAppContext) -> ModelHandle<Self> {
+        pub fn new(id: u64, path: &str, cx: &mut AppContext) -> ModelHandle<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
@@ -824,7 +819,7 @@ pub(crate) mod test {
             })
         }
 
-        pub fn new_untitled(cx: &mut MutableAppContext) -> ModelHandle<Self> {
+        pub fn new_untitled(cx: &mut AppContext) -> ModelHandle<Self> {
             cx.add_model(|_| Self {
                 project_path: None,
                 entry_id: None,

@@ -4,7 +4,7 @@ use collections::HashMap;
 use editor::{
     display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
 };
-use gpui::{actions, MutableAppContext, ViewContext};
+use gpui::{actions, AppContext, ViewContext};
 use language::{AutoindentMode, SelectionGoal};
 use workspace::Workspace;
 
@@ -18,14 +18,14 @@ use crate::{
 
 actions!(vim, [VisualDelete, VisualChange, VisualYank, VisualPaste]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(change);
     cx.add_action(delete);
     cx.add_action(yank);
     cx.add_action(paste);
 }
 
-pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
+pub fn visual_motion(motion: Motion, times: usize, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -56,7 +56,7 @@ pub fn visual_motion(motion: Motion, times: usize, cx: &mut MutableAppContext) {
     });
 }
 
-pub fn visual_object(object: Object, cx: &mut MutableAppContext) {
+pub fn visual_object(object: Object, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         if let Operator::Object { around } = vim.pop_operator(cx) {
             vim.update_active_editor(cx, |editor, cx| {
@@ -313,7 +313,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
     });
 }
 
-pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut MutableAppContext) {
+pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -648,7 +648,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                the 
+                the
                 ˇfox jumps over
                 dog"},
             Mode::Normal,

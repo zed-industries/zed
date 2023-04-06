@@ -14,7 +14,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
-use gpui::{Action, App, AssetSource, AsyncAppContext, MutableAppContext, Task, ViewContext};
+use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task, ViewContext};
 use isahc::{config::Configurable, Request};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -370,7 +370,7 @@ fn init_panic_hook(app_version: String) {
     }));
 }
 
-fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut MutableAppContext) {
+fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
     let diagnostics_telemetry = cx.global::<Settings>().telemetry_diagnostics();
 
     cx.background()

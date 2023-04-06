@@ -2,7 +2,7 @@ use super::*;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use fs::LineEnding;
-use gpui::{ModelHandle, MutableAppContext};
+use gpui::{AppContext, ModelHandle};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
@@ -35,7 +35,7 @@ fn init_logger() {
 }
 
 #[gpui::test]
-fn test_line_endings(cx: &mut gpui::MutableAppContext) {
+fn test_line_endings(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let mut buffer =
@@ -128,7 +128,7 @@ fn test_select_language() {
 }
 
 #[gpui::test]
-fn test_edit_events(cx: &mut gpui::MutableAppContext) {
+fn test_edit_events(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
     let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
     let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
@@ -675,7 +675,7 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
+fn test_enclosing_bracket_ranges(cx: &mut AppContext) {
     let mut assert = |selection_text, range_markers| {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
     };
@@ -791,9 +791,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
-    cx: &mut MutableAppContext,
-) {
+fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &mut AppContext) {
     let mut assert = |selection_text, bracket_pair_texts| {
         assert_bracket_pairs(selection_text, bracket_pair_texts, javascript_lang(), cx)
     };
@@ -825,7 +823,7 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(
 }
 
 #[gpui::test]
-fn test_range_for_syntax_ancestor(cx: &mut MutableAppContext) {
+fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
     cx.add_model(|cx| {
         let text = "fn a() { b(|c| {}) }";
         let buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
@@ -863,7 +861,7 @@ fn test_range_for_syntax_ancestor(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
+fn test_autoindent_with_soft_tabs(cx: &mut AppContext) {
     let settings = Settings::test(cx);
     cx.set_global(settings);
 
@@ -904,7 +902,7 @@ fn test_autoindent_with_soft_tabs(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
+fn test_autoindent_with_hard_tabs(cx: &mut AppContext) {
     let mut settings = Settings::test(cx);
     settings.editor_overrides.hard_tabs = Some(true);
     cx.set_global(settings);
@@ -946,7 +944,7 @@ fn test_autoindent_with_hard_tabs(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut MutableAppContext) {
+fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppContext) {
     let settings = Settings::test(cx);
     cx.set_global(settings);
 
@@ -1083,7 +1081,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 }
 
 #[gpui::test]
-fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut MutableAppContext) {
+fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut AppContext) {
     let settings = Settings::test(cx);
     cx.set_global(settings);
 
@@ -1146,7 +1144,7 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Mu
 }
 
 #[gpui::test]
-fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppContext) {
+fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let mut buffer = Buffer::new(
@@ -1202,7 +1200,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 }
 
 #[gpui::test]
-fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
+fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let text = "a\nb";
@@ -1218,7 +1216,7 @@ fn test_autoindent_with_edit_at_end_of_buffer(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_multi_line_insertion(cx: &mut MutableAppContext) {
+fn test_autoindent_multi_line_insertion(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let text = "
@@ -1258,7 +1256,7 @@ fn test_autoindent_multi_line_insertion(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
+fn test_autoindent_block_mode(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let text = r#"
@@ -1340,7 +1338,7 @@ fn test_autoindent_block_mode(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut MutableAppContext) {
+fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let text = r#"
@@ -1418,7 +1416,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut MutableAp
 }
 
 #[gpui::test]
-fn test_autoindent_language_without_indents_query(cx: &mut MutableAppContext) {
+fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let text = "
@@ -1461,7 +1459,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_with_injected_languages(cx: &mut MutableAppContext) {
+fn test_autoindent_with_injected_languages(cx: &mut AppContext) {
     cx.set_global({
         let mut settings = Settings::test(cx);
         settings.language_overrides.extend([
@@ -1575,7 +1573,7 @@ fn test_autoindent_with_injected_languages(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_autoindent_query_with_outdent_captures(cx: &mut MutableAppContext) {
+fn test_autoindent_query_with_outdent_captures(cx: &mut AppContext) {
     let mut settings = Settings::test(cx);
     settings.editor_defaults.tab_size = Some(2.try_into().unwrap());
     cx.set_global(settings);
@@ -1618,7 +1616,7 @@ fn test_autoindent_query_with_outdent_captures(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_language_config_at(cx: &mut MutableAppContext) {
+fn test_language_config_at(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     cx.add_model(|cx| {
         let language = Language::new(
@@ -1705,7 +1703,7 @@ fn test_language_config_at(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_serialization(cx: &mut gpui::MutableAppContext) {
+fn test_serialization(cx: &mut gpui::AppContext) {
     let mut now = Instant::now();
 
     let buffer1 = cx.add_model(|cx| {
@@ -1746,7 +1744,7 @@ fn test_serialization(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test(iterations = 100)]
-fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
+fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")
         .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
         .unwrap_or(1);
@@ -2199,7 +2197,7 @@ fn assert_bracket_pairs(
     selection_text: &'static str,
     bracket_pair_texts: Vec<&'static str>,
     language: Language,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) {
     cx.set_global(Settings::test(cx));
     let (expected_text, selection_ranges) = marked_text_ranges(selection_text, false);

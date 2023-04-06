@@ -498,12 +498,12 @@ extern "C" {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MutableAppContext;
+    use crate::AppContext;
     use font_kit::properties::{Style, Weight};
     use platform::FontSystem as _;
 
     #[crate::test(self, retries = 5)]
-    fn test_layout_str(_: &mut MutableAppContext) {
+    fn test_layout_str(_: &mut AppContext) {
         // This is failing intermittently on CI and we don't have time to figure it out
         let fonts = FontSystem::new();
         let menlo = fonts.load_family("Menlo", &Default::default()).unwrap();

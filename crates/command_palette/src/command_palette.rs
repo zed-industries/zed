@@ -4,7 +4,7 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
     keymap_matcher::Keystroke,
-    Action, AnyViewHandle, Element, Entity, MouseState, MutableAppContext, RenderContext, View,
+    Action, AnyViewHandle, Element, Entity, MouseState, AppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
@@ -12,7 +12,7 @@ use settings::Settings;
 use std::cmp;
 use workspace::Workspace;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(CommandPalette::toggle);
     Picker::<CommandPalette>::init(cx);
 }

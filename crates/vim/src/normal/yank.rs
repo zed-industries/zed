@@ -1,8 +1,8 @@
 use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim};
 use collections::HashMap;
-use gpui::MutableAppContext;
+use gpui::AppContext;
 
-pub fn yank_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
+pub fn yank_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut AppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -25,7 +25,7 @@ pub fn yank_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut Mutable
     });
 }
 
-pub fn yank_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
+pub fn yank_object(vim: &mut Vim, object: Object, around: bool, cx: &mut AppContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);

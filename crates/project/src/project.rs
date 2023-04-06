@@ -18,8 +18,8 @@ use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
-    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
+    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task,
+    UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     point_to_lsp,
@@ -414,7 +414,7 @@ impl Project {
         user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| Self {
             worktrees: Default::default(),
@@ -6519,7 +6519,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 impl Entity for Project {
     type Event = Event;
 
-    fn release(&mut self, _: &mut gpui::MutableAppContext) {
+    fn release(&mut self, _: &mut gpui::AppContext) {
         match &self.client_state {
             Some(ProjectClientState::Local { remote_id, .. }) => {
                 let _ = self.client.send(proto::UnshareProject {
@@ -6537,7 +6537,7 @@ impl Entity for Project {
 
     fn app_will_quit(
         &mut self,
-        _: &mut MutableAppContext,
+        _: &mut AppContext,
     ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
         let shutdown_futures = self
             .language_servers

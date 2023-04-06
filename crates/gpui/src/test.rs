@@ -18,7 +18,7 @@ use crate::{
     executor::{self, ExecutorEvent},
     platform,
     util::CwdBacktrace,
-    Element, ElementBox, Entity, FontCache, Handle, MutableAppContext, Platform, RenderContext,
+    AppContext, Element, ElementBox, Entity, FontCache, Handle, Platform, RenderContext,
     Subscription, TestAppContext, View,
 };
 
@@ -40,7 +40,7 @@ pub fn run_test(
     detect_nondeterminism: bool,
     test_fn: &mut (dyn RefUnwindSafe
               + Fn(
-        &mut MutableAppContext,
+        &mut AppContext,
         Rc<platform::test::ForegroundPlatform>,
         Arc<executor::Deterministic>,
         u64,

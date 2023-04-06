@@ -32,8 +32,8 @@ use gpui::{
     platform::CursorStyle,
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
-    Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, MutableAppContext,
-    PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
+    Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, PaintContext, Quad,
+    SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use itertools::Itertools;
 use json::json;
@@ -103,14 +103,14 @@ impl EditorElement {
         self.view.upgrade(cx).unwrap().read(cx)
     }
 
-    fn update_view<F, T>(&self, cx: &mut MutableAppContext, f: F) -> T
+    fn update_view<F, T>(&self, cx: &mut AppContext, f: F) -> T
     where
         F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
     {
         self.view.upgrade(cx).unwrap().update(cx, f)
     }
 
-    fn snapshot(&self, cx: &mut MutableAppContext) -> EditorSnapshot {
+    fn snapshot(&self, cx: &mut AppContext) -> EditorSnapshot {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
@@ -2522,7 +2522,7 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
-    fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
+    fn test_layout_line_numbers(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
@@ -2542,7 +2542,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_layout_with_placeholder_text_and_blocks(cx: &mut gpui::MutableAppContext) {
+    fn test_layout_with_placeholder_text_and_blocks(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("", cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {

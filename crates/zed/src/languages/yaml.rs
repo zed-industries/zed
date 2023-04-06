@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::MutableAppContext;
+use gpui::AppContext;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use node_runtime::NodeRuntime;
 use serde_json::Value;
@@ -101,7 +101,7 @@ impl LspAdapter for YamlLspAdapter {
 
     fn workspace_configuration(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<BoxFuture<'static, Value>> {
         let settings = cx.global::<Settings>();
         Some(

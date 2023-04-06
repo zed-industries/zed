@@ -630,7 +630,7 @@ mod tests {
     use std::env;
 
     #[crate::test(self)]
-    fn test_layout(cx: &mut crate::MutableAppContext) {
+    fn test_layout(cx: &mut crate::AppContext) {
         let mut presenter = cx.build_presenter(0, 0., Default::default());
         let (_, view) = cx.add_window(Default::default(), |_| TestView);
         let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
@@ -725,7 +725,7 @@ mod tests {
     }
 
     #[crate::test(self, iterations = 10, seed = 0)]
-    fn test_random(cx: &mut crate::MutableAppContext, mut rng: StdRng) {
+    fn test_random(cx: &mut crate::AppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);

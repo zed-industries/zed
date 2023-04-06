@@ -16,10 +16,7 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{DOT_GIT, GITIGNORE};
-use gpui::{
-    executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task,
-};
+use gpui::{executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{
     proto::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
@@ -287,7 +284,7 @@ impl Worktree {
         replica_id: ReplicaId,
         worktree: proto::WorktreeMetadata,
         client: Arc<Client>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| {
             let snapshot = Snapshot {
@@ -1896,7 +1893,7 @@ impl language::LocalFile for File {
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         if let Some(project_id) = worktree.share.as_ref().map(|share| share.project_id) {

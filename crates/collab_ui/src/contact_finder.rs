@@ -1,14 +1,14 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, RenderContext, Task,
+    View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     Picker::<ContactFinder>::init(cx);
 }
 

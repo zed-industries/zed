@@ -10,8 +10,8 @@ use editor::{
 use futures::StreamExt;
 use gpui::{
     actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
-    Entity, ModelContext, ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Entity, ModelContext, ModelHandle, MouseButton, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -36,7 +36,7 @@ actions!(project_search, [SearchInNew, ToggleFocus]);
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSearches::default());
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchBar::search);
@@ -50,7 +50,7 @@ pub fn init(cx: &mut MutableAppContext) {
     add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
 }
 
-fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableAppContext) {
+fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut AppContext) {
     cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<ProjectSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| {

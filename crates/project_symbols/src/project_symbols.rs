@@ -5,7 +5,7 @@ use editor::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -17,7 +17,7 @@ use workspace::Workspace;
 
 actions!(project_symbols, [Toggle]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSymbolsView::toggle);
     Picker::<ProjectSymbolsView>::init(cx);
 }

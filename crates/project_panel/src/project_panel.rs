@@ -13,8 +13,8 @@ use gpui::{
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
-    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton, PromptLevel,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -132,7 +132,7 @@ impl_internal_actions!(
     [Open, ToggleExpanded, DeployContextMenu, MoveProjectEntry]
 );
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectPanel::deploy_context_menu);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);

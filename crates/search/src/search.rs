@@ -1,11 +1,11 @@
 pub use buffer_search::BufferSearchBar;
-use gpui::{actions, Action, MutableAppContext};
+use gpui::{actions, Action, AppContext};
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
 
 pub mod buffer_search;
 pub mod project_search;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     buffer_search::init(cx);
     project_search::init(cx);
 }

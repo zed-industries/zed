@@ -2,6 +2,7 @@ use crate::{worktree::WorktreeHandle, Event, *};
 use fs::LineEnding;
 use fs::{FakeFs, RealFs};
 use futures::{future, StreamExt};
+use gpui::AppContext;
 use gpui::{executor::Deterministic, test::subscribe};
 use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,

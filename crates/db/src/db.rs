@@ -4,7 +4,7 @@ pub mod query;
 // Re-export
 pub use anyhow;
 use anyhow::Context;
-use gpui::MutableAppContext;
+use gpui::AppContext;
 pub use indoc::indoc;
 pub use lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -239,7 +239,7 @@ macro_rules! define_connection {
     };
 }
 
-pub fn write_and_log<F>(cx: &mut MutableAppContext, db_write: impl FnOnce() -> F + Send + 'static)
+pub fn write_and_log<F>(cx: &mut AppContext, db_write: impl FnOnce() -> F + Send + 'static)
 where
     F: Future<Output = anyhow::Result<()>> + Send,
 {

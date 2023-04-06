@@ -1,6 +1,6 @@
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{executor, MutableAppContext};
+use gpui::{executor, AppContext};
 use postage::sink::Sink as _;
 use postage::{prelude::Stream, watch};
 use serde::Deserialize;
@@ -67,7 +67,7 @@ pub fn watch_files(
     settings_file: WatchedJsonFile<SettingsFileContent>,
     theme_registry: Arc<ThemeRegistry>,
     keymap_file: WatchedJsonFile<KeymapFileContent>,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) {
     watch_settings_file(defaults, settings_file, theme_registry, cx);
     watch_keymap_file(keymap_file, cx);
@@ -77,7 +77,7 @@ pub(crate) fn watch_settings_file(
     defaults: Settings,
     mut file: WatchedJsonFile<SettingsFileContent>,
     theme_registry: Arc<ThemeRegistry>,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) {
     settings_updated(&defaults, file.0.borrow().clone(), &theme_registry, cx);
     cx.spawn(|mut cx| async move {
@@ -88,7 +88,7 @@ pub(crate) fn watch_settings_file(
     .detach();
 }
 
-fn keymap_updated(content: KeymapFileContent, cx: &mut MutableAppContext) {
+fn keymap_updated(content: KeymapFileContent, cx: &mut AppContext) {
     cx.clear_bindings();
     KeymapFileContent::load_defaults(cx);
     content.add_to_cx(cx).log_err();
@@ -98,7 +98,7 @@ fn settings_updated(
     defaults: &Settings,
     content: SettingsFileContent,
     theme_registry: &Arc<ThemeRegistry>,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) {
     let mut settings = defaults.clone();
     settings.set_user_settings(content, theme_registry, cx.font_cache());
@@ -106,7 +106,7 @@ fn settings_updated(
     cx.refresh_windows();
 }
 
-fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut MutableAppContext) {
+fn watch_keymap_file(mut file: WatchedJsonFile<KeymapFileContent>, cx: &mut AppContext) {
     cx.spawn(|mut cx| async move {
         let mut settings_subscription = None;
         while let Some(content) = file.0.recv().await {

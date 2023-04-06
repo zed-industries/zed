@@ -578,7 +578,7 @@ impl<'a> Iterator for SuggestionBufferRows<'a> {
 mod tests {
     use super::*;
     use crate::{display_map::fold_map::FoldMap, MultiBuffer};
-    use gpui::MutableAppContext;
+    use gpui::AppContext;
     use rand::{prelude::StdRng, Rng};
     use settings::Settings;
     use std::{
@@ -587,7 +587,7 @@ mod tests {
     };
 
     #[gpui::test]
-    fn test_basic(cx: &mut MutableAppContext) {
+    fn test_basic(cx: &mut AppContext) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut fold_map, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
@@ -632,7 +632,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_suggestions(cx: &mut MutableAppContext, mut rng: StdRng) {
+    fn test_random_suggestions(cx: &mut AppContext, mut rng: StdRng) {
         cx.set_global(Settings::test(cx));
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))

@@ -1,12 +1,12 @@
 use crate::{state::Mode, Vim};
 use editor::{scroll::autoscroll::Autoscroll, Bias};
-use gpui::{actions, MutableAppContext, ViewContext};
+use gpui::{actions, AppContext, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
 actions!(vim, [NormalBefore]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(normal_before);
 }
 

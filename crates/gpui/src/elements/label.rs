@@ -210,7 +210,7 @@ mod tests {
     use crate::fonts::{Properties as FontProperties, Weight};
 
     #[crate::test(self)]
-    fn test_layout_label_with_highlights(cx: &mut crate::MutableAppContext) {
+    fn test_layout_label_with_highlights(cx: &mut crate::AppContext) {
         let default_style = TextStyle::new(
             "Menlo",
             12.,

@@ -2,7 +2,7 @@ use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
     elements::*, platform::CursorStyle, serde_json, Entity, ModelHandle, MouseButton,
-    MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::Diagnostic;
 use project::Project;
@@ -17,7 +17,7 @@ pub struct DiagnosticIndicator {
     _observe_active_editor: Option<Subscription>,
 }
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(DiagnosticIndicator::go_to_next_diagnostic);
 }
 

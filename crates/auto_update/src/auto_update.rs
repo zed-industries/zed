@@ -5,7 +5,7 @@ use client::{ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, WeakViewHandle,
+    Task, WeakViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -49,7 +49,7 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
-pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut MutableAppContext) {
+pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
         let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
@@ -95,7 +95,7 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut Mutab
 
 pub fn notify_of_any_new_update(
     workspace: WeakViewHandle<Workspace>,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) -> Option<()> {
     let updater = AutoUpdater::get(cx)?;
     let version = updater.read(cx).current_version;
@@ -124,7 +124,7 @@ pub fn notify_of_any_new_update(
 }
 
 impl AutoUpdater {
-    pub fn get(cx: &mut MutableAppContext) -> Option<ModelHandle<Self>> {
+    pub fn get(cx: &mut AppContext) -> Option<ModelHandle<Self>> {
         cx.default_global::<Option<ModelHandle<Self>>>().clone()
     }
 

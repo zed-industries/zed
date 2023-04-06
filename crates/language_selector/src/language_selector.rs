@@ -5,7 +5,7 @@ use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
@@ -16,7 +16,7 @@ use workspace::{AppState, Workspace};
 
 actions!(language_selector, [Toggle]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     Picker::<LanguageSelector>::init(cx);
     cx.add_action({
         let language_registry = app_state.languages.clone();

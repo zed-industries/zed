@@ -7,8 +7,8 @@ use gpui::{
     actions,
     elements::{ChildView, Container, Empty, MouseEventHandler, ParentElement, Side, Stack},
     geometry::vector::Vector2F,
-    impl_internal_actions, Border, CursorStyle, Element, ElementBox, MouseButton,
-    MutableAppContext, RenderContext, SizeConstraint, ViewContext, ViewHandle,
+    impl_internal_actions, AppContext, Border, CursorStyle, Element, ElementBox, MouseButton,
+    RenderContext, SizeConstraint, ViewContext, ViewHandle,
 };
 use settings::{DockAnchor, Settings};
 use theme::Theme;
@@ -36,7 +36,7 @@ actions!(
 );
 impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(Dock::focus_dock);
     cx.add_action(Dock::hide_dock);
     cx.add_action(

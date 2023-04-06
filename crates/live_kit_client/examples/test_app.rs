@@ -89,6 +89,6 @@ fn main() {
     });
 }
 
-fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
+fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     cx.platform().quit();
 }

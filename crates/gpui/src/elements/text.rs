@@ -271,12 +271,10 @@ pub fn layout_highlighted_chunks<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        elements::Empty, fonts, ElementBox, Entity, MutableAppContext, RenderContext, View,
-    };
+    use crate::{elements::Empty, fonts, AppContext, ElementBox, Entity, RenderContext, View};
 
     #[crate::test(self)]
-    fn test_soft_wrapping_with_carriage_returns(cx: &mut MutableAppContext) {
+    fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
         let (window_id, _) = cx.add_window(Default::default(), |_| TestView);
         let mut presenter = cx.build_presenter(window_id, Default::default(), Default::default());
         fonts::with_font_cache(cx.font_cache().clone(), || {
