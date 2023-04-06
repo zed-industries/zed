@@ -21,7 +21,7 @@ fn init_logger() {
 // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.
 pub fn marked_display_snapshot(
     text: &str,
-    cx: &mut gpui::MutableAppContext,
+    cx: &mut gpui::AppContext,
 ) -> (DisplaySnapshot, Vec<DisplayPoint>) {
     let (unmarked_text, markers) = marked_text_offsets(text);
 

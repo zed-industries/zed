@@ -1,6 +1,5 @@
 use gpui::{
-    actions, geometry::vector::Vector2F, impl_internal_actions, Axis, MutableAppContext,
-    ViewContext,
+    actions, geometry::vector::Vector2F, impl_internal_actions, AppContext, Axis, ViewContext,
 };
 use language::Bias;
 
@@ -32,7 +31,7 @@ pub struct Scroll {
 
 impl_internal_actions!(editor, [Scroll]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::next_screen);
     cx.add_action(Editor::scroll);
     cx.add_action(Editor::scroll_cursor_top);

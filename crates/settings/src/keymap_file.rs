@@ -2,7 +2,7 @@ use crate::{parse_json_with_comments, Settings};
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
-use gpui::{keymap_matcher::Binding, MutableAppContext};
+use gpui::{keymap_matcher::Binding, AppContext};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
@@ -41,7 +41,7 @@ impl JsonSchema for KeymapAction {
 struct ActionWithData(Box<str>, Box<RawValue>);
 
 impl KeymapFileContent {
-    pub fn load_defaults(cx: &mut MutableAppContext) {
+    pub fn load_defaults(cx: &mut AppContext) {
         for path in ["keymaps/default.json", "keymaps/vim.json"] {
             Self::load(path, cx).unwrap();
         }
@@ -51,13 +51,13 @@ impl KeymapFileContent {
         }
     }
 
-    pub fn load(asset_path: &str, cx: &mut MutableAppContext) -> Result<()> {
+    pub fn load(asset_path: &str, cx: &mut AppContext) -> Result<()> {
         let content = Assets::get(asset_path).unwrap().data;
         let content_str = std::str::from_utf8(content.as_ref()).unwrap();
         parse_json_with_comments::<Self>(content_str)?.add_to_cx(cx)
     }
 
-    pub fn add_to_cx(self, cx: &mut MutableAppContext) -> Result<()> {
+    pub fn add_to_cx(self, cx: &mut AppContext) -> Result<()> {
         for KeymapBlock { context, bindings } in self.0 {
             let bindings = bindings
                 .into_iter()

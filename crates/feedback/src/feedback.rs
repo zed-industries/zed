@@ -6,7 +6,7 @@ pub mod submit_feedback_button;
 use std::sync::Arc;
 
 mod system_specs;
-use gpui::{actions, impl_actions, ClipboardItem, MutableAppContext, PromptLevel, ViewContext};
+use gpui::{actions, impl_actions, AppContext, ClipboardItem, PromptLevel, ViewContext};
 use serde::Deserialize;
 use system_specs::SystemSpecs;
 use workspace::{AppState, Workspace};
@@ -28,7 +28,7 @@ actions!(
     ]
 );
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     let system_specs = SystemSpecs::new(&cx);
     let system_specs_text = system_specs.to_string();
 

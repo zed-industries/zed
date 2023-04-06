@@ -2,7 +2,7 @@ use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{ChildView, Element as _, Label},
-    AnyViewHandle, Entity, MutableAppContext, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, BaseKeymap, Settings};
@@ -16,7 +16,7 @@ pub struct BaseKeymapSelector {
 
 actions!(welcome, [ToggleBaseKeymapSelector]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     Picker::<BaseKeymapSelector>::init(cx);
     cx.add_action({
         move |workspace, _: &ToggleBaseKeymapSelector, cx| BaseKeymapSelector::toggle(workspace, cx)

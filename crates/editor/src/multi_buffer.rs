@@ -1489,15 +1489,12 @@ impl MultiBuffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
-    pub fn build_simple(text: &str, cx: &mut gpui::MutableAppContext) -> ModelHandle<Self> {
+    pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> ModelHandle<Self> {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
-    pub fn build_random(
-        rng: &mut impl rand::Rng,
-        cx: &mut gpui::MutableAppContext,
-    ) -> ModelHandle<Self> {
+    pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::AppContext) -> ModelHandle<Self> {
         cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             let mutation_count = rng.gen_range(1..=5);
@@ -3729,7 +3726,7 @@ where
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use gpui::{MutableAppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext};
     use language::{Buffer, Rope};
     use rand::prelude::*;
     use settings::Settings;
@@ -3739,7 +3736,7 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
-    fn test_singleton(cx: &mut MutableAppContext) {
+    fn test_singleton(cx: &mut AppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
@@ -3766,7 +3763,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_remote(cx: &mut MutableAppContext) {
+    fn test_remote(cx: &mut AppContext) {
         let host_buffer = cx.add_model(|cx| Buffer::new(0, "a", cx));
         let guest_buffer = cx.add_model(|cx| {
             let state = host_buffer.read(cx).to_proto();
@@ -3797,7 +3794,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_excerpt_boundaries_and_clipping(cx: &mut MutableAppContext) {
+    fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
@@ -4021,7 +4018,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_excerpt_events(cx: &mut MutableAppContext) {
+    fn test_excerpt_events(cx: &mut AppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(10, 3, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(10, 3, 'm'), cx));
 
@@ -4098,7 +4095,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_push_excerpts_with_context_lines(cx: &mut MutableAppContext) {
+    fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
@@ -4172,7 +4169,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_empty_multibuffer(cx: &mut MutableAppContext) {
+    fn test_empty_multibuffer(cx: &mut AppContext) {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -4182,7 +4179,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_singleton_multibuffer_anchors(cx: &mut MutableAppContext) {
+    fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
@@ -4202,7 +4199,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_multibuffer_anchors(cx: &mut MutableAppContext) {
+    fn test_multibuffer_anchors(cx: &mut AppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "efghi", cx));
         let multibuffer = cx.add_model(|cx| {
@@ -4260,7 +4257,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut MutableAppContext) {
+    fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "ABCDEFGHIJKLMNOP", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
@@ -4563,7 +4560,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_multibuffer(cx: &mut MutableAppContext, mut rng: StdRng) {
+    fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -4980,7 +4977,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_history(cx: &mut MutableAppContext) {
+    fn test_history(cx: &mut AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));

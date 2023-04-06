@@ -4,7 +4,7 @@ use gpui::{
     elements::{Flex, MouseEventHandler, Padding, Text},
     impl_internal_actions,
     platform::CursorStyle,
-    Axis, Element, ElementBox, ModelHandle, MouseButton, MutableAppContext, RenderContext, Task,
+    AppContext, Axis, Element, ElementBox, ModelHandle, MouseButton, RenderContext, Task,
     ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity};
@@ -36,7 +36,7 @@ pub struct HideHover;
 actions!(editor, [Hover]);
 impl_internal_actions!(editor, [HoverAt, HideHover]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(hover);
     cx.add_action(hover_at);
     cx.add_action(hide_hover);

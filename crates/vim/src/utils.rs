@@ -1,7 +1,7 @@
 use editor::{ClipboardSelection, Editor};
-use gpui::{ClipboardItem, MutableAppContext};
+use gpui::{AppContext, ClipboardItem};
 
-pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut MutableAppContext) {
+pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut AppContext) {
     let selections = editor.selections.all_adjusted(cx);
     let buffer = editor.buffer().read(cx).snapshot(cx);
     let mut text = String::new();

@@ -15,7 +15,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use fs::LineEnding;
 use futures::FutureExt as _;
-use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
+use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use parking_lot::Mutex;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
@@ -232,7 +232,7 @@ pub trait LocalFile: File {
         fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: SystemTime,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     );
 }
 

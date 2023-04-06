@@ -13,13 +13,13 @@ mod sharing_status_indicator;
 use anyhow::anyhow;
 use call::ActiveCall;
 pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
-use gpui::{actions, MutableAppContext, Task};
+use gpui::{actions, AppContext, Task};
 use std::sync::Arc;
 use workspace::{AppState, JoinProject, ToggleFollow, Workspace};
 
 actions!(collab, [ToggleScreenSharing]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     collab_titlebar_item::init(cx);
     contact_notification::init(cx);
     contact_list::init(cx);
@@ -35,7 +35,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     });
 }
 
-pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut MutableAppContext) {
+pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
         let toggle_screen_sharing = room.update(cx, |room, cx| {
             if room.is_screen_sharing() {
@@ -48,13 +48,13 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut MutableAppContext
     }
 }
 
-fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut AppContext) {
     let project_id = action.project_id;
     let follow_user_id = action.follow_user_id;
     cx.spawn(|mut cx| async move {
         let existing_workspace = cx.update(|cx| {
             cx.window_ids()
-                .filter_map(|window_id| cx.root_view::<Workspace>(window_id))
+                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
                 .find(|workspace| {
                     workspace.read(cx).project().read(cx).remote_id() == Some(project_id)
                 })

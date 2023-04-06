@@ -3,8 +3,8 @@ use std::sync::Arc;
 use context_menu::{ContextMenu, ContextMenuItem};
 use editor::Editor;
 use gpui::{
-    elements::*, impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
-    MouseState, MutableAppContext, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    elements::*, impl_internal_actions, AppContext, CursorStyle, Element, ElementBox, Entity,
+    MouseButton, MouseState, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
 use workspace::{
@@ -43,7 +43,7 @@ impl_internal_actions!(
     ]
 );
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(CopilotButton::deploy_copilot_menu);
     cx.add_action(
         |_: &mut CopilotButton, action: &ToggleCopilotForLanguage, cx| {

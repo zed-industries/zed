@@ -24,8 +24,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, NavigationDirection},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseButton, MouseRegion, MutableAppContext, PromptLevel, Quad, RenderContext,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, MouseRegion, PromptLevel, Quad, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -108,7 +108,7 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
         pane.activate_item(action.0, true, true, cx);
     });
@@ -1094,7 +1094,7 @@ impl Pane {
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
             item.save(project, cx)
@@ -1740,15 +1740,15 @@ fn render_tab_bar_button<A: Action + Clone>(
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut MutableAppContext) {
+    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut AppContext) {
         self.history.borrow_mut().push(data, self.item.clone(), cx);
     }
 
-    pub fn pop_backward(&self, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+    pub fn pop_backward(&self, cx: &mut AppContext) -> Option<NavigationEntry> {
         self.history.borrow_mut().pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&self, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+    pub fn pop_forward(&self, cx: &mut AppContext) -> Option<NavigationEntry> {
         self.history
             .borrow_mut()
             .pop(NavigationMode::GoingForward, cx)
@@ -1768,7 +1768,7 @@ impl NavHistory {
         self.mode = NavigationMode::Normal;
     }
 
-    fn pop(&mut self, mode: NavigationMode, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+    fn pop(&mut self, mode: NavigationMode, cx: &mut AppContext) -> Option<NavigationEntry> {
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
                 return None
@@ -1788,7 +1788,7 @@ impl NavHistory {
         &mut self,
         data: Option<D>,
         item: Rc<dyn WeakItemHandle>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) {
         match self.mode {
             NavigationMode::Disabled => {}
@@ -1833,7 +1833,7 @@ impl NavHistory {
         self.did_update(cx);
     }
 
-    fn did_update(&self, cx: &mut MutableAppContext) {
+    fn did_update(&self, cx: &mut AppContext) {
         if let Some(pane) = self.pane.upgrade(cx) {
             cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
         }

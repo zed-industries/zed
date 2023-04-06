@@ -7,8 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, RenderContext,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -48,7 +48,7 @@ impl FollowableItem for Editor {
         project: ModelHandle<Project>,
         remote_id: ViewId,
         state: &mut Option<proto::view::Variant>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<ViewHandle<Self>>>> {
         let Some(proto::view::Variant::Editor(_)) = state else { return None };
         let Some(proto::view::Variant::Editor(state)) = state.take() else { unreachable!() };
@@ -769,7 +769,7 @@ impl Item for Editor {
             buffer: ModelHandle<Buffer>,
             workspace_id: WorkspaceId,
             item_id: ItemId,
-            cx: &mut MutableAppContext,
+            cx: &mut AppContext,
         ) {
             if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
                 let path = file.abs_path(cx);
@@ -1161,7 +1161,7 @@ fn path_for_file<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::MutableAppContext;
+    use gpui::AppContext;
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -1169,7 +1169,7 @@ mod tests {
     };
 
     #[gpui::test]
-    fn test_path_for_file(cx: &mut MutableAppContext) {
+    fn test_path_for_file(cx: &mut AppContext) {
         let file = TestFile {
             path: Path::new("").into(),
             full_path: PathBuf::from(""),

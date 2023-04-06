@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use editor::{char_kind, display_map::DisplaySnapshot, movement, Bias, CharKind, DisplayPoint};
-use gpui::{actions, impl_actions, MutableAppContext};
+use gpui::{actions, impl_actions, AppContext};
 use language::Selection;
 use serde::Deserialize;
 use workspace::Workspace;
@@ -43,7 +43,7 @@ actions!(
 );
 impl_actions!(vim, [Word]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(
         |_: &mut Workspace, &Word { ignore_punctuation }: &Word, cx: _| {
             object(Object::Word { ignore_punctuation }, cx)
@@ -61,7 +61,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| object(Object::AngleBrackets, cx));
 }
 
-fn object(object: Object, cx: &mut MutableAppContext) {
+fn object(object: Object, cx: &mut AppContext) {
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_object(object, cx),
         Mode::Visual { .. } => visual_object(object, cx),

@@ -1,6 +1,6 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    elements::*, geometry::rect::RectF, ClipboardItem, Element, Entity, MutableAppContext, View,
+    elements::*, geometry::rect::RectF, AppContext, ClipboardItem, Element, Entity, View,
     ViewContext, ViewHandle, WindowKind, WindowOptions,
 };
 use settings::Settings;
@@ -14,7 +14,7 @@ struct OpenGithub;
 
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     let copilot = Copilot::global(cx).unwrap();
 
     let mut code_verification: Option<ViewHandle<CopilotCodeVerification>> = None;
@@ -57,7 +57,7 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 fn create_copilot_auth_window(
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
     status: &Status,
     code_verification: &mut Option<ViewHandle<CopilotCodeVerification>>,
 ) {

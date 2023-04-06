@@ -6,8 +6,8 @@ use gpui::{
         Padding, ParentElement,
     },
     fonts::TextStyle,
-    AppContext, Border, Element, Entity, ModelHandle, MutableAppContext, Quad, RenderContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Border, Element, Entity, ModelHandle, Quad, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::Project;
 use settings::Settings;
@@ -16,7 +16,7 @@ use workspace::{item::Item, register_deserializable_item, Pane, Workspace};
 
 actions!(theme, [DeployThemeTestbench]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ThemeTestbench::deploy);
 
     register_deserializable_item::<ThemeTestbench>(cx)

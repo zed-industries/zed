@@ -3,10 +3,10 @@ use editor::{
     char_kind, display_map::DisplaySnapshot, movement, scroll::autoscroll::Autoscroll, CharKind,
     DisplayPoint,
 };
-use gpui::MutableAppContext;
+use gpui::AppContext;
 use language::Selection;
 
-pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut MutableAppContext) {
+pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut AppContext) {
     // Some motions ignore failure when switching to normal mode
     let mut motion_succeeded = matches!(
         motion,
@@ -38,7 +38,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: usize, cx: &mut Mutab
     }
 }
 
-pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut MutableAppContext) {
+pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut AppContext) {
     let mut objects_found = false;
     vim.update_active_editor(cx, |editor, cx| {
         // We are swapping to insert mode anyway. Just set the line end clipping behavior now

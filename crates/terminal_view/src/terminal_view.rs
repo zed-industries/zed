@@ -16,8 +16,8 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
@@ -68,7 +68,7 @@ impl_actions!(terminal, [SendText, SendKeystroke]);
 
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::deploy);
 
     register_deserializable_item::<TerminalView>(cx);

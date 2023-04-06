@@ -42,8 +42,8 @@ use gpui::{
     platform::CursorStyle,
     serde_json::{self, json},
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseButton, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -295,7 +295,7 @@ pub enum Direction {
     Next,
 }
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::new_file);
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
@@ -1314,7 +1314,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
+    pub fn snapshot(&mut self, cx: &mut AppContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
@@ -6168,13 +6168,13 @@ impl Editor {
         });
     }
 
-    pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
+    pub fn longest_row(&self, cx: &mut AppContext) -> u32 {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .longest_row()
     }
 
-    pub fn max_point(&self, cx: &mut MutableAppContext) -> DisplayPoint {
+    pub fn max_point(&self, cx: &mut AppContext) -> DisplayPoint {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .max_point()
@@ -6194,7 +6194,7 @@ impl Editor {
         });
     }
 
-    pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
+    pub fn display_text(&self, cx: &mut AppContext) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .text()
@@ -6226,7 +6226,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) -> bool {
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
@@ -6766,7 +6766,7 @@ pub struct EditorReleased(pub WeakViewHandle<Editor>);
 impl Entity for Editor {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         cx.emit_global(EditorReleased(self.handle.clone()));
     }
 }

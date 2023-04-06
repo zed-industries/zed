@@ -6,7 +6,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, ModelHandle, MutableAppContext};
+use gpui::{AppContext, ModelHandle};
 use itertools::Itertools;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension, ToPoint};
 use util::post_inc;
@@ -53,7 +53,7 @@ impl SelectionsCollection {
         }
     }
 
-    fn display_map(&self, cx: &mut MutableAppContext) -> DisplaySnapshot {
+    fn display_map(&self, cx: &mut AppContext) -> DisplaySnapshot {
         self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
@@ -136,7 +136,7 @@ impl SelectionsCollection {
     }
 
     // Returns all of the selections, adjusted to take into account the selection line_mode
-    pub fn all_adjusted(&self, cx: &mut MutableAppContext) -> Vec<Selection<Point>> {
+    pub fn all_adjusted(&self, cx: &mut AppContext) -> Vec<Selection<Point>> {
         let mut selections = self.all::<Point>(cx);
         if self.line_mode {
             let map = self.display_map(cx);
@@ -151,7 +151,7 @@ impl SelectionsCollection {
 
     pub fn all_adjusted_display(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         if self.line_mode {
             let selections = self.all::<Point>(cx);
@@ -198,7 +198,7 @@ impl SelectionsCollection {
 
     pub fn all_display(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         let display_map = self.display_map(cx);
         let selections = self
@@ -224,7 +224,7 @@ impl SelectionsCollection {
         resolve(self.newest_anchor(), &self.buffer(cx))
     }
 
-    pub fn newest_display(&self, cx: &mut MutableAppContext) -> Selection<DisplayPoint> {
+    pub fn newest_display(&self, cx: &mut AppContext) -> Selection<DisplayPoint> {
         let display_map = self.display_map(cx);
         let selection = self
             .newest_anchor()
@@ -279,7 +279,7 @@ impl SelectionsCollection {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+    pub fn display_ranges(&self, cx: &mut AppContext) -> Vec<Range<DisplayPoint>> {
         let display_map = self.display_map(cx);
         self.disjoint_anchors()
             .iter()
@@ -324,7 +324,7 @@ impl SelectionsCollection {
 
     pub(crate) fn change_with<R>(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
     ) -> (bool, R) {
         let mut mutable_collection = MutableSelectionsCollection {
@@ -345,7 +345,7 @@ impl SelectionsCollection {
 pub struct MutableSelectionsCollection<'a> {
     collection: &'a mut SelectionsCollection,
     selections_changed: bool,
-    cx: &'a mut MutableAppContext,
+    cx: &'a mut AppContext,
 }
 
 impl<'a> MutableSelectionsCollection<'a> {

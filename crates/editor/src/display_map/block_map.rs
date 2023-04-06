@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_basic_blocks(cx: &mut gpui::MutableAppContext) {
+    fn test_basic_blocks(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
 
         let family_id = cx
@@ -1191,7 +1191,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
+    fn test_blocks_on_wrapped_lines(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
 
         let family_id = cx
@@ -1241,7 +1241,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+    fn test_random_blocks(cx: &mut gpui::AppContext, mut rng: StdRng) {
         cx.set_global(Settings::test(cx));
 
         let operations = env::var("OPERATIONS")

@@ -16,7 +16,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, TryFutureExt as _,
 };
-use gpui::{executor::Background, MutableAppContext, Task};
+use gpui::{executor::Background, AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::CodeActionKind;
@@ -147,7 +147,7 @@ impl CachedLspAdapter {
 
     pub fn workspace_configuration(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<BoxFuture<'static, Value>> {
         self.adapter.workspace_configuration(cx)
     }
@@ -223,10 +223,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(
-        &self,
-        _: &mut MutableAppContext,
-    ) -> Option<BoxFuture<'static, Value>> {
+    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
         None
     }
 
@@ -584,7 +581,7 @@ impl LanguageRegistry {
         result
     }
 
-    pub fn workspace_configuration(&self, cx: &mut MutableAppContext) -> Task<serde_json::Value> {
+    pub fn workspace_configuration(&self, cx: &mut AppContext) -> Task<serde_json::Value> {
         let lsp_adapters = {
             let state = self.state.read();
             state
@@ -769,7 +766,7 @@ impl LanguageRegistry {
         language: Arc<Language>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Task<Result<lsp::LanguageServer>>> {
         #[cfg(any(test, feature = "test-support"))]
         if language.fake_adapter.is_some() {

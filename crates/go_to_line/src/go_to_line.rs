@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, Axis, Entity,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Axis, Entity,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use menu::{Cancel, Confirm};
 use settings::Settings;
@@ -12,7 +12,7 @@ use workspace::Workspace;
 
 actions!(go_to_line, [Toggle]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(GoToLine::toggle);
     cx.add_action(GoToLine::confirm);
     cx.add_action(GoToLine::cancel);
@@ -140,7 +140,7 @@ impl GoToLine {
 impl Entity for GoToLine {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         let scroll_position = self.prev_scroll_position.take();
         self.active_editor.update(cx, |editor, cx| {
             editor.highlight_rows(None);

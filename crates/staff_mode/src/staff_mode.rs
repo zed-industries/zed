@@ -1,4 +1,4 @@
-use gpui::MutableAppContext;
+use gpui::AppContext;
 
 #[derive(Debug, Default)]
 pub struct StaffMode(pub bool);
@@ -13,10 +13,7 @@ impl std::ops::Deref for StaffMode {
 
 /// Despite what the type system requires me to tell you, the init function will only be called a once
 /// as soon as we know that the staff mode is enabled.
-pub fn staff_mode<F: FnMut(&mut MutableAppContext) + 'static>(
-    cx: &mut MutableAppContext,
-    mut init: F,
-) {
+pub fn staff_mode<F: FnMut(&mut AppContext) + 'static>(cx: &mut AppContext, mut init: F) {
     if **cx.default_global::<StaffMode>() {
         init(cx)
     } else {
@@ -32,10 +29,7 @@ pub fn staff_mode<F: FnMut(&mut MutableAppContext) + 'static>(
 
 /// Immediately checks and runs the init function if the staff mode is not enabled.
 /// This is only included for symettry with staff_mode() above
-pub fn not_staff_mode<F: FnOnce(&mut MutableAppContext) + 'static>(
-    cx: &mut MutableAppContext,
-    init: F,
-) {
+pub fn not_staff_mode<F: FnOnce(&mut AppContext) + 'static>(cx: &mut AppContext, init: F) {
     if !**cx.default_global::<StaffMode>() {
         init(cx)
     }

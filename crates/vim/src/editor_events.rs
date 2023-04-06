@@ -1,15 +1,15 @@
 use editor::{EditorBlurred, EditorFocused, EditorMode, EditorReleased, Event};
-use gpui::MutableAppContext;
+use gpui::AppContext;
 
 use crate::{state::Mode, Vim};
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.subscribe_global(focused).detach();
     cx.subscribe_global(blurred).detach();
     cx.subscribe_global(released).detach();
 }
 
-fn focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppContext) {
+fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         if let Some(previously_active_editor) = vim
             .active_editor
@@ -48,7 +48,7 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut MutableAppContext) {
     });
 }
 
-fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppContext) {
+fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         if let Some(previous_editor) = vim.active_editor.clone() {
             if previous_editor == editor.clone() {
@@ -59,7 +59,7 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut MutableAppContext) {
     })
 }
 
-fn released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppContext) {
+fn released(EditorReleased(editor): &EditorReleased, cx: &mut AppContext) {
     cx.update_default_global(|vim: &mut Vim, _| {
         if let Some(previous_editor) = vim.active_editor.clone() {
             if previous_editor == editor.clone() {
@@ -69,7 +69,7 @@ fn released(EditorReleased(editor): &EditorReleased, cx: &mut MutableAppContext)
     });
 }
 
-fn local_selections_changed(newest_empty: bool, cx: &mut MutableAppContext) {
+fn local_selections_changed(newest_empty: bool, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
         if vim.enabled && vim.state.mode == Mode::Normal && !newest_empty {
             vim.switch_mode(Mode::Visual { line: false }, false, cx)

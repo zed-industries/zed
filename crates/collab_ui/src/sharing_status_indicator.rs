@@ -2,13 +2,13 @@ use call::ActiveCall;
 use gpui::{
     color::Color,
     elements::{MouseEventHandler, Svg},
-    Appearance, Element, ElementBox, Entity, MouseButton, MutableAppContext, RenderContext, View,
+    AppContext, Appearance, Element, ElementBox, Entity, MouseButton, RenderContext, View,
 };
 use settings::Settings;
 
 use crate::ToggleScreenSharing;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     let active_call = ActiveCall::global(cx);
 
     let mut status_indicator = None;
