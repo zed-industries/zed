@@ -65,8 +65,15 @@ impl platform::Screen for Screen {
             // This approach is similar to that which winit takes
             // https://github.com/rust-windowing/winit/blob/402cbd55f932e95dbfb4e8b5e8551c49e56ff9ac/src/platform_impl/macos/monitor.rs#L99
             let device_description = self.native_screen.deviceDescription();
+
             let key = ns_string("NSScreenNumber");
             let device_id_obj = device_description.objectForKey_(key);
+            if device_id_obj.is_null() {
+                // Under some circumstances, especially display re-arrangements or display locking, we seem to get a null pointer
+                // to the device id. See: https://linear.app/zed-industries/issue/Z-257/lock-screen-crash-with-multiple-monitors
+                return None;
+            }
+
             let mut device_id: u32 = 0;
             CFNumberGetValue(
                 device_id_obj as CFNumberRef,

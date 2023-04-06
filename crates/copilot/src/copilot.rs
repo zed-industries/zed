@@ -1,10 +1,9 @@
-mod request;
+pub mod request;
 mod sign_in;
 
 use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::Client;
 use collections::HashMap;
 use futures::{future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
@@ -25,40 +24,31 @@ use std::{
     sync::Arc,
 };
 use util::{
-    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
+    channel::ReleaseChannel, fs::remove_matching, github::latest_github_release, http::HttpClient,
+    paths, ResultExt,
 };
 
 const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(
-    copilot,
-    [NextSuggestion, PreviousSuggestion, Toggle, Reinstall]
-);
+actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
-pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
-    let copilot = cx.add_model(|cx| Copilot::start(client.http_client(), node_runtime, cx));
+pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
+    // Disable Copilot for stable releases.
+    if *cx.global::<ReleaseChannel>() == ReleaseChannel::Stable {
+        cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
+            filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
+            filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
+        });
+        return;
+    }
+
+    let copilot = cx.add_model({
+        let node_runtime = node_runtime.clone();
+        move |cx| Copilot::start(http, node_runtime, cx)
+    });
     cx.set_global(copilot.clone());
-    cx.add_global_action(|_: &SignIn, cx| {
-        let copilot = Copilot::global(cx).unwrap();
-        copilot
-            .update(cx, |copilot, cx| copilot.sign_in(cx))
-            .detach_and_log_err(cx);
-    });
-    cx.add_global_action(|_: &SignOut, cx| {
-        let copilot = Copilot::global(cx).unwrap();
-        copilot
-            .update(cx, |copilot, cx| copilot.sign_out(cx))
-            .detach_and_log_err(cx);
-    });
-
-    cx.add_global_action(|_: &Reinstall, cx| {
-        let copilot = Copilot::global(cx).unwrap();
-        copilot
-            .update(cx, |copilot, cx| copilot.reinstall(cx))
-            .detach();
-    });
 
     cx.observe(&copilot, |handle, cx| {
         let status = handle.read(cx).status();
@@ -82,6 +72,28 @@ pub fn init(client: Arc<Client>, node_runtime: Arc<NodeRuntime>, cx: &mut Mutabl
     .detach();
 
     sign_in::init(cx);
+    cx.add_global_action(|_: &SignIn, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .detach_and_log_err(cx);
+        }
+    });
+    cx.add_global_action(|_: &SignOut, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_out(cx))
+                .detach_and_log_err(cx);
+        }
+    });
+
+    cx.add_global_action(|_: &Reinstall, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot
+                .update(cx, |copilot, cx| copilot.reinstall(cx))
+                .detach();
+        }
+    });
 }
 
 enum CopilotServer {
@@ -99,12 +111,8 @@ enum CopilotServer {
 
 #[derive(Clone, Debug)]
 enum SignInStatus {
-    Authorized {
-        _user: String,
-    },
-    Unauthorized {
-        _user: String,
-    },
+    Authorized,
+    Unauthorized,
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
         task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
@@ -150,13 +158,6 @@ impl Entity for Copilot {
 }
 
 impl Copilot {
-    pub fn starting_task(&self) -> Option<Shared<Task<()>>> {
-        match self.server {
-            CopilotServer::Starting { ref task } => Some(task.clone()),
-            _ => None,
-        }
-    }
-
     pub fn global(cx: &AppContext) -> Option<ModelHandle<Self>> {
         if cx.has_global::<ModelHandle<Self>>() {
             Some(cx.global::<ModelHandle<Self>>().clone())
@@ -217,6 +218,23 @@ impl Copilot {
                 server: CopilotServer::Disabled,
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(cx: &mut gpui::TestAppContext) -> (ModelHandle<Self>, lsp::FakeLanguageServer) {
+        let (server, fake_server) =
+            LanguageServer::fake("copilot".into(), Default::default(), cx.to_async());
+        let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
+        let this = cx.add_model(|cx| Self {
+            http: http.clone(),
+            node_runtime: NodeRuntime::new(http, cx.background().clone()),
+            server: CopilotServer::Started {
+                server: Arc::new(server),
+                status: SignInStatus::Authorized,
+                subscriptions_by_buffer_id: Default::default(),
+            },
+        });
+        (this, fake_server)
     }
 
     fn start_language_server(
@@ -598,14 +616,10 @@ impl Copilot {
     ) {
         if let CopilotServer::Started { status, .. } = &mut self.server {
             *status = match lsp_status {
-                request::SignInStatus::Ok { user }
-                | request::SignInStatus::MaybeOk { user }
-                | request::SignInStatus::AlreadySignedIn { user } => {
-                    SignInStatus::Authorized { _user: user }
-                }
-                request::SignInStatus::NotAuthorized { user } => {
-                    SignInStatus::Unauthorized { _user: user }
-                }
+                request::SignInStatus::Ok { .. }
+                | request::SignInStatus::MaybeOk { .. }
+                | request::SignInStatus::AlreadySignedIn { .. } => SignInStatus::Authorized,
+                request::SignInStatus::NotAuthorized { .. } => SignInStatus::Unauthorized,
                 request::SignInStatus::NotSignedIn => SignInStatus::SignedOut,
             };
             cx.notify();

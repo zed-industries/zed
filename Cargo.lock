@@ -1124,6 +1124,7 @@ dependencies = [
  "serde_derive",
  "settings",
  "smol",
+ "staff_mode",
  "sum_tree",
  "tempfile",
  "thiserror",
@@ -1339,7 +1340,6 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-tar",
- "client",
  "collections",
  "context_menu",
  "futures 0.3.25",
@@ -5950,6 +5950,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sqlez",
+ "staff_mode",
  "theme",
  "toml",
  "tree-sitter",
@@ -6361,6 +6362,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
+name = "staff_mode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6678,6 +6687,7 @@ dependencies = [
  "postage",
  "settings",
  "smol",
+ "staff_mode",
  "theme",
  "util",
  "workspace",
@@ -8505,7 +8515,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.81.0"
+version = "0.82.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -8578,6 +8588,7 @@ dependencies = [
  "simplelog",
  "smallvec",
  "smol",
+ "staff_mode",
  "sum_tree",
  "tempdir",
  "terminal_view",

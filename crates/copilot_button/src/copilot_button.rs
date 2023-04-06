@@ -228,13 +228,8 @@ impl CopilotButton {
 
         Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
 
-        let this_handle = cx.handle().downgrade();
-        cx.observe_global::<Settings, _>(move |cx| {
-            if let Some(handle) = this_handle.upgrade(cx) {
-                handle.update(cx, |_, cx| cx.notify())
-            }
-        })
-        .detach();
+        cx.observe_global::<Settings, _>(move |_, cx| cx.notify())
+            .detach();
 
         Self {
             popup_menu: menu,
@@ -248,19 +243,6 @@ impl CopilotButton {
         let settings = cx.global::<Settings>();
 
         let mut menu_options = Vec::with_capacity(6);
-
-        if let Some((_, view_id)) = self.editor_subscription.as_ref() {
-            let locally_enabled = self.editor_enabled.unwrap_or(settings.copilot_on(None));
-            menu_options.push(ContextMenuItem::item_for_view(
-                if locally_enabled {
-                    "Pause Copilot for this file"
-                } else {
-                    "Resume Copilot for this file"
-                },
-                *view_id,
-                copilot::Toggle,
-            ));
-        }
 
         if let Some(language) = &self.language {
             let language_enabled = settings.copilot_on(Some(language.as_ref()));
@@ -334,11 +316,7 @@ impl CopilotButton {
 
         self.language = language_name.clone();
 
-        if let Some(enabled) = editor.copilot_state.user_enabled {
-            self.editor_enabled = Some(enabled);
-        } else {
-            self.editor_enabled = Some(settings.copilot_on(language_name.as_deref()));
-        }
+        self.editor_enabled = Some(settings.copilot_on(language_name.as_deref()));
 
         cx.notify()
     }

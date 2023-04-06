@@ -1,7 +1,16 @@
+use std::ops::Range;
+
 use crate::{ItemHandle, Pane};
 use gpui::{
-    elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
-    View, ViewContext, ViewHandle,
+    elements::*,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
+    json::{json, ToJson},
+    AnyViewHandle, DebugContext, ElementBox, Entity, LayoutContext, MeasurementContext,
+    MutableAppContext, PaintContext, RenderContext, SizeConstraint, Subscription, View,
+    ViewContext, ViewHandle,
 };
 use settings::Settings;
 
@@ -40,27 +49,33 @@ impl View for StatusBar {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-        Flex::row()
-            .with_children(self.left_items.iter().map(|i| {
-                ChildView::new(i.as_any(), cx)
-                    .aligned()
-                    .contained()
-                    .with_margin_right(theme.item_spacing)
-                    .boxed()
-            }))
-            .with_children(self.right_items.iter().rev().map(|i| {
-                ChildView::new(i.as_any(), cx)
-                    .aligned()
-                    .contained()
-                    .with_margin_left(theme.item_spacing)
-                    .flex_float()
-                    .boxed()
-            }))
-            .contained()
-            .with_style(theme.container)
-            .constrained()
-            .with_height(theme.height)
-            .boxed()
+
+        StatusBarElement {
+            left: Flex::row()
+                .with_children(self.left_items.iter().map(|i| {
+                    ChildView::new(i.as_any(), cx)
+                        .aligned()
+                        .contained()
+                        .with_margin_right(theme.item_spacing)
+                        .boxed()
+                }))
+                .boxed(),
+
+            right: Flex::row()
+                .with_children(self.right_items.iter().rev().map(|i| {
+                    ChildView::new(i.as_any(), cx)
+                        .aligned()
+                        .contained()
+                        .with_margin_left(theme.item_spacing)
+                        .boxed()
+                }))
+                .boxed(),
+        }
+        .contained()
+        .with_style(theme.container)
+        .constrained()
+        .with_height(theme.height)
+        .boxed()
     }
 }
 
@@ -129,5 +144,76 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
 impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
     fn from(val: &dyn StatusItemViewHandle) -> Self {
         val.as_any().clone()
+    }
+}
+
+struct StatusBarElement {
+    left: ElementBox,
+    right: ElementBox,
+}
+
+impl Element for StatusBarElement {
+    type LayoutState = ();
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        mut constraint: SizeConstraint,
+        cx: &mut LayoutContext,
+    ) -> (Vector2F, Self::LayoutState) {
+        let max_width = constraint.max.x();
+        constraint.min = vec2f(0., constraint.min.y());
+
+        let right_size = self.right.layout(constraint, cx);
+        let constraint = SizeConstraint::new(
+            vec2f(0., constraint.min.y()),
+            vec2f(max_width - right_size.x(), constraint.max.y()),
+        );
+
+        self.left.layout(constraint, cx);
+
+        (vec2f(max_width, right_size.y()), ())
+    }
+
+    fn paint(
+        &mut self,
+        bounds: RectF,
+        visible_bounds: RectF,
+        _: &mut Self::LayoutState,
+        cx: &mut PaintContext,
+    ) -> Self::PaintState {
+        let origin_y = bounds.upper_right().y();
+        let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
+
+        let left_origin = vec2f(bounds.lower_left().x(), origin_y);
+        self.left.paint(left_origin, visible_bounds, cx);
+
+        let right_origin = vec2f(bounds.upper_right().x() - self.right.size().x(), origin_y);
+        self.right.paint(right_origin, visible_bounds, cx);
+    }
+
+    fn rect_for_text_range(
+        &self,
+        _: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &MeasurementContext,
+    ) -> Option<RectF> {
+        None
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &DebugContext,
+    ) -> serde_json::Value {
+        json!({
+            "type": "StatusBarElement",
+            "bounds": bounds.to_json()
+        })
     }
 }
