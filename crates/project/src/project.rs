@@ -659,37 +659,11 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn check_invariants(&self, cx: &AppContext) {
-        if self.is_local() {
-            let mut worktree_root_paths = HashMap::default();
-            for worktree in self.worktrees(cx) {
-                let worktree = worktree.read(cx);
-                let abs_path = worktree.as_local().unwrap().abs_path().clone();
-                let prev_worktree_id = worktree_root_paths.insert(abs_path.clone(), worktree.id());
-                assert_eq!(
-                    prev_worktree_id,
-                    None,
-                    "abs path {:?} for worktree {:?} is not unique ({:?} was already registered with the same path)",
-                    abs_path,
-                    worktree.id(),
-                    prev_worktree_id
-                )
-            }
-        } else {
-            let replica_id = self.replica_id();
-            for buffer in self.opened_buffers.values() {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    let buffer = buffer.read(cx);
-                    assert_eq!(
-                        buffer.deferred_ops_len(),
-                        0,
-                        "replica {}, buffer {} has deferred operations",
-                        replica_id,
-                        buffer.remote_id()
-                    );
-                }
-            }
-        }
+    pub fn opened_buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {
+        self.opened_buffers
+            .values()
+            .filter_map(|b| b.upgrade(cx))
+            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]

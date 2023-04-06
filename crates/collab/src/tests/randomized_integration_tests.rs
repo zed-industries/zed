@@ -869,7 +869,17 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                     }
                 }
 
-                guest_project.check_invariants(cx);
+                for buffer in guest_project.opened_buffers(cx) {
+                    let buffer = buffer.read(cx);
+                    assert_eq!(
+                        buffer.deferred_ops_len(),
+                        0,
+                        "{} has deferred operations for buffer {:?} in project {:?}",
+                        client.username,
+                        buffer.file().unwrap().full_path(cx),
+                        guest_project.remote_id(),
+                    );
+                }
             });
         }
 
