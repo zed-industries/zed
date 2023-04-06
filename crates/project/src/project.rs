@@ -1081,6 +1081,7 @@ impl Project {
         message: proto::ResharedProject,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.shared_buffers.clear();
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         let _ = self.metadata_changed(cx);
         Ok(())
