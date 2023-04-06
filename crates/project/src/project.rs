@@ -1488,32 +1488,29 @@ impl Project {
         });
 
         let remote_id = buffer.read(cx).remote_id();
-        let open_buffer = if self.is_remote() || self.is_shared() {
+        let is_remote = self.is_remote();
+        let open_buffer = if is_remote || self.is_shared() {
             OpenBuffer::Strong(buffer.clone())
         } else {
             OpenBuffer::Weak(buffer.downgrade())
         };
 
-        match self.opened_buffers.insert(remote_id, open_buffer) {
-            None => {}
-            Some(OpenBuffer::Operations(operations)) => {
-                buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?
+        match self.opened_buffers.entry(remote_id) {
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(open_buffer);
             }
-            Some(OpenBuffer::Weak(existing_handle)) => {
-                if existing_handle.upgrade(cx).is_some() {
-                    debug_panic!("already registered buffer with remote id {}", remote_id);
-                    Err(anyhow!(
-                        "already registered buffer with remote id {}",
-                        remote_id
-                    ))?
+            hash_map::Entry::Occupied(mut entry) => {
+                if let OpenBuffer::Operations(operations) = entry.get_mut() {
+                    buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx))?;
+                } else if entry.get().upgrade(cx).is_some() {
+                    if is_remote {
+                        return Ok(());
+                    } else {
+                        debug_panic!("buffer {} was already registered", remote_id);
+                        Err(anyhow!("buffer {} was already registered", remote_id))?;
+                    }
                 }
-            }
-            Some(OpenBuffer::Strong(_)) => {
-                debug_panic!("already registered buffer with remote id {}", remote_id);
-                Err(anyhow!(
-                    "already registered buffer with remote id {}",
-                    remote_id
-                ))?
+                entry.insert(open_buffer);
             }
         }
         cx.subscribe(buffer, |this, buffer, event, cx| {
