@@ -1755,7 +1755,6 @@ async fn simulate_client(
             name: "the-fake-language-server",
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: Some(Box::new({
-                let plan = plan.clone();
                 let fs = client.fs.clone();
                 move |fake_server: &mut FakeLanguageServer| {
                     fake_server.handle_request::<lsp::request::Completion, _, _>(
@@ -1797,16 +1796,15 @@ async fn simulate_client(
 
                     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
                         let fs = fs.clone();
-                        let plan = plan.clone();
-                        move |_, _| {
-                            let fs = fs.clone();
-                            let plan = plan.clone();
+                        move |_, cx| {
+                            let background = cx.background();
+                            let mut rng = background.rng();
+                            let count = rng.gen_range::<usize, _>(1..3);
+                            let files = fs.files();
+                            let files = (0..count)
+                                .map(|_| files.choose(&mut *rng).unwrap().clone())
+                                .collect::<Vec<_>>();
                             async move {
-                                let files = fs.files();
-                                let count = plan.lock().rng.gen_range::<usize, _>(1..3);
-                                let files = (0..count)
-                                    .map(|_| files.choose(&mut plan.lock().rng).unwrap())
-                                    .collect::<Vec<_>>();
                                 log::info!("LSP: Returning definitions in files {:?}", &files);
                                 Ok(Some(lsp::GotoDefinitionResponse::Array(
                                     files
@@ -1821,17 +1819,19 @@ async fn simulate_client(
                         }
                     });
 
-                    fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>({
-                        let plan = plan.clone();
-                        move |_, _| {
+                    fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
+                        move |_, cx| {
                             let mut highlights = Vec::new();
-                            let highlight_count = plan.lock().rng.gen_range(1..=5);
+                            let background = cx.background();
+                            let mut rng = background.rng();
+
+                            let highlight_count = rng.gen_range(1..=5);
                             for _ in 0..highlight_count {
-                                let start_row = plan.lock().rng.gen_range(0..100);
-                                let start_column = plan.lock().rng.gen_range(0..100);
+                                let start_row = rng.gen_range(0..100);
+                                let start_column = rng.gen_range(0..100);
+                                let end_row = rng.gen_range(0..100);
+                                let end_column = rng.gen_range(0..100);
                                 let start = PointUtf16::new(start_row, start_column);
-                                let end_row = plan.lock().rng.gen_range(0..100);
-                                let end_column = plan.lock().rng.gen_range(0..100);
                                 let end = PointUtf16::new(end_row, end_column);
                                 let range = if start > end { end..start } else { start..end };
                                 highlights.push(lsp::DocumentHighlight {
@@ -1843,8 +1843,8 @@ async fn simulate_client(
                                 (highlight.range.start, highlight.range.end)
                             });
                             async move { Ok(Some(highlights)) }
-                        }
-                    });
+                        },
+                    );
                 }
             })),
             ..Default::default()
