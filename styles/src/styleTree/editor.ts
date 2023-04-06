@@ -103,8 +103,8 @@ export default function editor(colorScheme: ColorScheme) {
             modified: foreground(layer, "warning"),
             inserted: foreground(layer, "positive"),
             removedWidthEm: 0.275,
-            widthEm: 0.16,
-            cornerRadius: 0.05,
+            widthEm: 0.22,
+            cornerRadius: 0.2,
         },
         /** Highlights matching occurences of what is under the cursor
          * as well as matched brackets
