@@ -156,6 +156,7 @@ pub struct Completion {
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
+    pub server_id: usize,
     pub range: Range<Anchor>,
     pub lsp_action: lsp::CodeAction,
 }

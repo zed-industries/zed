@@ -1573,6 +1573,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
                         new_text: "".into(),
                     },
                 ],
+                0,
                 Some(lsp_document_version),
                 cx,
             )
@@ -1667,6 +1668,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestApp
                         new_text: "".into(),
                     },
                 ],
+                0,
                 None,
                 cx,
             )
@@ -1770,6 +1772,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
                         .unindent(),
                     },
                 ],
+                0,
                 None,
                 cx,
             )
@@ -2258,7 +2261,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         },
         tree_sitter_rust::language(),
-        None,
+        vec![],
         |_| Default::default(),
     );
 

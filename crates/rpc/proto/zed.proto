@@ -684,9 +684,10 @@ message SearchProjectResponse {
 }
 
 message CodeAction {
-    Anchor start = 1;
-    Anchor end = 2;
-    bytes lsp_action = 3;
+    uint64 server_id = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+    bytes lsp_action = 4;
 }
 
 message ProjectTransaction {

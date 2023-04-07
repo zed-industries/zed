@@ -37,7 +37,7 @@ impl TypeScriptLspAdapter {
     }
 }
 
-struct Versions {
+struct TypeScriptVersions {
     typescript_version: String,
     server_version: String,
 }
@@ -52,7 +52,8 @@ impl LspAdapter for TypeScriptLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(Versions {
+        dbg!();
+        Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
                 .node
@@ -67,7 +68,8 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<LanguageServerBinary> {
-        let versions = versions.downcast::<Versions>().unwrap();
+        dbg!();
+        let versions = versions.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
@@ -92,18 +94,10 @@ impl LspAdapter for TypeScriptLspAdapter {
     }
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+        dbg!();
         (|| async move {
-            let mut last_version_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_version_dir = Some(entry.path());
-                }
-            }
-            let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let old_server_path = last_version_dir.join(Self::OLD_SERVER_PATH);
-            let new_server_path = last_version_dir.join(Self::NEW_SERVER_PATH);
+            let old_server_path = container_dir.join(Self::OLD_SERVER_PATH);
+            let new_server_path = container_dir.join(Self::NEW_SERVER_PATH);
             if new_server_path.exists() {
                 Ok(LanguageServerBinary {
                     path: self.node.binary_path().await?,
@@ -117,7 +111,7 @@ impl LspAdapter for TypeScriptLspAdapter {
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",
-                    last_version_dir
+                    container_dir
                 ))
             }
         })()
@@ -167,6 +161,86 @@ impl LspAdapter for TypeScriptLspAdapter {
         Some(json!({
             "provideFormatter": true
         }))
+    }
+}
+
+pub struct EsLintLspAdapter {
+    node: Arc<NodeRuntime>,
+}
+
+impl EsLintLspAdapter {
+    const SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
+
+    pub fn new(node: Arc<NodeRuntime>) -> Self {
+        EsLintLspAdapter { node }
+    }
+}
+
+#[async_trait]
+impl LspAdapter for EsLintLspAdapter {
+    async fn name(&self) -> LanguageServerName {
+        LanguageServerName("eslint".into())
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: Arc<dyn HttpClient>,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        Ok(Box::new(
+            self.node.npm_package_latest_version("eslint").await?,
+        ))
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        versions: Box<dyn 'static + Send + Any>,
+        _: Arc<dyn HttpClient>,
+        container_dir: PathBuf,
+    ) -> Result<LanguageServerBinary> {
+        let version = versions.downcast::<String>().unwrap();
+        let server_path = container_dir.join(Self::SERVER_PATH);
+
+        if fs::metadata(&server_path).await.is_err() {
+            self.node
+                .npm_install_packages([("eslint", version.as_str())], &container_dir)
+                .await?;
+        }
+
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            arguments: server_binary_arguments(&server_path),
+        })
+    }
+
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+        (|| async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
+            if server_path.exists() {
+                Ok(LanguageServerBinary {
+                    path: self.node.binary_path().await?,
+                    arguments: server_binary_arguments(&server_path),
+                })
+            } else {
+                Err(anyhow!(
+                    "missing executable in directory {:?}",
+                    container_dir
+                ))
+            }
+        })()
+        .await
+        .log_err()
+    }
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        None
+    }
+
+    async fn initialization_options(&self) -> Option<serde_json::Value> {
+        None
     }
 }
 

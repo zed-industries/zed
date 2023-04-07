@@ -37,121 +37,107 @@ pub fn init(
     themes: Arc<ThemeRegistry>,
     node_runtime: Arc<NodeRuntime>,
 ) {
-    for (name, grammar, lsp_adapter) in [
+    fn adapter_arc(adapter: impl LspAdapter) -> Arc<dyn LspAdapter> {
+        Arc::new(adapter)
+    }
+
+    let languages_list = [
         (
             "c",
             tree_sitter_c::language(),
-            Some(Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>),
+            vec![adapter_arc(c::CLspAdapter)],
         ),
         (
             "cpp",
             tree_sitter_cpp::language(),
-            Some(Arc::new(c::CLspAdapter)),
+            vec![adapter_arc(c::CLspAdapter)],
         ),
-        (
-            "css",
-            tree_sitter_css::language(),
-            None, //
-        ),
+        ("css", tree_sitter_css::language(), vec![]),
         (
             "elixir",
             tree_sitter_elixir::language(),
-            Some(Arc::new(elixir::ElixirLspAdapter)),
+            vec![adapter_arc(elixir::ElixirLspAdapter)],
         ),
         (
             "go",
             tree_sitter_go::language(),
-            Some(Arc::new(go::GoLspAdapter)),
+            vec![adapter_arc(go::GoLspAdapter)],
         ),
         (
             "json",
             tree_sitter_json::language(),
-            Some(Arc::new(json::JsonLspAdapter::new(
+            vec![adapter_arc(json::JsonLspAdapter::new(
                 node_runtime.clone(),
                 languages.clone(),
                 themes.clone(),
-            ))),
+            ))],
         ),
-        (
-            "markdown",
-            tree_sitter_markdown::language(),
-            None, //
-        ),
+        ("markdown", tree_sitter_markdown::language(), vec![]),
         (
             "python",
             tree_sitter_python::language(),
-            Some(Arc::new(python::PythonLspAdapter::new(
+            vec![adapter_arc(python::PythonLspAdapter::new(
                 node_runtime.clone(),
-            ))),
+            ))],
         ),
         (
             "rust",
             tree_sitter_rust::language(),
-            Some(Arc::new(rust::RustLspAdapter)),
+            vec![adapter_arc(rust::RustLspAdapter)],
         ),
-        (
-            "toml",
-            tree_sitter_toml::language(),
-            None, //
-        ),
+        ("toml", tree_sitter_toml::language(), vec![]),
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter::new(
+            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
                 node_runtime.clone(),
-            ))),
+            ))],
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter::new(
+            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
                 node_runtime.clone(),
-            ))),
+            ))],
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            Some(Arc::new(typescript::TypeScriptLspAdapter::new(
+            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
                 node_runtime.clone(),
-            ))),
+            ))],
         ),
         (
             "html",
             tree_sitter_html::language(),
-            Some(Arc::new(html::HtmlLspAdapter::new(node_runtime.clone()))),
+            vec![adapter_arc(html::HtmlLspAdapter::new(node_runtime.clone()))],
         ),
         (
             "ruby",
             tree_sitter_ruby::language(),
-            Some(Arc::new(ruby::RubyLanguageServer)),
+            vec![adapter_arc(ruby::RubyLanguageServer)],
         ),
         (
             "erb",
             tree_sitter_embedded_template::language(),
-            Some(Arc::new(ruby::RubyLanguageServer)),
+            vec![adapter_arc(ruby::RubyLanguageServer)],
         ),
-        (
-            "scheme",
-            tree_sitter_scheme::language(),
-            None, //
-        ),
-        (
-            "racket",
-            tree_sitter_racket::language(),
-            None, //
-        ),
+        ("scheme", tree_sitter_scheme::language(), vec![]),
+        ("racket", tree_sitter_racket::language(), vec![]),
         (
             "lua",
             tree_sitter_lua::language(),
-            Some(Arc::new(lua::LuaLspAdapter)),
+            vec![adapter_arc(lua::LuaLspAdapter)],
         ),
         (
             "yaml",
             tree_sitter_yaml::language(),
-            Some(Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))),
+            vec![adapter_arc(yaml::YamlLspAdapter::new(node_runtime.clone()))],
         ),
-    ] {
-        languages.register(name, load_config(name), grammar, lsp_adapter, load_queries);
+    ];
+
+    for (name, grammar, lsp_adapters) in languages_list {
+        languages.register(name, load_config(name), grammar, lsp_adapters, load_queries);
     }
 }
 
@@ -163,7 +149,7 @@ pub async fn language(
 ) -> Arc<Language> {
     Arc::new(
         Language::new(load_config(name), Some(grammar))
-            .with_lsp_adapter(lsp_adapter)
+            .with_lsp_adapters(lsp_adapter)
             .await
             .with_queries(load_queries(name))
             .unwrap(),

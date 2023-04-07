@@ -462,6 +462,7 @@ pub async fn deserialize_completion(
 
 pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
     proto::CodeAction {
+        server_id: action.server_id as u64,
         start: Some(serialize_anchor(&action.range.start)),
         end: Some(serialize_anchor(&action.range.end)),
         lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
@@ -479,6 +480,7 @@ pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> 
         .ok_or_else(|| anyhow!("invalid end"))?;
     let lsp_action = serde_json::from_slice(&action.lsp_action)?;
     Ok(CodeAction {
+        server_id: action.server_id as usize,
         range: start..end,
         lsp_action,
     })
