@@ -601,6 +601,30 @@ impl AppContext {
         }
     }
 
+    pub fn background(&self) -> &Arc<executor::Background> {
+        &self.background
+    }
+
+    pub fn font_cache(&self) -> &Arc<FontCache> {
+        &self.font_cache
+    }
+
+    pub fn platform(&self) -> &Arc<dyn Platform> {
+        &self.platform
+    }
+
+    pub fn has_global<T: 'static>(&self) -> bool {
+        self.globals.contains_key(&TypeId::of::<T>())
+    }
+
+    pub fn global<T: 'static>(&self) -> &T {
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            global.downcast_ref().unwrap()
+        } else {
+            panic!("no global has been added for {}", type_name::<T>());
+        }
+    }
+
     pub fn upgrade(&self) -> App {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
@@ -643,12 +667,6 @@ impl AppContext {
 
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
         &self.foreground
-    }
-
-    pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
-        self.presenters_and_platform_windows
-            .get(&window_id)
-            .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
     pub fn deserialize_action(
@@ -808,6 +826,75 @@ impl AppContext {
     pub fn window_display_uuid(&self, window_id: usize) -> Option<Uuid> {
         let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
         window.screen().display_uuid()
+    }
+
+    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+        self.windows
+            .get(&window_id)
+            .map(|window| window.root_view.clone())
+    }
+
+    pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
+        self.windows
+            .get(&window_id)
+            .map(|window| window.root_view.id())
+    }
+
+    pub fn focused_view_id(&self, window_id: usize) -> Option<usize> {
+        self.windows
+            .get(&window_id)
+            .and_then(|window| window.focused_view_id)
+    }
+
+    pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
+        Some(self.views.get(&(window_id, view_id))?.ui_name())
+    }
+
+    pub fn view_type_id(&self, window_id: usize, view_id: usize) -> Option<TypeId> {
+        self.views
+            .get(&(window_id, view_id))
+            .map(|view| view.as_any().type_id())
+    }
+
+    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
+    /// Includes the passed view itself
+    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(view_id)
+            .into_iter()
+            .chain(std::iter::from_fn(move || {
+                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
+                    view_id = *parent_id;
+                    Some(view_id)
+                } else {
+                    None
+                }
+            }))
+    }
+
+    /// Returns the id of the parent of the given view, or none if the given
+    /// view is the root.
+    pub fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
+        if let Some(ParentId::View(view_id)) = self.parents.get(&(window_id, view_id)) {
+            Some(*view_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
+        if let Some(focused_view_id) = self.focused_view_id(view.window_id) {
+            self.ancestors(view.window_id, focused_view_id)
+                .skip(1) // Skip self id
+                .any(|parent| parent == view.view_id)
+        } else {
+            false
+        }
+    }
+
+    pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
+        self.presenters_and_platform_windows
+            .get(&window_id)
+            .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
     pub fn active_labeled_tasks<'a>(
@@ -2711,95 +2798,6 @@ impl UpdateView for AppContext {
 pub enum ParentId {
     View(usize),
     Root,
-}
-
-impl AppContext {
-    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
-        self.windows
-            .get(&window_id)
-            .map(|window| window.root_view.clone())
-    }
-
-    pub fn root_view_id(&self, window_id: usize) -> Option<usize> {
-        self.windows
-            .get(&window_id)
-            .map(|window| window.root_view.id())
-    }
-
-    pub fn focused_view_id(&self, window_id: usize) -> Option<usize> {
-        self.windows
-            .get(&window_id)
-            .and_then(|window| window.focused_view_id)
-    }
-
-    pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
-        Some(self.views.get(&(window_id, view_id))?.ui_name())
-    }
-
-    pub fn view_type_id(&self, window_id: usize, view_id: usize) -> Option<TypeId> {
-        self.views
-            .get(&(window_id, view_id))
-            .map(|view| view.as_any().type_id())
-    }
-
-    pub fn background(&self) -> &Arc<executor::Background> {
-        &self.background
-    }
-
-    pub fn font_cache(&self) -> &Arc<FontCache> {
-        &self.font_cache
-    }
-
-    pub fn platform(&self) -> &Arc<dyn Platform> {
-        &self.platform
-    }
-
-    pub fn has_global<T: 'static>(&self) -> bool {
-        self.globals.contains_key(&TypeId::of::<T>())
-    }
-
-    pub fn global<T: 'static>(&self) -> &T {
-        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
-            global.downcast_ref().unwrap()
-        } else {
-            panic!("no global has been added for {}", type_name::<T>());
-        }
-    }
-
-    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
-    /// Includes the passed view itself
-    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::once(view_id)
-            .into_iter()
-            .chain(std::iter::from_fn(move || {
-                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
-                    view_id = *parent_id;
-                    Some(view_id)
-                } else {
-                    None
-                }
-            }))
-    }
-
-    /// Returns the id of the parent of the given view, or none if the given
-    /// view is the root.
-    pub fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
-        if let Some(ParentId::View(view_id)) = self.parents.get(&(window_id, view_id)) {
-            Some(*view_id)
-        } else {
-            None
-        }
-    }
-
-    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
-        if let Some(focused_view_id) = self.focused_view_id(view.window_id) {
-            self.ancestors(view.window_id, focused_view_id)
-                .skip(1) // Skip self id
-                .any(|parent| parent == view.view_id)
-        } else {
-            false
-        }
-    }
 }
 
 pub struct Window {
