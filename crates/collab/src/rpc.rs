@@ -1655,17 +1655,40 @@ async fn update_buffer(
 ) -> Result<()> {
     session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db()
-        .await
-        .project_connection_ids(project_id, session.connection_id)
-        .await?;
+    let host_connection_id = {
+        let collaborators = session
+            .db()
+            .await
+            .project_collaborators(project_id, session.connection_id)
+            .await?;
+
+        let host = collaborators
+            .iter()
+            .find(|collaborator| collaborator.is_host)
+            .ok_or_else(|| anyhow!("host not found"))?;
+        host.connection_id
+    };
+
+    if host_connection_id != session.connection_id {
+        session
+            .peer
+            .forward_request(session.connection_id, host_connection_id, request.clone())
+            .await?;
+    }
 
     session.executor.record_backtrace();
+    let collaborators = session
+        .db()
+        .await
+        .project_collaborators(project_id, session.connection_id)
+        .await?;
 
     broadcast(
         Some(session.connection_id),
-        project_connection_ids.iter().copied(),
+        collaborators
+            .iter()
+            .filter(|collaborator| !collaborator.is_host)
+            .map(|collaborator| collaborator.connection_id),
         |connection_id| {
             session
                 .peer

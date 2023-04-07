@@ -380,7 +380,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_unshare_project);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
         client.add_model_message_handler(Self::handle_update_buffer_file);
-        client.add_model_message_handler(Self::handle_update_buffer);
+        client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
         client.add_model_request_handler(Self::handle_create_project_entry);
@@ -5160,7 +5160,7 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateBuffer>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<()> {
+    ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
             let buffer_id = payload.buffer_id;
@@ -5187,7 +5187,7 @@ impl Project {
                     e.insert(OpenBuffer::Operations(ops));
                 }
             }
-            Ok(())
+            Ok(proto::Ack {})
         })
     }
 
