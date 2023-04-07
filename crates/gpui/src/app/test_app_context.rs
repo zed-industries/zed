@@ -17,10 +17,14 @@ use parking_lot::{Mutex, RwLock};
 use smol::stream::StreamExt;
 
 use crate::{
-    executor, geometry::vector::Vector2F, keymap_matcher::Keystroke, platform, Action,
-    AnyViewHandle, AppContext, Appearance, Entity, Event, FontCache, Handle, InputHandler,
-    KeyDownEvent, ModelContext, ModelHandle, Platform, ReadModelWith, ReadViewWith, RenderContext,
-    Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle, WeakHandle,
+    executor,
+    geometry::vector::Vector2F,
+    keymap_matcher::Keystroke,
+    platform,
+    platform::{Appearance, Event, InputHandler, KeyDownEvent, Platform},
+    Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
+    ReadModelWith, ReadViewWith, RenderContext, Task, UpdateModel, UpdateView, View, ViewContext,
+    ViewHandle, WeakHandle,
 };
 use collections::BTreeMap;
 

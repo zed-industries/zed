@@ -1,4 +1,4 @@
-use crate::{Action, App, AppContext, ForegroundPlatform};
+use crate::{platform::ForegroundPlatform, Action, App, AppContext};
 
 pub struct Menu<'a> {
     pub name: &'a str,

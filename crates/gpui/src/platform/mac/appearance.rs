@@ -1,13 +1,12 @@
 use std::ffi::CStr;
 
+use crate::platform::Appearance;
 use cocoa::{
     appkit::{NSAppearanceNameVibrantDark, NSAppearanceNameVibrantLight},
     base::id,
     foundation::NSString,
 };
 use objc::{msg_send, sel, sel_impl};
-
-use crate::Appearance;
 
 impl Appearance {
     pub unsafe fn from_native(appearance: id) -> Self {

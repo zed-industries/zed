@@ -7,10 +7,11 @@ use gpui::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
+    platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, ElementBox, EventContext, FontCache, ModelContext, MouseButton, MouseRegion,
-    PaintContext, Quad, SizeConstraint, TextLayoutCache, WeakModelHandle, WeakViewHandle,
+    Element, ElementBox, EventContext, FontCache, ModelContext, MouseRegion, PaintContext, Quad,
+    SizeConstraint, TextLayoutCache, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -735,9 +736,9 @@ impl Element for TerminalElement {
             cx.scene.push_cursor_region(gpui::CursorRegion {
                 bounds,
                 style: if layout.hyperlink_tooltip.is_some() {
-                    gpui::CursorStyle::PointingHand
+                    CursorStyle::PointingHand
                 } else {
-                    gpui::CursorStyle::IBeam
+                    CursorStyle::IBeam
                 },
             });
 

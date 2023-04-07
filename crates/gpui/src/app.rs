@@ -44,12 +44,13 @@ use crate::{
     elements::ElementBox,
     executor::{self, Task},
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
-    platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
+    platform::{
+        self, Appearance, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
+        PathPromptOptions, Platform, PromptLevel, WindowBounds, WindowOptions,
+    },
     presenter::Presenter,
     util::post_inc,
-    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, KeyUpEvent,
-    ModifiersChangedEvent, MouseButton, MouseRegionId, PathPromptOptions, TextLayoutCache,
-    WindowBounds,
+    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, TextLayoutCache,
 };
 
 use self::ref_counts::RefCounts;
@@ -2801,7 +2802,7 @@ impl AppContext {
     }
 }
 
-struct Window {
+pub struct Window {
     root_view: AnyViewHandle,
     focused_view_id: Option<usize>,
     is_active: bool,
@@ -5136,7 +5137,12 @@ impl Subscription {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actions, elements::*, impl_actions, MouseButton, MouseButtonEvent};
+    use crate::{
+        actions,
+        elements::*,
+        impl_actions,
+        platform::{MouseButton, MouseButtonEvent},
+    };
     use itertools::Itertools;
     use postage::{sink::Sink, stream::Stream};
     use serde::Deserialize;

@@ -1,11 +1,12 @@
+use crate::{
+    platform::{MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent},
+    scene::mouse_region::HandlerKey,
+};
+use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use std::{
     mem::{discriminant, Discriminant},
     ops::Deref,
 };
-
-use pathfinder_geometry::{rect::RectF, vector::Vector2F};
-
-use crate::{scene::mouse_region::HandlerKey, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
 
 #[derive(Debug, Default, Clone)]
 pub struct MouseMove {

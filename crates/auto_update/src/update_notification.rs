@@ -1,8 +1,8 @@
 use crate::ViewReleaseNotes;
 use gpui::{
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
-    platform::{AppVersion, CursorStyle},
-    Element, Entity, MouseButton, View, ViewContext,
+    platform::{AppVersion, CursorStyle, MouseButton},
+    Element, Entity, View, ViewContext,
 };
 use menu::Cancel;
 use settings::Settings;

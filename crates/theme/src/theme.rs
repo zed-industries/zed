@@ -4,7 +4,7 @@ use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
-    Border, MouseState,
+    platform, Border, MouseState,
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
@@ -754,14 +754,15 @@ impl<T> Interactive<T> {
                 self.hover_and_active
                     .as_ref()
                     .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
-            } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+            } else if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some()
+            {
                 self.click_and_active
                     .as_ref()
                     .unwrap_or(self.active.as_ref().unwrap_or(&self.default))
             } else {
                 self.active.as_ref().unwrap_or(&self.default)
             }
-        } else if state.clicked() == Some(gpui::MouseButton::Left) && self.clicked.is_some() {
+        } else if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
         } else if state.hovered() {
             self.hover.as_ref().unwrap_or(&self.default)

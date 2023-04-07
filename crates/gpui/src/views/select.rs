@@ -1,8 +1,8 @@
 use serde::Deserialize;
 
 use crate::{
-    actions, elements::*, impl_actions, AppContext, Entity, MouseButton, RenderContext, View,
-    ViewContext, WeakViewHandle,
+    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, RenderContext,
+    View, ViewContext, WeakViewHandle,
 };
 
 pub struct Select {

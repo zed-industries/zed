@@ -138,8 +138,9 @@ pub mod simple_message_notification {
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
-        impl_actions, Action, AppContext, CursorStyle, Element, Entity, MouseButton, View,
-        ViewContext,
+        impl_actions,
+        platform::{CursorStyle, MouseButton},
+        Action, AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;

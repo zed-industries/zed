@@ -2,7 +2,8 @@ use call::ActiveCall;
 use client::UserStore;
 use gpui::Action;
 use gpui::{
-    actions, elements::*, Entity, ModelHandle, MouseButton, RenderContext, View, ViewContext,
+    actions, elements::*, platform::MouseButton, Entity, ModelHandle, RenderContext, View,
+    ViewContext,
 };
 use settings::Settings;
 

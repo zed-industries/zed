@@ -5,12 +5,13 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     platform::CursorStyle,
+    platform::MouseButton,
     scene::{
         CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
     DebugContext, Element, ElementBox, EventContext, LayoutContext, MeasurementContext,
-    MouseButton, MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
+    MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
 };
 use serde_json::json;
 use std::{marker::PhantomData, ops::Range};

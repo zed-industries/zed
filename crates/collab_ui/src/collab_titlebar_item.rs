@@ -15,8 +15,9 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     impl_internal_actions,
     json::{self, ToJson},
-    AppContext, CursorStyle, Entity, ImageData, ModelHandle, MouseButton, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Entity, ImageData, ModelHandle, RenderContext, Subscription, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};

@@ -5,8 +5,8 @@ use super::{
 use crate::{
     executor,
     keymap_matcher::KeymapMatcher,
-    platform::{self, CursorStyle},
-    Action, AppVersion, ClipboardItem, Event, Menu, MenuItem,
+    platform::{self, AppVersion, CursorStyle, Event},
+    Action, ClipboardItem, Menu, MenuItem,
 };
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
@@ -150,7 +150,7 @@ pub struct MacForegroundPlatformState {
     resign_active: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
+    event: Option<Box<dyn FnMut(platform::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -342,7 +342,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
         self.0.borrow_mut().reopen = Some(callback);
     }
 
-    fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+    fn on_event(&self, callback: Box<dyn FnMut(platform::Event) -> bool>) {
         self.0.borrow_mut().event = Some(callback);
     }
 
@@ -577,7 +577,7 @@ impl platform::Platform for MacPlatform {
         }
     }
 
-    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn crate::Screen>> {
+    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn platform::Screen>> {
         Screen::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
     }
 
@@ -864,7 +864,7 @@ impl platform::Platform for MacPlatform {
         "macOS"
     }
 
-    fn os_version(&self) -> Result<crate::AppVersion> {
+    fn os_version(&self) -> Result<crate::platform::AppVersion> {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             let version = process_info.operatingSystemVersion();

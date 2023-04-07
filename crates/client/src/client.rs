@@ -13,8 +13,9 @@ use async_tungstenite::tungstenite::{
 use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use gpui::{
     actions,
+    platform::AppVersion,
     serde_json::{self, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AppVersion,
+    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
     AsyncAppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle,
 };
 use lazy_static::lazy_static;

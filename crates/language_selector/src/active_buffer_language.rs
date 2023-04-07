@@ -1,7 +1,8 @@
 use editor::Editor;
 use gpui::{
-    elements::*, CursorStyle, Entity, MouseButton, RenderContext, Subscription, View, ViewContext,
-    ViewHandle,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use std::sync::Arc;

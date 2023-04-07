@@ -1,7 +1,8 @@
 use gpui::{
     elements::{Empty, MouseEventHandler, Svg},
-    CursorStyle, Element, ElementBox, Entity, MouseButton, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    platform::CursorStyle,
+    platform::MouseButton,
+    Element, ElementBox, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 

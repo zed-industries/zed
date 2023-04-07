@@ -8,8 +8,10 @@ use gpui::{
     },
     fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
+    platform,
+    platform::MouseButton,
     scene::MouseClick,
-    Action, Element, ElementBox, EventContext, MouseButton, MouseState, RenderContext, View,
+    Action, Element, ElementBox, EventContext, MouseState, RenderContext, View,
 };
 use serde::Deserialize;
 
@@ -80,8 +82,10 @@ pub fn checkbox_with_label<T: 'static, V: View>(
             .align_children_center()
             .boxed()
     })
-    .on_click(gpui::MouseButton::Left, move |_, cx| change(!checked, cx))
-    .with_cursor_style(gpui::CursorStyle::PointingHand)
+    .on_click(platform::MouseButton::Left, move |_, cx| {
+        change(!checked, cx)
+    })
+    .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -212,7 +216,7 @@ where
             .boxed()
     })
     .on_click(MouseButton::Left, f)
-    .with_cursor_style(gpui::CursorStyle::PointingHand)
+    .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -261,11 +265,11 @@ where
                         let style = style.close_icon.style_for(state, false);
                         icon(style).boxed()
                     })
-                    .on_click(gpui::MouseButton::Left, move |_, cx| {
+                    .on_click(platform::MouseButton::Left, move |_, cx| {
                         let window_id = cx.window_id();
                         cx.remove_window(window_id);
                     })
-                    .with_cursor_style(gpui::CursorStyle::PointingHand)
+                    .with_cursor_style(platform::CursorStyle::PointingHand)
                     .aligned()
                     .right()
                     .boxed(),

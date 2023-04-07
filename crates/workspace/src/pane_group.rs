@@ -4,7 +4,8 @@ use call::{ActiveCall, ParticipantLocation};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
-    Axis, Border, CursorStyle, ModelHandle, MouseButton, RenderContext, ViewHandle,
+    platform::{CursorStyle, MouseButton},
+    Axis, Border, ModelHandle, RenderContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;

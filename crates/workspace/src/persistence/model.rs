@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 
 use async_recursion::async_recursion;
-use gpui::{AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WindowBounds};
+use gpui::{platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
 
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},

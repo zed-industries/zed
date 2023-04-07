@@ -1,5 +1,5 @@
 use client::ZED_APP_VERSION;
-use gpui::{AppContext, AppVersion};
+use gpui::{platform::AppVersion, AppContext};
 use human_bytes::human_bytes;
 use serde::Serialize;
 use std::{env, fmt::Display};

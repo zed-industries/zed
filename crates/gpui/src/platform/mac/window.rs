@@ -5,14 +5,14 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     keymap_matcher::Keystroke,
-    mac::platform::NSViewLayerContentsRedrawDuringViewResize,
     platform::{
         self,
-        mac::{renderer::Renderer, screen::Screen},
-        Event, WindowBounds,
+        mac::{
+            platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer, screen::Screen,
+        },
+        Event, InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
+        MouseMovedEvent, Scene, WindowBounds, WindowKind,
     },
-    InputHandler, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseMovedEvent, Scene, WindowKind,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -670,14 +670,14 @@ impl platform::Window for Window {
         self.0.as_ref().borrow().titlebar_height()
     }
 
-    fn appearance(&self) -> crate::Appearance {
+    fn appearance(&self) -> platform::Appearance {
         unsafe {
             let appearance: id = msg_send![self.0.borrow().native_window, effectiveAppearance];
-            crate::Appearance::from_native(appearance)
+            platform::Appearance::from_native(appearance)
         }
     }
 
-    fn screen(&self) -> Rc<dyn crate::Screen> {
+    fn screen(&self) -> Rc<dyn platform::Screen> {
         unsafe {
             Rc::new(Screen {
                 native_screen: self.0.as_ref().borrow().native_window.screen(),

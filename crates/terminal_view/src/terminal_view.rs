@@ -16,6 +16,7 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
+    platform::KeyDownEvent,
     AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
@@ -425,7 +426,7 @@ impl View for TerminalView {
         cx.notify();
     }
 
-    fn key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
+    fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
         self.clear_bel(cx);
         self.pause_cursor_blinking(cx);
 

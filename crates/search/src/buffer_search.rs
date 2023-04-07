@@ -5,8 +5,12 @@ use crate::{
 use collections::HashMap;
 use editor::Editor;
 use gpui::{
-    actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
-    Entity, MouseButton, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    actions,
+    elements::*,
+    impl_actions,
+    platform::{CursorStyle, MouseButton},
+    Action, AnyViewHandle, AppContext, Entity, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;

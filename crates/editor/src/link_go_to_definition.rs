@@ -358,7 +358,10 @@ fn go_to_fetched_definition_of_kind(
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
-    use gpui::{Modifiers, ModifiersChangedEvent, View};
+    use gpui::{
+        platform::{self, Modifiers, ModifiersChangedEvent},
+        View,
+    };
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
@@ -430,7 +433,7 @@ mod tests {
         // Unpress shift causes highlight to go away (normal goto-definition is not valid here)
         cx.update_editor(|editor, cx| {
             editor.modifiers_changed(
-                &gpui::ModifiersChangedEvent {
+                &platform::ModifiersChangedEvent {
                     modifiers: Modifiers {
                         cmd: true,
                         ..Default::default()
