@@ -5,7 +5,9 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    platform, scene, FontSystem, PaintContext,
+    platform,
+    platform::FontSystem,
+    scene, PaintContext,
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};

@@ -6,8 +6,9 @@ use crate::{
     platform::{
         self,
         mac::{platform::NSViewLayerContentsRedrawDuringViewResize, renderer::Renderer},
+        Event, FontSystem, WindowBounds,
     },
-    Event, FontSystem, Scene, WindowBounds,
+    Scene,
 };
 use cocoa::{
     appkit::{NSScreen, NSSquareStatusItemLength, NSStatusBar, NSStatusItem, NSView, NSWindow},
@@ -185,15 +186,15 @@ impl platform::Window for StatusItem {
         0.
     }
 
-    fn appearance(&self) -> crate::Appearance {
+    fn appearance(&self) -> platform::Appearance {
         unsafe {
             let appearance: id =
                 msg_send![self.0.borrow().native_item.button(), effectiveAppearance];
-            crate::Appearance::from_native(appearance)
+            platform::Appearance::from_native(appearance)
         }
     }
 
-    fn screen(&self) -> Rc<dyn crate::Screen> {
+    fn screen(&self) -> Rc<dyn platform::Screen> {
         unsafe {
             Rc::new(Screen {
                 native_screen: self.0.borrow().native_window().screen(),
@@ -205,11 +206,11 @@ impl platform::Window for StatusItem {
         self
     }
 
-    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
+    fn set_input_handler(&mut self, _: Box<dyn platform::InputHandler>) {}
 
     fn prompt(
         &self,
-        _: crate::PromptLevel,
+        _: crate::platform::PromptLevel,
         _: &str,
         _: &[&str],
     ) -> postage::oneshot::Receiver<usize> {
@@ -251,7 +252,7 @@ impl platform::Window for StatusItem {
         unimplemented!()
     }
 
-    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+    fn on_event(&mut self, callback: Box<dyn FnMut(platform::Event) -> bool>) {
         self.0.borrow_mut().event_callback = Some(callback);
     }
 

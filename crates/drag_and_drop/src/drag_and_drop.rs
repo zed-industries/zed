@@ -4,9 +4,9 @@ use collections::HashSet;
 use gpui::{
     elements::{Empty, MouseEventHandler, Overlay},
     geometry::{rect::RectF, vector::Vector2F},
+    platform::{CursorStyle, MouseButton},
     scene::{MouseDown, MouseDrag},
-    AppContext, CursorStyle, Element, ElementBox, EventContext, MouseButton, RenderContext, View,
-    WeakViewHandle,
+    AppContext, Element, ElementBox, EventContext, RenderContext, View, WeakViewHandle,
 };
 
 const DEAD_ZONE: f32 = 4.;

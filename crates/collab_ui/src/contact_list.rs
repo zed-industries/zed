@@ -10,8 +10,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    AppContext, CursorStyle, Entity, ModelHandle, MouseButton, PromptLevel, RenderContext,
-    Subscription, View, ViewContext, ViewHandle,
+    platform::{CursorStyle, MouseButton, PromptLevel},
+    AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;

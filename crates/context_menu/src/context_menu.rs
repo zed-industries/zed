@@ -1,7 +1,11 @@
 use gpui::{
-    elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap_matcher::KeymapContext,
-    platform::CursorStyle, Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton,
-    MouseState, RenderContext, SizeConstraint, Subscription, View, ViewContext,
+    elements::*,
+    geometry::vector::Vector2F,
+    impl_internal_actions,
+    keymap_matcher::KeymapContext,
+    platform::{CursorStyle, MouseButton},
+    Action, AnyViewHandle, AppContext, Axis, Entity, MouseState, RenderContext, SizeConstraint,
+    Subscription, View, ViewContext,
 };
 use menu::*;
 use settings::Settings;

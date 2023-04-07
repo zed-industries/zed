@@ -29,11 +29,10 @@ use gpui::{
         PathBuilder,
     },
     json::{self, ToJson},
-    platform::CursorStyle,
+    platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
-    Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent, MouseRegion, PaintContext, Quad,
-    SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
+    MouseRegion, PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use itertools::Itertools;
 use json::json;

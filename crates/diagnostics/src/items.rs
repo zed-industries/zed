@@ -1,8 +1,10 @@
 use collections::HashSet;
 use editor::{Editor, GoToDiagnostic};
 use gpui::{
-    elements::*, platform::CursorStyle, serde_json, AppContext, Entity, ModelHandle, MouseButton,
-    RenderContext, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    serde_json, AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use language::Diagnostic;
 use project::Project;

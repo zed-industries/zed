@@ -6,8 +6,12 @@ use alacritty_terminal::grid::Dimensions;
 /// with modifications for our circumstances
 use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point, Side};
 use alacritty_terminal::term::TermMode;
+use gpui::platform;
 use gpui::scene::MouseScrollWheel;
-use gpui::{geometry::vector::Vector2F, MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent};
+use gpui::{
+    geometry::vector::Vector2F,
+    platform::{MouseButtonEvent, MouseMovedEvent, ScrollWheelEvent},
+};
 
 use crate::TerminalSize;
 
@@ -78,10 +82,10 @@ impl MouseButton {
     fn from_move(e: &MouseMovedEvent) -> Self {
         match e.pressed_button {
             Some(b) => match b {
-                gpui::MouseButton::Left => MouseButton::LeftMove,
-                gpui::MouseButton::Middle => MouseButton::MiddleMove,
-                gpui::MouseButton::Right => MouseButton::RightMove,
-                gpui::MouseButton::Navigate(_) => MouseButton::Other,
+                platform::MouseButton::Left => MouseButton::LeftMove,
+                platform::MouseButton::Middle => MouseButton::MiddleMove,
+                platform::MouseButton::Right => MouseButton::RightMove,
+                platform::MouseButton::Navigate(_) => MouseButton::Other,
             },
             None => MouseButton::NoneMove,
         }
@@ -89,10 +93,10 @@ impl MouseButton {
 
     fn from_button(e: &MouseButtonEvent) -> Self {
         match e.button {
-            gpui::MouseButton::Left => MouseButton::LeftButton,
-            gpui::MouseButton::Right => MouseButton::MiddleButton,
-            gpui::MouseButton::Middle => MouseButton::RightButton,
-            gpui::MouseButton::Navigate(_) => MouseButton::Other,
+            platform::MouseButton::Left => MouseButton::LeftButton,
+            platform::MouseButton::Right => MouseButton::MiddleButton,
+            platform::MouseButton::Middle => MouseButton::RightButton,
+            platform::MouseButton::Navigate(_) => MouseButton::Other,
         }
     }
 

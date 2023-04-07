@@ -1,7 +1,9 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    elements::*, geometry::rect::RectF, AppContext, ClipboardItem, Element, Entity, View,
-    ViewContext, ViewHandle, WindowKind, WindowOptions,
+    elements::*,
+    geometry::rect::RectF,
+    platform::{WindowBounds, WindowKind, WindowOptions},
+    AppContext, ClipboardItem, Element, Entity, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use theme::ui::modal;
@@ -63,7 +65,7 @@ fn create_copilot_auth_window(
 ) {
     let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
     let window_options = WindowOptions {
-        bounds: gpui::WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
+        bounds: WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
         titlebar: None,
         center: true,
         focus: true,
@@ -128,7 +130,7 @@ impl CopilotCodeVerification {
                 .with_style(device_code_style.cta.style_for(state, false).container)
                 .boxed()
         })
-        .on_click(gpui::MouseButton::Left, {
+        .on_click(gpui::platform::MouseButton::Left, {
             let user_code = data.user_code.clone();
             move |_, cx| {
                 cx.platform()
@@ -136,7 +138,7 @@ impl CopilotCodeVerification {
                 cx.notify();
             }
         })
-        .with_cursor_style(gpui::CursorStyle::PointingHand)
+        .with_cursor_style(gpui::platform::CursorStyle::PointingHand)
         .boxed()
     }
 

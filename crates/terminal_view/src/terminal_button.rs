@@ -1,7 +1,10 @@
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    elements::*, impl_internal_actions, AppContext, CursorStyle, Element, ElementBox, Entity,
-    MouseButton, RenderContext, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    elements::*,
+    impl_internal_actions,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::any::TypeId;

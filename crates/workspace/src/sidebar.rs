@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
-    elements::*, impl_actions, platform::CursorStyle, AnyViewHandle, AppContext, Entity,
-    MouseButton, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
+    AppContext, Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;

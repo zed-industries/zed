@@ -39,11 +39,10 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::CursorStyle,
+    platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    ModelHandle, RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -6866,7 +6865,7 @@ impl View for Editor {
 
     fn modifiers_changed(
         &mut self,
-        event: &gpui::ModifiersChangedEvent,
+        event: &gpui::platform::ModifiersChangedEvent,
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let pending_selection = self.has_pending_selection();

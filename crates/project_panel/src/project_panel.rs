@@ -12,9 +12,9 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    platform::{CursorStyle, MouseButton, PromptLevel},
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, RenderContext, Task, View,
+    ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};

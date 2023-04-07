@@ -19,8 +19,8 @@ use gpui::{
     actions,
     geometry::vector::vec2f,
     impl_actions,
-    platform::{WindowBounds, WindowOptions},
-    AssetSource, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    platform::{Platform, PromptLevel, TitlebarOptions, WindowBounds, WindowKind, WindowOptions},
+    AssetSource, ViewContext,
 };
 use language::Rope;
 pub use lsp;
@@ -458,11 +458,7 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
     let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
-    cx.prompt(
-        gpui::PromptLevel::Info,
-        &format!("{app_name} {version}"),
-        &["OK"],
-    );
+    cx.prompt(PromptLevel::Info, &format!("{app_name} {version}"), &["OK"]);
 }
 
 fn open_config_file(

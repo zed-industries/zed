@@ -2,8 +2,10 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions, elements::*, platform::CursorStyle, Action, AppContext, Entity, ModelHandle,
-    MouseButton, RenderContext, View, ViewContext, ViewHandle,
+    actions,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    Action, AppContext, Entity, ModelHandle, RenderContext, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};

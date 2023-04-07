@@ -1,7 +1,8 @@
 use client::User;
 use gpui::{
-    elements::*, platform::CursorStyle, Action, Element, ElementBox, MouseButton, RenderContext,
-    View,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    Action, Element, ElementBox, RenderContext, View,
 };
 use settings::Settings;
 use std::sync::Arc;

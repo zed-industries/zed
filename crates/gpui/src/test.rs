@@ -17,9 +17,10 @@ use crate::{
     elements::Empty,
     executor::{self, ExecutorEvent},
     platform,
+    platform::Platform,
     util::CwdBacktrace,
-    AppContext, Element, ElementBox, Entity, FontCache, Handle, Platform, RenderContext,
-    Subscription, TestAppContext, View,
+    AppContext, Element, ElementBox, Entity, FontCache, Handle, RenderContext, Subscription,
+    TestAppContext, View,
 };
 
 #[cfg(test)]

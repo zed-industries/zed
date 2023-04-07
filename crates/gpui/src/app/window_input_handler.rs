@@ -2,7 +2,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use pathfinder_geometry::rect::RectF;
 
-use crate::{AnyView, AppContext, InputHandler};
+use crate::{platform::InputHandler, AnyView, AppContext};
 
 pub struct WindowInputHandler {
     pub app: Rc<RefCell<AppContext>>,

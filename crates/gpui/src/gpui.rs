@@ -28,7 +28,6 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::test;
-pub use platform::*;
 pub use presenter::{
     Axis, DebugContext, EventContext, LayoutContext, MeasurementContext, PaintContext,
     SizeConstraint, Vector2FExt,

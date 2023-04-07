@@ -5,9 +5,10 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{self, json},
+    platform::ScrollWheelEvent,
     presenter::MeasurementContext,
     scene::MouseScrollWheel,
-    ElementBox, MouseRegion, RenderContext, ScrollWheelEvent, View,
+    ElementBox, MouseRegion, RenderContext, View,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};

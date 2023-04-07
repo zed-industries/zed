@@ -3,8 +3,11 @@ use std::sync::Arc;
 use context_menu::{ContextMenu, ContextMenuItem};
 use editor::Editor;
 use gpui::{
-    elements::*, impl_internal_actions, AppContext, CursorStyle, Element, ElementBox, Entity,
-    MouseButton, MouseState, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    elements::*,
+    impl_internal_actions,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Element, ElementBox, Entity, MouseState, RenderContext, Subscription, View,
+    ViewContext, ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
 use workspace::{

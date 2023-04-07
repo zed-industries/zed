@@ -3,9 +3,8 @@ use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, Text},
     impl_internal_actions,
-    platform::CursorStyle,
-    AppContext, Axis, Element, ElementBox, ModelHandle, MouseButton, RenderContext, Task,
-    ViewContext,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Axis, Element, ElementBox, ModelHandle, RenderContext, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity};
 use project::{HoverBlock, Project};

@@ -1,8 +1,8 @@
 use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleContactsMenu};
 use client::UserStore;
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, MouseButton, RenderContext, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, RenderContext,
+    View, ViewContext, ViewHandle,
 };
 use project::Project;
 use settings::Settings;

@@ -22,10 +22,10 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::{CursorStyle, NavigationDirection},
+    platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseButton, MouseRegion, PromptLevel, Quad, RenderContext, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseRegion, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -1887,7 +1887,7 @@ impl Element for PaneBackdrop {
         let child_view_id = self.child_view;
         cx.scene.push_mouse_region(
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
-                gpui::MouseButton::Left,
+                gpui::platform::MouseButton::Left,
                 move |_, cx| {
                     let window_id = cx.window_id;
                     cx.focus(window_id, Some(child_view_id))

@@ -49,8 +49,9 @@ use thiserror::Error;
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::Keystroke,
+    platform::{MouseButton, MouseMovedEvent, TouchPhase},
     scene::{MouseDown, MouseDrag, MouseScrollWheel, MouseUp},
-    ClipboardItem, Entity, ModelContext, MouseButton, MouseMovedEvent, Task,
+    ClipboardItem, Entity, ModelContext, Task,
 };
 
 use crate::mappings::{
@@ -1132,12 +1133,12 @@ impl Terminal {
         let line_height = self.last_content.size.line_height;
         match e.phase {
             /* Reset scroll state on started */
-            Some(gpui::TouchPhase::Started) => {
+            Some(TouchPhase::Started) => {
                 self.scroll_px = 0.;
                 None
             }
             /* Calculate the appropriate scroll lines */
-            Some(gpui::TouchPhase::Moved) => {
+            Some(gpui::platform::TouchPhase::Moved) => {
                 let old_offset = (self.scroll_px / line_height) as i32;
 
                 self.scroll_px += e.delta.pixel_delta(line_height).y() * scroll_multiplier;

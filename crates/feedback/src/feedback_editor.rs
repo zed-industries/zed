@@ -11,8 +11,9 @@ use futures::AsyncReadExt;
 use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Svg},
-    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    platform::PromptLevel,
+    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext,
+    Task, View, ViewContext, ViewHandle,
 };
 use isahc::Request;
 use language::Buffer;

@@ -9,9 +9,12 @@ use editor::{
 };
 use futures::StreamExt;
 use gpui::{
-    actions, elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox,
-    Entity, ModelContext, ModelHandle, MouseButton, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    actions,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    Action, AnyViewHandle, AppContext, ElementBox, Entity, ModelContext, ModelHandle,
+    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};

@@ -2,9 +2,9 @@ use super::atlas::{AllocId, AtlasAllocator};
 use crate::{
     fonts::{FontId, GlyphId},
     geometry::{rect::RectI, vector::Vector2I},
-    platform::RasterizationOptions,
+    platform::{FontSystem, RasterizationOptions},
     scene::ImageGlyph,
-    FontSystem, ImageData,
+    ImageData,
 };
 use anyhow::anyhow;
 use metal::{MTLPixelFormat, TextureDescriptor, TextureRef};

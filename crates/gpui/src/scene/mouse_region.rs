@@ -5,7 +5,7 @@ use collections::HashMap;
 use pathfinder_geometry::rect::RectF;
 use smallvec::SmallVec;
 
-use crate::{EventContext, MouseButton};
+use crate::{platform::MouseButton, EventContext};
 
 use super::{
     mouse_event::{
@@ -290,7 +290,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Move, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Move, found {:?}",
                         region_event);
                 }
             }));
@@ -307,7 +307,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::MoveOut, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::MoveOut, found {:?}",
                         region_event);
                 }
             }));
@@ -325,7 +325,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Down, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Down, found {:?}",
                         region_event);
                 }
             }));
@@ -343,7 +343,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Up, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Up, found {:?}",
                         region_event);
                 }
             }));
@@ -361,7 +361,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Click, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Click, found {:?}",
                         region_event);
                 }
             }));
@@ -379,7 +379,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::DownOut, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::DownOut, found {:?}",
                         region_event);
                 }
             }));
@@ -397,7 +397,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::UpOut, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::UpOut, found {:?}",
                         region_event);
                 }
             }));
@@ -415,7 +415,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Drag, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Drag, found {:?}",
                         region_event);
                 }
             }));
@@ -429,7 +429,7 @@ impl HandlerSet {
                     handler(e, cx);
                 } else {
                     panic!(
-                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Hover, found {:?}", 
+                        "Mouse Region Event incorrectly called with mismatched event type. Expected MouseRegionEvent::Hover, found {:?}",
                         region_event);
                 }
             }));
