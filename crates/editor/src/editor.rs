@@ -261,6 +261,8 @@ actions!(
         Format,
         ToggleSoftWrap,
         RevealInFinder,
+        CopyPath,
+        CopyRelativePath,
         CopyHighlightJson
     ]
 );
@@ -381,6 +383,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::jump);
     cx.add_action(Editor::toggle_soft_wrap);
     cx.add_action(Editor::reveal_in_finder);
+    cx.add_action(Editor::copy_path);
+    cx.add_action(Editor::copy_relative_path);
     cx.add_action(Editor::copy_highlight_json);
     cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
@@ -6248,6 +6252,26 @@ impl Editor {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 cx.reveal_path(&file.abs_path(cx));
+            }
+        }
+    }
+
+    pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(path) = file.abs_path(cx).to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                }
+            }
+        }
+    }
+
+    pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(path) = file.path().to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                }
             }
         }
     }
