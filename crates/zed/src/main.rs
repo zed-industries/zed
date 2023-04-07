@@ -336,7 +336,7 @@ fn init_panic_hook(app_version: String) {
         let message = match info.location() {
             Some(location) => {
                 format!(
-                    "thread '{}' panicked at '{}': {}:{}{:?}",
+                    "thread '{}' panicked at '{}': {}:{}\n{:?}",
                     thread,
                     payload,
                     location.file(),
@@ -345,7 +345,7 @@ fn init_panic_hook(app_version: String) {
                 )
             }
             None => format!(
-                "thread '{}' panicked at '{}'{:?}",
+                "thread '{}' panicked at '{}'\n{:?}",
                 thread, payload, backtrace
             ),
         };
