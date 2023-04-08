@@ -4,7 +4,11 @@ use crate::{
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
-    platform::{Appearance, CursorStyle, Event, FontSystem, MouseButton, MouseMovedEvent},
+    keymap_matcher::{Keystroke, MatchResult},
+    platform::{
+        self, Appearance, CursorStyle, Event, FontSystem, MouseButton, MouseMovedEvent,
+        PromptLevel, WindowBounds,
+    },
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
@@ -18,6 +22,7 @@ use crate::{
 use anyhow::bail;
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
+use postage::oneshot;
 use serde_json::json;
 use smallvec::SmallVec;
 use sqlez::{
@@ -29,9 +34,16 @@ use std::{
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
+use uuid::Uuid;
 
-pub struct Presenter {
+pub struct Window {
     window_id: usize,
+    pub(crate) root_view: AnyViewHandle,
+    pub(crate) focused_view_id: Option<usize>,
+    pub(crate) is_active: bool,
+    pub(crate) is_fullscreen: bool,
+    pub(crate) invalidation: Option<WindowInvalidation>,
+    pub(crate) platform_window: Box<dyn platform::Window>,
     pub(crate) rendered_views: HashMap<usize, ElementBox>,
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
@@ -47,18 +59,27 @@ pub struct Presenter {
     appearance: Appearance,
 }
 
-impl Presenter {
+impl Window {
     pub fn new(
         window_id: usize,
-        titlebar_height: f32,
-        appearance: Appearance,
+        root_view: AnyViewHandle,
+        platform_window: Box<dyn platform::Window>,
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
         cx: &mut AppContext,
     ) -> Self {
+        let focused_view_id = Some(root_view.id());
+        let titlebar_height = platform_window.titlebar_height();
+        let appearance = platform_window.appearance();
         Self {
             window_id,
+            root_view,
+            focused_view_id,
+            is_active: false,
+            invalidation: None,
+            is_fullscreen: false,
+            platform_window,
             rendered_views: cx.render_views(window_id, titlebar_height, appearance),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
@@ -74,180 +95,101 @@ impl Presenter {
             appearance,
         }
     }
+}
 
-    pub fn invalidate(
-        &mut self,
-        invalidation: &mut WindowInvalidation,
-        appearance: Appearance,
-        cx: &mut AppContext,
-    ) {
-        cx.start_frame();
-        self.appearance = appearance;
-        for view_id in &invalidation.removed {
-            invalidation.updated.remove(view_id);
-            self.rendered_views.remove(view_id);
+pub struct WindowContext<'a: 'b, 'b> {
+    app_context: &'a mut AppContext,
+    pub(crate) window: &'b mut Window, // TODO: make this private?
+    window_id: usize,
+}
+
+impl Deref for WindowContext<'_, '_> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app_context
+    }
+}
+
+impl DerefMut for WindowContext<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app_context
+    }
+}
+
+impl<'a: 'b, 'b> WindowContext<'a, 'b> {
+    pub fn new(app_context: &'a mut AppContext, window: &'b mut Window, window_id: usize) -> Self {
+        Self {
+            app_context,
+            window,
+            window_id,
         }
-        for view_id in &invalidation.updated {
-            self.rendered_views.insert(
-                *view_id,
-                cx.render_view(RenderParams {
-                    window_id: self.window_id,
-                    view_id: *view_id,
-                    titlebar_height: self.titlebar_height,
-                    hovered_region_ids: self.hovered_region_ids.clone(),
-                    clicked_region_ids: self
-                        .clicked_button
-                        .map(|button| (self.clicked_region_ids.clone(), button)),
-                    refreshing: false,
-                    appearance,
+    }
+
+    pub fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+        let window_id = self.window_id;
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            let dispatch_path = self
+                .ancestors(window_id, focused_view_id)
+                .filter_map(|view_id| {
+                    self.views
+                        .get(&(window_id, view_id))
+                        .map(|view| (view_id, view.keymap_context(self)))
                 })
-                .unwrap(),
-            );
-        }
-    }
+                .collect();
 
-    pub fn refresh(
-        &mut self,
-        invalidation: &mut WindowInvalidation,
-        appearance: Appearance,
-        cx: &mut AppContext,
-    ) {
-        self.invalidate(invalidation, appearance, cx);
-        for (view_id, view) in &mut self.rendered_views {
-            if !invalidation.updated.contains(view_id) {
-                *view = cx
-                    .render_view(RenderParams {
-                        window_id: self.window_id,
-                        view_id: *view_id,
-                        titlebar_height: self.titlebar_height,
-                        hovered_region_ids: self.hovered_region_ids.clone(),
-                        clicked_region_ids: self
-                            .clicked_button
-                            .map(|button| (self.clicked_region_ids.clone(), button)),
-                        refreshing: true,
-                        appearance,
-                    })
-                    .unwrap();
-            }
-        }
-    }
+            let match_result = self
+                .keystroke_matcher
+                .push_keystroke(keystroke.clone(), dispatch_path);
+            let mut handled_by = None;
 
-    pub fn build_scene(
-        &mut self,
-        window_size: Vector2F,
-        scale_factor: f32,
-        refreshing: bool,
-        cx: &mut AppContext,
-    ) -> Scene {
-        let mut scene_builder = SceneBuilder::new(scale_factor);
-
-        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.layout(window_size, refreshing, cx);
-            let mut paint_cx = self.build_paint_context(&mut scene_builder, window_size, cx);
-            paint_cx.paint(
-                root_view_id,
-                Vector2F::zero(),
-                RectF::new(Vector2F::zero(), window_size),
-            );
-            self.text_layout_cache.finish_frame();
-            let scene = scene_builder.build();
-            self.cursor_regions = scene.cursor_regions();
-            self.mouse_regions = scene.mouse_regions();
-
-            // window.is_topmost for the mouse moved event's postion?
-            if cx.window_is_active(self.window_id) {
-                if let Some(event) = self.last_mouse_moved_event.clone() {
-                    self.dispatch_event(event, true, cx);
+            let keystroke_handled = match &match_result {
+                MatchResult::None => false,
+                MatchResult::Pending => true,
+                MatchResult::Matches(matches) => {
+                    for (view_id, action) in matches {
+                        if self.handle_dispatch_action_from_effect(
+                            window_id,
+                            Some(*view_id),
+                            action.as_ref(),
+                        ) {
+                            self.keystroke_matcher.clear_pending();
+                            handled_by = Some(action.boxed_clone());
+                            break;
+                        }
+                    }
+                    handled_by.is_some()
                 }
-            }
-
-            scene
-        } else {
-            log::error!("could not find root_view_id for window {}", self.window_id);
-            scene_builder.build()
-        }
-    }
-
-    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut AppContext) {
-        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.build_layout_context(window_size, refreshing, cx)
-                .layout(root_view_id, SizeConstraint::strict(window_size));
-        }
-    }
-
-    pub fn build_layout_context<'a>(
-        &'a mut self,
-        window_size: Vector2F,
-        refreshing: bool,
-        cx: &'a mut AppContext,
-    ) -> LayoutContext<'a> {
-        LayoutContext {
-            window_id: self.window_id,
-            rendered_views: &mut self.rendered_views,
-            font_cache: &self.font_cache,
-            font_system: cx.platform().fonts(),
-            text_layout_cache: &self.text_layout_cache,
-            asset_cache: &self.asset_cache,
-            view_stack: Vec::new(),
-            refreshing,
-            hovered_region_ids: self.hovered_region_ids.clone(),
-            clicked_region_ids: self
-                .clicked_button
-                .map(|button| (self.clicked_region_ids.clone(), button)),
-            titlebar_height: self.titlebar_height,
-            appearance: self.appearance,
-            window_size,
-            app: cx,
-        }
-    }
-
-    pub fn build_paint_context<'a>(
-        &'a mut self,
-        scene: &'a mut SceneBuilder,
-        window_size: Vector2F,
-        cx: &'a mut AppContext,
-    ) -> PaintContext {
-        PaintContext {
-            scene,
-            window_size,
-            font_cache: &self.font_cache,
-            text_layout_cache: &self.text_layout_cache,
-            rendered_views: &mut self.rendered_views,
-            view_stack: Vec::new(),
-            app: cx,
-        }
-    }
-
-    pub fn rect_for_text_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<RectF> {
-        cx.focused_view_id(self.window_id).and_then(|view_id| {
-            let cx = MeasurementContext {
-                app: cx,
-                rendered_views: &self.rendered_views,
-                window_id: self.window_id,
             };
-            cx.rect_for_text_range(view_id, range_utf16)
-        })
+
+            self.keystroke(
+                window_id,
+                keystroke.clone(),
+                handled_by,
+                match_result.clone(),
+            );
+            keystroke_handled
+        } else {
+            self.keystroke(window_id, keystroke.clone(), None, MatchResult::None);
+            false
+        }
     }
 
-    pub fn dispatch_event(
-        &mut self,
-        event: Event,
-        event_reused: bool,
-        cx: &mut AppContext,
-    ) -> bool {
+    pub fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
+        let window_id = self.window_id;
 
         // 1. Handle platform event. Keyboard events get dispatched immediately, while mouse events
         //    get mapped into the mouse-specific MouseEvent type.
         //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
         //  -> Also updates mouse-related state
         match &event {
-            Event::KeyDown(e) => return cx.dispatch_key_down(self.window_id, e),
+            Event::KeyDown(e) => return self.dispatch_key_down(window_id, e),
 
-            Event::KeyUp(e) => return cx.dispatch_key_up(self.window_id, e),
+            Event::KeyUp(e) => return self.dispatch_key_up(window_id, e),
 
-            Event::ModifiersChanged(e) => return cx.dispatch_modifiers_changed(self.window_id, e),
+            Event::ModifiersChanged(e) => return self.dispatch_modifiers_changed(window_id, e),
 
             Event::MouseDown(e) => {
                 // Click events are weird because they can be fired after a drag event.
@@ -256,8 +198,9 @@ impl Presenter {
                 // So we need to store the overlapping regions on mouse down.
 
                 // If there is already clicked_button stored, don't replace it.
-                if self.clicked_button.is_none() {
-                    self.clicked_region_ids = self
+                if self.window.clicked_button.is_none() {
+                    self.window.clicked_region_ids = self
+                        .window
                         .mouse_regions
                         .iter()
                         .filter_map(|(region, _)| {
@@ -269,7 +212,7 @@ impl Presenter {
                         })
                         .collect();
 
-                    self.clicked_button = Some(e.button);
+                    self.window.clicked_button = Some(e.button);
                 }
 
                 mouse_events.push(MouseEvent::Down(MouseDown {
@@ -308,26 +251,29 @@ impl Presenter {
                 },
             ) => {
                 let mut style_to_assign = CursorStyle::Arrow;
-                for region in self.cursor_regions.iter().rev() {
+                for region in self.window.cursor_regions.iter().rev() {
                     if region.bounds.contains_point(*position) {
                         style_to_assign = region.style;
                         break;
                     }
                 }
 
-                // TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // if cx.is_topmost_window_for_position(self.window_id, *position) {
-                //     cx.platform().set_cursor_style(style_to_assign);
-                // }
+                if self
+                    .window
+                    .platform_window
+                    .is_topmost_for_position(*position)
+                {
+                    self.platform().set_cursor_style(style_to_assign);
+                }
 
                 if !event_reused {
                     if pressed_button.is_some() {
                         mouse_events.push(MouseEvent::Drag(MouseDrag {
                             region: Default::default(),
-                            prev_mouse_position: self.mouse_position,
+                            prev_mouse_position: self.window.mouse_position,
                             platform_event: e.clone(),
                         }));
-                    } else if let Some(clicked_button) = self.clicked_button {
+                    } else if let Some(clicked_button) = self.window.clicked_button {
                         // Mouse up event happened outside the current window. Simulate mouse up button event
                         let button_event = e.to_button_event(clicked_button);
                         mouse_events.push(MouseEvent::Up(MouseUp {
@@ -359,7 +305,7 @@ impl Presenter {
                     region: Default::default(),
                 }));
 
-                self.last_mouse_moved_event = Some(event.clone());
+                self.window.last_mouse_moved_event = Some(event.clone());
             }
 
             Event::MouseExited(event) => {
@@ -373,7 +319,6 @@ impl Presenter {
                         modifiers: event.modifiers,
                     }),
                     event_reused,
-                    cx,
                 );
             }
 
@@ -384,7 +329,7 @@ impl Presenter {
         }
 
         if let Some(position) = event.position() {
-            self.mouse_position = position;
+            self.window.mouse_position = position;
         }
 
         // 2. Dispatch mouse events on regions
@@ -398,8 +343,8 @@ impl Presenter {
             match &mouse_event {
                 MouseEvent::Hover(_) => {
                     let mut highest_z_index = None;
-                    let mouse_position = self.mouse_position.clone();
-                    for (region, z_index) in self.mouse_regions.iter().rev() {
+                    let mouse_position = self.window.mouse_position.clone();
+                    for (region, z_index) in self.window.mouse_regions.iter().rev() {
                         // Allow mouse regions to appear transparent to hovers
                         if !region.hoverable {
                             continue;
@@ -417,7 +362,7 @@ impl Presenter {
                         // highest_z_index is set.
                         if contains_mouse && z_index == highest_z_index.unwrap() {
                             //Ensure that hover entrance events aren't sent twice
-                            if self.hovered_region_ids.insert(region.id()) {
+                            if self.window.hovered_region_ids.insert(region.id()) {
                                 valid_regions.push(region.clone());
                                 if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
@@ -425,7 +370,7 @@ impl Presenter {
                             }
                         } else {
                             // Ensure that hover exit events aren't sent twice
-                            if self.hovered_region_ids.remove(&region.id()) {
+                            if self.window.hovered_region_ids.remove(&region.id()) {
                                 valid_regions.push(region.clone());
                                 if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
@@ -436,8 +381,8 @@ impl Presenter {
                 }
 
                 MouseEvent::Down(_) | MouseEvent::Up(_) => {
-                    for (region, _) in self.mouse_regions.iter().rev() {
-                        if region.bounds.contains_point(self.mouse_position) {
+                    for (region, _) in self.window.mouse_regions.iter().rev() {
+                        if region.bounds.contains_point(self.window.mouse_position) {
                             valid_regions.push(region.clone());
                             if region.notify_on_click {
                                 notified_views.insert(region.id().view_id());
@@ -449,19 +394,25 @@ impl Presenter {
                 MouseEvent::Click(e) => {
                     // Only raise click events if the released button is the same as the one stored
                     if self
+                        .window
                         .clicked_button
                         .map(|clicked_button| clicked_button == e.button)
                         .unwrap_or(false)
                     {
                         // Clear clicked regions and clicked button
-                        let clicked_region_ids =
-                            std::mem::replace(&mut self.clicked_region_ids, Default::default());
-                        self.clicked_button = None;
+                        let clicked_region_ids = std::mem::replace(
+                            &mut self.window.clicked_region_ids,
+                            Default::default(),
+                        );
+                        self.window.clicked_button = None;
 
                         // Find regions which still overlap with the mouse since the last MouseDown happened
-                        for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                        for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                             if clicked_region_ids.contains(&mouse_region.id()) {
-                                if mouse_region.bounds.contains_point(self.mouse_position) {
+                                if mouse_region
+                                    .bounds
+                                    .contains_point(self.window.mouse_position)
+                                {
                                     valid_regions.push(mouse_region.clone());
                                 }
                             }
@@ -470,26 +421,32 @@ impl Presenter {
                 }
 
                 MouseEvent::Drag(_) => {
-                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
-                        if self.clicked_region_ids.contains(&mouse_region.id()) {
+                    for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
+                        if self.window.clicked_region_ids.contains(&mouse_region.id()) {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
                 }
 
                 MouseEvent::MoveOut(_) | MouseEvent::UpOut(_) | MouseEvent::DownOut(_) => {
-                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                    for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // NOT contains
-                        if !mouse_region.bounds.contains_point(self.mouse_position) {
+                        if !mouse_region
+                            .bounds
+                            .contains_point(self.window.mouse_position)
+                        {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
                 }
 
                 _ => {
-                    for (mouse_region, _) in self.mouse_regions.iter().rev() {
+                    for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // Contains
-                        if mouse_region.bounds.contains_point(self.mouse_position) {
+                        if mouse_region
+                            .bounds
+                            .contains_point(self.window.mouse_position)
+                        {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
@@ -497,9 +454,9 @@ impl Presenter {
             }
 
             //3. Fire region events
-            let hovered_region_ids = self.hovered_region_ids.clone();
+            let hovered_region_ids = self.window.hovered_region_ids.clone();
             for valid_region in valid_regions.into_iter() {
-                let mut event_cx = self.build_event_context(&mut notified_views, cx);
+                let mut event_cx = self.build_event_context(&mut notified_views);
 
                 mouse_event.set_region(valid_region.bounds);
                 if let MouseEvent::Hover(e) = &mut mouse_event {
@@ -548,42 +505,252 @@ impl Presenter {
         }
 
         for view_id in notified_views {
-            cx.notify_view(self.window_id, view_id);
+            self.notify_view(window_id, view_id);
         }
 
         any_event_handled
     }
 
-    pub fn build_event_context<'a>(
-        &'a mut self,
-        notified_views: &'a mut HashSet<usize>,
-        cx: &'a mut AppContext,
-    ) -> EventContext<'a> {
+    pub fn build_event_context<'c>(
+        &'c mut self,
+        notified_views: &'c mut HashSet<usize>,
+    ) -> EventContext<'c> {
         EventContext {
-            font_cache: &self.font_cache,
-            text_layout_cache: &self.text_layout_cache,
+            font_cache: &self.window.font_cache,
+            text_layout_cache: &self.window.text_layout_cache,
             view_stack: Default::default(),
             notified_views,
             notify_count: 0,
             handled: false,
             window_id: self.window_id,
+            app: self,
+        }
+    }
+
+    pub fn invalidate(&mut self, invalidation: &mut WindowInvalidation, appearance: Appearance) {
+        self.start_frame();
+        self.window.appearance = appearance;
+        for view_id in &invalidation.removed {
+            invalidation.updated.remove(view_id);
+            self.window.rendered_views.remove(view_id);
+        }
+        for view_id in &invalidation.updated {
+            let window_id = self.window_id;
+            let titlebar_height = self.window.titlebar_height;
+            let hovered_region_ids = self.window.hovered_region_ids.clone();
+            let clicked_region_ids = self
+                .window
+                .clicked_button
+                .map(|button| (self.window.clicked_region_ids.clone(), button));
+
+            let element = self
+                .render_view(RenderParams {
+                    window_id,
+                    view_id: *view_id,
+                    titlebar_height,
+                    hovered_region_ids,
+                    clicked_region_ids,
+                    refreshing: false,
+                    appearance,
+                })
+                .unwrap();
+            self.window.rendered_views.insert(*view_id, element);
+        }
+    }
+
+    pub fn refresh(&mut self, invalidation: &mut WindowInvalidation, appearance: Appearance) {
+        self.invalidate(invalidation, appearance);
+
+        let view_ids = self
+            .window
+            .rendered_views
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+
+        for view_id in view_ids {
+            if !invalidation.updated.contains(&view_id) {
+                let window_id = self.window_id;
+                let titlebar_height = self.window.titlebar_height;
+                let hovered_region_ids = self.window.hovered_region_ids.clone();
+                let clicked_region_ids = self
+                    .window
+                    .clicked_button
+                    .map(|button| (self.window.clicked_region_ids.clone(), button));
+                let element = self
+                    .render_view(RenderParams {
+                        window_id,
+                        view_id,
+                        titlebar_height,
+                        hovered_region_ids,
+                        clicked_region_ids,
+                        refreshing: true,
+                        appearance,
+                    })
+                    .unwrap();
+                self.window.rendered_views.insert(view_id, element);
+            }
+        }
+    }
+
+    pub fn build_scene(&mut self, refreshing: bool) -> Scene {
+        let window_size = self.window.platform_window.content_size();
+        let scale_factor = self.window.platform_window.scale_factor();
+
+        let mut scene_builder = SceneBuilder::new(scale_factor);
+
+        if let Some(root_view_id) = self.root_view_id(self.window_id) {
+            self.layout(window_size, refreshing, self);
+            let mut paint_cx = self.build_paint_context(&mut scene_builder, window_size);
+            paint_cx.paint(
+                root_view_id,
+                Vector2F::zero(),
+                RectF::new(Vector2F::zero(), window_size),
+            );
+            self.window.text_layout_cache.finish_frame();
+            let scene = scene_builder.build();
+            self.window.cursor_regions = scene.cursor_regions();
+            self.window.mouse_regions = scene.mouse_regions();
+
+            // window.is_topmost for the mouse moved event's postion?
+            if self.window_is_active(self.window_id) {
+                if let Some(event) = self.window.last_mouse_moved_event.clone() {
+                    self.dispatch_event(event, true);
+                }
+            }
+
+            scene
+        } else {
+            log::error!("could not find root_view_id for window {}", self.window_id);
+            scene_builder.build()
+        }
+    }
+
+    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut AppContext) {
+        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
+            self.build_layout_context(window_size, refreshing, cx)
+                .layout(root_view_id, SizeConstraint::strict(window_size));
+        }
+    }
+
+    pub fn build_layout_context<'c>(
+        &'c mut self,
+        window_size: Vector2F,
+        refreshing: bool,
+        cx: &'c mut AppContext,
+    ) -> LayoutContext<'c> {
+        LayoutContext {
+            window_id: self.window_id,
+            rendered_views: &mut self.window.rendered_views,
+            font_cache: &self.font_cache,
+            font_system: cx.platform().fonts(),
+            text_layout_cache: &self.window.text_layout_cache,
+            asset_cache: &self.window.asset_cache,
+            view_stack: Vec::new(),
+            refreshing,
+            hovered_region_ids: self.window.hovered_region_ids.clone(),
+            clicked_region_ids: self
+                .window
+                .clicked_button
+                .map(|button| (self.window.clicked_region_ids.clone(), button)),
+            titlebar_height: self.window.titlebar_height,
+            appearance: self.window.appearance,
+            window_size,
             app: cx,
         }
     }
 
-    pub fn debug_elements(&self, cx: &AppContext) -> Option<json::Value> {
-        let view = cx.root_view(self.window_id)?;
+    pub fn build_paint_context<'c>(
+        &'c mut self,
+        scene: &'c mut SceneBuilder,
+        window_size: Vector2F,
+    ) -> PaintContext {
+        PaintContext {
+            scene,
+            window_size,
+            font_cache: &self.font_cache,
+            text_layout_cache: &self.window.text_layout_cache,
+            rendered_views: &mut self.window.rendered_views,
+            view_stack: Vec::new(),
+            app: self,
+        }
+    }
+
+    pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
+        self.focused_view_id(self.window_id).and_then(|view_id| {
+            let cx = MeasurementContext {
+                app: self,
+                rendered_views: &self.window.rendered_views,
+                window_id: self.window_id,
+            };
+            cx.rect_for_text_range(view_id, range_utf16)
+        })
+    }
+
+    pub fn debug_elements(&self) -> Option<json::Value> {
+        let view = self.root_view(self.window_id)?;
         Some(json!({
-            "root_view": view.debug_json(cx),
-            "root_element": self.rendered_views.get(&view.id())
+            "root_view": view.debug_json(self),
+            "root_element": self.window.rendered_views.get(&view.id())
                 .map(|root_element| {
                     root_element.debug(&DebugContext {
-                        rendered_views: &self.rendered_views,
-                        font_cache: &self.font_cache,
-                        app: cx,
+                        rendered_views: &self.window.rendered_views,
+                        font_cache: &self.window.font_cache,
+                        app: self,
                     })
                 })
         }))
+    }
+
+    pub fn set_window_title(&mut self, title: &str) {
+        self.window.platform_window.set_title(title);
+    }
+
+    pub fn set_window_edited(&mut self, edited: bool) {
+        self.window.platform_window.set_edited(edited);
+    }
+
+    pub fn is_topmost_window_for_position(&self, position: Vector2F) -> bool {
+        self.window
+            .platform_window
+            .is_topmost_for_position(position)
+    }
+
+    pub fn activate_window(&self) {
+        self.window.platform_window.activate();
+    }
+
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.bounds()
+    }
+
+    pub fn window_display_uuid(&self) -> Option<Uuid> {
+        self.window.platform_window.screen().display_uuid()
+    }
+
+    fn show_character_palette(&self) {
+        self.window.platform_window.show_character_palette();
+    }
+
+    pub fn minimize_window(&self) {
+        self.window.platform_window.minimize();
+    }
+
+    pub fn zoom_window(&self) {
+        self.window.platform_window.zoom();
+    }
+
+    pub fn toggle_window_full_screen(&self) {
+        self.window.platform_window.toggle_full_screen();
+    }
+
+    pub fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.window.platform_window.prompt(level, msg, answers)
     }
 }
 

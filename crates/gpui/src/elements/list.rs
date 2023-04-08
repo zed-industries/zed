@@ -4,7 +4,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     DebugContext, Element, ElementBox, ElementRc, EventContext, LayoutContext, MouseRegion,
     PaintContext, RenderContext, SizeConstraint, View, ViewContext,
 };
@@ -631,7 +631,6 @@ mod tests {
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::AppContext) {
-        let mut presenter = cx.build_presenter(0, 0., Default::default());
         let (_, view) = cx.add_window(Default::default(), |_| TestView);
         let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
 
@@ -730,8 +729,7 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let (_, view) = cx.add_window(Default::default(), |_| TestView);
-        let mut presenter = cx.build_presenter(0, 0., Default::default());
+        let (window_id, view) = cx.add_window(Default::default(), |_| TestView);
         let mut next_id = 0;
         let elements = Rc::new(RefCell::new(
             (0..rng.gen_range(0..=20))

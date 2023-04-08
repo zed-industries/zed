@@ -6,7 +6,7 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     Action, Axis, ElementStateHandle, LayoutContext, PaintContext, RenderContext, SizeConstraint,
     Task, View,
 };

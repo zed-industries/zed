@@ -1,7 +1,7 @@
 use super::Element;
 use crate::{
     json::{self, json},
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     DebugContext, PaintContext,
 };
 use json::ToJson;

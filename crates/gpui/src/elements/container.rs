@@ -9,8 +9,8 @@ use crate::{
     },
     json::ToJson,
     platform::CursorStyle,
-    presenter::MeasurementContext,
     scene::{self, Border, CursorRegion, Quad},
+    window::MeasurementContext,
     Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;

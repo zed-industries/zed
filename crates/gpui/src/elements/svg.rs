@@ -8,8 +8,9 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    presenter::MeasurementContext,
-    scene, DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
+    scene,
+    window::MeasurementContext,
+    DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
 };
 
 pub struct Svg {

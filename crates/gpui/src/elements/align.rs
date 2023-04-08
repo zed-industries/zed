@@ -1,7 +1,7 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json,
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
 };
 use json::ToJson;

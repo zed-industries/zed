@@ -7,8 +7,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    presenter::MeasurementContext,
     text_layout::{Line, RunStyle},
+    window::MeasurementContext,
     DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;

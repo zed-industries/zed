@@ -2531,7 +2531,7 @@ mod tests {
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let mut presenter = cx.build_presenter(window_id, 30., Default::default());
+            let mut presenter = cx.build_window(window_id, 30., Default::default());
             let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
             element
                 .layout_line_numbers(0..6, &Default::default(), false, &snapshot, &layout_cx)
@@ -2568,7 +2568,7 @@ mod tests {
         let mut element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
 
         let mut scene = SceneBuilder::new(1.0);
-        let mut presenter = cx.build_presenter(window_id, 30., Default::default());
+        let mut presenter = cx.build_window(window_id, 30., Default::default());
         let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
         let (size, mut state) = element.layout(
             SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),

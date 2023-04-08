@@ -261,7 +261,7 @@ pub struct Window {
 }
 
 impl Window {
-    fn new(size: Vector2F) -> Self {
+    pub fn new(size: Vector2F) -> Self {
         Self {
             size,
             event_handlers: Default::default(),

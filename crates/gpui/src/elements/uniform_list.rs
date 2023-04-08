@@ -6,8 +6,8 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    presenter::MeasurementContext,
     scene::MouseScrollWheel,
+    window::MeasurementContext,
     ElementBox, MouseRegion, RenderContext, View,
 };
 use json::ToJson;

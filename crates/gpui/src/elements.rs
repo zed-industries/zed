@@ -26,16 +26,14 @@ pub use self::{
     stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
 use self::{clipped::Clipped, expanded::Expanded};
-pub use crate::presenter::ChildView;
 use crate::{
+    app::window::MeasurementContext,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json,
-    presenter::MeasurementContext,
-    Action, DebugContext, EventContext, LayoutContext, PaintContext, RenderContext, SizeConstraint,
-    View,
+    json, Action, DebugContext, EventContext, LayoutContext, PaintContext, RenderContext,
+    SizeConstraint, View,
 };
 use core::panic;
 use json::ToJson;

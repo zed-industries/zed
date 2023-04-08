@@ -14,7 +14,6 @@ mod clipboard;
 pub use clipboard::ClipboardItem;
 pub mod fonts;
 pub mod geometry;
-mod presenter;
 pub mod scene;
 pub use scene::{Border, CursorRegion, MouseRegion, MouseRegionId, Quad, Scene, SceneBuilder};
 pub mod text_layout;
@@ -28,7 +27,7 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::test;
-pub use presenter::{
+pub use window::{
     Axis, DebugContext, EventContext, LayoutContext, MeasurementContext, PaintContext,
     SizeConstraint, Vector2FExt,
 };

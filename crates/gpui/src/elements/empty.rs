@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     DebugContext,
 };
 use crate::{Element, LayoutContext, PaintContext, SizeConstraint};

@@ -5,8 +5,9 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    presenter::MeasurementContext,
-    scene, Border, DebugContext, Element, ImageData, LayoutContext, PaintContext, SizeConstraint,
+    scene,
+    window::MeasurementContext,
+    Border, DebugContext, Element, ImageData, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};

@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     Axis, DebugContext, Element, ElementBox, LayoutContext, MouseRegion, PaintContext,
     SizeConstraint,
 };

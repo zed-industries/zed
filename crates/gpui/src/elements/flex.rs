@@ -2,7 +2,7 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    presenter::MeasurementContext,
+    window::MeasurementContext,
     Axis, DebugContext, Element, ElementBox, ElementStateHandle, LayoutContext, PaintContext,
     RenderContext, SizeConstraint, Vector2FExt, View,
 };

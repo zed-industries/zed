@@ -92,13 +92,12 @@ impl TestAppContext {
                     return true;
                 }
 
-                if cx.window.presenter.dispatch_event(
+                if cx.dispatch_event(
                     Event::KeyDown(KeyDownEvent {
                         keystroke: keystroke.clone(),
                         is_held,
                     }),
                     false,
-                    cx,
                 ) {
                     return true;
                 }
@@ -286,12 +285,15 @@ impl TestAppContext {
 
     pub fn simulate_window_activation(&self, to_activate: Option<usize>) {
         self.cx.borrow_mut().update(|cx| {
-            for window_id in cx
+            let other_window_ids = cx
                 .windows
                 .keys()
                 .filter(|window_id| Some(**window_id) != to_activate)
-            {
-                cx.window_changed_active_status(*window_id, false)
+                .copied()
+                .collect::<Vec<_>>();
+
+            for window_id in other_window_ids {
+                cx.window_changed_active_status(window_id, false)
             }
 
             if let Some(to_activate) = to_activate {
