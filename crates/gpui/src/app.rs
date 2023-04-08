@@ -321,6 +321,17 @@ impl App {
         state.pending_notifications.clear();
         result
     }
+
+    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        let mut state = self.0.borrow_mut();
+        let result = state.update_window(window_id, callback);
+        state.pending_notifications.clear();
+        result
+    }
 }
 
 impl AsyncAppContext {
@@ -339,6 +350,14 @@ impl AsyncAppContext {
 
     pub fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, callback: F) -> T {
         self.0.borrow_mut().update(callback)
+    }
+
+    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        self.0.borrow_mut().update_window(window_id, callback)
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -366,7 +385,7 @@ impl AsyncAppContext {
     }
 
     pub fn activate_window(&mut self, window_id: usize) {
-        self.update(|cx| cx.activate_window(window_id))
+        self.update_window(window_id, |cx| cx.activate_window());
     }
 
     pub fn prompt(
@@ -375,8 +394,8 @@ impl AsyncAppContext {
         level: PromptLevel,
         msg: &str,
         answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
-        self.update(|cx| cx.prompt(window_id, level, msg, answers))
+    ) -> Option<oneshot::Receiver<usize>> {
+        self.update_window(window_id, |cx| cx.prompt(level, msg, answers))
     }
 
     pub fn platform(&self) -> Arc<dyn Platform> {
@@ -528,9 +547,6 @@ pub struct AppContext {
     keystroke_observations: CallbackCollection<usize, KeystrokeCallback>,
     active_labeled_task_observations: CallbackCollection<(), ActiveLabeledTasksCallback>,
 
-    #[allow(clippy::type_complexity)]
-    presenters_and_platform_windows:
-        HashMap<usize, (Rc<RefCell<Presenter>>, Box<dyn platform::Window>)>,
     foreground: Rc<executor::Foreground>,
     pending_effects: VecDeque<Effect>,
     pending_notifications: HashSet<usize>,
@@ -588,7 +604,6 @@ impl AppContext {
             keystroke_observations: Default::default(),
             action_dispatch_observations: Default::default(),
             active_labeled_task_observations: Default::default(),
-            presenters_and_platform_windows: Default::default(),
             foreground,
             pending_effects: VecDeque::new(),
             pending_notifications: Default::default(),
@@ -659,9 +674,7 @@ impl AppContext {
     }
 
     pub fn remove_all_windows(&mut self) {
-        for (window_id, _) in self.windows.drain() {
-            self.presenters_and_platform_windows.remove(&window_id);
-        }
+        self.windows.clear();
         self.flush_effects();
     }
 
@@ -782,14 +795,6 @@ impl AppContext {
         }
     }
 
-    pub fn is_topmost_window_for_position(&self, window_id: usize, position: Vector2F) -> bool {
-        self.presenters_and_platform_windows
-            .get(&window_id)
-            .map_or(false, |(_, window)| {
-                window.is_topmost_for_position(position)
-            })
-    }
-
     pub fn has_window(&self, window_id: usize) -> bool {
         self.window_ids()
             .find(|window| window == &window_id)
@@ -798,12 +803,6 @@ impl AppContext {
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
         self.windows.keys().copied()
-    }
-
-    pub fn activate_window(&self, window_id: usize) {
-        if let Some((_, window)) = self.presenters_and_platform_windows.get(&window_id) {
-            window.activate()
-        }
     }
 
     pub fn window_is_active(&self, window_id: usize) -> bool {
@@ -816,16 +815,6 @@ impl AppContext {
         self.windows
             .get(&window_id)
             .map_or(false, |window| window.is_fullscreen)
-    }
-
-    pub fn window_bounds(&self, window_id: usize) -> Option<WindowBounds> {
-        let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
-        Some(window.bounds())
-    }
-
-    pub fn window_display_uuid(&self, window_id: usize) -> Option<Uuid> {
-        let (_, window) = self.presenters_and_platform_windows.get(&window_id)?;
-        window.screen().display_uuid()
     }
 
     pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
@@ -889,12 +878,6 @@ impl AppContext {
         } else {
             false
         }
-    }
-
-    pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
-        self.presenters_and_platform_windows
-            .get(&window_id)
-            .and_then(|(presenter, _)| presenter.borrow().debug_elements(self))
     }
 
     pub fn active_labeled_tasks<'a>(
@@ -966,35 +949,23 @@ impl AppContext {
         result
     }
 
-    fn show_character_palette(&self, window_id: usize) {
-        let (_, window) = &self.presenters_and_platform_windows[&window_id];
-        window.show_character_palette();
-    }
-
-    pub fn minimize_window(&self, window_id: usize) {
-        let (_, window) = &self.presenters_and_platform_windows[&window_id];
-        window.minimize();
-    }
-
-    pub fn zoom_window(&self, window_id: usize) {
-        let (_, window) = &self.presenters_and_platform_windows[&window_id];
-        window.zoom();
-    }
-
-    pub fn toggle_window_full_screen(&self, window_id: usize) {
-        let (_, window) = &self.presenters_and_platform_windows[&window_id];
-        window.toggle_full_screen();
-    }
-
-    pub fn prompt(
-        &self,
+    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
         window_id: usize,
-        level: PromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
-        let (_, window) = &self.presenters_and_platform_windows[&window_id];
-        window.prompt(level, msg, answers)
+        callback: F,
+    ) -> Option<T> {
+        self.update(|app_context| {
+            let mut window = app_context.windows.remove(&window_id)?;
+            let mut window_context = WindowContext {
+                app_context,
+                window: &mut window,
+                window_id,
+            };
+
+            let result = callback(&mut window_context);
+            app_context.windows.insert(window_id, window);
+            Some(result)
+        })
     }
 
     pub fn prompt_for_paths(
@@ -1560,54 +1531,6 @@ impl AppContext {
         false
     }
 
-    pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: &Keystroke) -> bool {
-        if let Some(focused_view_id) = self.focused_view_id(window_id) {
-            let dispatch_path = self
-                .ancestors(window_id, focused_view_id)
-                .filter_map(|view_id| {
-                    self.views
-                        .get(&(window_id, view_id))
-                        .map(|view| (view_id, view.keymap_context(self)))
-                })
-                .collect();
-
-            let match_result = self
-                .keystroke_matcher
-                .push_keystroke(keystroke.clone(), dispatch_path);
-            let mut handled_by = None;
-
-            let keystroke_handled = match &match_result {
-                MatchResult::None => false,
-                MatchResult::Pending => true,
-                MatchResult::Matches(matches) => {
-                    for (view_id, action) in matches {
-                        if self.handle_dispatch_action_from_effect(
-                            window_id,
-                            Some(*view_id),
-                            action.as_ref(),
-                        ) {
-                            self.keystroke_matcher.clear_pending();
-                            handled_by = Some(action.boxed_clone());
-                            break;
-                        }
-                    }
-                    handled_by.is_some()
-                }
-            };
-
-            self.keystroke(
-                window_id,
-                keystroke.clone(),
-                handled_by,
-                match_result.clone(),
-            );
-            keystroke_handled
-        } else {
-            self.keystroke(window_id, keystroke.clone(), None, MatchResult::None);
-            false
-        }
-    }
-
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
         let type_id = TypeId::of::<T>();
         self.update(|this| {
@@ -1696,6 +1619,16 @@ impl AppContext {
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
+            let platform_window =
+                this.platform
+                    .open_window(window_id, window_options, this.foreground.clone());
+            let presenter = self.build_presenter(
+                window_id,
+                platform_window.titlebar_height(),
+                platform_window.appearance(),
+            );
+            this.register_platform_window(window_id, &mut presenter, platform_window.as_mut());
+
             this.windows.insert(
                 window_id,
                 Window {
@@ -1704,14 +1637,11 @@ impl AppContext {
                     is_active: false,
                     invalidation: None,
                     is_fullscreen: false,
+                    platform_window,
+                    presenter,
                 },
             );
             root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
-
-            let window =
-                this.platform
-                    .open_window(window_id, window_options, this.foreground.clone());
-            this.register_platform_window(window_id, window);
 
             (window_id, root_view)
         })
@@ -1727,6 +1657,15 @@ impl AppContext {
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
+
+            let mut platform_window = this.platform.add_status_item();
+            let mut presenter = self.build_presenter(
+                window_id,
+                platform_window.titlebar_height(),
+                platform_window.appearance(),
+            );
+            this.register_platform_window(window_id, &mut presenter, platform_window.as_mut());
+
             let focused_view_id = root_view.id();
             this.windows.insert(
                 window_id,
@@ -1736,12 +1675,11 @@ impl AppContext {
                     is_active: false,
                     invalidation: None,
                     is_fullscreen: false,
+                    platform_window,
+                    presenter,
                 },
             );
             root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
-
-            let status_item = this.platform.add_status_item();
-            this.register_platform_window(window_id, status_item);
 
             (window_id, root_view)
         })
@@ -1754,89 +1692,79 @@ impl AppContext {
     fn register_platform_window(
         &mut self,
         window_id: usize,
-        mut window: Box<dyn platform::Window>,
+        presenter: &mut Presenter,
+        platform_window: &mut dyn platform::Window,
     ) {
-        let presenter = Rc::new(RefCell::new(self.build_presenter(
-            window_id,
-            window.titlebar_height(),
-            window.appearance(),
-        )));
-
         {
             let mut app = self.upgrade();
-            let presenter = Rc::downgrade(&presenter);
 
-            window.on_event(Box::new(move |event| {
-                app.update(|cx| {
-                    if let Some(presenter) = presenter.upgrade() {
-                        if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
-                            if cx.dispatch_keystroke(window_id, keystroke) {
-                                return true;
-                            }
+            platform_window.on_event(Box::new(move |event| {
+                app.update_window(window_id, |cx| {
+                    if let Event::KeyDown(KeyDownEvent { keystroke, .. }) = &event {
+                        if cx.dispatch_keystroke(keystroke) {
+                            return true;
                         }
-
-                        presenter.borrow_mut().dispatch_event(event, false, cx)
-                    } else {
-                        false
                     }
+
+                    cx.dispatch_event(event, false)
                 })
+                .unwrap_or(false)
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_active_status_change(Box::new(move |is_active| {
+            platform_window.on_active_status_change(Box::new(move |is_active| {
                 app.update(|cx| cx.window_changed_active_status(window_id, is_active))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_resize(Box::new(move || {
+            platform_window.on_resize(Box::new(move || {
                 app.update(|cx| cx.window_was_resized(window_id))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_moved(Box::new(move || {
+            platform_window.on_moved(Box::new(move || {
                 app.update(|cx| cx.window_was_moved(window_id))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_fullscreen(Box::new(move |is_fullscreen| {
+            platform_window.on_fullscreen(Box::new(move |is_fullscreen| {
                 app.update(|cx| cx.window_was_fullscreen_changed(window_id, is_fullscreen))
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_close(Box::new(move || {
+            platform_window.on_close(Box::new(move || {
                 app.update(|cx| cx.remove_window(window_id));
             }));
         }
 
         {
             let mut app = self.upgrade();
-            window.on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
+            platform_window
+                .on_appearance_changed(Box::new(move || app.update(|cx| cx.refresh_windows())));
         }
 
-        window.set_input_handler(Box::new(WindowInputHandler {
+        platform_window.set_input_handler(Box::new(WindowInputHandler {
             app: self.upgrade().0,
             window_id,
         }));
 
-        let scene = presenter.borrow_mut().build_scene(
-            window.content_size(),
-            window.scale_factor(),
+        let scene = presenter.build_scene(
+            platform_window.content_size(),
+            platform_window.scale_factor(),
             false,
             self,
         );
-        window.present_scene(scene);
-        self.presenters_and_platform_windows
-            .insert(window_id, (presenter.clone(), window));
+        platform_window.present_scene(scene);
     }
 
     pub fn replace_root_view<T, F>(&mut self, window_id: usize, build_root_view: F) -> ViewHandle<T>
@@ -1857,7 +1785,6 @@ impl AppContext {
 
     pub fn remove_window(&mut self, window_id: usize) {
         self.windows.remove(&window_id);
-        self.presenters_and_platform_windows.remove(&window_id);
         self.flush_effects();
     }
 
@@ -2217,30 +2144,20 @@ impl AppContext {
     }
 
     fn update_windows(&mut self) {
-        let mut invalidations: HashMap<_, _> = Default::default();
         for (window_id, window) in &mut self.windows {
-            if let Some(invalidation) = window.invalidation.take() {
-                invalidations.insert(*window_id, invalidation);
-            }
-        }
-
-        for (window_id, mut invalidation) in invalidations {
-            if let Some((presenter, mut window)) =
-                self.presenters_and_platform_windows.remove(&window_id)
-            {
-                {
-                    let mut presenter = presenter.borrow_mut();
-                    presenter.invalidate(&mut invalidation, window.appearance(), self);
-                    let scene = presenter.build_scene(
-                        window.content_size(),
-                        window.scale_factor(),
-                        false,
-                        self,
-                    );
-                    window.present_scene(scene);
-                }
-                self.presenters_and_platform_windows
-                    .insert(window_id, (presenter, window));
+            if let Some(mut invalidation) = window.invalidation.take() {
+                window.presenter.invalidate(
+                    &mut invalidation,
+                    window.platform_window.appearance(),
+                    self,
+                );
+                let scene = window.presenter.build_scene(
+                    window.platform_window.content_size(),
+                    window.platform_window.scale_factor(),
+                    false,
+                    self,
+                );
+                window.platform_window.present_scene(scene);
             }
         }
     }
@@ -2306,20 +2223,21 @@ impl AppContext {
     }
 
     fn perform_window_refresh(&mut self) {
-        let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
-        for (window_id, (presenter, window)) in &mut presenters {
-            let mut invalidation = self.windows.get_mut(window_id).unwrap().invalidation.take();
-            let mut presenter = presenter.borrow_mut();
-            presenter.refresh(
-                invalidation.as_mut().unwrap_or(&mut Default::default()),
-                window.appearance(),
+        for window in self.windows.values_mut() {
+            let mut invalidation = window.invalidation.take().unwrap_or_default();
+            window.presenter.invalidate(
+                &mut invalidation,
+                window.platform_window.appearance(),
                 self,
             );
-            let scene =
-                presenter.build_scene(window.content_size(), window.scale_factor(), true, self);
-            window.present_scene(scene);
+            let scene = window.presenter.build_scene(
+                window.platform_window.content_size(),
+                window.platform_window.scale_factor(),
+                true,
+                self,
+            );
+            window.platform_window.present_scene(scene);
         }
-        self.presenters_and_platform_windows = presenters;
     }
 
     fn emit_global_event(&mut self, payload: Box<dyn Any>) {
@@ -2365,33 +2283,19 @@ impl AppContext {
     }
 
     fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
-        //Short circuit evaluation if we're already g2g
-        if self
-            .windows
-            .get(&window_id)
-            .map(|w| w.is_fullscreen == is_fullscreen)
-            .unwrap_or(false)
-        {
-            return;
-        }
+        self.update_window(window_id, |cx| {
+            cx.window.is_fullscreen = is_fullscreen;
 
-        self.update(|this| {
-            let window = this.windows.get_mut(&window_id)?;
-            window.is_fullscreen = is_fullscreen;
-
-            let mut fullscreen_observations = this.window_fullscreen_observations.clone();
-            fullscreen_observations.emit(window_id, this, |callback, this| {
+            let mut fullscreen_observations = cx.window_fullscreen_observations.clone();
+            fullscreen_observations.emit(window_id, cx, |callback, this| {
                 callback(is_fullscreen, this)
             });
 
-            if let Some((uuid, bounds)) = this
-                .window_display_uuid(window_id)
-                .zip(this.window_bounds(window_id))
-            {
-                let mut bounds_observations = this.window_bounds_observations.clone();
-                bounds_observations.emit(window_id, this, |callback, this| {
-                    callback(bounds, uuid, this)
-                });
+            if let Some(uuid) = cx.window_display_uuid() {
+                let bounds = cx.window_bounds();
+                let mut bounds_observations = cx.window_bounds_observations.clone();
+                bounds_observations
+                    .emit(window_id, cx, |callback, this| callback(bounds, uuid, this));
             }
 
             Some(())
@@ -2563,23 +2467,27 @@ impl AppContext {
         mut callback: WindowShouldCloseSubscriptionCallback,
     ) {
         let mut app = self.upgrade();
-        if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
-            window.on_should_close(Box::new(move || app.update(|cx| callback(cx))))
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            window
+                .platform_window
+                .on_should_close(Box::new(move || app.update(|cx| callback(cx))))
         }
     }
 
     fn handle_window_moved(&mut self, window_id: usize) {
-        if let Some((display, bounds)) = self
-            .window_display_uuid(window_id)
-            .zip(self.window_bounds(window_id))
-        {
-            self.window_bounds_observations
-                .clone()
-                .emit(window_id, self, move |callback, this| {
-                    callback(bounds, display, this);
-                    true
-                });
-        }
+        self.update_window(window_id, |cx| {
+            if let Some(display) = cx.window_display_uuid() {
+                let bounds = cx.window_bounds();
+                cx.window_bounds_observations.clone().emit(
+                    window_id,
+                    self,
+                    move |callback, this| {
+                        callback(bounds, display, this);
+                        true
+                    },
+                );
+            }
+        });
     }
 
     fn handle_active_labeled_tasks_changed_effect(&mut self) {
@@ -2806,6 +2714,8 @@ pub struct Window {
     is_active: bool,
     is_fullscreen: bool,
     invalidation: Option<WindowInvalidation>,
+    presenter: Presenter,
+    platform_window: Box<dyn platform::Window>,
 }
 
 #[derive(Default, Clone)]
@@ -3584,6 +3494,138 @@ impl<M> DerefMut for ModelContext<'_, M> {
     }
 }
 
+pub struct WindowContext<'a: 'b, 'b> {
+    app_context: &'a mut AppContext,
+    window: &'b mut Window,
+    window_id: usize,
+}
+
+impl Deref for WindowContext<'_, '_> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.app_context
+    }
+}
+
+impl DerefMut for WindowContext<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app_context
+    }
+}
+
+impl WindowContext<'_, '_> {
+    pub fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+        let window_id = self.window_id;
+        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+            let dispatch_path = self
+                .ancestors(window_id, focused_view_id)
+                .filter_map(|view_id| {
+                    self.views
+                        .get(&(window_id, view_id))
+                        .map(|view| (view_id, view.keymap_context(self)))
+                })
+                .collect();
+
+            let match_result = self
+                .keystroke_matcher
+                .push_keystroke(keystroke.clone(), dispatch_path);
+            let mut handled_by = None;
+
+            let keystroke_handled = match &match_result {
+                MatchResult::None => false,
+                MatchResult::Pending => true,
+                MatchResult::Matches(matches) => {
+                    for (view_id, action) in matches {
+                        if self.handle_dispatch_action_from_effect(
+                            window_id,
+                            Some(*view_id),
+                            action.as_ref(),
+                        ) {
+                            self.keystroke_matcher.clear_pending();
+                            handled_by = Some(action.boxed_clone());
+                            break;
+                        }
+                    }
+                    handled_by.is_some()
+                }
+            };
+
+            self.keystroke(
+                window_id,
+                keystroke.clone(),
+                handled_by,
+                match_result.clone(),
+            );
+            keystroke_handled
+        } else {
+            self.keystroke(window_id, keystroke.clone(), None, MatchResult::None);
+            false
+        }
+    }
+
+    pub fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
+        self.window
+            .presenter
+            .dispatch_event(event, event_reused, self)
+    }
+
+    pub fn set_window_title(&mut self, title: &str) {
+        self.window.platform_window.set_title(title);
+    }
+
+    pub fn set_window_edited(&mut self, edited: bool) {
+        self.window.platform_window.set_edited(edited);
+    }
+
+    pub fn is_topmost_window_for_position(&self, position: Vector2F) -> bool {
+        self.window
+            .platform_window
+            .is_topmost_for_position(position)
+    }
+
+    pub fn activate_window(&self) {
+        self.window.platform_window.activate();
+    }
+
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.bounds()
+    }
+
+    pub fn window_display_uuid(&self) -> Option<Uuid> {
+        self.window.platform_window.screen().display_uuid()
+    }
+
+    pub fn debug_elements(&self) -> Option<crate::json::Value> {
+        self.window.presenter.debug_elements(self)
+    }
+
+    fn show_character_palette(&self) {
+        self.window.platform_window.show_character_palette();
+    }
+
+    pub fn minimize_window(&self) {
+        self.window.platform_window.minimize();
+    }
+
+    pub fn zoom_window(&self) {
+        self.window.platform_window.zoom();
+    }
+
+    pub fn toggle_window_full_screen(&self) {
+        self.window.platform_window.toggle_full_screen();
+    }
+
+    pub fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.window.platform_window.prompt(level, msg, answers)
+    }
+}
+
 pub struct ViewContext<'a, T: ?Sized> {
     app: &'a mut AppContext,
     window_id: usize,
@@ -3633,31 +3675,6 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.platform()
     }
 
-    pub fn show_character_palette(&self) {
-        self.app.show_character_palette(self.window_id);
-    }
-
-    pub fn minimize_window(&self) {
-        self.app.minimize_window(self.window_id)
-    }
-
-    pub fn zoom_window(&self) {
-        self.app.zoom_window(self.window_id)
-    }
-
-    pub fn toggle_full_screen(&self) {
-        self.app.toggle_window_full_screen(self.window_id)
-    }
-
-    pub fn prompt(
-        &self,
-        level: PromptLevel,
-        msg: &str,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
-        self.app.prompt(self.window_id, level, msg, answers)
-    }
-
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
@@ -3671,10 +3688,6 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn reveal_path(&self, path: &Path) {
         self.app.reveal_path(path)
-    }
-
-    pub fn debug_elements(&self) -> crate::json::Value {
-        self.app.debug_elements(self.window_id).unwrap()
     }
 
     pub fn focus(&mut self, handle: &AnyViewHandle) {
@@ -3701,20 +3714,6 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn blur(&mut self) {
         self.app.focus(self.window_id, None);
-    }
-
-    pub fn set_window_title(&mut self, title: &str) {
-        let window_id = self.window_id();
-        if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
-            window.set_title(title);
-        }
-    }
-
-    pub fn set_window_edited(&mut self, edited: bool) {
-        let window_id = self.window_id();
-        if let Some((_, window)) = self.presenters_and_platform_windows.get_mut(&window_id) {
-            window.set_edited(edited);
-        }
     }
 
     pub fn on_window_should_close<F>(&mut self, mut callback: F)
@@ -5492,19 +5491,20 @@ mod tests {
         let (window_id, _) = cx.add_window(Default::default(), |_| View {
             mouse_down_count: mouse_down_count.clone(),
         });
-        let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
-        // Ensure window's root element is in a valid lifecycle state.
-        presenter.borrow_mut().dispatch_event(
-            Event::MouseDown(MouseButtonEvent {
-                position: Default::default(),
-                button: MouseButton::Left,
-                modifiers: Default::default(),
-                click_count: 1,
-            }),
-            false,
-            cx,
-        );
-        assert_eq!(mouse_down_count.load(SeqCst), 1);
+
+        cx.update_window(window_id, |cx| {
+            // Ensure window's root element is in a valid lifecycle state.
+            cx.dispatch_event(
+                Event::MouseDown(MouseButtonEvent {
+                    position: Default::default(),
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }),
+                false,
+            );
+            assert_eq!(mouse_down_count.load(SeqCst), 1);
+        });
     }
 
     #[crate::test(self)]
@@ -6553,19 +6553,28 @@ mod tests {
             }
         });
 
-        cx.dispatch_keystroke(window_id, &Keystroke::parse("a").unwrap());
+        cx.update_window(window_id, |cx| {
+            cx.dispatch_keystroke(&Keystroke::parse("a").unwrap())
+        });
         assert_eq!(&*actions.borrow(), &["2 a"]);
         actions.borrow_mut().clear();
 
-        cx.dispatch_keystroke(window_id, &Keystroke::parse("b").unwrap());
+        cx.update_window(window_id, |cx| {
+            cx.dispatch_keystroke(&Keystroke::parse("b").unwrap());
+        });
+
         assert_eq!(&*actions.borrow(), &["3 b", "2 b", "1 b", "global b"]);
         actions.borrow_mut().clear();
 
-        cx.dispatch_keystroke(window_id, &Keystroke::parse("c").unwrap());
+        cx.update_window(window_id, |cx| {
+            cx.dispatch_keystroke(&Keystroke::parse("c").unwrap());
+        });
         assert_eq!(&*actions.borrow(), &["3 c"]);
         actions.borrow_mut().clear();
 
-        cx.dispatch_keystroke(window_id, &Keystroke::parse("d").unwrap());
+        cx.update_window(window_id, |cx| {
+            cx.dispatch_keystroke(&Keystroke::parse("d").unwrap());
+        });
         assert_eq!(&*actions.borrow(), &["2 d"]);
         actions.borrow_mut().clear();
     }
@@ -6836,46 +6845,54 @@ mod tests {
         }
 
         let (window_id, root_view) = cx.add_window(Default::default(), |_| View(0));
-        let presenter = cx.presenters_and_platform_windows[&window_id].0.clone();
-
-        assert_eq!(
-            presenter.borrow().rendered_views[&root_view.id()].name(),
-            Some("render count: 0")
-        );
+        cx.update_window(window_id, |cx| {
+            assert_eq!(
+                cx.window.presenter.rendered_views[&root_view.id()].name(),
+                Some("render count: 0")
+            );
+        });
 
         let view = cx.add_view(&root_view, |cx| {
             cx.refresh_windows();
             View(0)
         });
 
-        assert_eq!(
-            presenter.borrow().rendered_views[&root_view.id()].name(),
-            Some("render count: 1")
-        );
-        assert_eq!(
-            presenter.borrow().rendered_views[&view.id()].name(),
-            Some("render count: 0")
-        );
+        cx.update_window(window_id, |cx| {
+            assert_eq!(
+                cx.window.presenter.rendered_views[&root_view.id()].name(),
+                Some("render count: 1")
+            );
+            assert_eq!(
+                cx.window.presenter.rendered_views[&view.id()].name(),
+                Some("render count: 0")
+            );
+        });
 
         cx.update(|cx| cx.refresh_windows());
-        assert_eq!(
-            presenter.borrow().rendered_views[&root_view.id()].name(),
-            Some("render count: 2")
-        );
-        assert_eq!(
-            presenter.borrow().rendered_views[&view.id()].name(),
-            Some("render count: 1")
-        );
+
+        cx.update_window(window_id, |cx| {
+            assert_eq!(
+                cx.window.presenter.rendered_views[&root_view.id()].name(),
+                Some("render count: 2")
+            );
+            assert_eq!(
+                cx.window.presenter.rendered_views[&view.id()].name(),
+                Some("render count: 1")
+            );
+        });
 
         cx.update(|cx| {
             cx.refresh_windows();
             drop(view);
         });
-        assert_eq!(
-            presenter.borrow().rendered_views[&root_view.id()].name(),
-            Some("render count: 3")
-        );
-        assert_eq!(presenter.borrow().rendered_views.len(), 1);
+
+        cx.update_window(window_id, |cx| {
+            assert_eq!(
+                cx.window.presenter.rendered_views[&root_view.id()].name(),
+                Some("render count: 3")
+            );
+            assert_eq!(cx.window.presenter.rendered_views.len(), 1);
+        });
     }
 
     #[crate::test(self)]

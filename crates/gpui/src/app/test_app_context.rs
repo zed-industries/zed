@@ -84,31 +84,28 @@ impl TestAppContext {
     }
 
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
-        let handled = self.cx.borrow_mut().update(|cx| {
-            let presenter = cx
-                .presenters_and_platform_windows
-                .get(&window_id)
-                .unwrap()
-                .0
-                .clone();
+        let handled = self
+            .cx
+            .borrow_mut()
+            .update_window(window_id, |cx| {
+                if cx.dispatch_keystroke(&keystroke) {
+                    return true;
+                }
 
-            if cx.dispatch_keystroke(window_id, &keystroke) {
-                return true;
-            }
+                if cx.window.presenter.dispatch_event(
+                    Event::KeyDown(KeyDownEvent {
+                        keystroke: keystroke.clone(),
+                        is_held,
+                    }),
+                    false,
+                    cx,
+                ) {
+                    return true;
+                }
 
-            if presenter.borrow_mut().dispatch_event(
-                Event::KeyDown(KeyDownEvent {
-                    keystroke: keystroke.clone(),
-                    is_held,
-                }),
-                false,
-                cx,
-            ) {
-                return true;
-            }
-
-            false
-        });
+                false
+            })
+            .unwrap_or(false);
 
         if !handled && !keystroke.cmd && !keystroke.ctrl {
             WindowInputHandler {
@@ -244,7 +241,7 @@ impl TestAppContext {
         use postage::prelude::Sink as _;
 
         let mut done_tx = self
-            .window_mut(window_id)
+            .platform_window_mut(window_id)
             .pending_prompts
             .borrow_mut()
             .pop_front()
@@ -253,20 +250,23 @@ impl TestAppContext {
     }
 
     pub fn has_pending_prompt(&self, window_id: usize) -> bool {
-        let window = self.window_mut(window_id);
+        let window = self.platform_window_mut(window_id);
         let prompts = window.pending_prompts.borrow_mut();
         !prompts.is_empty()
     }
 
     pub fn current_window_title(&self, window_id: usize) -> Option<String> {
-        self.window_mut(window_id).title.clone()
+        self.platform_window_mut(window_id).title.clone()
     }
 
     pub fn simulate_window_close(&self, window_id: usize) -> bool {
-        let handler = self.window_mut(window_id).should_close_handler.take();
+        let handler = self
+            .platform_window_mut(window_id)
+            .should_close_handler
+            .take();
         if let Some(mut handler) = handler {
             let should_close = handler();
-            self.window_mut(window_id).should_close_handler = Some(handler);
+            self.platform_window_mut(window_id).should_close_handler = Some(handler);
             should_close
         } else {
             false
@@ -274,47 +274,34 @@ impl TestAppContext {
     }
 
     pub fn simulate_window_resize(&self, window_id: usize, size: Vector2F) {
-        let mut window = self.window_mut(window_id);
+        let mut window = self.platform_window_mut(window_id);
         window.size = size;
         let mut handlers = mem::take(&mut window.resize_handlers);
         drop(window);
         for handler in &mut handlers {
             handler();
         }
-        self.window_mut(window_id).resize_handlers = handlers;
+        self.platform_window_mut(window_id).resize_handlers = handlers;
     }
 
     pub fn simulate_window_activation(&self, to_activate: Option<usize>) {
-        let mut handlers = BTreeMap::new();
-        {
-            let mut cx = self.cx.borrow_mut();
-            for (window_id, (_, window)) in &mut cx.presenters_and_platform_windows {
-                let window = window
-                    .as_any_mut()
-                    .downcast_mut::<platform::test::Window>()
-                    .unwrap();
-                handlers.insert(
-                    *window_id,
-                    mem::take(&mut window.active_status_change_handlers),
-                );
-            }
-        };
-        let mut handlers = handlers.into_iter().collect::<Vec<_>>();
-        handlers.sort_unstable_by_key(|(window_id, _)| Some(*window_id) == to_activate);
-
-        for (window_id, mut window_handlers) in handlers {
-            for window_handler in &mut window_handlers {
-                window_handler(Some(window_id) == to_activate);
+        self.cx.borrow_mut().update(|cx| {
+            for window_id in cx
+                .windows
+                .keys()
+                .filter(|window_id| Some(**window_id) != to_activate)
+            {
+                cx.window_changed_active_status(*window_id, false)
             }
 
-            self.window_mut(window_id)
-                .active_status_change_handlers
-                .extend(window_handlers);
-        }
+            if let Some(to_activate) = to_activate {
+                cx.window_changed_active_status(to_activate, true)
+            }
+        });
     }
 
     pub fn is_window_edited(&self, window_id: usize) -> bool {
-        self.window_mut(window_id).edited
+        self.platform_window_mut(window_id).edited
     }
 
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
@@ -337,13 +324,11 @@ impl TestAppContext {
         self.assert_dropped(weak);
     }
 
-    fn window_mut(&self, window_id: usize) -> std::cell::RefMut<platform::test::Window> {
+    fn platform_window_mut(&self, window_id: usize) -> std::cell::RefMut<platform::test::Window> {
         std::cell::RefMut::map(self.cx.borrow_mut(), |state| {
-            let (_, window) = state
-                .presenters_and_platform_windows
-                .get_mut(&window_id)
-                .unwrap();
+            let window = state.windows.get_mut(&window_id).unwrap();
             let test_window = window
+                .platform_window
                 .as_any_mut()
                 .downcast_mut::<platform::test::Window>()
                 .unwrap();

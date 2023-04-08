@@ -315,9 +315,10 @@ impl Presenter {
                     }
                 }
 
-                if cx.is_topmost_window_for_position(self.window_id, *position) {
-                    cx.platform().set_cursor_style(style_to_assign);
-                }
+                // TODO!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // if cx.is_topmost_window_for_position(self.window_id, *position) {
+                //     cx.platform().set_cursor_style(style_to_assign);
+                // }
 
                 if !event_reused {
                     if pressed_button.is_some() {

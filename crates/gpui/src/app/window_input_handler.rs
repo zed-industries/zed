@@ -91,8 +91,7 @@ impl InputHandler for WindowInputHandler {
 
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
         let app = self.app.borrow();
-        let (presenter, _) = app.presenters_and_platform_windows.get(&self.window_id)?;
-        let presenter = presenter.borrow();
-        presenter.rect_for_text_range(range_utf16, &app)
+        let window = app.windows.get(&self.window_id)?;
+        window.presenter.rect_for_text_range(range_utf16, &app)
     }
 }
