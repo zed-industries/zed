@@ -377,7 +377,7 @@ impl Buffer {
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
-        this.saved_version = proto::deserialize_version(message.saved_version);
+        this.saved_version = proto::deserialize_version(&message.saved_version);
         this.saved_version_fingerprint =
             proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message
@@ -1309,19 +1309,23 @@ impl Buffer {
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Local>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = Result<()>> {
         self.text.wait_for_edits(edit_ids)
     }
 
     pub fn wait_for_anchors<'a>(
         &mut self,
         anchors: impl IntoIterator<Item = &'a Anchor>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = Result<()>> {
         self.text.wait_for_anchors(anchors)
     }
 
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = ()> {
+    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
         self.text.wait_for_version(version)
+    }
+
+    pub fn give_up_waiting(&mut self) {
+        self.text.give_up_waiting();
     }
 
     pub fn set_active_selections(

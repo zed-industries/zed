@@ -1064,7 +1064,7 @@ impl RemoteWorktree {
                     version: serialize_version(&version),
                 })
                 .await?;
-            let version = deserialize_version(response.version);
+            let version = deserialize_version(&response.version);
             let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
             let mtime = response
                 .mtime

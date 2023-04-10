@@ -1182,6 +1182,11 @@ impl Project {
             }
 
             for open_buffer in self.opened_buffers.values_mut() {
+                // Wake up any tasks waiting for peers' edits to this buffer.
+                if let Some(buffer) = open_buffer.upgrade(cx) {
+                    buffer.update(cx, |buffer, _| buffer.give_up_waiting());
+                }
+
                 if let OpenBuffer::Strong(buffer) = open_buffer {
                     *open_buffer = OpenBuffer::Weak(buffer.downgrade());
                 }
@@ -3738,9 +3743,9 @@ impl Project {
                 } else {
                     source_buffer_handle
                         .update(&mut cx, |buffer, _| {
-                            buffer.wait_for_version(deserialize_version(response.version))
+                            buffer.wait_for_version(deserialize_version(&response.version))
                         })
-                        .await;
+                        .await?;
 
                     let completions = response.completions.into_iter().map(|completion| {
                         language::proto::deserialize_completion(completion, language.clone())
@@ -3831,7 +3836,7 @@ impl Project {
                         .update(&mut cx, |buffer, _| {
                             buffer.wait_for_edits(transaction.edit_ids.iter().copied())
                         })
-                        .await;
+                        .await?;
                     if push_to_history {
                         buffer_handle.update(&mut cx, |buffer, _| {
                             buffer.push_transaction(transaction.clone(), Instant::now());
@@ -3939,9 +3944,9 @@ impl Project {
                 } else {
                     buffer_handle
                         .update(&mut cx, |buffer, _| {
-                            buffer.wait_for_version(deserialize_version(response.version))
+                            buffer.wait_for_version(deserialize_version(&response.version))
                         })
-                        .await;
+                        .await?;
 
                     response
                         .actions
@@ -5425,8 +5430,6 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = envelope.payload.buffer_id;
-        let requested_version = deserialize_version(envelope.payload.version);
-
         let (project_id, buffer) = this.update(&mut cx, |this, cx| {
             let project_id = this.remote_id().ok_or_else(|| anyhow!("not connected"))?;
             let buffer = this
@@ -5434,13 +5437,14 @@ impl Project {
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade(cx))
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
-            Ok::<_, anyhow::Error>((project_id, buffer))
+            anyhow::Ok((project_id, buffer))
         })?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(requested_version)
+                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })
-            .await;
+            .await?;
+        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
 
         let (saved_version, fingerprint, mtime) = this
             .update(&mut cx, |this, cx| this.save_buffer(buffer, cx))
@@ -5503,7 +5507,7 @@ impl Project {
             this.shared_buffers.entry(guest_id).or_default().clear();
             for buffer in envelope.payload.buffers {
                 let buffer_id = buffer.id;
-                let remote_version = language::proto::deserialize_version(buffer.version);
+                let remote_version = language::proto::deserialize_version(&buffer.version);
                 if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
                     this.shared_buffers
                         .entry(guest_id)
@@ -5619,10 +5623,10 @@ impl Project {
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
 
-        let version = deserialize_version(envelope.payload.version);
+        let version = deserialize_version(&envelope.payload.version);
         buffer
             .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
-            .await;
+            .await?;
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
 
         let position = envelope
@@ -5710,9 +5714,9 @@ impl Project {
         })?;
         buffer
             .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(envelope.payload.version))
+                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })
-            .await;
+            .await?;
 
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
         let code_actions = this.update(&mut cx, |this, cx| {
@@ -5979,7 +5983,7 @@ impl Project {
                     .update(&mut cx, |buffer, _| {
                         buffer.wait_for_edits(transaction.edit_ids.iter().copied())
                     })
-                    .await;
+                    .await?;
 
                 if push_to_history {
                     buffer.update(&mut cx, |buffer, _| {
@@ -6098,7 +6102,7 @@ impl Project {
             let send_updates_for_buffers = response.buffers.into_iter().map(|buffer| {
                 let client = client.clone();
                 let buffer_id = buffer.id;
-                let remote_version = language::proto::deserialize_version(buffer.version);
+                let remote_version = language::proto::deserialize_version(&buffer.version);
                 this.read_with(&cx, |this, cx| {
                     if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
                         let operations = buffer.read(cx).serialize_ops(Some(remote_version), cx);
@@ -6263,7 +6267,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let fingerprint = deserialize_fingerprint(&envelope.payload.fingerprint)?;
-        let version = deserialize_version(envelope.payload.version);
+        let version = deserialize_version(&envelope.payload.version);
         let mtime = envelope
             .payload
             .mtime
@@ -6296,7 +6300,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let payload = envelope.payload;
-        let version = deserialize_version(payload.version);
+        let version = deserialize_version(&payload.version);
         let fingerprint = deserialize_fingerprint(&payload.fingerprint)?;
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
