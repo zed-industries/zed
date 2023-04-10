@@ -4,19 +4,17 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    window::MeasurementContext,
-    DebugContext, Element, ElementBox, ElementRc, EventContext, LayoutContext, MouseRegion,
-    PaintContext, RenderContext, SizeConstraint, View, ViewContext,
+    Element, ElementBox, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 
-pub struct List {
-    state: ListState,
+pub struct List<V: View> {
+    state: ListState<V>,
 }
 
 #[derive(Clone)]
-pub struct ListState(Rc<RefCell<StateInner>>);
+pub struct ListState<V: View>(Rc<RefCell<StateInner<V>>>);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Orientation {
@@ -24,16 +22,16 @@ pub enum Orientation {
     Bottom,
 }
 
-struct StateInner {
+struct StateInner<V: View> {
     last_layout_width: Option<f32>,
-    render_item: Box<dyn FnMut(usize, &mut LayoutContext) -> Option<ElementBox>>,
+    render_item: Box<dyn FnMut(usize, &V, &mut ViewContext<V>) -> Option<ElementBox<V>>>,
     rendered_range: Range<usize>,
-    items: SumTree<ListItem>,
+    items: SumTree<ListItem<V>>,
     logical_scroll_top: Option<ListOffset>,
     orientation: Orientation,
     overdraw: f32,
     #[allow(clippy::type_complexity)]
-    scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut EventContext)>>,
+    scroll_handler: Option<Box<dyn FnMut(Range<usize>, &mut V, &mut ViewContext<V>)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -43,13 +41,13 @@ pub struct ListOffset {
 }
 
 #[derive(Clone)]
-enum ListItem {
+enum ListItem<V: View> {
     Unrendered,
-    Rendered(ElementRc),
+    Rendered(Rc<ElementBox<V>>),
     Removed(f32),
 }
 
-impl std::fmt::Debug for ListItem {
+impl<V: View> std::fmt::Debug for ListItem<V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unrendered => write!(f, "Unrendered"),
@@ -79,20 +77,21 @@ struct UnrenderedCount(usize);
 #[derive(Clone, Debug, Default)]
 struct Height(f32);
 
-impl List {
-    pub fn new(state: ListState) -> Self {
+impl<V: View> List<V> {
+    pub fn new(state: ListState<V>) -> Self {
         Self { state }
     }
 }
 
-impl Element for List {
+impl<V: View> Element<V> for List<V> {
     type LayoutState = ListOffset;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let state = &mut *self.state.0.borrow_mut();
         let size = constraint.max;
@@ -134,6 +133,7 @@ impl Element for List {
                 scroll_top.item_ix + ix,
                 existing_element,
                 item_constraint,
+                view,
                 cx,
             ) {
                 rendered_height += element.size().y();
@@ -151,7 +151,7 @@ impl Element for List {
                 cursor.prev(&());
                 if cursor.item().is_some() {
                     if let Some(element) =
-                        state.render_item(cursor.start().0, None, item_constraint, cx)
+                        state.render_item(cursor.start().0, None, item_constraint, view, cx)
                     {
                         rendered_height += element.size().y();
                         rendered_items.push_front(ListItem::Rendered(element));
@@ -187,7 +187,7 @@ impl Element for List {
             cursor.prev(&());
             if let Some(item) = cursor.item() {
                 if let Some(element) =
-                    state.render_item(cursor.start().0, Some(item), item_constraint, cx)
+                    state.render_item(cursor.start().0, Some(item), item_constraint, view, cx)
                 {
                     leading_overdraw += element.size().y();
                     rendered_items.push_front(ListItem::Rendered(element));
@@ -241,10 +241,12 @@ impl Element for List {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         scroll_top: &mut ListOffset,
-        cx: &mut PaintContext,
+        view: &V,
+        cx: &mut ViewContext<V>,
     ) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         cx.scene.push_layer(Some(visible_bounds));
@@ -268,7 +270,7 @@ impl Element for List {
 
         let state = &mut *self.state.0.borrow_mut();
         for (mut element, origin) in state.visible_elements(bounds, scroll_top) {
-            element.paint(origin, visible_bounds, cx);
+            element.paint(scene, origin, visible_bounds, view, cx);
         }
 
         cx.scene.pop_layer();
@@ -281,7 +283,8 @@ impl Element for List {
         _: RectF,
         scroll_top: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
         let state = self.state.0.borrow();
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
@@ -293,7 +296,7 @@ impl Element for List {
             }
 
             if let ListItem::Rendered(element) = item {
-                if let Some(rect) = element.rect_for_text_range(range_utf16.clone(), cx) {
+                if let Some(rect) = element.rect_for_text_range(range_utf16.clone(), view, cx) {
                     return Some(rect);
                 }
 
@@ -312,12 +315,13 @@ impl Element for List {
         bounds: RectF,
         scroll_top: &Self::LayoutState,
         _: &(),
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value {
         let state = self.state.0.borrow_mut();
         let visible_elements = state
             .visible_elements(bounds, scroll_top)
-            .map(|e| e.0.debug(cx))
+            .map(|e| e.0.debug(view, cx))
             .collect::<Vec<_>>();
         let visible_range = scroll_top.item_ix..(scroll_top.item_ix + visible_elements.len());
         json!({
@@ -328,8 +332,8 @@ impl Element for List {
     }
 }
 
-impl ListState {
-    pub fn new<F, V>(
+impl<V: View> ListState<V> {
+    pub fn new<F>(
         element_count: usize,
         orientation: Orientation,
         overdraw: f32,
@@ -338,7 +342,7 @@ impl ListState {
     ) -> Self
     where
         V: View,
-        F: 'static + FnMut(&mut V, usize, &mut RenderContext<V>) -> ElementBox,
+        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> ElementBox<V>,
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
@@ -406,7 +410,7 @@ impl ListState {
 
     pub fn set_scroll_handler(
         &mut self,
-        handler: impl FnMut(Range<usize>, &mut EventContext) + 'static,
+        handler: impl FnMut(Range<usize>, &mut V, &mut ViewContext<V>) + 'static,
     ) {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
@@ -426,14 +430,15 @@ impl ListState {
     }
 }
 
-impl StateInner {
+impl<V: View> StateInner<V> {
     fn render_item(
         &mut self,
         ix: usize,
-        existing_element: Option<&ListItem>,
+        existing_element: Option<&ListItem<V>>,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
-    ) -> Option<ElementRc> {
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Option<Rc<ElementBox<V>>> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
         } else {
@@ -455,7 +460,7 @@ impl StateInner {
         &'a self,
         bounds: RectF,
         scroll_top: &ListOffset,
-    ) -> impl Iterator<Item = (ElementRc, Vector2F)> + 'a {
+    ) -> impl Iterator<Item = (Rc<ElementBox>, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
         let mut cursor = self.items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -485,7 +490,8 @@ impl StateInner {
         height: f32,
         mut delta: Vector2F,
         precise: bool,
-        cx: &mut EventContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) {
         if !precise {
             delta *= 20.;
@@ -538,7 +544,7 @@ impl StateInner {
     }
 }
 
-impl ListItem {
+impl<V: View> ListItem<V> {
     fn remove(&self) -> Self {
         match self {
             ListItem::Unrendered => ListItem::Unrendered,
@@ -548,7 +554,7 @@ impl ListItem {
     }
 }
 
-impl sum_tree::Item for ListItem {
+impl<V: View> sum_tree::Item for ListItem<V> {
     type Summary = ListItemSummary;
 
     fn summary(&self) -> Self::Summary {
@@ -900,7 +906,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut RenderContext<'_, Self>) -> ElementBox {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
             Empty::new().boxed()
         }
     }
@@ -919,15 +925,28 @@ mod tests {
         }
     }
 
-    impl Element for TestElement {
+    impl<V: View> Element<V> for TestElement {
         type LayoutState = ();
         type PaintState = ();
 
-        fn layout(&mut self, _: SizeConstraint, _: &mut LayoutContext) -> (Vector2F, ()) {
+        fn layout(
+            &mut self,
+            _: SizeConstraint,
+            _: &mut V,
+            _: &mut ViewContext<V>,
+        ) -> (Vector2F, ()) {
             (self.size, ())
         }
 
-        fn paint(&mut self, _: RectF, _: RectF, _: &mut (), _: &mut PaintContext) {
+        fn paint(
+            &mut self,
+            _: &mut SceneBuilder,
+            _: RectF,
+            _: RectF,
+            _: &mut (),
+            _: &mut V,
+            _: &mut ViewContext<V>,
+        ) {
             todo!()
         }
 
@@ -938,12 +957,13 @@ mod tests {
             _: RectF,
             _: &Self::LayoutState,
             _: &Self::PaintState,
-            _: &MeasurementContext,
+            _: &V,
+            _: &ViewContext<V>,
         ) -> Option<RectF> {
             todo!()
         }
 
-        fn debug(&self, _: RectF, _: &(), _: &(), _: &DebugContext) -> serde_json::Value {
+        fn debug(&self, _: RectF, _: &(), _: &(), _: &V, _: &ViewContext<V>) -> serde_json::Value {
             self.id.into()
         }
 

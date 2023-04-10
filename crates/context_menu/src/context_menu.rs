@@ -28,7 +28,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::cancel);
 }
 
-type ContextMenuItemBuilder = Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> ElementBox>;
+type ContextMenuItemBuilder =
+    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> ElementBox>;
 
 pub enum ContextMenuItemLabel {
     String(Cow<'static, str>),

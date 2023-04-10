@@ -1,23 +1,20 @@
 use crate::{
     app::WindowInvalidation,
     elements::Element,
-    font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
     keymap_matcher::{Keystroke, MatchResult},
     platform::{
-        self, Appearance, CursorStyle, Event, FontSystem, MouseButton, MouseMovedEvent,
-        PromptLevel, WindowBounds,
+        self, Appearance, CursorStyle, Event, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent,
+        MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
     },
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
-    AssetCache, ElementBox, Entity, ModelHandle, MouseRegion, MouseRegionId, MouseState, ParentId,
-    ReadModel, ReadView, RenderContext, RenderParams, SceneBuilder, UpgradeModelHandle,
-    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, ElementBox, MouseRegion,
+    MouseRegionId, RenderParams, SceneBuilder, View,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -29,11 +26,7 @@ use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use std::{
-    marker::PhantomData,
-    ops::{Deref, DerefMut, Range},
-    sync::Arc,
-};
+use std::ops::{Deref, DerefMut, Range};
 use uuid::Uuid;
 
 pub struct Window {
@@ -44,19 +37,17 @@ pub struct Window {
     pub(crate) is_fullscreen: bool,
     pub(crate) invalidation: Option<WindowInvalidation>,
     pub(crate) platform_window: Box<dyn platform::Window>,
-    pub(crate) rendered_views: HashMap<usize, ElementBox>,
+    pub(crate) rendered_views: HashMap<usize, Box<dyn RenderedView>>,
+    titlebar_height: f32,
+    appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
-    font_cache: Arc<FontCache>,
-    text_layout_cache: TextLayoutCache,
-    asset_cache: Arc<AssetCache>,
     last_mouse_moved_event: Option<Event>,
     hovered_region_ids: HashSet<MouseRegionId>,
     clicked_region_ids: HashSet<MouseRegionId>,
     clicked_button: Option<MouseButton>,
     mouse_position: Vector2F,
-    titlebar_height: f32,
-    appearance: Appearance,
+    text_layout_cache: TextLayoutCache,
 }
 
 impl Window {
@@ -64,9 +55,6 @@ impl Window {
         window_id: usize,
         root_view: AnyViewHandle,
         platform_window: Box<dyn platform::Window>,
-        font_cache: Arc<FontCache>,
-        text_layout_cache: TextLayoutCache,
-        asset_cache: Arc<AssetCache>,
         cx: &mut AppContext,
     ) -> Self {
         let focused_view_id = Some(root_view.id());
@@ -83,9 +71,7 @@ impl Window {
             rendered_views: cx.render_views(window_id, titlebar_height, appearance),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
-            font_cache,
-            text_layout_cache,
-            asset_cache,
+            text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
             last_mouse_moved_event: None,
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
@@ -100,7 +86,7 @@ impl Window {
 pub struct WindowContext<'a: 'b, 'b> {
     app_context: &'a mut AppContext,
     pub(crate) window: &'b mut Window, // TODO: make this private?
-    window_id: usize,
+    pub(crate) window_id: usize,
 }
 
 impl Deref for WindowContext<'_, '_> {
@@ -126,9 +112,19 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         }
     }
 
+    pub fn update_any_view<F, T>(&mut self, view_id: usize, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut dyn AnyView, &mut Self) -> T,
+    {
+        let view = self.views.remove(&(self.window_id, view_id))?;
+        let result = f(view.as_any_mut(), self);
+        self.views.insert((self.window_id, view_id), view);
+        Some(result)
+    }
+
     pub fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let window_id = self.window_id;
-        if let Some(focused_view_id) = self.focused_view_id(window_id) {
+        if let Some(focused_view_id) = self.focused_view_id() {
             let dispatch_path = self
                 .ancestors(window_id, focused_view_id)
                 .filter_map(|view_id| {
@@ -511,20 +507,71 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         any_event_handled
     }
 
-    pub fn build_event_context<'c>(
-        &'c mut self,
-        notified_views: &'c mut HashSet<usize>,
-    ) -> EventContext<'c> {
-        EventContext {
-            font_cache: &self.window.font_cache,
-            text_layout_cache: &self.window.text_layout_cache,
-            view_stack: Default::default(),
-            notified_views,
-            notify_count: 0,
-            handled: false,
-            window_id: self.window_id,
-            app: self,
+    pub fn dispatch_key_down(&mut self, window_id: usize, event: &KeyDownEvent) -> bool {
+        if let Some(focused_view_id) = self.window.focused_view_id {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
+                if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
+                    let handled = view.key_down(event, self, view_id);
+                    self.views.insert((window_id, view_id), view);
+                    if handled {
+                        return true;
+                    }
+                } else {
+                    log::error!("view {} does not exist", view_id)
+                }
+            }
         }
+
+        false
+    }
+
+    pub fn dispatch_key_up(&mut self, window_id: usize, event: &KeyUpEvent) -> bool {
+        if let Some(focused_view_id) = self.window.fo {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
+                if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
+                    let handled = view.key_up(event, self, view_id);
+                    self.views.insert((window_id, view_id), view);
+                    if handled {
+                        return true;
+                    }
+                } else {
+                    log::error!("view {} does not exist", view_id)
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn dispatch_modifiers_changed(
+        &mut self,
+        window_id: usize,
+        event: &ModifiersChangedEvent,
+    ) -> bool {
+        if let Some(focused_view_id) = self.window.focused_view_id {
+            for view_id in self
+                .ancestors(window_id, focused_view_id)
+                .collect::<Vec<_>>()
+            {
+                if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
+                    let handled = view.modifiers_changed(event, self, view_id);
+                    self.views.insert((window_id, view_id), view);
+                    if handled {
+                        return true;
+                    }
+                } else {
+                    log::error!("view {} does not exist", view_id)
+                }
+            }
+        }
+
+        false
     }
 
     pub fn invalidate(&mut self, invalidation: &mut WindowInvalidation, appearance: Appearance) {
@@ -593,113 +640,56 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         }
     }
 
-    pub fn build_scene(&mut self, refreshing: bool) -> Scene {
+    pub fn build_scene(&mut self) -> Scene {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
+        let root_view_id = self.window.root_view.id();
+        let rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
+        rendered_root.layout(root_view_id, SizeConstraint::strict(window_size), self);
+
         let mut scene_builder = SceneBuilder::new(scale_factor);
+        let paint_bounds = RectF::from_points(Vector2F::zero(), window_size);
+        rendered_root.paint(
+            root_view_id,
+            &mut scene_builder,
+            paint_bounds,
+            paint_bounds,
+            self,
+        );
 
-        if let Some(root_view_id) = self.root_view_id(self.window_id) {
-            self.layout(window_size, refreshing, self);
-            let mut paint_cx = self.build_paint_context(&mut scene_builder, window_size);
-            paint_cx.paint(
-                root_view_id,
-                Vector2F::zero(),
-                RectF::new(Vector2F::zero(), window_size),
-            );
-            self.window.text_layout_cache.finish_frame();
-            let scene = scene_builder.build();
-            self.window.cursor_regions = scene.cursor_regions();
-            self.window.mouse_regions = scene.mouse_regions();
+        self.window.text_layout_cache.finish_frame();
+        let scene = scene_builder.build();
+        self.window.cursor_regions = scene.cursor_regions();
+        self.window.mouse_regions = scene.mouse_regions();
 
-            // window.is_topmost for the mouse moved event's postion?
-            if self.window_is_active(self.window_id) {
-                if let Some(event) = self.window.last_mouse_moved_event.clone() {
-                    self.dispatch_event(event, true);
-                }
+        if self.window_is_active() {
+            if let Some(event) = self.window.last_mouse_moved_event.clone() {
+                self.dispatch_event(event, true);
             }
-
-            scene
-        } else {
-            log::error!("could not find root_view_id for window {}", self.window_id);
-            scene_builder.build()
         }
-    }
 
-    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut AppContext) {
-        if let Some(root_view_id) = cx.root_view_id(self.window_id) {
-            self.build_layout_context(window_size, refreshing, cx)
-                .layout(root_view_id, SizeConstraint::strict(window_size));
-        }
-    }
-
-    pub fn build_layout_context<'c>(
-        &'c mut self,
-        window_size: Vector2F,
-        refreshing: bool,
-        cx: &'c mut AppContext,
-    ) -> LayoutContext<'c> {
-        LayoutContext {
-            window_id: self.window_id,
-            rendered_views: &mut self.window.rendered_views,
-            font_cache: &self.font_cache,
-            font_system: cx.platform().fonts(),
-            text_layout_cache: &self.window.text_layout_cache,
-            asset_cache: &self.window.asset_cache,
-            view_stack: Vec::new(),
-            refreshing,
-            hovered_region_ids: self.window.hovered_region_ids.clone(),
-            clicked_region_ids: self
-                .window
-                .clicked_button
-                .map(|button| (self.window.clicked_region_ids.clone(), button)),
-            titlebar_height: self.window.titlebar_height,
-            appearance: self.window.appearance,
-            window_size,
-            app: cx,
-        }
-    }
-
-    pub fn build_paint_context<'c>(
-        &'c mut self,
-        scene: &'c mut SceneBuilder,
-        window_size: Vector2F,
-    ) -> PaintContext {
-        PaintContext {
-            scene,
-            window_size,
-            font_cache: &self.font_cache,
-            text_layout_cache: &self.window.text_layout_cache,
-            rendered_views: &mut self.window.rendered_views,
-            view_stack: Vec::new(),
-            app: self,
-        }
+        scene
     }
 
     pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
-        self.focused_view_id(self.window_id).and_then(|view_id| {
-            let cx = MeasurementContext {
-                app: self,
-                rendered_views: &self.window.rendered_views,
-                window_id: self.window_id,
-            };
-            cx.rect_for_text_range(view_id, range_utf16)
-        })
+        todo!()
     }
 
     pub fn debug_elements(&self) -> Option<json::Value> {
-        let view = self.root_view(self.window_id)?;
-        Some(json!({
-            "root_view": view.debug_json(self),
-            "root_element": self.window.rendered_views.get(&view.id())
-                .map(|root_element| {
-                    root_element.debug(&DebugContext {
-                        rendered_views: &self.window.rendered_views,
-                        font_cache: &self.window.font_cache,
-                        app: self,
-                    })
-                })
-        }))
+        todo!()
+        // let view = self.root_view()?;
+        // Some(json!({
+        //     "root_view": view.debug_json(self),
+        //     "root_element": self.window.rendered_views.get(&view.id())
+        //         .map(|root_element| {
+        //             root_element.debug(&DebugContext {
+        //                 rendered_views: &self.window.rendered_views,
+        //                 font_cache: &self.window.font_cache,
+        //                 app: self,
+        //             })
+        //         })
+        // }))
     }
 
     pub fn set_window_title(&mut self, title: &str) {
@@ -718,6 +708,26 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
 
     pub fn activate_window(&self) {
         self.window.platform_window.activate();
+    }
+
+    pub fn window_is_active(&self) -> bool {
+        self.window.is_active
+    }
+
+    pub fn window_is_fullscreen(&self) -> bool {
+        self.window.is_fullscreen
+    }
+
+    pub fn root_view(&self, window_id: usize) -> &AnyViewHandle {
+        &self.window.root_view
+    }
+
+    pub fn root_view_id(&self) -> usize {
+        self.window.root_view.id()
+    }
+
+    pub fn focused_view_id(&self) -> Option<usize> {
+        self.window.focused_view_id
     }
 
     pub fn window_bounds(&self) -> WindowBounds {
@@ -754,328 +764,46 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
     }
 }
 
-pub struct LayoutContext<'a> {
-    window_id: usize,
-    rendered_views: &'a mut HashMap<usize, ElementBox>,
-    view_stack: Vec<usize>,
-    pub font_cache: &'a Arc<FontCache>,
-    pub font_system: Arc<dyn FontSystem>,
-    pub text_layout_cache: &'a TextLayoutCache,
-    pub asset_cache: &'a AssetCache,
-    pub app: &'a mut AppContext,
-    pub refreshing: bool,
-    pub window_size: Vector2F,
-    titlebar_height: f32,
-    appearance: Appearance,
-    hovered_region_ids: HashSet<MouseRegionId>,
-    clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
+pub trait RenderedView {
+    fn layout(
+        &self,
+        view_id: usize,
+        constraint: SizeConstraint,
+        cx: &mut WindowContext,
+    ) -> Vector2F;
+    fn paint(
+        &self,
+        view_id: usize,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        cx: &mut WindowContext,
+    );
 }
 
-impl<'a> LayoutContext<'a> {
-    pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
-        let view_id = self.view_stack.last().unwrap();
-
-        let region_id = MouseRegionId::new::<Tag>(*view_id, region_id);
-        MouseState {
-            hovered: self.hovered_region_ids.contains(&region_id),
-            clicked: self.clicked_region_ids.as_ref().and_then(|(ids, button)| {
-                if ids.contains(&region_id) {
-                    Some(*button)
-                } else {
-                    None
-                }
-            }),
-            accessed_hovered: false,
-            accessed_clicked: false,
-        }
+impl<V: View> RenderedView for ElementBox<V> {
+    fn layout(
+        &self,
+        view_id: usize,
+        constraint: SizeConstraint,
+        cx: &mut WindowContext,
+    ) -> Vector2F {
+        cx.update_view_for_id(view_id, |view, cx| self.layout(view, constraint, cx))
+            .unwrap()
     }
 
-    fn layout(&mut self, view_id: usize, constraint: SizeConstraint) -> Vector2F {
-        let print_error = |view_id| {
-            format!(
-                "{} with id {}",
-                self.app.name_for_view(self.window_id, view_id).unwrap(),
-                view_id,
-            )
-        };
-        match (
-            self.view_stack.last(),
-            self.app.parents.get(&(self.window_id, view_id)),
-        ) {
-            (Some(layout_parent), Some(ParentId::View(app_parent))) => {
-                if layout_parent != app_parent {
-                    panic!(
-                        "View {} was laid out with parent {} when it was constructed with parent {}",
-                        print_error(view_id),
-                        print_error(*layout_parent),
-                        print_error(*app_parent))
-                }
-            }
-            (None, Some(ParentId::View(app_parent))) => panic!(
-                "View {} was laid out without a parent when it was constructed with parent {}",
-                print_error(view_id),
-                print_error(*app_parent)
-            ),
-            (Some(layout_parent), Some(ParentId::Root)) => panic!(
-                "View {} was laid out with parent {} when it was constructed as a window root",
-                print_error(view_id),
-                print_error(*layout_parent),
-            ),
-            (_, None) => panic!(
-                "View {} did not have a registered parent in the app context",
-                print_error(view_id),
-            ),
-            _ => {}
-        }
-
-        self.view_stack.push(view_id);
-        let mut rendered_view = self.rendered_views.remove(&view_id).unwrap();
-        let size = rendered_view.layout(constraint, self);
-        self.rendered_views.insert(view_id, rendered_view);
-        self.view_stack.pop();
-        size
-    }
-
-    pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
-    where
-        F: FnOnce(&mut V, &mut RenderContext<V>) -> T,
-        V: View,
-    {
-        handle.update(self.app, |view, cx| {
-            let mut render_cx = RenderContext {
-                app: cx,
-                window_id: handle.window_id(),
-                view_id: handle.id(),
-                view_type: PhantomData,
-                titlebar_height: self.titlebar_height,
-                hovered_region_ids: self.hovered_region_ids.clone(),
-                clicked_region_ids: self.clicked_region_ids.clone(),
-                refreshing: self.refreshing,
-                appearance: self.appearance,
-            };
-            f(view, &mut render_cx)
+    fn paint(
+        &self,
+        view_id: usize,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        cx: &mut WindowContext,
+    ) {
+        cx.update_view_for_id(view_id, |view, cx| {
+            self.paint(view, scene, bounds, visible_bounds, cx)
         })
     }
-}
-
-impl<'a> Deref for LayoutContext<'a> {
-    type Target = AppContext;
-
-    fn deref(&self) -> &Self::Target {
-        self.app
-    }
-}
-
-impl<'a> DerefMut for LayoutContext<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.app
-    }
-}
-
-impl<'a> ReadView for LayoutContext<'a> {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        self.app.read_view(handle)
-    }
-}
-
-impl<'a> ReadModel for LayoutContext<'a> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.read_model(handle)
-    }
-}
-
-impl<'a> UpgradeModelHandle for LayoutContext<'a> {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        self.app.upgrade_model_handle(handle)
-    }
-
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.app.model_handle_is_upgradable(handle)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.app.upgrade_any_model_handle(handle)
-    }
-}
-
-impl<'a> UpgradeViewHandle for LayoutContext<'a> {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.app.upgrade_view_handle(handle)
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &crate::AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.app.upgrade_any_view_handle(handle)
-    }
-}
-
-pub struct PaintContext<'a> {
-    rendered_views: &'a mut HashMap<usize, ElementBox>,
-    view_stack: Vec<usize>,
-    pub window_size: Vector2F,
-    pub scene: &'a mut SceneBuilder,
-    pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a TextLayoutCache,
-    pub app: &'a AppContext,
-}
-
-impl<'a> PaintContext<'a> {
-    fn paint(&mut self, view_id: usize, origin: Vector2F, visible_bounds: RectF) {
-        if let Some(mut tree) = self.rendered_views.remove(&view_id) {
-            self.view_stack.push(view_id);
-            tree.paint(origin, visible_bounds, self);
-            self.rendered_views.insert(view_id, tree);
-            self.view_stack.pop();
-        }
-    }
-
-    #[inline]
-    pub fn paint_stacking_context<F>(
-        &mut self,
-        clip_bounds: Option<RectF>,
-        z_index: Option<usize>,
-        f: F,
-    ) where
-        F: FnOnce(&mut Self),
-    {
-        self.scene.push_stacking_context(clip_bounds, z_index);
-        f(self);
-        self.scene.pop_stacking_context();
-    }
-
-    #[inline]
-    pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
-    where
-        F: FnOnce(&mut Self),
-    {
-        self.scene.push_layer(clip_bounds);
-        f(self);
-        self.scene.pop_layer();
-    }
-
-    pub fn current_view_id(&self) -> usize {
-        *self.view_stack.last().unwrap()
-    }
-}
-
-impl<'a> Deref for PaintContext<'a> {
-    type Target = AppContext;
-
-    fn deref(&self) -> &Self::Target {
-        self.app
-    }
-}
-
-pub struct EventContext<'a> {
-    pub font_cache: &'a FontCache,
-    pub text_layout_cache: &'a TextLayoutCache,
-    pub app: &'a mut AppContext,
-    pub window_id: usize,
-    pub notify_count: usize,
-    view_stack: Vec<usize>,
-    handled: bool,
-    notified_views: &'a mut HashSet<usize>,
-}
-
-impl<'a> EventContext<'a> {
-    fn with_current_view<F, T>(&mut self, view_id: usize, f: F) -> T
-    where
-        F: FnOnce(&mut Self) -> T,
-    {
-        self.view_stack.push(view_id);
-        let result = f(self);
-        self.view_stack.pop();
-        result
-    }
-
-    pub fn window_id(&self) -> usize {
-        self.window_id
-    }
-
-    pub fn view_id(&self) -> Option<usize> {
-        self.view_stack.last().copied()
-    }
-
-    pub fn is_parent_view_focused(&self) -> bool {
-        if let Some(parent_view_id) = self.view_stack.last() {
-            self.app.focused_view_id(self.window_id) == Some(*parent_view_id)
-        } else {
-            false
-        }
-    }
-
-    pub fn focus_parent_view(&mut self) {
-        if let Some(parent_view_id) = self.view_stack.last() {
-            self.app.focus(self.window_id, Some(*parent_view_id))
-        }
-    }
-
-    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
-        self.app
-            .dispatch_any_action_at(self.window_id, *self.view_stack.last().unwrap(), action)
-    }
-
-    pub fn dispatch_action<A: Action>(&mut self, action: A) {
-        self.dispatch_any_action(Box::new(action));
-    }
-
-    pub fn notify(&mut self) {
-        self.notify_count += 1;
-        if let Some(view_id) = self.view_stack.last() {
-            self.notified_views.insert(*view_id);
-        }
-    }
-
-    pub fn notify_count(&self) -> usize {
-        self.notify_count
-    }
-
-    pub fn propagate_event(&mut self) {
-        self.handled = false;
-    }
-}
-
-impl<'a> Deref for EventContext<'a> {
-    type Target = AppContext;
-
-    fn deref(&self) -> &Self::Target {
-        self.app
-    }
-}
-
-impl<'a> DerefMut for EventContext<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.app
-    }
-}
-
-pub struct MeasurementContext<'a> {
-    app: &'a AppContext,
-    rendered_views: &'a HashMap<usize, ElementBox>,
-    pub window_id: usize,
-}
-
-impl<'a> Deref for MeasurementContext<'a> {
-    type Target = AppContext;
-
-    fn deref(&self) -> &Self::Target {
-        self.app
-    }
-}
-
-impl<'a> MeasurementContext<'a> {
-    fn rect_for_text_range(&self, view_id: usize, range_utf16: Range<usize>) -> Option<RectF> {
-        let element = self.rendered_views.get(&view_id)?;
-        element.rect_for_text_range(range_utf16, self)
-    }
-}
-
-pub struct DebugContext<'a> {
-    rendered_views: &'a HashMap<usize, ElementBox>,
-    pub font_cache: &'a FontCache,
-    pub app: &'a AppContext,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1235,88 +963,88 @@ impl ChildView {
     }
 }
 
-impl Element for ChildView {
-    type LayoutState = bool;
-    type PaintState = ();
+// impl Element for ChildView {
+//     type LayoutState = bool;
+//     type PaintState = ();
 
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        cx: &mut LayoutContext,
-    ) -> (Vector2F, Self::LayoutState) {
-        if cx.rendered_views.contains_key(&self.view.id()) {
-            let size = cx.layout(self.view.id(), constraint);
-            (size, true)
-        } else {
-            log::error!(
-                "layout called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
-                self.view.id(),
-                self.view_name
-            );
-            (Vector2F::zero(), false)
-        }
-    }
+//     fn layout(
+//         &mut self,
+//         constraint: SizeConstraint,
+//         cx: &mut LayoutContext,
+//     ) -> (Vector2F, Self::LayoutState) {
+//         if cx.rendered_views.contains_key(&self.view.id()) {
+//             let size = cx.layout(self.view.id(), constraint);
+//             (size, true)
+//         } else {
+//             log::error!(
+//                 "layout called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+//                 self.view.id(),
+//                 self.view_name
+//             );
+//             (Vector2F::zero(), false)
+//         }
+//     }
 
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        view_is_valid: &mut Self::LayoutState,
-        cx: &mut PaintContext,
-    ) {
-        if *view_is_valid {
-            cx.paint(self.view.id(), bounds.origin(), visible_bounds);
-        } else {
-            log::error!(
-                "paint called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
-                self.view.id(),
-                self.view_name
-            );
-        }
-    }
+//     fn paint(
+//         &mut self,
+//         bounds: RectF,
+//         visible_bounds: RectF,
+//         view_is_valid: &mut Self::LayoutState,
+//         cx: &mut PaintContext,
+//     ) {
+//         if *view_is_valid {
+//             cx.paint(self.view.id(), bounds.origin(), visible_bounds);
+//         } else {
+//             log::error!(
+//                 "paint called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+//                 self.view.id(),
+//                 self.view_name
+//             );
+//         }
+//     }
 
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        _: RectF,
-        _: RectF,
-        view_is_valid: &Self::LayoutState,
-        _: &Self::PaintState,
-        cx: &MeasurementContext,
-    ) -> Option<RectF> {
-        if *view_is_valid {
-            cx.rect_for_text_range(self.view.id(), range_utf16)
-        } else {
-            log::error!(
-                "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
-                self.view.id(),
-                self.view_name
-            );
-            None
-        }
-    }
+//     fn rect_for_text_range(
+//         &self,
+//         range_utf16: Range<usize>,
+//         _: RectF,
+//         _: RectF,
+//         view_is_valid: &Self::LayoutState,
+//         _: &Self::PaintState,
+//         cx: &MeasurementContext,
+//     ) -> Option<RectF> {
+//         if *view_is_valid {
+//             cx.rect_for_text_range(self.view.id(), range_utf16)
+//         } else {
+//             log::error!(
+//                 "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+//                 self.view.id(),
+//                 self.view_name
+//             );
+//             None
+//         }
+//     }
 
-    fn debug(
-        &self,
-        bounds: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        cx: &DebugContext,
-    ) -> serde_json::Value {
-        json!({
-            "type": "ChildView",
-            "view_id": self.view.id(),
-            "bounds": bounds.to_json(),
-            "view": if let Some(view) = self.view.upgrade(cx.app) {
-                view.debug_json(cx.app)
-            } else {
-                json!(null)
-            },
-            "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
-                view.debug(cx)
-            } else {
-                json!(null)
-            }
-        })
-    }
-}
+//     fn debug(
+//         &self,
+//         bounds: RectF,
+//         _: &Self::LayoutState,
+//         _: &Self::PaintState,
+//         cx: &DebugContext,
+//     ) -> serde_json::Value {
+//         json!({
+//             "type": "ChildView",
+//             "view_id": self.view.id(),
+//             "bounds": bounds.to_json(),
+//             "view": if let Some(view) = self.view.upgrade(cx.app) {
+//                 view.debug_json(cx.app)
+//             } else {
+//                 json!(null)
+//             },
+//             "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
+//                 view.debug(cx)
+//             } else {
+//                 json!(null)
+//             }
+//         })
+//     }
+// }

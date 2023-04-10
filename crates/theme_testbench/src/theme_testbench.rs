@@ -2,8 +2,8 @@ use gpui::{
     actions,
     color::Color,
     elements::{
-        Canvas, Container, ContainerStyle, ElementBox, Flex, Label, Margin, MouseEventHandler,
-        Padding, ParentElement,
+        Canvas, Container, ContainerStyle, Flex, Label, Margin, MouseEventHandler, Padding,
+        ParentElement, ElementBox,
     },
     fonts::TextStyle,
     AppContext, Border, Element, Entity, ModelHandle, Quad, RenderContext, Task, View, ViewContext,

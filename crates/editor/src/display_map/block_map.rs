@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{fonts::HighlightStyle, ElementBox, RenderContext};
+use gpui::{fonts::HighlightStyle, RenderContext, ElementBox};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{

@@ -3,14 +3,12 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    window::MeasurementContext,
-    Axis, DebugContext, Element, ElementBox, LayoutContext, MouseRegion, PaintContext,
-    SizeConstraint,
+    Axis, Element, ElementBox, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde_json::json;
 
-pub struct Overlay {
-    child: ElementBox,
+pub struct Overlay<V: View> {
+    child: ElementBox<V>,
     anchor_position: Option<Vector2F>,
     anchor_corner: AnchorCorner,
     fit_mode: OverlayFitMode,
@@ -74,8 +72,8 @@ impl AnchorCorner {
     }
 }
 
-impl Overlay {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> Overlay<V> {
+    pub fn new(child: ElementBox<V>) -> Self {
         Self {
             child,
             anchor_position: None,
@@ -118,14 +116,15 @@ impl Overlay {
     }
 }
 
-impl Element for Overlay {
+impl<V: View> Element<V> for Overlay<V> {
     type LayoutState = Vector2F;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let constraint = if self.anchor_position.is_some() {
             SizeConstraint::new(Vector2F::zero(), cx.window_size)
@@ -138,10 +137,12 @@ impl Element for Overlay {
 
     fn paint(
         &mut self,
+        scene: SceneBuilder,
         bounds: RectF,
         _: RectF,
         size: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) {
         let (anchor_position, mut bounds) = match self.position_mode {
             OverlayPositionMode::Window => {
@@ -224,8 +225,10 @@ impl Element for Overlay {
             }
 
             self.child.paint(
+                scene,
                 bounds.origin(),
                 RectF::new(Vector2F::zero(), cx.window_size),
+                view,
                 cx,
             );
         });
@@ -238,9 +241,10 @@ impl Element for Overlay {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -248,12 +252,13 @@ impl Element for Overlay {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "Overlay",
             "abs_position": self.anchor_position.to_json(),
-            "child": self.child.debug(cx),
+            "child": self.child.debug(view, cx),
         })
     }
 }

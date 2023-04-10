@@ -1,4 +1,4 @@
-use super::{Element, EventContext, LayoutContext, PaintContext, SizeConstraint};
+use super::{Element, SizeConstraint};
 use crate::{
     geometry::{
         rect::RectF,
@@ -7,8 +7,7 @@ use crate::{
     json::{self, json},
     platform::ScrollWheelEvent,
     scene::MouseScrollWheel,
-    window::MeasurementContext,
-    ElementBox, MouseRegion, RenderContext, View,
+    ElementBox, MouseRegion, SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -38,33 +37,33 @@ struct StateInner {
     scroll_to: Option<ScrollTarget>,
 }
 
-pub struct LayoutState {
+pub struct LayoutState<V: View> {
     scroll_max: f32,
     item_height: f32,
-    items: Vec<ElementBox>,
+    items: Vec<ElementBox<V>>,
 }
 
-pub struct UniformList {
+pub struct UniformList<V: View> {
     state: UniformListState,
     item_count: usize,
     #[allow(clippy::type_complexity)]
-    append_items: Box<dyn Fn(Range<usize>, &mut Vec<ElementBox>, &mut LayoutContext)>,
+    append_items: Box<dyn Fn(Range<usize>, &mut Vec<ElementBox<V>>, &mut V, &mut ViewContext<V>)>,
     padding_top: f32,
     padding_bottom: f32,
     get_width_from_item: Option<usize>,
     view_id: usize,
 }
 
-impl UniformList {
-    pub fn new<F, V>(
+impl<V: View> UniformList<V> {
+    pub fn new<F>(
         state: UniformListState,
         item_count: usize,
-        cx: &mut RenderContext<V>,
+        cx: &mut ViewContext<V>,
         append_items: F,
     ) -> Self
     where
         V: View,
-        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox>, &mut RenderContext<V>),
+        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox<V>>, &mut V, &mut ViewContext<V>),
     {
         let handle = cx.handle();
         Self {
@@ -160,14 +159,15 @@ impl UniformList {
     }
 }
 
-impl Element for UniformList {
-    type LayoutState = LayoutState;
+impl<V: View> Element<V> for UniformList<V> {
+    type LayoutState = LayoutState<V>;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if constraint.max.y().is_infinite() {
             unimplemented!(
@@ -262,7 +262,7 @@ impl Element for UniformList {
         }
 
         for item in &mut items {
-            let item_size = item.layout(item_constraint, cx);
+            let item_size = item.layout(item_constraint, view, cx);
             if item_size.x() > size.x() {
                 size.set_x(item_size.x());
             }
@@ -280,10 +280,12 @@ impl Element for UniformList {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
 
@@ -322,7 +324,7 @@ impl Element for UniformList {
             );
 
         for item in &mut layout.items {
-            item.paint(item_origin, visible_bounds, cx);
+            item.paint(scene, item_origin, visible_bounds, view, cx);
             item_origin += vec2f(0.0, layout.item_height);
         }
 
@@ -336,12 +338,13 @@ impl Element for UniformList {
         _: RectF,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
         layout
             .items
             .iter()
-            .find_map(|child| child.rect_for_text_range(range.clone(), cx))
+            .find_map(|child| child.rect_for_text_range(range.clone(), view, cx))
     }
 
     fn debug(
@@ -349,14 +352,15 @@ impl Element for UniformList {
         bounds: RectF,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &crate::DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> json::Value {
         json!({
             "type": "UniformList",
             "bounds": bounds.to_json(),
             "scroll_max": layout.scroll_max,
             "item_height": layout.item_height,
-            "items": layout.items.iter().map(|item| item.debug(cx)).collect::<Vec<json::Value>>()
+            "items": layout.items.iter().map(|item| item.debug(view, cx)).collect::<Vec<json::Value>>()
 
         })
     }

@@ -3,42 +3,43 @@ use std::ops::Range;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use serde_json::json;
 
-use crate::{
-    json, DebugContext, Element, ElementBox, LayoutContext, MeasurementContext, PaintContext,
-    SizeConstraint,
-};
+use crate::{json, Element, ElementBox, SceneBuilder, SizeConstraint, View, ViewContext};
 
-pub struct Clipped {
-    child: ElementBox,
+pub struct Clipped<V: View> {
+    child: ElementBox<V>,
 }
 
-impl Clipped {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> Clipped<V> {
+    pub fn new(child: ElementBox<V>) -> Self {
         Self { child }
     }
 }
 
-impl Element for Clipped {
+impl<V: View> Element<V> for Clipped<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        (self.child.layout(constraint, cx), ())
+        (self.child.layout(constraint, view, cx), ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         cx.scene.push_layer(Some(bounds));
-        self.child.paint(bounds.origin(), visible_bounds, cx);
+        self.child
+            .paint(scene, bounds.origin(), visible_bounds, view, cx);
         cx.scene.pop_layer();
     }
 
@@ -49,9 +50,10 @@ impl Element for Clipped {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -59,11 +61,12 @@ impl Element for Clipped {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> json::Value {
         json!({
             "type": "Clipped",
-            "child": self.child.debug(cx)
+            "child": self.child.debug(view, cx)
         })
     }
 }

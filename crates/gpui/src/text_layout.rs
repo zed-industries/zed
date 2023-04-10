@@ -7,7 +7,9 @@ use crate::{
     },
     platform,
     platform::FontSystem,
-    scene, PaintContext,
+    scene,
+    window::WindowContext,
+    AppContext, PaintContext, SceneBuilder,
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -271,10 +273,11 @@ impl Line {
 
     pub fn paint(
         &self,
+        scene: &SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
-        cx: &mut PaintContext,
+        cx: &mut WindowContext,
     ) {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = vec2f(0., padding_top + self.layout.ascent);

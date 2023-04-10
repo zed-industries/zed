@@ -8,8 +8,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle},
-    window::MeasurementContext,
-    DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
+    Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -128,14 +127,15 @@ impl Label {
     }
 }
 
-impl Element for Label {
+impl<V: View> Element<V> for Label {
     type LayoutState = Line;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let runs = self.compute_runs();
         let line =
@@ -155,12 +155,20 @@ impl Element for Label {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         line: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        _: &V,
+        cx: &mut ViewContext<Self>,
     ) -> Self::PaintState {
-        line.paint(bounds.origin(), visible_bounds, bounds.size().y(), cx)
+        line.paint(
+            scene,
+            bounds.origin(),
+            visible_bounds,
+            bounds.size().y(),
+            cx,
+        )
     }
 
     fn rect_for_text_range(
@@ -170,7 +178,8 @@ impl Element for Label {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -180,7 +189,8 @@ impl Element for Label {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Value {
         json!({
             "type": "Label",

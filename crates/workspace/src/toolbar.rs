@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
-    ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    Entity, RenderContext, View, ViewContext, ElementBox, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 

@@ -12,8 +12,8 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, ElementBox, Entity, ModelContext, ModelHandle,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    Action, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, RenderContext,
+    Subscription, Task, View, ViewContext, ElementBox, ViewHandle, WeakModelHandle,
     WeakViewHandle,
 };
 use menu::Confirm;

@@ -10,8 +10,7 @@ use crate::{
     json::ToJson,
     platform::CursorStyle,
     scene::{self, Border, CursorRegion, Quad},
-    window::MeasurementContext,
-    Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
+    Element, ElementBox, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -36,13 +35,13 @@ pub struct ContainerStyle {
     pub cursor: Option<CursorStyle>,
 }
 
-pub struct Container {
-    child: ElementBox,
+pub struct Container<V: View> {
+    child: ElementBox<V>,
     style: ContainerStyle,
 }
 
-impl Container {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> Container<V> {
+    pub fn new(child: ElementBox<V>) -> Self {
         Self {
             child,
             style: Default::default(),
@@ -185,14 +184,15 @@ impl Container {
     }
 }
 
-impl Element for Container {
+impl<V: View> Element<V> for Container<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size_buffer = self.margin_size() + self.padding_size();
         if !self.style.border.overlay {
@@ -202,16 +202,18 @@ impl Element for Container {
             min: (constraint.min - size_buffer).max(Vector2F::zero()),
             max: (constraint.max - size_buffer).max(Vector2F::zero()),
         };
-        let child_size = self.child.layout(child_constraint, cx);
+        let child_size = self.child.layout(child_constraint, view, cx);
         (child_size + size_buffer, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let quad_bounds = RectF::from_points(
             bounds.origin() + vec2f(self.style.margin.left, self.style.margin.top),
@@ -247,7 +249,8 @@ impl Element for Container {
                 corner_radius: self.style.corner_radius,
             });
 
-            self.child.paint(child_origin, visible_bounds, cx);
+            self.child
+                .paint(scene, child_origin, visible_bounds, view, cx);
 
             cx.scene.push_layer(None);
             cx.scene.push_quad(Quad {
@@ -270,7 +273,8 @@ impl Element for Container {
                     self.style.border.left_width(),
                     self.style.border.top_width(),
                 );
-            self.child.paint(child_origin, visible_bounds, cx);
+            self.child
+                .paint(scene, child_origin, visible_bounds, view, cx);
 
             if self.style.overlay_color.is_some() {
                 cx.scene.push_layer(None);
@@ -292,9 +296,10 @@ impl Element for Container {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -302,13 +307,14 @@ impl Element for Container {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
+        view: &V,
         cx: &crate::DebugContext,
     ) -> serde_json::Value {
         json!({
             "type": "Container",
             "bounds": bounds.to_json(),
             "details": self.style.to_json(),
-            "child": self.child.debug(cx),
+            "child": self.child.debug(view, cx),
         })
     }
 }

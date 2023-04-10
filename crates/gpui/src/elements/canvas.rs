@@ -1,8 +1,7 @@
 use super::Element;
 use crate::{
     json::{self, json},
-    window::MeasurementContext,
-    DebugContext, PaintContext,
+    SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use pathfinder_geometry::{
@@ -10,20 +9,20 @@ use pathfinder_geometry::{
     vector::{vec2f, Vector2F},
 };
 
-pub struct Canvas<F>(F);
+pub struct Canvas<V, F>(F);
 
-impl<F> Canvas<F>
+impl<V: View, F> Canvas<V, F>
 where
-    F: FnMut(RectF, RectF, &mut PaintContext),
+    F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     pub fn new(f: F) -> Self {
         Self(f)
     }
 }
 
-impl<F> Element for Canvas<F>
+impl<V, F> Element<V> for Canvas<V, F>
 where
-    F: FnMut(RectF, RectF, &mut PaintContext),
+    F: FnMut(RectF, RectF, &mut ViewContext<V>),
 {
     type LayoutState = ();
     type PaintState = ();
@@ -48,10 +47,12 @@ where
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.0(bounds, visible_bounds, cx)
     }
@@ -63,7 +64,8 @@ where
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -73,7 +75,8 @@ where
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> json::Value {
         json!({"type": "Canvas", "bounds": bounds.to_json()})
     }

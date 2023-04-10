@@ -5,22 +5,20 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json,
-    window::MeasurementContext,
-    DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
+    json, Element, ElementBox, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
-pub struct ConstrainedBox {
-    child: ElementBox,
-    constraint: Constraint,
+pub struct ConstrainedBox<V: View> {
+    child: ElementBox<V>,
+    constraint: Constraint<V>,
 }
 
-pub enum Constraint {
+pub enum Constraint<V: View> {
     Static(SizeConstraint),
-    Dynamic(Box<dyn FnMut(SizeConstraint, &mut LayoutContext) -> SizeConstraint>),
+    Dynamic(Box<dyn FnMut(SizeConstraint, &mut V, &mut ViewContext<V>) -> SizeConstraint>),
 }
 
-impl ToJson for Constraint {
+impl<V: View> ToJson for Constraint<V> {
     fn to_json(&self) -> serde_json::Value {
         match self {
             Constraint::Static(constraint) => constraint.to_json(),
@@ -29,8 +27,8 @@ impl ToJson for Constraint {
     }
 }
 
-impl ConstrainedBox {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> ConstrainedBox<V> {
+    pub fn new(child: ElementBox<V>) -> Self {
         Self {
             child,
             constraint: Constraint::Static(Default::default()),
@@ -39,7 +37,7 @@ impl ConstrainedBox {
 
     pub fn dynamically(
         mut self,
-        constraint: impl 'static + FnMut(SizeConstraint, &mut LayoutContext) -> SizeConstraint,
+        constraint: impl 'static + FnMut(SizeConstraint, &mut V, &mut ViewContext<V>) -> SizeConstraint,
     ) -> Self {
         self.constraint = Constraint::Dynamic(Box::new(constraint));
         self
@@ -120,41 +118,48 @@ impl ConstrainedBox {
     fn constraint(
         &mut self,
         input_constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> SizeConstraint {
         match &mut self.constraint {
             Constraint::Static(constraint) => *constraint,
-            Constraint::Dynamic(compute_constraint) => compute_constraint(input_constraint, cx),
+            Constraint::Dynamic(compute_constraint) => {
+                compute_constraint(input_constraint, view, cx)
+            }
         }
     }
 }
 
-impl Element for ConstrainedBox {
+impl<V: View> Element<V> for ConstrainedBox<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         mut parent_constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let constraint = self.constraint(parent_constraint, cx);
+        let constraint = self.constraint(parent_constraint, view, cx);
         parent_constraint.min = parent_constraint.min.max(constraint.min);
         parent_constraint.max = parent_constraint.max.min(constraint.max);
         parent_constraint.max = parent_constraint.max.max(parent_constraint.min);
-        let size = self.child.layout(parent_constraint, cx);
+        let size = self.child.layout(parent_constraint, view, cx);
         (size, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         cx.paint_layer(Some(visible_bounds), |cx| {
-            self.child.paint(bounds.origin(), visible_bounds, cx);
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx);
         })
     }
 
@@ -165,9 +170,10 @@ impl Element for ConstrainedBox {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -175,8 +181,9 @@ impl Element for ConstrainedBox {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> json::Value {
-        json!({"type": "ConstrainedBox", "assigned_constraint": self.constraint.to_json(), "child": self.child.debug(cx)})
+        json!({"type": "ConstrainedBox", "assigned_constraint": self.constraint.to_json(), "child": self.child.debug(view, cx)})
     }
 }

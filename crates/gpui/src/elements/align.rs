@@ -1,20 +1,18 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json,
-    window::MeasurementContext,
-    DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
+    json, Element, ElementBox, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use json::ToJson;
 
 use serde_json::json;
 
-pub struct Align {
-    child: ElementBox,
+pub struct Align<V: View> {
+    child: ElementBox<V>,
     alignment: Vector2F,
 }
 
-impl Align {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> Align<V> {
+    pub fn new(child: ElementBox<V>) -> Self {
         Self {
             child,
             alignment: Vector2F::zero(),
@@ -42,18 +40,19 @@ impl Align {
     }
 }
 
-impl Element for Align {
+impl<V: View> Element<V> for Align<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
+        view: &mut V,
         mut constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         constraint.min = Vector2F::zero();
-        let child_size = self.child.layout(constraint, cx);
+        let child_size = self.child.layout(view, constraint, cx);
         if size.x().is_infinite() {
             size.set_x(child_size.x());
         }
@@ -65,10 +64,12 @@ impl Element for Align {
 
     fn paint(
         &mut self,
+        view: &mut V,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let my_center = bounds.size() / 2.;
         let my_target = my_center + my_center * self.alignment;
@@ -77,6 +78,8 @@ impl Element for Align {
         let child_target = child_center + child_center * self.alignment;
 
         self.child.paint(
+            view,
+            scene,
             bounds.origin() - (child_target - my_target),
             visible_bounds,
             cx,
@@ -85,28 +88,30 @@ impl Element for Align {
 
     fn rect_for_text_range(
         &self,
+        view: &V,
         range_utf16: std::ops::Range<usize>,
         _: RectF,
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(view, range_utf16, cx)
     }
 
     fn debug(
         &self,
+        view: &V,
         bounds: pathfinder_geometry::rect::RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        cx: &ViewContext<V>,
     ) -> json::Value {
         json!({
             "type": "Align",
             "bounds": bounds.to_json(),
             "alignment": self.alignment.to_json(),
-            "child": self.child.debug(cx),
+            "child": self.child.debug(view, cx),
         })
     }
 }

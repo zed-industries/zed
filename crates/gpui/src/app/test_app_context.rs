@@ -23,8 +23,8 @@ use crate::{
     platform,
     platform::{Appearance, Event, InputHandler, KeyDownEvent, Platform},
     Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
-    ReadModelWith, ReadViewWith, RenderContext, Task, UpdateModel, UpdateView, View, ViewContext,
-    ViewHandle, WeakHandle,
+    ReadModelWith, ReadViewWith, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
+    WeakHandle,
 };
 use collections::BTreeMap;
 
