@@ -6310,7 +6310,13 @@ impl Project {
             let buffer = this
                 .opened_buffers
                 .get(&payload.buffer_id)
-                .and_then(|buffer| buffer.upgrade(cx));
+                .and_then(|buffer| buffer.upgrade(cx))
+                .or_else(|| {
+                    this.incomplete_remote_buffers
+                        .get(&payload.buffer_id)
+                        .cloned()
+                        .flatten()
+                });
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
                     buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
