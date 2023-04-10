@@ -101,7 +101,7 @@ impl<V: View> Flex<V> {
                             vec2f(constraint.max.x(), child_max),
                         ),
                     };
-                    let child_size = child.layout(child_constraint, cx);
+                    let child_size = child.layout(child_constraint, view, cx);
                     *remaining_space -= child_size.along(self.axis);
                     *remaining_flex -= flex;
                     *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
@@ -434,7 +434,7 @@ impl<V: View> Element<V> for FlexItem<V> {
         view: &V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, cx);
+        let size = self.child.layout(constraint, view, cx);
         (size, ())
     }
 
@@ -445,7 +445,7 @@ impl<V: View> Element<V> for FlexItem<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &V,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.child
             .paint(scene, bounds.origin(), visible_bounds, view, cx)

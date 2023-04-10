@@ -233,14 +233,16 @@ impl<Tag, V: View> Element<V> for MouseEventHandler<Tag, V> {
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if self.above {
-            self.child.paint(bounds.origin(), visible_bounds, view, cx);
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx);
 
             cx.paint_layer(None, |cx| {
-                self.paint_regions(bounds, visible_bounds, cx);
+                self.paint_regions(scene, bounds, visible_bounds, cx);
             });
         } else {
-            self.paint_regions(bounds, visible_bounds, cx);
-            self.child.paint(bounds.origin(), visible_bounds, view, cx);
+            self.paint_regions(scene, bounds, visible_bounds, cx);
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx);
         }
     }
 

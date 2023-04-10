@@ -131,7 +131,7 @@ impl<V: View> Element<V> for Overlay<V> {
         } else {
             constraint
         };
-        let size = self.child.layout(constraint, cx);
+        let size = self.child.layout(constraint, view, cx);
         (Vector2F::zero(), size)
     }
 

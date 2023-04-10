@@ -104,7 +104,7 @@ impl<V: View> UniformList<V> {
         mut delta: Vector2F,
         precise: bool,
         scroll_max: f32,
-        cx: &mut EventContext,
+        cx: &mut ViewContext<V>,
     ) -> bool {
         if !precise {
             delta *= 20.;

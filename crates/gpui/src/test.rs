@@ -19,8 +19,8 @@ use crate::{
     platform,
     platform::Platform,
     util::CwdBacktrace,
-    AppContext, Element, ElementBox, Entity, FontCache, Handle, RenderContext, Subscription,
-    TestAppContext, View,
+    AppContext, Element, ElementBox, Entity, FontCache, Handle, Subscription, TestAppContext, View,
+    ViewContext,
 };
 
 #[cfg(test)]
@@ -240,7 +240,7 @@ impl View for EmptyView {
         "empty view"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
         Element::boxed(Empty::new())
     }
 }

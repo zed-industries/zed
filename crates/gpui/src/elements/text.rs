@@ -7,8 +7,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle, ShapedBoundary},
-    window::MeasurementContext,
-    DebugContext, Element, FontCache, LayoutContext, PaintContext, SizeConstraint, TextLayoutCache,
+    Element, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -53,14 +52,15 @@ impl Text {
     }
 }
 
-impl Element for Text {
+impl<V: View> Element<V> for Text {
     type LayoutState = LayoutState;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
 
@@ -99,7 +99,7 @@ impl Element for Text {
             chunks,
             &self.style,
             cx.text_layout_cache,
-            cx.font_cache,
+            &cx.font_cache,
             usize::MAX,
             self.text.matches('\n').count() + 1,
         );
@@ -143,10 +143,12 @@ impl Element for Text {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();
@@ -163,6 +165,7 @@ impl Element for Text {
             if boundaries.intersects(visible_bounds) {
                 if self.soft_wrap {
                     line.paint_wrapped(
+                        scene,
                         origin,
                         visible_bounds,
                         layout.line_height,
@@ -170,7 +173,7 @@ impl Element for Text {
                         cx,
                     );
                 } else {
-                    line.paint(origin, visible_bounds, layout.line_height, cx);
+                    line.paint(scene, origin, visible_bounds, layout.line_height, cx);
                 }
             }
             origin.set_y(boundaries.max_y());
@@ -184,7 +187,8 @@ impl Element for Text {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -194,7 +198,8 @@ impl Element for Text {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Value {
         json!({
             "type": "Text",
@@ -272,7 +277,7 @@ pub fn layout_highlighted_chunks<'a>(
 mod tests {
     use super::*;
     use crate::{
-        elements::Empty, fonts, platform, AppContext, ElementBox, Entity, RenderContext, View,
+        elements::Empty, fonts, platform, AppContext, ElementBox, Entity, View, ViewContext,
     };
 
     #[crate::test(self)]
@@ -305,7 +310,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
             Empty::new().boxed()
         }
     }

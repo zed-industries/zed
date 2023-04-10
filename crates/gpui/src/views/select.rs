@@ -1,13 +1,13 @@
 use serde::Deserialize;
 
 use crate::{
-    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, RenderContext,
-    View, ViewContext, WeakViewHandle,
+    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, View,
+    ViewContext, WeakViewHandle,
 };
 
 pub struct Select {
     handle: WeakViewHandle<Self>,
-    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> ElementBox>,
+    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> ElementBox<Self>>,
     selected_item_ix: usize,
     item_count: usize,
     is_open: bool,
@@ -41,7 +41,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl Select {
-    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> ElementBox>(
+    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> ElementBox<Self>>(
         item_count: usize,
         cx: &mut ViewContext<Self>,
         render_item: F,
@@ -92,7 +92,7 @@ impl View for Select {
         "Select"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         if self.item_count == 0 {
             return Empty::new().boxed();
         }
@@ -106,16 +106,21 @@ impl View for Select {
             Default::default()
         };
         let mut result = Flex::column().with_child(
-            MouseEventHandler::<Header>::new(self.handle.id(), cx, |mouse_state, cx| {
-                Container::new((self.render_item)(
-                    self.selected_item_ix,
-                    ItemType::Header,
-                    mouse_state.hovered(),
-                    cx,
-                ))
-                .with_style(style.header)
-                .boxed()
-            })
+            MouseEventHandler::<Header>::new(
+                self.handle.id(),
+                self,
+                cx,
+                |mouse_state, this, cx| {
+                    Container::new((self.render_item)(
+                        self.selected_item_ix,
+                        ItemType::Header,
+                        mouse_state.hovered(),
+                        cx,
+                    ))
+                    .with_style(style.header)
+                    .boxed()
+                },
+            )
             .on_click(MouseButton::Left, move |_, cx| {
                 cx.dispatch_action(ToggleSelect)
             })
@@ -134,18 +139,23 @@ impl View for Select {
                                     let selected_item_ix = this.selected_item_ix;
                                     range.end = range.end.min(this.item_count);
                                     items.extend(range.map(|ix| {
-                                        MouseEventHandler::<Item>::new(ix, cx, |mouse_state, cx| {
-                                            (this.render_item)(
-                                                ix,
-                                                if ix == selected_item_ix {
-                                                    ItemType::Selected
-                                                } else {
-                                                    ItemType::Unselected
-                                                },
-                                                mouse_state.hovered(),
-                                                cx,
-                                            )
-                                        })
+                                        MouseEventHandler::<Item>::new(
+                                            ix,
+                                            self,
+                                            cx,
+                                            |mouse_state, this, cx| {
+                                                (this.render_item)(
+                                                    ix,
+                                                    if ix == selected_item_ix {
+                                                        ItemType::Selected
+                                                    } else {
+                                                        ItemType::Unselected
+                                                    },
+                                                    mouse_state.hovered(),
+                                                    cx,
+                                                )
+                                            },
+                                        )
                                         .on_click(MouseButton::Left, move |_, cx| {
                                             cx.dispatch_action(SelectItem(ix))
                                         })

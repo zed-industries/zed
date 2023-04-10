@@ -6,7 +6,7 @@ use crate::{
     json::json,
     Element, ElementBox, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
 };
-use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 
 pub struct List<V: View> {
@@ -24,7 +24,7 @@ pub enum Orientation {
 
 struct StateInner<V: View> {
     last_layout_width: Option<f32>,
-    render_item: Box<dyn FnMut(usize, &V, &mut ViewContext<V>) -> Option<ElementBox<V>>>,
+    render_item: Box<dyn FnMut(&mut V, usize, &mut ViewContext<V>) -> ElementBox<V>>,
     rendered_range: Range<usize>,
     items: SumTree<ListItem<V>>,
     logical_scroll_top: Option<ListOffset>,
@@ -40,14 +40,23 @@ pub struct ListOffset {
     pub offset_in_item: f32,
 }
 
-#[derive(Clone)]
 enum ListItem<V: View> {
     Unrendered,
     Rendered(Rc<ElementBox<V>>),
     Removed(f32),
 }
 
-impl<V: View> std::fmt::Debug for ListItem<V> {
+impl<V: View> Clone for ListItem<V> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Unrendered => Self::Unrendered,
+            Self::Rendered(element) => Self::Rendered(element.clone()),
+            Self::Removed(height) => Self::Removed(*height),
+        }
+    }
+}
+
+impl<V: View> Debug for ListItem<V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unrendered => write!(f, "Unrendered"),
@@ -245,14 +254,13 @@ impl<V: View> Element<V> for List<V> {
         bounds: RectF,
         visible_bounds: RectF,
         scroll_top: &mut ListOffset,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
-        cx.scene.push_layer(Some(visible_bounds));
-
-        cx.scene.push_mouse_region(
-            MouseRegion::new::<Self>(cx.current_view_id(), 0, bounds).on_scroll({
+        scene.push_layer(Some(visible_bounds));
+        scene.push_mouse_region(
+            MouseRegion::new::<Self>(cx.view_id(), 0, bounds).on_scroll({
                 let state = self.state.clone();
                 let height = bounds.height();
                 let scroll_top = scroll_top.clone();
@@ -273,7 +281,7 @@ impl<V: View> Element<V> for List<V> {
             element.paint(scene, origin, visible_bounds, view, cx);
         }
 
-        cx.scene.pop_layer();
+        scene.pop_layer();
     }
 
     fn rect_for_text_range(
@@ -349,9 +357,10 @@ impl<V: View> ListState<V> {
         let handle = cx.weak_handle();
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
-            render_item: Box::new(move |ix, cx| {
-                let handle = handle.upgrade(cx)?;
-                Some(cx.render(&handle, |view, cx| render_item(view, ix, cx)))
+            render_item: Box::new(move |ix, view, cx| {
+                render_item(view, ix, cx)
+                // let handle = handle.upgrade(cx)?;
+                // Some(cx.render(&handle, |view, cx| render_item(view, ix, cx)))
             }),
             rendered_range: 0..0,
             items,
@@ -442,8 +451,8 @@ impl<V: View> StateInner<V> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
         } else {
-            let mut element = (self.render_item)(ix, cx)?;
-            element.layout(constraint, cx);
+            let mut element = (self.render_item)(view, ix, cx);
+            element.layout(constraint, view, cx);
             Some(element.into())
         }
     }
@@ -460,7 +469,7 @@ impl<V: View> StateInner<V> {
         &'a self,
         bounds: RectF,
         scroll_top: &ListOffset,
-    ) -> impl Iterator<Item = (Rc<ElementBox>, Vector2F)> + 'a {
+    ) -> impl Iterator<Item = (Rc<ElementBox<V>>, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
         let mut cursor = self.items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -637,262 +646,264 @@ mod tests {
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::AppContext) {
-        let (_, view) = cx.add_window(Default::default(), |_| TestView);
-        let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
+        todo!()
+        // let (_, view) = cx.add_window(Default::default(), |_| TestView);
+        // let constraint = SizeConstraint::new(vec2f(0., 0.), vec2f(100., 40.));
 
-        let elements = Rc::new(RefCell::new(vec![(0, 20.), (1, 30.), (2, 100.)]));
+        // let elements = Rc::new(RefCell::new(vec![(0, 20.), (1, 30.), (2, 100.)]));
 
-        let state = view.update(cx, |_, cx| {
-            ListState::new(elements.borrow().len(), Orientation::Top, 1000.0, cx, {
-                let elements = elements.clone();
-                move |_, ix, _| {
-                    let (id, height) = elements.borrow()[ix];
-                    TestElement::new(id, height).boxed()
-                }
-            })
-        });
+        // let state = view.update(cx, |_, cx| {
+        //     ListState::new(elements.borrow().len(), Orientation::Top, 1000.0, cx, {
+        //         let elements = elements.clone();
+        //         move |_, ix, _| {
+        //             let (id, height) = elements.borrow()[ix];
+        //             TestElement::new(id, height).boxed()
+        //         }
+        //     })
+        // });
 
-        let mut list = List::new(state.clone());
-        let (size, _) = list.layout(
-            constraint,
-            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
-        );
-        assert_eq!(size, vec2f(100., 40.));
-        assert_eq!(
-            state.0.borrow().items.summary().clone(),
-            ListItemSummary {
-                count: 3,
-                rendered_count: 3,
-                unrendered_count: 0,
-                height: 150.
-            }
-        );
+        // let mut list = List::new(state.clone());
+        // let (size, _) = list.layout(
+        //     constraint,
+        //     &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        // );
+        // assert_eq!(size, vec2f(100., 40.));
+        // assert_eq!(
+        //     state.0.borrow().items.summary().clone(),
+        //     ListItemSummary {
+        //         count: 3,
+        //         rendered_count: 3,
+        //         unrendered_count: 0,
+        //         height: 150.
+        //     }
+        // );
 
-        state.0.borrow_mut().scroll(
-            &ListOffset {
-                item_ix: 0,
-                offset_in_item: 0.,
-            },
-            40.,
-            vec2f(0., -54.),
-            true,
-            &mut presenter.build_event_context(&mut Default::default(), cx),
-        );
-        let (_, logical_scroll_top) = list.layout(
-            constraint,
-            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
-        );
-        assert_eq!(
-            logical_scroll_top,
-            ListOffset {
-                item_ix: 2,
-                offset_in_item: 4.
-            }
-        );
-        assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 54.);
+        // state.0.borrow_mut().scroll(
+        //     &ListOffset {
+        //         item_ix: 0,
+        //         offset_in_item: 0.,
+        //     },
+        //     40.,
+        //     vec2f(0., -54.),
+        //     true,
+        //     &mut presenter.build_event_context(&mut Default::default(), cx),
+        // );
+        // let (_, logical_scroll_top) = list.layout(
+        //     constraint,
+        //     &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        // );
+        // assert_eq!(
+        //     logical_scroll_top,
+        //     ListOffset {
+        //         item_ix: 2,
+        //         offset_in_item: 4.
+        //     }
+        // );
+        // assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 54.);
 
-        elements.borrow_mut().splice(1..2, vec![(3, 40.), (4, 50.)]);
-        elements.borrow_mut().push((5, 60.));
-        state.splice(1..2, 2);
-        state.splice(4..4, 1);
-        assert_eq!(
-            state.0.borrow().items.summary().clone(),
-            ListItemSummary {
-                count: 5,
-                rendered_count: 2,
-                unrendered_count: 3,
-                height: 120.
-            }
-        );
+        // elements.borrow_mut().splice(1..2, vec![(3, 40.), (4, 50.)]);
+        // elements.borrow_mut().push((5, 60.));
+        // state.splice(1..2, 2);
+        // state.splice(4..4, 1);
+        // assert_eq!(
+        //     state.0.borrow().items.summary().clone(),
+        //     ListItemSummary {
+        //         count: 5,
+        //         rendered_count: 2,
+        //         unrendered_count: 3,
+        //         height: 120.
+        //     }
+        // );
 
-        let (size, logical_scroll_top) = list.layout(
-            constraint,
-            &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
-        );
-        assert_eq!(size, vec2f(100., 40.));
-        assert_eq!(
-            state.0.borrow().items.summary().clone(),
-            ListItemSummary {
-                count: 5,
-                rendered_count: 5,
-                unrendered_count: 0,
-                height: 270.
-            }
-        );
-        assert_eq!(
-            logical_scroll_top,
-            ListOffset {
-                item_ix: 3,
-                offset_in_item: 4.
-            }
-        );
-        assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 114.);
+        // let (size, logical_scroll_top) = list.layout(
+        //     constraint,
+        //     &mut presenter.build_layout_context(vec2f(100., 40.), false, cx),
+        // );
+        // assert_eq!(size, vec2f(100., 40.));
+        // assert_eq!(
+        //     state.0.borrow().items.summary().clone(),
+        //     ListItemSummary {
+        //         count: 5,
+        //         rendered_count: 5,
+        //         unrendered_count: 0,
+        //         height: 270.
+        //     }
+        // );
+        // assert_eq!(
+        //     logical_scroll_top,
+        //     ListOffset {
+        //         item_ix: 3,
+        //         offset_in_item: 4.
+        //     }
+        // );
+        // assert_eq!(state.0.borrow().scroll_top(&logical_scroll_top), 114.);
     }
 
     #[crate::test(self, iterations = 10, seed = 0)]
     fn test_random(cx: &mut crate::AppContext, mut rng: StdRng) {
-        let operations = env::var("OPERATIONS")
-            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(10);
+        todo!()
+        // let operations = env::var("OPERATIONS")
+        //     .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        //     .unwrap_or(10);
 
-        let (window_id, view) = cx.add_window(Default::default(), |_| TestView);
-        let mut next_id = 0;
-        let elements = Rc::new(RefCell::new(
-            (0..rng.gen_range(0..=20))
-                .map(|_| {
-                    let id = next_id;
-                    next_id += 1;
-                    (id, rng.gen_range(0..=200) as f32 / 2.0)
-                })
-                .collect::<Vec<_>>(),
-        ));
-        let orientation = *[Orientation::Top, Orientation::Bottom]
-            .choose(&mut rng)
-            .unwrap();
-        let overdraw = rng.gen_range(1..=100) as f32;
+        // let (window_id, view) = cx.add_window(Default::default(), |_| TestView);
+        // let mut next_id = 0;
+        // let elements = Rc::new(RefCell::new(
+        //     (0..rng.gen_range(0..=20))
+        //         .map(|_| {
+        //             let id = next_id;
+        //             next_id += 1;
+        //             (id, rng.gen_range(0..=200) as f32 / 2.0)
+        //         })
+        //         .collect::<Vec<_>>(),
+        // ));
+        // let orientation = *[Orientation::Top, Orientation::Bottom]
+        //     .choose(&mut rng)
+        //     .unwrap();
+        // let overdraw = rng.gen_range(1..=100) as f32;
 
-        let state = view.update(cx, |_, cx| {
-            ListState::new(elements.borrow().len(), orientation, overdraw, cx, {
-                let elements = elements.clone();
-                move |_, ix, _| {
-                    let (id, height) = elements.borrow()[ix];
-                    TestElement::new(id, height).boxed()
-                }
-            })
-        });
+        // let state = view.update(cx, |_, cx| {
+        //     ListState::new(elements.borrow().len(), orientation, overdraw, cx, {
+        //         let elements = elements.clone();
+        //         move |_, ix, _| {
+        //             let (id, height) = elements.borrow()[ix];
+        //             TestElement::new(id, height).boxed()
+        //         }
+        //     })
+        // });
 
-        let mut width = rng.gen_range(0..=2000) as f32 / 2.;
-        let mut height = rng.gen_range(0..=2000) as f32 / 2.;
-        log::info!("orientation: {:?}", orientation);
-        log::info!("overdraw: {}", overdraw);
-        log::info!("elements: {:?}", elements.borrow());
-        log::info!("size: ({:?}, {:?})", width, height);
-        log::info!("==================");
+        // let mut width = rng.gen_range(0..=2000) as f32 / 2.;
+        // let mut height = rng.gen_range(0..=2000) as f32 / 2.;
+        // log::info!("orientation: {:?}", orientation);
+        // log::info!("overdraw: {}", overdraw);
+        // log::info!("elements: {:?}", elements.borrow());
+        // log::info!("size: ({:?}, {:?})", width, height);
+        // log::info!("==================");
 
-        let mut last_logical_scroll_top = None;
-        for _ in 0..operations {
-            match rng.gen_range(0..=100) {
-                0..=29 if last_logical_scroll_top.is_some() => {
-                    let delta = vec2f(0., rng.gen_range(-overdraw..=overdraw));
-                    log::info!(
-                        "Scrolling by {:?}, previous scroll top: {:?}",
-                        delta,
-                        last_logical_scroll_top.unwrap()
-                    );
-                    state.0.borrow_mut().scroll(
-                        last_logical_scroll_top.as_ref().unwrap(),
-                        height,
-                        delta,
-                        true,
-                        &mut presenter.build_event_context(&mut Default::default(), cx),
-                    );
-                }
-                30..=34 => {
-                    width = rng.gen_range(0..=2000) as f32 / 2.;
-                    log::info!("changing width: {:?}", width);
-                }
-                35..=54 => {
-                    height = rng.gen_range(0..=1000) as f32 / 2.;
-                    log::info!("changing height: {:?}", height);
-                }
-                _ => {
-                    let mut elements = elements.borrow_mut();
-                    let end_ix = rng.gen_range(0..=elements.len());
-                    let start_ix = rng.gen_range(0..=end_ix);
-                    let new_elements = (0..rng.gen_range(0..10))
-                        .map(|_| {
-                            let id = next_id;
-                            next_id += 1;
-                            (id, rng.gen_range(0..=200) as f32 / 2.)
-                        })
-                        .collect::<Vec<_>>();
-                    log::info!("splice({:?}, {:?})", start_ix..end_ix, new_elements);
-                    state.splice(start_ix..end_ix, new_elements.len());
-                    elements.splice(start_ix..end_ix, new_elements);
-                    for (ix, item) in state.0.borrow().items.cursor::<()>().enumerate() {
-                        if let ListItem::Rendered(element) = item {
-                            let (expected_id, _) = elements[ix];
-                            element.with_metadata(|metadata: Option<&usize>| {
-                                assert_eq!(*metadata.unwrap(), expected_id);
-                            });
-                        }
-                    }
-                }
-            }
+        // let mut last_logical_scroll_top = None;
+        // for _ in 0..operations {
+        //     match rng.gen_range(0..=100) {
+        //         0..=29 if last_logical_scroll_top.is_some() => {
+        //             let delta = vec2f(0., rng.gen_range(-overdraw..=overdraw));
+        //             log::info!(
+        //                 "Scrolling by {:?}, previous scroll top: {:?}",
+        //                 delta,
+        //                 last_logical_scroll_top.unwrap()
+        //             );
+        //             state.0.borrow_mut().scroll(
+        //                 last_logical_scroll_top.as_ref().unwrap(),
+        //                 height,
+        //                 delta,
+        //                 true,
+        //                 &mut presenter.build_event_context(&mut Default::default(), cx),
+        //             );
+        //         }
+        //         30..=34 => {
+        //             width = rng.gen_range(0..=2000) as f32 / 2.;
+        //             log::info!("changing width: {:?}", width);
+        //         }
+        //         35..=54 => {
+        //             height = rng.gen_range(0..=1000) as f32 / 2.;
+        //             log::info!("changing height: {:?}", height);
+        //         }
+        //         _ => {
+        //             let mut elements = elements.borrow_mut();
+        //             let end_ix = rng.gen_range(0..=elements.len());
+        //             let start_ix = rng.gen_range(0..=end_ix);
+        //             let new_elements = (0..rng.gen_range(0..10))
+        //                 .map(|_| {
+        //                     let id = next_id;
+        //                     next_id += 1;
+        //                     (id, rng.gen_range(0..=200) as f32 / 2.)
+        //                 })
+        //                 .collect::<Vec<_>>();
+        //             log::info!("splice({:?}, {:?})", start_ix..end_ix, new_elements);
+        //             state.splice(start_ix..end_ix, new_elements.len());
+        //             elements.splice(start_ix..end_ix, new_elements);
+        //             for (ix, item) in state.0.borrow().items.cursor::<()>().enumerate() {
+        //                 if let ListItem::Rendered(element) = item {
+        //                     let (expected_id, _) = elements[ix];
+        //                     element.with_metadata(|metadata: Option<&usize>| {
+        //                         assert_eq!(*metadata.unwrap(), expected_id);
+        //                     });
+        //                 }
+        //             }
+        //         }
+        //     }
 
-            let mut list = List::new(state.clone());
-            let window_size = vec2f(width, height);
-            let (size, logical_scroll_top) = list.layout(
-                SizeConstraint::new(vec2f(0., 0.), window_size),
-                &mut presenter.build_layout_context(window_size, false, cx),
-            );
-            assert_eq!(size, window_size);
-            last_logical_scroll_top = Some(logical_scroll_top);
+        //     let mut list = List::new(state.clone());
+        //     let window_size = vec2f(width, height);
+        //     let (size, logical_scroll_top) = list.layout(
+        //         SizeConstraint::new(vec2f(0., 0.), window_size),
+        //         &mut presenter.build_layout_context(window_size, false, cx),
+        //     );
+        //     assert_eq!(size, window_size);
+        //     last_logical_scroll_top = Some(logical_scroll_top);
 
-            let state = state.0.borrow();
-            log::info!("items {:?}", state.items.items(&()));
+        //     let state = state.0.borrow();
+        //     log::info!("items {:?}", state.items.items(&()));
 
-            let scroll_top = state.scroll_top(&logical_scroll_top);
-            let rendered_top = (scroll_top - overdraw).max(0.);
-            let rendered_bottom = scroll_top + height + overdraw;
-            let mut item_top = 0.;
+        //     let scroll_top = state.scroll_top(&logical_scroll_top);
+        //     let rendered_top = (scroll_top - overdraw).max(0.);
+        //     let rendered_bottom = scroll_top + height + overdraw;
+        //     let mut item_top = 0.;
 
-            log::info!(
-                "rendered top {:?}, rendered bottom {:?}, scroll top {:?}",
-                rendered_top,
-                rendered_bottom,
-                scroll_top,
-            );
+        //     log::info!(
+        //         "rendered top {:?}, rendered bottom {:?}, scroll top {:?}",
+        //         rendered_top,
+        //         rendered_bottom,
+        //         scroll_top,
+        //     );
 
-            let mut first_rendered_element_top = None;
-            let mut last_rendered_element_bottom = None;
-            assert_eq!(state.items.summary().count, elements.borrow().len());
-            for (ix, item) in state.items.cursor::<()>().enumerate() {
-                match item {
-                    ListItem::Unrendered => {
-                        let item_bottom = item_top;
-                        assert!(item_bottom <= rendered_top || item_top >= rendered_bottom);
-                        item_top = item_bottom;
-                    }
-                    ListItem::Removed(height) => {
-                        let (id, expected_height) = elements.borrow()[ix];
-                        assert_eq!(
-                            *height, expected_height,
-                            "element {} height didn't match",
-                            id
-                        );
-                        let item_bottom = item_top + height;
-                        assert!(item_bottom <= rendered_top || item_top >= rendered_bottom);
-                        item_top = item_bottom;
-                    }
-                    ListItem::Rendered(element) => {
-                        let (expected_id, expected_height) = elements.borrow()[ix];
-                        element.with_metadata(|metadata: Option<&usize>| {
-                            assert_eq!(*metadata.unwrap(), expected_id);
-                        });
-                        assert_eq!(element.size().y(), expected_height);
-                        let item_bottom = item_top + element.size().y();
-                        first_rendered_element_top.get_or_insert(item_top);
-                        last_rendered_element_bottom = Some(item_bottom);
-                        assert!(item_bottom > rendered_top || item_top < rendered_bottom);
-                        item_top = item_bottom;
-                    }
-                }
-            }
+        //     let mut first_rendered_element_top = None;
+        //     let mut last_rendered_element_bottom = None;
+        //     assert_eq!(state.items.summary().count, elements.borrow().len());
+        //     for (ix, item) in state.items.cursor::<()>().enumerate() {
+        //         match item {
+        //             ListItem::Unrendered => {
+        //                 let item_bottom = item_top;
+        //                 assert!(item_bottom <= rendered_top || item_top >= rendered_bottom);
+        //                 item_top = item_bottom;
+        //             }
+        //             ListItem::Removed(height) => {
+        //                 let (id, expected_height) = elements.borrow()[ix];
+        //                 assert_eq!(
+        //                     *height, expected_height,
+        //                     "element {} height didn't match",
+        //                     id
+        //                 );
+        //                 let item_bottom = item_top + height;
+        //                 assert!(item_bottom <= rendered_top || item_top >= rendered_bottom);
+        //                 item_top = item_bottom;
+        //             }
+        //             ListItem::Rendered(element) => {
+        //                 let (expected_id, expected_height) = elements.borrow()[ix];
+        //                 element.with_metadata(|metadata: Option<&usize>| {
+        //                     assert_eq!(*metadata.unwrap(), expected_id);
+        //                 });
+        //                 assert_eq!(element.size().y(), expected_height);
+        //                 let item_bottom = item_top + element.size().y();
+        //                 first_rendered_element_top.get_or_insert(item_top);
+        //                 last_rendered_element_bottom = Some(item_bottom);
+        //                 assert!(item_bottom > rendered_top || item_top < rendered_bottom);
+        //                 item_top = item_bottom;
+        //             }
+        //         }
+        //     }
 
-            match orientation {
-                Orientation::Top => {
-                    if let Some(first_rendered_element_top) = first_rendered_element_top {
-                        assert!(first_rendered_element_top <= scroll_top);
-                    }
-                }
-                Orientation::Bottom => {
-                    if let Some(last_rendered_element_bottom) = last_rendered_element_bottom {
-                        assert!(last_rendered_element_bottom >= scroll_top + height);
-                    }
-                }
-            }
-        }
+        //     match orientation {
+        //         Orientation::Top => {
+        //             if let Some(first_rendered_element_top) = first_rendered_element_top {
+        //                 assert!(first_rendered_element_top <= scroll_top);
+        //             }
+        //         }
+        //         Orientation::Bottom => {
+        //             if let Some(last_rendered_element_bottom) = last_rendered_element_bottom {
+        //                 assert!(last_rendered_element_bottom >= scroll_top + height);
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     struct TestView;

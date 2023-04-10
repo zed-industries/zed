@@ -27,12 +27,11 @@ pub use self::{
 };
 use self::{clipped::Clipped, expanded::Expanded};
 use crate::{
-    app::window::MeasurementContext,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, RenderContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    json, Action, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use core::panic;
 use json::ToJson;
@@ -62,7 +61,7 @@ trait AnyElement<V: View> {
         cx: &ViewContext<V>,
     ) -> Option<RectF>;
 
-    fn debug(&self, view: &V, cx: &mut ViewContext<V>) -> serde_json::Value;
+    fn debug(&self, view: &V, cx: &ViewContext<V>) -> serde_json::Value;
 
     fn size(&self) -> Vector2F;
 
@@ -82,6 +81,7 @@ pub trait Element<V: View> {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
@@ -133,81 +133,81 @@ pub trait Element<V: View> {
         }
     }
 
-    fn constrained(self) -> ConstrainedBox
+    fn constrained(self) -> ConstrainedBox<V>
     where
         Self: 'static + Sized,
     {
         ConstrainedBox::new(self.boxed())
     }
 
-    fn aligned(self) -> Align
+    fn aligned(self) -> Align<V>
     where
         Self: 'static + Sized,
     {
         Align::new(self.boxed())
     }
 
-    fn clipped(self) -> Clipped
+    fn clipped(self) -> Clipped<V>
     where
         Self: 'static + Sized,
     {
         Clipped::new(self.boxed())
     }
 
-    fn contained(self) -> Container
+    fn contained(self) -> Container<V>
     where
         Self: 'static + Sized,
     {
         Container::new(self.boxed())
     }
 
-    fn expanded(self) -> Expanded
+    fn expanded(self) -> Expanded<V>
     where
         Self: 'static + Sized,
     {
         Expanded::new(self.boxed())
     }
 
-    fn flex(self, flex: f32, expanded: bool) -> FlexItem
+    fn flex(self, flex: f32, expanded: bool) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
         FlexItem::new(self.boxed()).flex(flex, expanded)
     }
 
-    fn flex_float(self) -> FlexItem
+    fn flex_float(self) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
         FlexItem::new(self.boxed()).float()
     }
 
-    fn with_tooltip<Tag: 'static, T: View>(
+    fn with_tooltip<Tag: 'static>(
         self,
         id: usize,
         text: String,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
-        cx: &mut RenderContext<T>,
-    ) -> Tooltip
+        cx: &mut ViewContext<V>,
+    ) -> Tooltip<V>
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, T>(id, text, action, style, self.boxed(), cx)
+        Tooltip::new::<Tag>(id, text, action, style, self.boxed(), cx)
     }
 
-    fn with_resize_handle<Tag: 'static, T: View>(
+    fn with_resize_handle<Tag: 'static>(
         self,
         element_id: usize,
         side: Side,
         handle_size: f32,
         initial_size: f32,
-        cx: &mut RenderContext<T>,
-    ) -> Resizable
+        cx: &mut ViewContext<V>,
+    ) -> Resizable<V>
     where
         Self: 'static + Sized,
     {
-        Resizable::new::<Tag, T>(
+        Resizable::new::<Tag>(
             self.boxed(),
             element_id,
             side,
@@ -270,6 +270,7 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         view: &mut V,
         origin: Vector2F,
         visible_bounds: RectF,
@@ -283,7 +284,7 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(view, bounds, visible_bounds, &mut layout, cx);
+                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
                 Lifecycle::PostPaint {
                     element,
                     constraint,
@@ -301,7 +302,7 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(view, bounds, visible_bounds, &mut layout, cx);
+                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
                 Lifecycle::PostPaint {
                     element,
                     constraint,
@@ -334,12 +335,12 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
         } = self
         {
             element.rect_for_text_range(
-                view,
                 range_utf16,
                 *bounds,
                 *visible_bounds,
                 layout,
                 paint,
+                view,
                 cx,
             )
         } else {
@@ -374,7 +375,7 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
                 layout,
                 paint,
             } => {
-                let mut value = element.debug(view, *bounds, layout, paint, cx);
+                let mut value = element.debug(*bounds, layout, paint, view, cx);
                 if let json::Value::Object(map) = &mut value {
                     let mut new_map: crate::json::Map<String, serde_json::Value> =
                         Default::default();
@@ -403,7 +404,7 @@ impl<V: View, E: Element<V>> Default for Lifecycle<V, E> {
 }
 
 pub struct ElementBox<V: View> {
-    element: RefCell<dyn AnyElement<V>>,
+    element: Box<RefCell<dyn AnyElement<V>>>,
     view_type: PhantomData<V>,
     name: Option<Cow<'static, str>>,
 }
@@ -420,8 +421,8 @@ impl<V: View> ElementBox<V> {
 
     pub fn layout(
         &self,
-        view: &mut V,
         constraint: SizeConstraint,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Vector2F {
         self.element.borrow_mut().layout(view, constraint, cx)
@@ -429,10 +430,10 @@ impl<V: View> ElementBox<V> {
 
     pub fn paint(
         &self,
-        view: &mut V,
         scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         self.element
@@ -442,8 +443,8 @@ impl<V: View> ElementBox<V> {
 
     pub fn rect_for_text_range(
         &self,
-        view: &V,
         range_utf16: Range<usize>,
+        view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
         self.element

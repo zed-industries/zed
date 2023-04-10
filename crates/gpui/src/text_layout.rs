@@ -9,7 +9,7 @@ use crate::{
     platform::FontSystem,
     scene,
     window::WindowContext,
-    AppContext, PaintContext, SceneBuilder,
+    SceneBuilder,
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -376,11 +376,12 @@ impl Line {
 
     pub fn paint_wrapped(
         &self,
+        scene: &SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
         boundaries: impl IntoIterator<Item = ShapedBoundary>,
-        cx: &mut PaintContext,
+        cx: &mut WindowContext,
     ) {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
@@ -419,14 +420,14 @@ impl Line {
                 );
                 if glyph_bounds.intersects(visible_bounds) {
                     if glyph.is_emoji {
-                        cx.scene.push_image_glyph(scene::ImageGlyph {
+                        scene.push_image_glyph(scene::ImageGlyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,
                             origin: glyph_bounds.origin() + baseline_origin,
                         });
                     } else {
-                        cx.scene.push_glyph(scene::Glyph {
+                        scene.push_glyph(scene::Glyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,

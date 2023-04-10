@@ -69,7 +69,7 @@ pub trait Entity: 'static {
 
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox<Self>;
+    fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> ElementBox<Self>;
     fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn key_down(&mut self, _: &KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
@@ -2983,7 +2983,7 @@ where
         params: RenderParams,
         cx: &mut WindowContext<'a, 'b>,
     ) -> Box<dyn RenderedView> {
-        View::render(self, &mut RenderContext::new(params, cx))
+        View::render(self, &mut ViewContext::new(params, cx))
     }
 
     fn focus_in<'a, 'b>(
@@ -3359,7 +3359,7 @@ impl<'a, 'b, T: View> DerefMut for ViewContext<'a, 'b, T> {
     }
 }
 
-impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
+impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     fn new(window_context: &'b mut WindowContext<'a, 'b>, view_id: usize) -> Self {
         Self {
             window_context,
@@ -3368,7 +3368,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
         }
     }
 
-    pub fn handle(&self) -> ViewHandle<T> {
+    pub fn handle(&self) -> ViewHandle<V> {
         ViewHandle::new(
             self.window_id,
             self.view_id,
@@ -3376,7 +3376,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
         )
     }
 
-    pub fn weak_handle(&self) -> WeakViewHandle<T> {
+    pub fn weak_handle(&self) -> WeakViewHandle<V> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
@@ -3449,7 +3449,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn on_window_should_close<F>(&mut self, mut callback: F)
     where
-        F: 'static + FnMut(&mut T, &mut ViewContext<T>) -> bool,
+        F: 'static + FnMut(&mut V, &mut ViewContext<V>) -> bool,
     {
         let window_id = self.window_id();
         let view = self.weak_handle();
@@ -3511,10 +3511,10 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
         );
     }
 
-    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
+    pub fn replace_root_view<W, F>(&mut self, build_root_view: F) -> ViewHandle<W>
     where
-        V: View,
-        F: FnOnce(&mut ViewContext<V>) -> V,
+        W: View,
+        F: FnOnce(&mut ViewContext<W>) -> W,
     {
         let window_id = self.window_id;
         self.update(|this| {
@@ -3533,7 +3533,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
         E: Entity,
         E::Event: 'static,
         H: Handle<E>,
-        F: 'static + FnMut(&mut T, H, &E::Event, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, H, &E::Event, &mut ViewContext<V>),
     {
         let subscriber = self.weak_handle();
         self.window_context
@@ -3553,7 +3553,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
     where
         E: Entity,
         H: Handle<E>,
-        F: 'static + FnMut(&mut T, H, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, H, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context
@@ -3572,7 +3572,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
     pub fn observe_global<G, F>(&mut self, mut callback: F) -> Subscription
     where
         G: Any,
-        F: 'static + FnMut(&mut T, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context.observe_global::<G, _>(move |cx| {
@@ -3582,10 +3582,10 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
         })
     }
 
-    pub fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
+    pub fn observe_focus<F, W>(&mut self, handle: &ViewHandle<W>, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, ViewHandle<V>, bool, &mut ViewContext<T>),
-        V: View,
+        F: 'static + FnMut(&mut V, ViewHandle<W>, bool, &mut ViewContext<V>),
+        W: View,
     {
         let observer = self.weak_handle();
         self.window_context
@@ -3605,7 +3605,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
     where
         E: Entity,
         H: Handle<E>,
-        F: 'static + FnMut(&mut T, &E, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, &E, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context
@@ -3620,7 +3620,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn observe_actions<F>(&mut self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, TypeId, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, TypeId, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context.observe_actions(move |action_id, cx| {
@@ -3634,7 +3634,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn observe_window_activation<F>(&mut self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, bool, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context
@@ -3652,7 +3652,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn observe_fullscreen<F>(&mut self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, bool, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, bool, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context
@@ -3672,11 +3672,11 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
     where
         F: 'static
             + FnMut(
-                &mut T,
+                &mut V,
                 &Keystroke,
                 Option<&Box<dyn Action>>,
                 &MatchResult,
-                &mut ViewContext<T>,
+                &mut ViewContext<V>,
             ) -> bool,
     {
         let observer = self.weak_handle();
@@ -3697,7 +3697,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn observe_window_bounds<F>(&mut self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, WindowBounds, Uuid, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, WindowBounds, Uuid, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context
@@ -3715,7 +3715,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn observe_active_labeled_tasks<F>(&mut self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut T, &mut ViewContext<T>),
+        F: 'static + FnMut(&mut V, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
         self.window_context.observe_active_labeled_tasks(move |cx| {
@@ -3730,7 +3730,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
         })
     }
 
-    pub fn emit(&mut self, payload: T::Event) {
+    pub fn emit(&mut self, payload: V::Event) {
         self.window_context
             .pending_effects
             .push_back(Effect::Event {
@@ -3754,7 +3754,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
             .dispatch_any_action_at(self.window_id, self.view_id, action)
     }
 
-    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
         let handle = self.handle();
         self.window_context.defer(move |cx| {
             handle.update(cx, |view, cx| {
@@ -3765,7 +3765,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn after_window_update(
         &mut self,
-        callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>),
+        callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>),
     ) {
         let handle = self.handle();
         self.window_context.after_window_update(move |cx| {
@@ -3781,7 +3781,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn spawn_labeled<F, Fut, S>(&mut self, task_label: &'static str, f: F) -> Task<S>
     where
-        F: FnOnce(ViewHandle<T>, AsyncAppContext) -> Fut,
+        F: FnOnce(ViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
@@ -3792,7 +3792,7 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn spawn<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
-        F: FnOnce(ViewHandle<T>, AsyncAppContext) -> Fut,
+        F: FnOnce(ViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
@@ -3802,78 +3802,12 @@ impl<'a, 'b, T: View> ViewContext<'a, 'b, T> {
 
     pub fn spawn_weak<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
-        F: FnOnce(WeakViewHandle<T>, AsyncAppContext) -> Fut,
+        F: FnOnce(WeakViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
         let handle = self.weak_handle();
         self.window_context.spawn(|cx| f(handle, cx))
-    }
-}
-
-pub struct RenderParams {
-    pub window_id: usize,
-    pub view_id: usize,
-    pub titlebar_height: f32,
-    pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
-    pub refreshing: bool,
-    pub appearance: Appearance,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MouseState {
-    pub(crate) hovered: bool,
-    pub(crate) clicked: Option<MouseButton>,
-    pub(crate) accessed_hovered: bool,
-    pub(crate) accessed_clicked: bool,
-}
-
-impl MouseState {
-    pub fn hovered(&mut self) -> bool {
-        self.accessed_hovered = true;
-        self.hovered
-    }
-
-    pub fn clicked(&mut self) -> Option<MouseButton> {
-        self.accessed_clicked = true;
-        self.clicked
-    }
-
-    pub fn accessed_hovered(&self) -> bool {
-        self.accessed_hovered
-    }
-
-    pub fn accessed_clicked(&self) -> bool {
-        self.accessed_clicked
-    }
-}
-
-impl<'a, V: View> RenderContext<'a, V> {
-    fn new(params: RenderParams, app: &'a mut AppContext) -> Self {
-        Self {
-            app,
-            window_id: params.window_id,
-            view_id: params.view_id,
-            view_type: PhantomData,
-            titlebar_height: params.titlebar_height,
-            hovered_region_ids: params.hovered_region_ids.clone(),
-            clicked_region_ids: params.clicked_region_ids.clone(),
-            refreshing: params.refreshing,
-            appearance: params.appearance,
-        }
-    }
-
-    pub fn handle(&self) -> WeakViewHandle<V> {
-        WeakViewHandle::new(self.window_id, self.view_id)
-    }
-
-    pub fn window_id(&self) -> usize {
-        self.window_id
-    }
-
-    pub fn view_id(&self) -> usize {
-        self.view_id
     }
 
     pub fn mouse_state<Tag: 'static>(&self, region_id: usize) -> MouseState {
@@ -3916,62 +3850,6 @@ impl<'a, V: View> RenderContext<'a, V> {
     }
 }
 
-impl<V: View> Deref for RenderContext<'_, V> {
-    type Target = AppContext;
-
-    fn deref(&self) -> &Self::Target {
-        self.app
-    }
-}
-
-impl<V: View> DerefMut for RenderContext<'_, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.app
-    }
-}
-
-impl<V: View> ReadModel for RenderContext<'_, V> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.read_model(handle)
-    }
-}
-
-impl<V: View> UpdateModel for RenderContext<'_, V> {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O {
-        self.app.update_model(handle, update)
-    }
-}
-
-impl<V: View> ReadView for RenderContext<'_, V> {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        self.app.read_view(handle)
-    }
-}
-
-impl<'a, 'b, M> Deref for ViewContext<'a, 'b, M> {
-    type Target = WindowContext<'a, 'b>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.window_context
-    }
-}
-
-impl<M> DerefMut for ViewContext<'_, '_, M> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.window_context
-    }
-}
-
-impl<V> ReadModel for ViewContext<'_, '_, V> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.window_context.read_model(handle)
-    }
-}
-
 impl<V> UpgradeModelHandle for ViewContext<'_, '_, V> {
     fn upgrade_model_handle<T: Entity>(
         &self,
@@ -3996,16 +3874,6 @@ impl<V> UpgradeViewHandle for ViewContext<'_, '_, V> {
 
     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
         self.window_context.upgrade_any_view_handle(handle)
-    }
-}
-
-impl<V: View> UpgradeViewHandle for RenderContext<'_, V> {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.app.upgrade_view_handle(handle)
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.app.upgrade_any_view_handle(handle)
     }
 }
 
@@ -4035,6 +3903,44 @@ impl<V: View> UpdateView for ViewContext<'_, '_, V> {
         T: View,
     {
         self.window_context.update_view(handle, update)
+    }
+}
+
+pub struct RenderParams {
+    pub window_id: usize,
+    pub view_id: usize,
+    pub titlebar_height: f32,
+    pub hovered_region_ids: HashSet<MouseRegionId>,
+    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
+    pub refreshing: bool,
+    pub appearance: Appearance,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MouseState {
+    pub(crate) hovered: bool,
+    pub(crate) clicked: Option<MouseButton>,
+    pub(crate) accessed_hovered: bool,
+    pub(crate) accessed_clicked: bool,
+}
+
+impl MouseState {
+    pub fn hovered(&mut self) -> bool {
+        self.accessed_hovered = true;
+        self.hovered
+    }
+
+    pub fn clicked(&mut self) -> Option<MouseButton> {
+        self.accessed_clicked = true;
+        self.clicked
+    }
+
+    pub fn accessed_hovered(&self) -> bool {
+        self.accessed_hovered
+    }
+
+    pub fn accessed_clicked(&self) -> bool {
+        self.accessed_clicked
     }
 }
 
@@ -5078,7 +4984,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 post_inc(&mut self.render_count);
                 Empty::new().boxed()
             }
@@ -5131,7 +5037,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
 
@@ -5195,7 +5101,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
                 enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
                 MouseEventHandler::<Handler>::new(0, cx, |_, _| Empty::new().boxed())
@@ -5261,7 +5167,7 @@ mod tests {
                 "View"
             }
 
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
         }
@@ -5779,7 +5685,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
 
@@ -5844,7 +5750,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
 
@@ -6020,7 +5926,7 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
 
@@ -6038,7 +5944,7 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
 
@@ -6190,7 +6096,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
 
@@ -6317,7 +6223,7 @@ mod tests {
         }
 
         impl super::View for View1 {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
             fn ui_name() -> &'static str {
@@ -6325,7 +6231,7 @@ mod tests {
             }
         }
         impl super::View for View2 {
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
             fn ui_name() -> &'static str {
@@ -6500,7 +6406,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
         }
@@ -6562,7 +6468,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().named(format!("render count: {}", post_inc(&mut self.0)))
             }
         }
@@ -6651,7 +6557,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 Empty::new().boxed()
             }
         }
@@ -6731,7 +6637,7 @@ mod tests {
                 "child view"
             }
 
-            fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
                 self.rendered.set(true);
                 Empty::new().boxed()
             }
@@ -6756,7 +6662,7 @@ mod tests {
                 "parent view"
             }
 
-            fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
                 if let Some(child) = self.child.as_ref() {
                     ChildView::new(child, cx).boxed()
                 } else {
@@ -6798,7 +6704,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox<Self> {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
             Empty::new().boxed()
         }
     }

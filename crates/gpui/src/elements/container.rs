@@ -308,7 +308,7 @@ impl<V: View> Element<V> for Container<V> {
         _: &Self::LayoutState,
         _: &Self::PaintState,
         view: &V,
-        cx: &crate::DebugContext,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "Container",

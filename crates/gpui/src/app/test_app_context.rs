@@ -74,7 +74,7 @@ impl TestAppContext {
 
     pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
         let mut cx = self.cx.borrow_mut();
-        if let Some(view_id) = cx.focused_view_id(window_id) {
+        if let Some(view_id) = cx.focused_view_id {
             cx.handle_dispatch_action_from_effect(window_id, Some(view_id), &action);
         }
     }
@@ -169,11 +169,11 @@ impl TestAppContext {
 
     pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
     where
-        F: FnOnce(&mut V, &mut RenderContext<V>) -> T,
+        F: FnOnce(&mut V, &mut ViewContext<V>) -> T,
         V: View,
     {
         handle.update(&mut *self.cx.borrow_mut(), |view, cx| {
-            let mut render_cx = RenderContext {
+            let mut render_cx = ViewContext {
                 app: cx,
                 window_id: handle.window_id(),
                 view_id: handle.id(),

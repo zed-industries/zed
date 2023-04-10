@@ -8,9 +8,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene,
-    window::MeasurementContext,
-    DebugContext, Element, LayoutContext, PaintContext, SizeConstraint,
+    scene, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 pub struct Svg {
@@ -32,14 +30,15 @@ impl Svg {
     }
 }
 
-impl Element for Svg {
+impl<V: View> Element<V> for Svg {
     type LayoutState = Option<usvg::Tree>;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         match cx.asset_cache.svg(&self.path) {
             Ok(tree) => {
@@ -59,13 +58,15 @@ impl Element for Svg {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         _visible_bounds: RectF,
         svg: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        _: &mut V,
+        _: &mut ViewContext<V>,
     ) {
         if let Some(svg) = svg.clone() {
-            cx.scene.push_icon(scene::Icon {
+            scene.push_icon(scene::Icon {
                 bounds,
                 svg,
                 path: self.path.clone(),
@@ -81,7 +82,8 @@ impl Element for Svg {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -91,7 +93,8 @@ impl Element for Svg {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "Svg",

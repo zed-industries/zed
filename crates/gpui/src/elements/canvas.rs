@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use super::Element;
 use crate::{
     json::{self, json},
@@ -9,18 +11,19 @@ use pathfinder_geometry::{
     vector::{vec2f, Vector2F},
 };
 
-pub struct Canvas<V, F>(F);
+pub struct Canvas<V, F>(F, PhantomData<V>);
 
-impl<V: View, F> Canvas<V, F>
+impl<V, F> Canvas<V, F>
 where
+    V: View,
     F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     pub fn new(f: F) -> Self {
-        Self(f)
+        Self(f, PhantomData)
     }
 }
 
-impl<V, F> Element<V> for Canvas<V, F>
+impl<V: View, F> Element<V> for Canvas<V, F>
 where
     F: FnMut(RectF, RectF, &mut ViewContext<V>),
 {
@@ -30,7 +33,8 @@ where
     fn layout(
         &mut self,
         constraint: crate::SizeConstraint,
-        _: &mut crate::LayoutContext,
+        _: &mut V,
+        _: &mut crate::ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() {
             constraint.max.x()

@@ -19,7 +19,7 @@ pub use scene::{Border, CursorRegion, MouseRegion, MouseRegionId, Quad, Scene, S
 pub mod text_layout;
 pub use text_layout::TextLayoutCache;
 mod util;
-pub use elements::{Element, ElementBox, ElementRc};
+pub use elements::{Element, ElementBox};
 pub mod executor;
 pub use executor::Task;
 pub mod color;
@@ -27,10 +27,7 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::test;
-pub use window::{
-    Axis, DebugContext, EventContext, LayoutContext, MeasurementContext, PaintContext,
-    SizeConstraint, Vector2FExt,
-};
+pub use window::{Axis, SizeConstraint, Vector2FExt};
 
 pub use anyhow;
 pub use serde_json;

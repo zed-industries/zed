@@ -87,6 +87,7 @@ pub struct WindowContext<'a: 'b, 'b> {
     app_context: &'a mut AppContext,
     pub(crate) window: &'b mut Window, // TODO: make this private?
     pub(crate) window_id: usize,
+    pub refreshing: bool,
 }
 
 impl Deref for WindowContext<'_, '_> {
