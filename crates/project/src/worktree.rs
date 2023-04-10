@@ -841,8 +841,7 @@ impl LocalWorktree {
                     .unwrap()
                     .path_changes_tx
                     .try_send((vec![abs_path], tx))
-                    .unwrap();
-            });
+            })?;
             rx.recv().await;
             Ok(())
         }))
@@ -933,7 +932,7 @@ impl LocalWorktree {
             }
 
             let (tx, mut rx) = barrier::channel();
-            path_changes_tx.try_send((paths, tx)).unwrap();
+            path_changes_tx.try_send((paths, tx))?;
             rx.recv().await;
             this.upgrade(&cx)
                 .ok_or_else(|| anyhow!("worktree was dropped"))?
