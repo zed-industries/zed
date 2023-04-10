@@ -4,8 +4,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{ChildView, Flex, ParentElement},
-    AnyViewHandle, Element, ElementBox, Entity, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, Entity, RenderContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
@@ -18,7 +18,7 @@ use workspace::{
 
 actions!(projects, [OpenRecent]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(RecentProjectsView::toggle);
     Picker::<RecentProjectsView>::init(cx);
 }

@@ -17,11 +17,14 @@ use parking_lot::{Mutex, RwLock};
 use smol::stream::StreamExt;
 
 use crate::{
-    executor, geometry::vector::Vector2F, keymap_matcher::Keystroke, platform, Action,
-    AnyViewHandle, AppContext, Appearance, Entity, Event, FontCache, Handle, InputHandler,
-    KeyDownEvent, ModelContext, ModelHandle, MutableAppContext, Platform, ReadModelWith,
-    ReadViewWith, RenderContext, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
-    WeakHandle,
+    executor,
+    geometry::vector::Vector2F,
+    keymap_matcher::Keystroke,
+    platform,
+    platform::{Appearance, Event, InputHandler, KeyDownEvent, Platform},
+    Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
+    ReadModelWith, ReadViewWith, RenderContext, Task, UpdateModel, UpdateView, View, ViewContext,
+    ViewHandle, WeakHandle,
 };
 use collections::BTreeMap;
 
@@ -31,7 +34,7 @@ use super::{
 
 #[derive(Clone)]
 pub struct TestAppContext {
-    cx: Rc<RefCell<MutableAppContext>>,
+    cx: Rc<RefCell<AppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
     condition_duration: Option<Duration>,
     pub function_name: String,
@@ -49,7 +52,7 @@ impl TestAppContext {
         first_entity_id: usize,
         function_name: String,
     ) -> Self {
-        let mut cx = MutableAppContext::new(
+        let mut cx = AppContext::new(
             foreground,
             background,
             platform,
@@ -150,15 +153,15 @@ impl TestAppContext {
         self.cx.borrow().window_ids().collect()
     }
 
-    pub fn root_view<T: View>(&self, window_id: usize) -> Option<ViewHandle<T>> {
+    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
         self.cx.borrow().root_view(window_id)
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
-        callback(self.cx.borrow().as_ref())
+        callback(&*self.cx.borrow())
     }
 
-    pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
+    pub fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, callback: F) -> T {
         let mut state = self.cx.borrow_mut();
         // Don't increment pending flushes in order for effects to be flushed before the callback
         // completes, which is helpful in tests.
@@ -195,7 +198,7 @@ impl TestAppContext {
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.cx.borrow().cx.font_cache.clone()
+        self.cx.borrow().font_cache.clone()
     }
 
     pub fn foreground_platform(&self) -> Rc<platform::test::ForegroundPlatform> {
@@ -203,7 +206,7 @@ impl TestAppContext {
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
-        self.cx.borrow().cx.platform.clone()
+        self.cx.borrow().platform.clone()
     }
 
     pub fn foreground(&self) -> Rc<executor::Foreground> {
@@ -397,7 +400,7 @@ impl ReadModelWith for TestAppContext {
         read: &mut dyn FnMut(&E, &AppContext) -> T,
     ) -> T {
         let cx = self.cx.borrow();
-        let cx = cx.as_ref();
+        let cx = &*cx;
         read(handle.read(cx), cx)
     }
 }
@@ -425,7 +428,7 @@ impl ReadViewWith for TestAppContext {
         V: View,
     {
         let cx = self.cx.borrow();
-        let cx = cx.as_ref();
+        let cx = &*cx;
         read(handle.read(cx), cx)
     }
 }
@@ -514,7 +517,7 @@ impl<T: Entity> ModelHandle<T> {
                 loop {
                     {
                         let cx = cx.borrow();
-                        let cx = cx.as_ref();
+                        let cx = &*cx;
                         if predicate(
                             handle
                                 .upgrade(cx)
@@ -601,7 +604,7 @@ impl<T: View> ViewHandle<T> {
                 loop {
                     {
                         let cx = cx.borrow();
-                        let cx = cx.as_ref();
+                        let cx = &*cx;
                         if predicate(
                             handle
                                 .upgrade(cx)

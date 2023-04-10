@@ -3,14 +3,14 @@ use std::sync::Arc;
 use crate::notifications::render_user_notification;
 use client::{ContactEventKind, User, UserStore};
 use gpui::{
-    elements::*, impl_internal_actions, Entity, ModelHandle, MutableAppContext, RenderContext,
-    View, ViewContext,
+    elements::*, impl_internal_actions, AppContext, Entity, ModelHandle, RenderContext, View,
+    ViewContext,
 };
 use workspace::notifications::Notification;
 
 impl_internal_actions!(contact_notifications, [Dismiss, RespondToContactRequest]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactNotification::dismiss);
     cx.add_action(ContactNotification::respond_to_contact_request);
 }

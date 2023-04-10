@@ -10,8 +10,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    AppContext, CursorStyle, Entity, ModelHandle, MouseButton, MutableAppContext, PromptLevel,
-    RenderContext, Subscription, View, ViewContext, ViewHandle,
+    platform::{CursorStyle, MouseButton, PromptLevel},
+    AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -24,7 +24,7 @@ use workspace::{JoinProject, OpenSharedScreen};
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
 impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactList::remove_contact);
     cx.add_action(ContactList::respond_to_contact_request);
     cx.add_action(ContactList::cancel);

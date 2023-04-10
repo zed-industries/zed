@@ -2,8 +2,10 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions, elements::*, platform::CursorStyle, Action, AppContext, Entity, ModelHandle,
-    MouseButton, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    actions,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    Action, AppContext, Entity, ModelHandle, RenderContext, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
@@ -46,7 +48,7 @@ struct Content {
     action: Option<Box<dyn Action>>,
 }
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ActivityIndicator::show_error_message);
     cx.add_action(ActivityIndicator::dismiss_error_message);
 }

@@ -1,11 +1,11 @@
 use std::{any::TypeId, ops::DerefMut};
 
 use collections::HashSet;
-use gpui::{AnyViewHandle, Entity, MutableAppContext, View, ViewContext, ViewHandle};
+use gpui::{AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle};
 
 use crate::Workspace;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
     simple_message_notification::init(cx);
 }
@@ -138,8 +138,9 @@ pub mod simple_message_notification {
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
-        impl_actions, Action, CursorStyle, Element, Entity, MouseButton, MutableAppContext, View,
-        ViewContext,
+        impl_actions,
+        platform::{CursorStyle, MouseButton},
+        Action, AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;
@@ -162,7 +163,7 @@ pub mod simple_message_notification {
 
     impl_actions!(message_notifications, [OsOpen]);
 
-    pub fn init(cx: &mut MutableAppContext) {
+    pub fn init(cx: &mut AppContext) {
         cx.add_action(MessageNotification::dismiss);
         cx.add_action(
             |_workspace: &mut Workspace, open_action: &OsOpen, cx: &mut ViewContext<Workspace>| {

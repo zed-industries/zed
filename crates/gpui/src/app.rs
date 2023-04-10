@@ -44,12 +44,13 @@ use crate::{
     elements::ElementBox,
     executor::{self, Task},
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
-    platform::{self, KeyDownEvent, Platform, PromptLevel, WindowOptions},
+    platform::{
+        self, Appearance, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
+        PathPromptOptions, Platform, PromptLevel, WindowBounds, WindowOptions,
+    },
     presenter::Presenter,
     util::post_inc,
-    Appearance, AssetCache, AssetSource, ClipboardItem, FontCache, KeyUpEvent,
-    ModifiersChangedEvent, MouseButton, MouseRegionId, PathPromptOptions, TextLayoutCache,
-    WindowBounds,
+    AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId, TextLayoutCache,
 };
 
 use self::ref_counts::RefCounts;
@@ -57,10 +58,10 @@ use self::ref_counts::RefCounts;
 pub trait Entity: 'static {
     type Event;
 
-    fn release(&mut self, _: &mut MutableAppContext) {}
+    fn release(&mut self, _: &mut AppContext) {}
     fn app_will_quit(
         &mut self,
-        _: &mut MutableAppContext,
+        _: &mut AppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
         None
     }
@@ -182,17 +183,17 @@ pub trait UpdateView {
 }
 
 #[derive(Clone)]
-pub struct App(Rc<RefCell<MutableAppContext>>);
+pub struct App(Rc<RefCell<AppContext>>);
 
 #[derive(Clone)]
-pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
+pub struct AsyncAppContext(Rc<RefCell<AppContext>>);
 
 impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
         let platform = platform::current::platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let foreground_platform = platform::current::foreground_platform(foreground.clone());
-        let app = Self(Rc::new(RefCell::new(MutableAppContext::new(
+        let app = Self(Rc::new(RefCell::new(AppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
             platform.clone(),
@@ -220,7 +221,7 @@ impl App {
 
     pub fn on_become_active<F>(self, mut callback: F) -> Self
     where
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&mut AppContext),
     {
         let cx = self.0.clone();
         self.0
@@ -232,7 +233,7 @@ impl App {
 
     pub fn on_resign_active<F>(self, mut callback: F) -> Self
     where
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&mut AppContext),
     {
         let cx = self.0.clone();
         self.0
@@ -244,7 +245,7 @@ impl App {
 
     pub fn on_quit<F>(&mut self, mut callback: F) -> &mut Self
     where
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&mut AppContext),
     {
         let cx = self.0.clone();
         self.0
@@ -257,7 +258,7 @@ impl App {
     /// Handle the application being re-activated when no windows are open.
     pub fn on_reopen<F>(&mut self, mut callback: F) -> &mut Self
     where
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&mut AppContext),
     {
         let cx = self.0.clone();
         self.0
@@ -269,7 +270,7 @@ impl App {
 
     pub fn on_event<F>(&mut self, mut callback: F) -> &mut Self
     where
-        F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(Event, &mut AppContext) -> bool,
     {
         let cx = self.0.clone();
         self.0
@@ -283,7 +284,7 @@ impl App {
 
     pub fn on_open_urls<F>(&mut self, mut callback: F) -> &mut Self
     where
-        F: 'static + FnMut(Vec<String>, &mut MutableAppContext),
+        F: 'static + FnMut(Vec<String>, &mut AppContext),
     {
         let cx = self.0.clone();
         self.0
@@ -295,7 +296,7 @@ impl App {
 
     pub fn run<F>(self, on_finish_launching: F)
     where
-        F: 'static + FnOnce(&mut MutableAppContext),
+        F: 'static + FnOnce(&mut AppContext),
     {
         let platform = self.0.borrow().foreground_platform.clone();
         platform.run(Box::new(move || {
@@ -307,14 +308,14 @@ impl App {
     }
 
     pub fn platform(&self) -> Arc<dyn Platform> {
-        self.0.borrow().platform()
+        self.0.borrow().platform.clone()
     }
 
     pub fn font_cache(&self) -> Arc<FontCache> {
-        self.0.borrow().cx.font_cache.clone()
+        self.0.borrow().font_cache.clone()
     }
 
-    fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, callback: F) -> T {
         let mut state = self.0.borrow_mut();
         let result = state.update(callback);
         state.pending_notifications.clear();
@@ -333,10 +334,10 @@ impl AsyncAppContext {
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
-        callback(self.0.borrow().as_ref())
+        callback(&*self.0.borrow())
     }
 
-    pub fn update<T, F: FnOnce(&mut MutableAppContext) -> T>(&mut self, callback: F) -> T {
+    pub fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, callback: F) -> T {
         self.0.borrow_mut().update(callback)
     }
 
@@ -379,7 +380,7 @@ impl AsyncAppContext {
     }
 
     pub fn platform(&self) -> Arc<dyn Platform> {
-        self.0.borrow().platform()
+        self.0.borrow().platform().clone()
     }
 
     pub fn foreground(&self) -> Rc<executor::Foreground> {
@@ -387,7 +388,7 @@ impl AsyncAppContext {
     }
 
     pub fn background(&self) -> Arc<executor::Background> {
-        self.0.borrow().cx.background.clone()
+        self.0.borrow().background.clone()
     }
 }
 
@@ -435,7 +436,7 @@ impl ReadModelWith for AsyncAppContext {
         read: &mut dyn FnMut(&E, &AppContext) -> T,
     ) -> T {
         let cx = self.0.borrow();
-        let cx = cx.as_ref();
+        let cx = &*cx;
         read(handle.read(cx), cx)
     }
 }
@@ -463,37 +464,45 @@ impl ReadViewWith for AsyncAppContext {
         V: View,
     {
         let cx = self.0.borrow();
-        let cx = cx.as_ref();
+        let cx = &*cx;
         read(handle.read(cx), cx)
     }
 }
 
-type ActionCallback =
-    dyn FnMut(&mut dyn AnyView, &dyn Action, &mut MutableAppContext, usize, usize);
-type GlobalActionCallback = dyn FnMut(&dyn Action, &mut MutableAppContext);
+type ActionCallback = dyn FnMut(&mut dyn AnyView, &dyn Action, &mut AppContext, usize, usize);
+type GlobalActionCallback = dyn FnMut(&dyn Action, &mut AppContext);
 
-type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext) -> bool>;
-type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
-type ObservationCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
-type GlobalObservationCallback = Box<dyn FnMut(&mut MutableAppContext)>;
-type FocusObservationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
-type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut MutableAppContext)>;
-type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut MutableAppContext)>;
-type WindowActivationCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
-type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut MutableAppContext) -> bool>;
-type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool>;
-type KeystrokeCallback = Box<
-    dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut MutableAppContext) -> bool,
->;
-type ActiveLabeledTasksCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool>;
+type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut AppContext)>;
+type ObservationCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
+type GlobalObservationCallback = Box<dyn FnMut(&mut AppContext)>;
+type FocusObservationCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
+type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut AppContext)>;
+type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut AppContext)>;
+type WindowActivationCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
+type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
+type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut AppContext) -> bool>;
+type KeystrokeCallback =
+    Box<dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut AppContext) -> bool>;
+type ActiveLabeledTasksCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
-type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut MutableAppContext) -> bool>;
+type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
 
-pub struct MutableAppContext {
+pub struct AppContext {
+    models: HashMap<usize, Box<dyn AnyModel>>,
+    views: HashMap<(usize, usize), Box<dyn AnyView>>,
+    pub(crate) parents: HashMap<(usize, usize), ParentId>,
+    windows: HashMap<usize, Window>,
+    globals: HashMap<TypeId, Box<dyn Any>>,
+    element_states: HashMap<ElementStateId, Box<dyn Any>>,
+    background: Arc<executor::Background>,
+    ref_counts: Arc<Mutex<RefCounts>>,
+    font_cache: Arc<FontCache>,
+    platform: Arc<dyn Platform>,
+
     weak_self: Option<rc::Weak<RefCell<Self>>>,
     foreground_platform: Rc<dyn platform::ForegroundPlatform>,
     assets: Arc<AssetCache>,
-    cx: AppContext,
     action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     // Entity Types -> { Action Types -> Action Handlers }
@@ -533,7 +542,7 @@ pub struct MutableAppContext {
     active_labeled_tasks: BTreeMap<usize, &'static str>,
 }
 
-impl MutableAppContext {
+impl AppContext {
     fn new(
         foreground: Rc<executor::Foreground>,
         background: Arc<executor::Background>,
@@ -544,21 +553,20 @@ impl MutableAppContext {
         asset_source: impl AssetSource,
     ) -> Self {
         Self {
+            models: Default::default(),
+            views: Default::default(),
+            parents: Default::default(),
+            windows: Default::default(),
+            globals: Default::default(),
+            element_states: Default::default(),
+            ref_counts: Arc::new(Mutex::new(ref_counts)),
+            background,
+            font_cache,
+            platform,
+
             weak_self: None,
             foreground_platform,
             assets: Arc::new(AssetCache::new(asset_source)),
-            cx: AppContext {
-                models: Default::default(),
-                views: Default::default(),
-                parents: Default::default(),
-                windows: Default::default(),
-                globals: Default::default(),
-                element_states: Default::default(),
-                ref_counts: Arc::new(Mutex::new(ref_counts)),
-                background,
-                font_cache,
-                platform,
-            },
             action_deserializers: Default::default(),
             capture_actions: Default::default(),
             actions: Default::default(),
@@ -602,15 +610,15 @@ impl MutableAppContext {
 
         self.update(|cx| {
             for model_id in cx.models.keys().copied().collect::<Vec<_>>() {
-                let mut model = cx.cx.models.remove(&model_id).unwrap();
+                let mut model = cx.models.remove(&model_id).unwrap();
                 futures.extend(model.app_will_quit(cx));
-                cx.cx.models.insert(model_id, model);
+                cx.models.insert(model_id, model);
             }
 
             for view_id in cx.views.keys().copied().collect::<Vec<_>>() {
-                let mut view = cx.cx.views.remove(&view_id).unwrap();
+                let mut view = cx.views.remove(&view_id).unwrap();
                 futures.extend(view.app_will_quit(cx));
-                cx.cx.views.insert(view_id, view);
+                cx.views.insert(view_id, view);
             }
         });
 
@@ -627,26 +635,14 @@ impl MutableAppContext {
     }
 
     pub fn remove_all_windows(&mut self) {
-        for (window_id, _) in self.cx.windows.drain() {
+        for (window_id, _) in self.windows.drain() {
             self.presenters_and_platform_windows.remove(&window_id);
         }
         self.flush_effects();
     }
 
-    pub fn platform(&self) -> Arc<dyn platform::Platform> {
-        self.cx.platform.clone()
-    }
-
-    pub fn font_cache(&self) -> &Arc<FontCache> {
-        &self.cx.font_cache
-    }
-
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
         &self.foreground
-    }
-
-    pub fn background(&self) -> &Arc<executor::Background> {
-        &self.cx.background
     }
 
     pub fn debug_elements(&self, window_id: usize) -> Option<crate::json::Value> {
@@ -696,7 +692,7 @@ impl MutableAppContext {
         let handler = Box::new(
             move |view: &mut dyn AnyView,
                   action: &dyn Action,
-                  cx: &mut MutableAppContext,
+                  cx: &mut AppContext,
                   window_id: usize,
                   view_id: usize| {
                 let action = action.as_any().downcast_ref().unwrap();
@@ -745,9 +741,9 @@ impl MutableAppContext {
     pub fn add_global_action<A, F>(&mut self, mut handler: F)
     where
         A: Action,
-        F: 'static + FnMut(&A, &mut MutableAppContext),
+        F: 'static + FnMut(&A, &mut AppContext),
     {
-        let handler = Box::new(move |action: &dyn Action, cx: &mut MutableAppContext| {
+        let handler = Box::new(move |action: &dyn Action, cx: &mut AppContext| {
             let action = action.as_any().downcast_ref().unwrap();
             handler(action, cx);
         });
@@ -783,7 +779,7 @@ impl MutableAppContext {
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.cx.windows.keys().copied()
+        self.windows.keys().copied()
     }
 
     pub fn activate_window(&self, window_id: usize) {
@@ -792,23 +788,14 @@ impl MutableAppContext {
         }
     }
 
-    pub fn root_view<T: View>(&self, window_id: usize) -> Option<ViewHandle<T>> {
-        self.cx
-            .windows
-            .get(&window_id)
-            .and_then(|window| window.root_view.clone().downcast::<T>())
-    }
-
     pub fn window_is_active(&self, window_id: usize) -> bool {
-        self.cx
-            .windows
+        self.windows
             .get(&window_id)
             .map_or(false, |window| window.is_active)
     }
 
     pub fn window_is_fullscreen(&self, window_id: usize) -> bool {
-        self.cx
-            .windows
+        self.windows
             .get(&window_id)
             .map_or(false, |window| window.is_fullscreen)
     }
@@ -833,12 +820,11 @@ impl MutableAppContext {
         let window_id = params.window_id;
         let view_id = params.view_id;
         let mut view = self
-            .cx
             .views
             .remove(&(window_id, view_id))
             .ok_or_else(|| anyhow!("view not found"))?;
         let element = view.render(params, self);
-        self.cx.views.insert((window_id, view_id), view);
+        self.views.insert((window_id, view_id), view);
         Ok(element)
     }
 
@@ -1005,7 +991,7 @@ impl MutableAppContext {
             entity_id: handle.id(),
             subscription_id,
             callback: Box::new(move |payload, cx| {
-                if let Some(emitter) = H::upgrade_from(&emitter, cx.as_ref()) {
+                if let Some(emitter) = H::upgrade_from(&emitter, cx) {
                     let payload = payload.downcast_ref().expect("downcast is type safe");
                     callback(emitter, payload, cx)
                 } else {
@@ -1042,7 +1028,7 @@ impl MutableAppContext {
 
     fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(ViewHandle<V>, bool, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(ViewHandle<V>, bool, &mut AppContext) -> bool,
         V: View,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
@@ -1066,7 +1052,7 @@ impl MutableAppContext {
     pub fn observe_global<G, F>(&mut self, mut observe: F) -> Subscription
     where
         G: Any,
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&mut AppContext),
     {
         let type_id = TypeId::of::<G>();
         let id = post_inc(&mut self.next_subscription_id);
@@ -1074,7 +1060,7 @@ impl MutableAppContext {
         self.global_observations.add_callback(
             type_id,
             id,
-            Box::new(move |cx: &mut MutableAppContext| observe(cx)),
+            Box::new(move |cx: &mut AppContext| observe(cx)),
         );
         Subscription::GlobalObservation(self.global_observations.subscribe(type_id, id))
     }
@@ -1082,7 +1068,7 @@ impl MutableAppContext {
     pub fn observe_default_global<G, F>(&mut self, observe: F) -> Subscription
     where
         G: Any + Default,
-        F: 'static + FnMut(&mut MutableAppContext),
+        F: 'static + FnMut(&mut AppContext),
     {
         if !self.has_global::<G>() {
             self.set_global(G::default());
@@ -1114,7 +1100,7 @@ impl MutableAppContext {
 
     pub fn observe_actions<F>(&mut self, callback: F) -> Subscription
     where
-        F: 'static + FnMut(TypeId, &mut MutableAppContext),
+        F: 'static + FnMut(TypeId, &mut AppContext),
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.action_dispatch_observations
@@ -1127,7 +1113,7 @@ impl MutableAppContext {
 
     fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
-        F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(bool, &mut AppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.pending_effects
@@ -1144,7 +1130,7 @@ impl MutableAppContext {
 
     fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
-        F: 'static + FnMut(bool, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(bool, &mut AppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.pending_effects
@@ -1161,7 +1147,7 @@ impl MutableAppContext {
 
     fn observe_window_bounds<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
-        F: 'static + FnMut(WindowBounds, Uuid, &mut MutableAppContext) -> bool,
+        F: 'static + FnMut(WindowBounds, Uuid, &mut AppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.pending_effects
@@ -1179,12 +1165,7 @@ impl MutableAppContext {
     pub fn observe_keystrokes<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
         F: 'static
-            + FnMut(
-                &Keystroke,
-                &MatchResult,
-                Option<&Box<dyn Action>>,
-                &mut MutableAppContext,
-            ) -> bool,
+            + FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut AppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.keystroke_observations
@@ -1197,7 +1178,7 @@ impl MutableAppContext {
 
     pub fn observe_active_labeled_tasks<F>(&mut self, callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut MutableAppContext) -> bool,
+        F: 'static + FnMut(&mut AppContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.active_labeled_task_observations
@@ -1208,14 +1189,14 @@ impl MutableAppContext {
         )
     }
 
-    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut AppContext)) {
         self.pending_effects.push_back(Effect::Deferred {
             callback: Box::new(callback),
             after_window_update: false,
         })
     }
 
-    pub fn after_window_update(&mut self, callback: impl 'static + FnOnce(&mut MutableAppContext)) {
+    pub fn after_window_update(&mut self, callback: impl 'static + FnOnce(&mut AppContext)) {
         self.pending_effects.push_back(Effect::Deferred {
             callback: Box::new(callback),
             after_window_update: true,
@@ -1343,7 +1324,7 @@ impl MutableAppContext {
 
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
         let action_type = action.as_any().type_id();
-        if let Some(window_id) = self.cx.platform.main_window_id() {
+        if let Some(window_id) = self.platform.main_window_id() {
             if let Some(focused_view_id) = self.focused_view_id(window_id) {
                 for view_id in self.ancestors(window_id, focused_view_id) {
                     if let Some(view) = self.views.get(&(window_id, view_id)) {
@@ -1368,7 +1349,7 @@ impl MutableAppContext {
         &mut self,
         window_id: usize,
         view_id: usize,
-        mut visit: impl FnMut(usize, bool, &mut MutableAppContext) -> bool,
+        mut visit: impl FnMut(usize, bool, &mut AppContext) -> bool,
     ) -> bool {
         // List of view ids from the leaf to the root of the window
         let path = self.ancestors(window_id, view_id).collect::<Vec<_>>();
@@ -1431,9 +1412,9 @@ impl MutableAppContext {
                 .ancestors(window_id, focused_view_id)
                 .collect::<Vec<_>>()
             {
-                if let Some(mut view) = self.cx.views.remove(&(window_id, view_id)) {
+                if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
                     let handled = view.key_down(event, self, window_id, view_id);
-                    self.cx.views.insert((window_id, view_id), view);
+                    self.views.insert((window_id, view_id), view);
                     if handled {
                         return true;
                     }
@@ -1452,9 +1433,9 @@ impl MutableAppContext {
                 .ancestors(window_id, focused_view_id)
                 .collect::<Vec<_>>()
             {
-                if let Some(mut view) = self.cx.views.remove(&(window_id, view_id)) {
+                if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
                     let handled = view.key_up(event, self, window_id, view_id);
-                    self.cx.views.insert((window_id, view_id), view);
+                    self.views.insert((window_id, view_id), view);
                     if handled {
                         return true;
                     }
@@ -1477,9 +1458,9 @@ impl MutableAppContext {
                 .ancestors(window_id, focused_view_id)
                 .collect::<Vec<_>>()
             {
-                if let Some(mut view) = self.cx.views.remove(&(window_id, view_id)) {
+                if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
                     let handled = view.modifiers_changed(event, self, window_id, view_id);
-                    self.cx.views.insert((window_id, view_id), view);
+                    self.views.insert((window_id, view_id), view);
                     if handled {
                         return true;
                     }
@@ -1497,10 +1478,9 @@ impl MutableAppContext {
             let dispatch_path = self
                 .ancestors(window_id, focused_view_id)
                 .filter_map(|view_id| {
-                    self.cx
-                        .views
+                    self.views
                         .get(&(window_id, view_id))
-                        .map(|view| (view_id, view.keymap_context(self.as_ref())))
+                        .map(|view| (view_id, view.keymap_context(self)))
                 })
                 .collect();
 
@@ -1544,7 +1524,7 @@ impl MutableAppContext {
     pub fn default_global<T: 'static + Default>(&mut self) -> &T {
         let type_id = TypeId::of::<T>();
         self.update(|this| {
-            if let Entry::Vacant(entry) = this.cx.globals.entry(type_id) {
+            if let Entry::Vacant(entry) = this.globals.entry(type_id) {
                 entry.insert(Box::new(T::default()));
                 this.notify_global(type_id);
             }
@@ -1555,7 +1535,7 @@ impl MutableAppContext {
     pub fn set_global<T: 'static>(&mut self, state: T) {
         self.update(|this| {
             let type_id = TypeId::of::<T>();
-            this.cx.globals.insert(type_id, Box::new(state));
+            this.globals.insert(type_id, Box::new(state));
             this.notify_global(type_id);
         });
     }
@@ -1563,17 +1543,16 @@ impl MutableAppContext {
     pub fn update_default_global<T, F, U>(&mut self, update: F) -> U
     where
         T: 'static + Default,
-        F: FnOnce(&mut T, &mut MutableAppContext) -> U,
+        F: FnOnce(&mut T, &mut AppContext) -> U,
     {
         self.update(|this| {
             let type_id = TypeId::of::<T>();
             let mut state = this
-                .cx
                 .globals
                 .remove(&type_id)
                 .unwrap_or_else(|| Box::new(T::default()));
             let result = update(state.downcast_mut().unwrap(), this);
-            this.cx.globals.insert(type_id, state);
+            this.globals.insert(type_id, state);
             this.notify_global(type_id);
             result
         })
@@ -1582,13 +1561,13 @@ impl MutableAppContext {
     pub fn update_global<T, F, U>(&mut self, update: F) -> U
     where
         T: 'static,
-        F: FnOnce(&mut T, &mut MutableAppContext) -> U,
+        F: FnOnce(&mut T, &mut AppContext) -> U,
     {
         self.update(|this| {
             let type_id = TypeId::of::<T>();
-            if let Some(mut state) = this.cx.globals.remove(&type_id) {
+            if let Some(mut state) = this.globals.remove(&type_id) {
                 let result = update(state.downcast_mut().unwrap(), this);
-                this.cx.globals.insert(type_id, state);
+                this.globals.insert(type_id, state);
                 this.notify_global(type_id);
                 result
             } else {
@@ -1598,7 +1577,7 @@ impl MutableAppContext {
     }
 
     pub fn clear_globals(&mut self) {
-        self.cx.globals.clear();
+        self.globals.clear();
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -1608,10 +1587,10 @@ impl MutableAppContext {
     {
         self.update(|this| {
             let model_id = post_inc(&mut this.next_entity_id);
-            let handle = ModelHandle::new(model_id, &this.cx.ref_counts);
+            let handle = ModelHandle::new(model_id, &this.ref_counts);
             let mut cx = ModelContext::new(this, model_id);
             let model = build_model(&mut cx);
-            this.cx.models.insert(model_id, Box::new(model));
+            this.models.insert(model_id, Box::new(model));
             handle
         })
     }
@@ -1630,7 +1609,7 @@ impl MutableAppContext {
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
-            this.cx.windows.insert(
+            this.windows.insert(
                 window_id,
                 Window {
                     root_view: root_view.clone().into_any(),
@@ -1643,8 +1622,7 @@ impl MutableAppContext {
             root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
 
             let window =
-                this.cx
-                    .platform
+                this.platform
                     .open_window(window_id, window_options, this.foreground.clone());
             this.register_platform_window(window_id, window);
 
@@ -1663,7 +1641,7 @@ impl MutableAppContext {
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
             let focused_view_id = root_view.id();
-            this.cx.windows.insert(
+            this.windows.insert(
                 window_id,
                 Window {
                     root_view: root_view.clone().into_any(),
@@ -1675,7 +1653,7 @@ impl MutableAppContext {
             );
             root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
 
-            let status_item = this.cx.platform.add_status_item();
+            let status_item = this.platform.add_status_item();
             this.register_platform_window(window_id, status_item);
 
             (window_id, root_view)
@@ -1783,7 +1761,7 @@ impl MutableAppContext {
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
-            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            let window = this.windows.get_mut(&window_id).unwrap();
             window.root_view = root_view.clone().into_any();
             window.focused_view_id = Some(root_view.id());
             root_view
@@ -1791,7 +1769,7 @@ impl MutableAppContext {
     }
 
     pub fn remove_window(&mut self, window_id: usize) {
-        self.cx.windows.remove(&window_id);
+        self.windows.remove(&window_id);
         self.presenters_and_platform_windows.remove(&window_id);
         self.flush_effects();
     }
@@ -1806,8 +1784,8 @@ impl MutableAppContext {
             window_id,
             titlebar_height,
             appearance,
-            self.cx.font_cache.clone(),
-            TextLayoutCache::new(self.cx.platform.fonts()),
+            self.font_cache.clone(),
+            TextLayoutCache::new(self.platform.fonts()),
             self.assets.clone(),
             self,
         )
@@ -1856,20 +1834,20 @@ impl MutableAppContext {
         self.update(|this| {
             let view_id = post_inc(&mut this.next_entity_id);
             // Make sure we can tell child views about their parent
-            this.cx.parents.insert((window_id, view_id), parent_id);
+            this.parents.insert((window_id, view_id), parent_id);
             let mut cx = ViewContext::new(this, window_id, view_id);
             let handle = if let Some(view) = build_view(&mut cx) {
-                this.cx.views.insert((window_id, view_id), Box::new(view));
-                if let Some(window) = this.cx.windows.get_mut(&window_id) {
+                this.views.insert((window_id, view_id), Box::new(view));
+                if let Some(window) = this.windows.get_mut(&window_id) {
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
                         .updated
                         .insert(view_id);
                 }
-                Some(ViewHandle::new(window_id, view_id, &this.cx.ref_counts))
+                Some(ViewHandle::new(window_id, view_id, &this.ref_counts))
             } else {
-                this.cx.parents.remove(&(window_id, view_id));
+                this.parents.remove(&(window_id, view_id));
                 None
             };
             handle
@@ -1879,7 +1857,7 @@ impl MutableAppContext {
     fn remove_dropped_entities(&mut self) {
         loop {
             let (dropped_models, dropped_views, dropped_element_states) =
-                self.cx.ref_counts.lock().take_dropped();
+                self.ref_counts.lock().take_dropped();
             if dropped_models.is_empty()
                 && dropped_views.is_empty()
                 && dropped_element_states.is_empty()
@@ -1890,7 +1868,7 @@ impl MutableAppContext {
             for model_id in dropped_models {
                 self.subscriptions.remove(model_id);
                 self.observations.remove(model_id);
-                let mut model = self.cx.models.remove(&model_id).unwrap();
+                let mut model = self.models.remove(&model_id).unwrap();
                 model.release(self);
                 self.pending_effects
                     .push_back(Effect::ModelRelease { model_id, model });
@@ -1899,9 +1877,9 @@ impl MutableAppContext {
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(view_id);
                 self.observations.remove(view_id);
-                let mut view = self.cx.views.remove(&(window_id, view_id)).unwrap();
+                let mut view = self.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
-                let change_focus_to = self.cx.windows.get_mut(&window_id).and_then(|window| {
+                let change_focus_to = self.windows.get_mut(&window_id).and_then(|window| {
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
@@ -1913,7 +1891,7 @@ impl MutableAppContext {
                         None
                     }
                 });
-                self.cx.parents.remove(&(window_id, view_id));
+                self.parents.remove(&(window_id, view_id));
 
                 if let Some(view_id) = change_focus_to {
                     self.handle_focus_effect(window_id, Some(view_id));
@@ -1924,7 +1902,7 @@ impl MutableAppContext {
             }
 
             for key in dropped_element_states {
-                self.cx.element_states.remove(&key);
+                self.element_states.remove(&key);
             }
         }
     }
@@ -2028,7 +2006,7 @@ impl MutableAppContext {
                         }
 
                         Effect::ResizeWindow { window_id } => {
-                            if let Some(window) = self.cx.windows.get_mut(&window_id) {
+                            if let Some(window) = self.windows.get_mut(&window_id) {
                                 window
                                     .invalidation
                                     .get_or_insert(WindowInvalidation::default());
@@ -2153,7 +2131,7 @@ impl MutableAppContext {
 
     fn update_windows(&mut self) {
         let mut invalidations: HashMap<_, _> = Default::default();
-        for (window_id, window) in &mut self.cx.windows {
+        for (window_id, window) in &mut self.windows {
             if let Some(invalidation) = window.invalidation.take() {
                 invalidations.insert(*window_id, invalidation);
             }
@@ -2243,13 +2221,7 @@ impl MutableAppContext {
     fn perform_window_refresh(&mut self) {
         let mut presenters = mem::take(&mut self.presenters_and_platform_windows);
         for (window_id, (presenter, window)) in &mut presenters {
-            let mut invalidation = self
-                .cx
-                .windows
-                .get_mut(window_id)
-                .unwrap()
-                .invalidation
-                .take();
+            let mut invalidation = self.windows.get_mut(window_id).unwrap().invalidation.take();
             let mut presenter = presenter.borrow_mut();
             presenter.refresh(
                 invalidation.as_mut().unwrap_or(&mut Default::default()),
@@ -2279,11 +2251,10 @@ impl MutableAppContext {
         observed_view_id: usize,
     ) {
         if self
-            .cx
             .views
             .contains_key(&(observed_window_id, observed_view_id))
         {
-            if let Some(window) = self.cx.windows.get_mut(&observed_window_id) {
+            if let Some(window) = self.windows.get_mut(&observed_window_id) {
                 window
                     .invalidation
                     .get_or_insert_with(Default::default)
@@ -2309,7 +2280,6 @@ impl MutableAppContext {
     fn handle_fullscreen_effect(&mut self, window_id: usize, is_fullscreen: bool) {
         //Short circuit evaluation if we're already g2g
         if self
-            .cx
             .windows
             .get(&window_id)
             .map(|w| w.is_fullscreen == is_fullscreen)
@@ -2319,7 +2289,7 @@ impl MutableAppContext {
         }
 
         self.update(|this| {
-            let window = this.cx.windows.get_mut(&window_id)?;
+            let window = this.windows.get_mut(&window_id)?;
             window.is_fullscreen = is_fullscreen;
 
             let mut fullscreen_observations = this.window_fullscreen_observations.clone();
@@ -2359,7 +2329,6 @@ impl MutableAppContext {
     fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
         //Short circuit evaluation if we're already g2g
         if self
-            .cx
             .windows
             .get(&window_id)
             .map(|w| w.is_active == active)
@@ -2369,19 +2338,19 @@ impl MutableAppContext {
         }
 
         self.update(|this| {
-            let window = this.cx.windows.get_mut(&window_id)?;
+            let window = this.windows.get_mut(&window_id)?;
             window.is_active = active;
 
             //Handle focus
             let focused_id = window.focused_view_id?;
             for view_id in this.ancestors(window_id, focused_id).collect::<Vec<_>>() {
-                if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                if let Some(mut view) = this.views.remove(&(window_id, view_id)) {
                     if active {
                         view.focus_in(this, window_id, view_id, focused_id);
                     } else {
                         view.focus_out(this, window_id, view_id, focused_id);
                     }
-                    this.cx.views.insert((window_id, view_id), view);
+                    this.views.insert((window_id, view_id), view);
                 }
             }
 
@@ -2394,7 +2363,6 @@ impl MutableAppContext {
 
     fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
         if self
-            .cx
             .windows
             .get(&window_id)
             .map(|w| w.focused_view_id)
@@ -2404,7 +2372,7 @@ impl MutableAppContext {
         }
 
         self.update(|this| {
-            let blurred_id = this.cx.windows.get_mut(&window_id).and_then(|window| {
+            let blurred_id = this.windows.get_mut(&window_id).and_then(|window| {
                 let blurred_id = window.focused_view_id;
                 window.focused_view_id = focused_id;
                 blurred_id
@@ -2419,9 +2387,9 @@ impl MutableAppContext {
 
             if let Some(blurred_id) = blurred_id {
                 for view_id in blurred_parents.iter().copied() {
-                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                    if let Some(mut view) = this.views.remove(&(window_id, view_id)) {
                         view.focus_out(this, window_id, view_id, blurred_id);
-                        this.cx.views.insert((window_id, view_id), view);
+                        this.views.insert((window_id, view_id), view);
                     }
                 }
 
@@ -2431,9 +2399,9 @@ impl MutableAppContext {
 
             if let Some(focused_id) = focused_id {
                 for view_id in focused_parents {
-                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                    if let Some(mut view) = this.views.remove(&(window_id, view_id)) {
                         view.focus_in(this, window_id, view_id, focused_id);
-                        this.cx.views.insert((window_id, view_id), view);
+                        this.views.insert((window_id, view_id), view);
                     }
                 }
 
@@ -2453,7 +2421,7 @@ impl MutableAppContext {
             if let Some(view_id) = view_id {
                 this.halt_action_dispatch = false;
                 this.visit_dispatch_path(window_id, view_id, |view_id, capture_phase, this| {
-                    if let Some(mut view) = this.cx.views.remove(&(window_id, view_id)) {
+                    if let Some(mut view) = this.views.remove(&(window_id, view_id)) {
                         let type_id = view.as_any().type_id();
 
                         if let Some((name, mut handlers)) = this
@@ -2474,7 +2442,7 @@ impl MutableAppContext {
                                 .insert(name, handlers);
                         }
 
-                        this.cx.views.insert((window_id, view_id), view);
+                        this.views.insert((window_id, view_id), view);
                     }
 
                     !this.halt_action_dispatch
@@ -2594,22 +2562,22 @@ impl MutableAppContext {
     }
 
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
-        self.cx.platform.write_to_clipboard(item);
+        self.platform.write_to_clipboard(item);
     }
 
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        self.cx.platform.read_from_clipboard()
+        self.platform.read_from_clipboard()
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn leak_detector(&self) -> Arc<Mutex<LeakDetector>> {
-        self.cx.ref_counts.lock().leak_detector.clone()
+        self.ref_counts.lock().leak_detector.clone()
     }
 }
 
-impl ReadModel for MutableAppContext {
+impl ReadModel for AppContext {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        if let Some(model) = self.cx.models.get(&handle.model_id) {
+        if let Some(model) = self.models.get(&handle.model_id) {
             model
                 .as_any()
                 .downcast_ref()
@@ -2620,13 +2588,13 @@ impl ReadModel for MutableAppContext {
     }
 }
 
-impl UpdateModel for MutableAppContext {
+impl UpdateModel for AppContext {
     fn update_model<T: Entity, V>(
         &mut self,
         handle: &ModelHandle<T>,
         update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
     ) -> V {
-        if let Some(mut model) = self.cx.models.remove(&handle.model_id) {
+        if let Some(mut model) = self.models.remove(&handle.model_id) {
             self.update(|this| {
                 let mut cx = ModelContext::new(this, handle.model_id);
                 let result = update(
@@ -2636,7 +2604,7 @@ impl UpdateModel for MutableAppContext {
                         .expect("downcast is type safe"),
                     &mut cx,
                 );
-                this.cx.models.insert(handle.model_id, model);
+                this.models.insert(handle.model_id, model);
                 result
             })
         } else {
@@ -2645,36 +2613,65 @@ impl UpdateModel for MutableAppContext {
     }
 }
 
-impl UpgradeModelHandle for MutableAppContext {
+impl UpgradeModelHandle for AppContext {
     fn upgrade_model_handle<T: Entity>(
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        self.cx.upgrade_model_handle(handle)
+        if self.models.contains_key(&handle.model_id) {
+            Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        } else {
+            None
+        }
     }
 
     fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.cx.model_handle_is_upgradable(handle)
+        self.models.contains_key(&handle.model_id)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.cx.upgrade_any_model_handle(handle)
+        if self.models.contains_key(&handle.model_id) {
+            Some(AnyModelHandle::new(
+                handle.model_id,
+                handle.model_type,
+                self.ref_counts.clone(),
+            ))
+        } else {
+            None
+        }
     }
 }
 
-impl UpgradeViewHandle for MutableAppContext {
+impl UpgradeViewHandle for AppContext {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.cx.upgrade_view_handle(handle)
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(ViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                &self.ref_counts,
+            ))
+        } else {
+            None
+        }
     }
 
     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.cx.upgrade_any_view_handle(handle)
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(AnyViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                handle.view_type,
+                self.ref_counts.clone(),
+            ))
+        } else {
+            None
+        }
     }
 }
 
-impl ReadView for MutableAppContext {
+impl ReadView for AppContext {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.cx.views.get(&(handle.window_id, handle.view_id)) {
+        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
             panic!("circular view reference for type {}", type_name::<T>());
@@ -2682,7 +2679,7 @@ impl ReadView for MutableAppContext {
     }
 }
 
-impl UpdateView for MutableAppContext {
+impl UpdateView for AppContext {
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
@@ -2693,7 +2690,6 @@ impl UpdateView for MutableAppContext {
     {
         self.update(|this| {
             let mut view = this
-                .cx
                 .views
                 .remove(&(handle.window_id, handle.view_id))
                 .expect("circular view update");
@@ -2705,25 +2701,9 @@ impl UpdateView for MutableAppContext {
                     .expect("downcast is type safe"),
                 &mut cx,
             );
-            this.cx
-                .views
-                .insert((handle.window_id, handle.view_id), view);
+            this.views.insert((handle.window_id, handle.view_id), view);
             result
         })
-    }
-}
-
-impl AsRef<AppContext> for MutableAppContext {
-    fn as_ref(&self) -> &AppContext {
-        &self.cx
-    }
-}
-
-impl Deref for MutableAppContext {
-    type Target = AppContext;
-
-    fn deref(&self) -> &Self::Target {
-        &self.cx
     }
 }
 
@@ -2733,21 +2713,8 @@ pub enum ParentId {
     Root,
 }
 
-pub struct AppContext {
-    models: HashMap<usize, Box<dyn AnyModel>>,
-    views: HashMap<(usize, usize), Box<dyn AnyView>>,
-    pub(crate) parents: HashMap<(usize, usize), ParentId>,
-    windows: HashMap<usize, Window>,
-    globals: HashMap<TypeId, Box<dyn Any>>,
-    element_states: HashMap<ElementStateId, Box<dyn Any>>,
-    background: Arc<executor::Background>,
-    ref_counts: Arc<Mutex<RefCounts>>,
-    font_cache: Arc<FontCache>,
-    platform: Arc<dyn Platform>,
-}
-
 impl AppContext {
-    pub(crate) fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
         self.windows
             .get(&window_id)
             .map(|window| window.root_view.clone())
@@ -2816,7 +2783,7 @@ impl AppContext {
 
     /// Returns the id of the parent of the given view, or none if the given
     /// view is the root.
-    fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
+    pub fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
         if let Some(ParentId::View(view_id)) = self.parents.get(&(window_id, view_id)) {
             Some(*view_id)
         } else {
@@ -2835,88 +2802,7 @@ impl AppContext {
     }
 }
 
-impl ReadModel for AppContext {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        if let Some(model) = self.models.get(&handle.model_id) {
-            model
-                .as_any()
-                .downcast_ref()
-                .expect("downcast should be type safe")
-        } else {
-            panic!("circular model reference");
-        }
-    }
-}
-
-impl UpgradeModelHandle for AppContext {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        if self.models.contains_key(&handle.model_id) {
-            Some(ModelHandle::new(handle.model_id, &self.ref_counts))
-        } else {
-            None
-        }
-    }
-
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.models.contains_key(&handle.model_id)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        if self.models.contains_key(&handle.model_id) {
-            Some(AnyModelHandle::new(
-                handle.model_id,
-                handle.model_type,
-                self.ref_counts.clone(),
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-impl UpgradeViewHandle for AppContext {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
-            Some(ViewHandle::new(
-                handle.window_id,
-                handle.view_id,
-                &self.ref_counts,
-            ))
-        } else {
-            None
-        }
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
-            Some(AnyViewHandle::new(
-                handle.window_id,
-                handle.view_id,
-                handle.view_type,
-                self.ref_counts.clone(),
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-impl ReadView for AppContext {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
-            view.as_any()
-                .downcast_ref()
-                .expect("downcast should be type safe")
-        } else {
-            panic!("circular view reference");
-        }
-    }
-}
-
-struct Window {
+pub struct Window {
     root_view: AnyViewHandle,
     focused_view_id: Option<usize>,
     is_active: bool,
@@ -2961,7 +2847,7 @@ pub enum Effect {
         view_id: usize,
     },
     Deferred {
-        callback: Box<dyn FnOnce(&mut MutableAppContext)>,
+        callback: Box<dyn FnOnce(&mut AppContext)>,
         after_window_update: bool,
     },
     GlobalNotification {
@@ -3213,10 +3099,10 @@ impl Debug for Effect {
 pub trait AnyModel {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn release(&mut self, cx: &mut MutableAppContext);
+    fn release(&mut self, cx: &mut AppContext);
     fn app_will_quit(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
 }
 
@@ -3232,13 +3118,13 @@ where
         self
     }
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         self.release(cx);
     }
 
     fn app_will_quit(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
         self.app_will_quit(cx)
     }
@@ -3247,23 +3133,23 @@ where
 pub trait AnyView {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn release(&mut self, cx: &mut MutableAppContext);
+    fn release(&mut self, cx: &mut AppContext);
     fn app_will_quit(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
-    fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox;
+    fn render(&mut self, params: RenderParams, cx: &mut AppContext) -> ElementBox;
     fn focus_in(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
         focused_id: usize,
     );
     fn focus_out(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
         focused_id: usize,
@@ -3271,21 +3157,21 @@ pub trait AnyView {
     fn key_down(
         &mut self,
         event: &KeyDownEvent,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) -> bool;
     fn key_up(
         &mut self,
         event: &KeyUpEvent,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) -> bool;
     fn modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) -> bool;
@@ -3295,12 +3181,12 @@ pub trait AnyView {
     fn text_for_range(&self, range: Range<usize>, cx: &AppContext) -> Option<String>;
     fn selected_text_range(&self, cx: &AppContext) -> Option<Range<usize>>;
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>>;
-    fn unmark_text(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize);
+    fn unmark_text(&mut self, cx: &mut AppContext, window_id: usize, view_id: usize);
     fn replace_text_in_range(
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     );
@@ -3309,7 +3195,7 @@ pub trait AnyView {
         range: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     );
@@ -3335,13 +3221,13 @@ where
         self
     }
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         self.release(cx);
     }
 
     fn app_will_quit(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
         self.app_will_quit(cx)
     }
@@ -3350,13 +3236,13 @@ where
         T::ui_name()
     }
 
-    fn render(&mut self, params: RenderParams, cx: &mut MutableAppContext) -> ElementBox {
+    fn render(&mut self, params: RenderParams, cx: &mut AppContext) -> ElementBox {
         View::render(self, &mut RenderContext::new(params, cx))
     }
 
     fn focus_in(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
         focused_id: usize,
@@ -3378,7 +3264,7 @@ where
 
     fn focus_out(
         &mut self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
         blurred_id: usize,
@@ -3401,7 +3287,7 @@ where
     fn key_down(
         &mut self,
         event: &KeyDownEvent,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) -> bool {
@@ -3412,7 +3298,7 @@ where
     fn key_up(
         &mut self,
         event: &KeyUpEvent,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) -> bool {
@@ -3423,7 +3309,7 @@ where
     fn modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) -> bool {
@@ -3451,7 +3337,7 @@ where
         View::marked_text_range(self, cx)
     }
 
-    fn unmark_text(&mut self, cx: &mut MutableAppContext, window_id: usize, view_id: usize) {
+    fn unmark_text(&mut self, cx: &mut AppContext, window_id: usize, view_id: usize) {
         let mut cx = ViewContext::new(cx, window_id, view_id);
         View::unmark_text(self, &mut cx)
     }
@@ -3460,7 +3346,7 @@ where
         &mut self,
         range: Option<Range<usize>>,
         text: &str,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) {
@@ -3473,7 +3359,7 @@ where
         range: Option<Range<usize>>,
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         window_id: usize,
         view_id: usize,
     ) {
@@ -3483,14 +3369,14 @@ where
 }
 
 pub struct ModelContext<'a, T: ?Sized> {
-    app: &'a mut MutableAppContext,
+    app: &'a mut AppContext,
     model_id: usize,
     model_type: PhantomData<T>,
     halt_stream: bool,
 }
 
 impl<'a, T: Entity> ModelContext<'a, T> {
-    fn new(app: &'a mut MutableAppContext, model_id: usize) -> Self {
+    fn new(app: &'a mut AppContext, model_id: usize) -> Self {
         Self {
             app,
             model_id,
@@ -3500,7 +3386,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 
     pub fn background(&self) -> &Arc<executor::Background> {
-        &self.app.cx.background
+        &self.app.background
     }
 
     pub fn halt_stream(&mut self) {
@@ -3613,7 +3499,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
     }
 
     pub fn handle(&self) -> ModelHandle<T> {
-        ModelHandle::new(self.model_id, &self.app.cx.ref_counts)
+        ModelHandle::new(self.model_id, &self.app.ref_counts)
     }
 
     pub fn weak_handle(&self) -> WeakModelHandle<T> {
@@ -3643,12 +3529,12 @@ impl<'a, T: Entity> ModelContext<'a, T> {
 
 impl<M> AsRef<AppContext> for ModelContext<'_, M> {
     fn as_ref(&self) -> &AppContext {
-        &self.app.cx
+        &self.app
     }
 }
 
-impl<M> AsMut<MutableAppContext> for ModelContext<'_, M> {
-    fn as_mut(&mut self) -> &mut MutableAppContext {
+impl<M> AsMut<AppContext> for ModelContext<'_, M> {
+    fn as_mut(&mut self) -> &mut AppContext {
         self.app
     }
 }
@@ -3674,20 +3560,20 @@ impl<M> UpgradeModelHandle for ModelContext<'_, M> {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        self.cx.upgrade_model_handle(handle)
+        self.app.upgrade_model_handle(handle)
     }
 
     fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.cx.model_handle_is_upgradable(handle)
+        self.app.model_handle_is_upgradable(handle)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.cx.upgrade_any_model_handle(handle)
+        self.app.upgrade_any_model_handle(handle)
     }
 }
 
 impl<M> Deref for ModelContext<'_, M> {
-    type Target = MutableAppContext;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.app
@@ -3701,14 +3587,14 @@ impl<M> DerefMut for ModelContext<'_, M> {
 }
 
 pub struct ViewContext<'a, T: ?Sized> {
-    app: &'a mut MutableAppContext,
+    app: &'a mut AppContext,
     window_id: usize,
     view_id: usize,
     view_type: PhantomData<T>,
 }
 
 impl<'a, T: View> ViewContext<'a, T> {
-    fn new(app: &'a mut MutableAppContext, window_id: usize, view_id: usize) -> Self {
+    fn new(app: &'a mut AppContext, window_id: usize, view_id: usize) -> Self {
         Self {
             app,
             window_id,
@@ -3718,11 +3604,15 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn handle(&self) -> ViewHandle<T> {
-        ViewHandle::new(self.window_id, self.view_id, &self.app.cx.ref_counts)
+        ViewHandle::new(self.window_id, self.view_id, &self.app.ref_counts)
     }
 
     pub fn weak_handle(&self) -> WeakViewHandle<T> {
         WeakViewHandle::new(self.window_id, self.view_id)
+    }
+
+    pub fn parent(&self) -> Option<usize> {
+        self.app.parent(self.window_id, self.view_id)
     }
 
     pub fn window_id(&self) -> usize {
@@ -3738,10 +3628,10 @@ impl<'a, T: View> ViewContext<'a, T> {
     }
 
     pub fn background_executor(&self) -> &Arc<executor::Background> {
-        &self.app.cx.background
+        &self.app.background
     }
 
-    pub fn platform(&self) -> Arc<dyn Platform> {
+    pub fn platform(&self) -> &Arc<dyn Platform> {
         self.app.platform()
     }
 
@@ -3877,19 +3767,14 @@ impl<'a, T: View> ViewContext<'a, T> {
             .build_and_insert_view(self.window_id, ParentId::View(self.view_id), build_view)
     }
 
-    pub fn parent(&mut self) -> Option<usize> {
-        self.cx.parent(self.window_id, self.view_id)
-    }
-
     pub fn reparent(&mut self, view_handle: &AnyViewHandle) {
         if self.window_id != view_handle.window_id {
             panic!("Can't reparent view to a view from a different window");
         }
-        self.cx
-            .parents
+        self.parents
             .remove(&(view_handle.window_id, view_handle.view_id));
         let new_parent_id = self.view_id;
-        self.cx.parents.insert(
+        self.parents.insert(
             (view_handle.window_id, view_handle.view_id),
             ParentId::View(new_parent_id),
         );
@@ -3905,7 +3790,7 @@ impl<'a, T: View> ViewContext<'a, T> {
             let root_view = this
                 .build_and_insert_view(window_id, ParentId::Root, |cx| Some(build_root_view(cx)))
                 .unwrap();
-            let window = this.cx.windows.get_mut(&window_id).unwrap();
+            let window = this.windows.get_mut(&window_id).unwrap();
             window.root_view = root_view.clone().into_any();
             window.focused_view_id = Some(root_view.id());
             root_view
@@ -4205,7 +4090,7 @@ pub struct RenderContext<'a, T: View> {
     pub(crate) view_type: PhantomData<T>,
     pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
     pub(crate) clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
-    pub app: &'a mut MutableAppContext,
+    pub app: &'a mut AppContext,
     pub titlebar_height: f32,
     pub appearance: Appearance,
     pub refreshing: bool,
@@ -4240,7 +4125,7 @@ impl MouseState {
 }
 
 impl<'a, V: View> RenderContext<'a, V> {
-    fn new(params: RenderParams, app: &'a mut MutableAppContext) -> Self {
+    fn new(params: RenderParams, app: &'a mut AppContext) -> Self {
         Self {
             app,
             window_id: params.window_id,
@@ -4292,11 +4177,10 @@ impl<'a, V: View> RenderContext<'a, V> {
             element_id,
             tag: TypeId::of::<Tag>(),
         };
-        self.cx
-            .element_states
+        self.element_states
             .entry(id)
             .or_insert_with(|| Box::new(initial));
-        ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
+        ElementStateHandle::new(id, self.frame_count, &self.ref_counts)
     }
 
     pub fn default_element_state<Tag: 'static, T: 'static + Default>(
@@ -4307,14 +4191,8 @@ impl<'a, V: View> RenderContext<'a, V> {
     }
 }
 
-impl AsRef<AppContext> for &AppContext {
-    fn as_ref(&self) -> &AppContext {
-        self
-    }
-}
-
 impl<V: View> Deref for RenderContext<'_, V> {
-    type Target = MutableAppContext;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.app
@@ -4349,14 +4227,8 @@ impl<V: View> ReadView for RenderContext<'_, V> {
     }
 }
 
-impl<M> AsRef<AppContext> for ViewContext<'_, M> {
-    fn as_ref(&self) -> &AppContext {
-        &self.app.cx
-    }
-}
-
 impl<M> Deref for ViewContext<'_, M> {
-    type Target = MutableAppContext;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.app
@@ -4369,8 +4241,8 @@ impl<M> DerefMut for ViewContext<'_, M> {
     }
 }
 
-impl<M> AsMut<MutableAppContext> for ViewContext<'_, M> {
-    fn as_mut(&mut self) -> &mut MutableAppContext {
+impl<M> AsMut<AppContext> for ViewContext<'_, M> {
+    fn as_mut(&mut self) -> &mut AppContext {
         self.app
     }
 }
@@ -4386,35 +4258,35 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        self.cx.upgrade_model_handle(handle)
+        self.app.upgrade_model_handle(handle)
     }
 
     fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.cx.model_handle_is_upgradable(handle)
+        self.app.model_handle_is_upgradable(handle)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.cx.upgrade_any_model_handle(handle)
+        self.app.upgrade_any_model_handle(handle)
     }
 }
 
 impl<V> UpgradeViewHandle for ViewContext<'_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.cx.upgrade_view_handle(handle)
+        self.app.upgrade_view_handle(handle)
     }
 
     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.cx.upgrade_any_view_handle(handle)
+        self.app.upgrade_any_view_handle(handle)
     }
 }
 
 impl<V: View> UpgradeViewHandle for RenderContext<'_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.cx.upgrade_view_handle(handle)
+        self.app.upgrade_view_handle(handle)
     }
 
     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.cx.upgrade_any_view_handle(handle)
+        self.app.upgrade_any_view_handle(handle)
     }
 }
 
@@ -4747,7 +4619,7 @@ impl<T: View> ViewHandle<T> {
 
     pub fn defer<C, F>(&self, cx: &mut C, update: F)
     where
-        C: AsMut<MutableAppContext>,
+        C: AsMut<AppContext>,
         F: 'static + FnOnce(&mut T, &mut ViewContext<T>),
     {
         let this = self.clone();
@@ -5191,14 +5063,11 @@ impl<T: 'static> ElementStateHandle<T> {
 
     pub fn update<C, R>(&self, cx: &mut C, f: impl FnOnce(&mut T, &mut C) -> R) -> R
     where
-        C: DerefMut<Target = MutableAppContext>,
+        C: DerefMut<Target = AppContext>,
     {
-        let mut element_state = cx.deref_mut().cx.element_states.remove(&self.id).unwrap();
+        let mut element_state = cx.deref_mut().element_states.remove(&self.id).unwrap();
         let result = f(element_state.downcast_mut().unwrap(), cx);
-        cx.deref_mut()
-            .cx
-            .element_states
-            .insert(self.id, element_state);
+        cx.deref_mut().element_states.insert(self.id, element_state);
         result
     }
 }
@@ -5268,7 +5137,12 @@ impl Subscription {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{actions, elements::*, impl_actions, MouseButton, MouseButtonEvent};
+    use crate::{
+        actions,
+        elements::*,
+        impl_actions,
+        platform::{MouseButton, MouseButtonEvent},
+    };
     use itertools::Itertools;
     use postage::{sink::Sink, stream::Stream};
     use serde::Deserialize;
@@ -5279,7 +5153,7 @@ mod tests {
     };
 
     #[crate::test(self)]
-    fn test_model_handles(cx: &mut MutableAppContext) {
+    fn test_model_handles(cx: &mut AppContext) {
         struct Model {
             other: Option<ModelHandle<Model>>,
             events: Vec<String>,
@@ -5311,7 +5185,7 @@ mod tests {
 
         let handle_1 = cx.add_model(|cx| Model::new(None, cx));
         let handle_2 = cx.add_model(|cx| Model::new(Some(handle_1.clone()), cx));
-        assert_eq!(cx.cx.models.len(), 2);
+        assert_eq!(cx.models.len(), 2);
 
         handle_1.update(cx, |model, cx| {
             model.events.push("updated".into());
@@ -5334,13 +5208,13 @@ mod tests {
             model.other.take();
         });
 
-        assert_eq!(cx.cx.models.len(), 1);
+        assert_eq!(cx.models.len(), 1);
         assert!(cx.subscriptions.is_empty());
         assert!(cx.observations.is_empty());
     }
 
     #[crate::test(self)]
-    fn test_model_events(cx: &mut MutableAppContext) {
+    fn test_model_events(cx: &mut AppContext) {
         #[derive(Default)]
         struct Model {
             events: Vec<usize>,
@@ -5373,7 +5247,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_model_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
+    fn test_model_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
         #[derive(Default)]
         struct Model;
 
@@ -5404,7 +5278,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_observe_and_notify_from_model(cx: &mut MutableAppContext) {
+    fn test_observe_and_notify_from_model(cx: &mut AppContext) {
         #[derive(Default)]
         struct Model {
             count: usize,
@@ -5443,7 +5317,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_model_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
+    fn test_model_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
         #[derive(Default)]
         struct Model;
 
@@ -5474,7 +5348,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_defer_and_after_window_update(cx: &mut MutableAppContext) {
+    fn test_defer_and_after_window_update(cx: &mut AppContext) {
         struct View {
             render_count: usize,
         }
@@ -5526,7 +5400,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_view_handles(cx: &mut MutableAppContext) {
+    fn test_view_handles(cx: &mut AppContext) {
         struct View {
             other: Option<ViewHandle<View>>,
             events: Vec<String>,
@@ -5564,7 +5438,7 @@ mod tests {
         let (_, root_view) = cx.add_window(Default::default(), |cx| View::new(None, cx));
         let handle_1 = cx.add_view(&root_view, |cx| View::new(None, cx));
         let handle_2 = cx.add_view(&root_view, |cx| View::new(Some(handle_1.clone()), cx));
-        assert_eq!(cx.cx.views.len(), 3);
+        assert_eq!(cx.views.len(), 3);
 
         handle_1.update(cx, |view, cx| {
             view.events.push("updated".into());
@@ -5585,13 +5459,13 @@ mod tests {
             view.other.take();
         });
 
-        assert_eq!(cx.cx.views.len(), 2);
+        assert_eq!(cx.views.len(), 2);
         assert!(cx.subscriptions.is_empty());
         assert!(cx.observations.is_empty());
     }
 
     #[crate::test(self)]
-    fn test_add_window(cx: &mut MutableAppContext) {
+    fn test_add_window(cx: &mut AppContext) {
         struct View {
             mouse_down_count: Arc<AtomicUsize>,
         }
@@ -5636,7 +5510,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_entity_release_hooks(cx: &mut MutableAppContext) {
+    fn test_entity_release_hooks(cx: &mut AppContext) {
         struct Model {
             released: Rc<Cell<bool>>,
         }
@@ -5648,7 +5522,7 @@ mod tests {
         impl Entity for Model {
             type Event = ();
 
-            fn release(&mut self, _: &mut MutableAppContext) {
+            fn release(&mut self, _: &mut AppContext) {
                 self.released.set(true);
             }
         }
@@ -5656,7 +5530,7 @@ mod tests {
         impl Entity for View {
             type Event = ();
 
-            fn release(&mut self, _: &mut MutableAppContext) {
+            fn release(&mut self, _: &mut AppContext) {
                 self.released.set(true);
             }
         }
@@ -5709,7 +5583,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_view_events(cx: &mut MutableAppContext) {
+    fn test_view_events(cx: &mut AppContext) {
         struct Model;
 
         impl Entity for Model {
@@ -5751,7 +5625,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_global_events(cx: &mut MutableAppContext) {
+    fn test_global_events(cx: &mut AppContext) {
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct GlobalEvent(u64);
 
@@ -5803,9 +5677,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_global_events_emitted_before_subscription_in_same_update_cycle(
-        cx: &mut MutableAppContext,
-    ) {
+    fn test_global_events_emitted_before_subscription_in_same_update_cycle(cx: &mut AppContext) {
         let events = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
             {
@@ -5838,7 +5710,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_global_nested_events(cx: &mut MutableAppContext) {
+    fn test_global_nested_events(cx: &mut AppContext) {
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct GlobalEvent(u64);
 
@@ -5882,7 +5754,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_global(cx: &mut MutableAppContext) {
+    fn test_global(cx: &mut AppContext) {
         type Global = usize;
 
         let observation_count = Rc::new(RefCell::new(0));
@@ -5937,7 +5809,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dropping_subscribers(cx: &mut MutableAppContext) {
+    fn test_dropping_subscribers(cx: &mut AppContext) {
         struct Model;
 
         impl Entity for Model {
@@ -5968,7 +5840,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut MutableAppContext) {
+    fn test_view_emit_before_subscribe_in_same_update_cycle(cx: &mut AppContext) {
         let (_, view) = cx.add_window::<TestView, _>(Default::default(), |cx| {
             drop(cx.subscribe(&cx.handle(), {
                 move |this, _, _, _| this.events.push("dropped before flush".into())
@@ -5989,7 +5861,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_observe_and_notify_from_view(cx: &mut MutableAppContext) {
+    fn test_observe_and_notify_from_view(cx: &mut AppContext) {
         #[derive(Default)]
         struct Model {
             state: String,
@@ -6019,7 +5891,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut MutableAppContext) {
+    fn test_view_notify_before_observe_in_same_update_cycle(cx: &mut AppContext) {
         let (_, view) = cx.add_window::<TestView, _>(Default::default(), |cx| {
             drop(cx.observe(&cx.handle(), {
                 move |this, _, _| this.events.push("dropped before flush".into())
@@ -6040,7 +5912,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut MutableAppContext) {
+    fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut AppContext) {
         struct Model;
         impl Entity for Model {
             type Event = ();
@@ -6065,7 +5937,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dropping_observers(cx: &mut MutableAppContext) {
+    fn test_dropping_observers(cx: &mut AppContext) {
         struct Model;
 
         impl Entity for Model {
@@ -6093,7 +5965,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dropping_subscriptions_during_callback(cx: &mut MutableAppContext) {
+    fn test_dropping_subscriptions_during_callback(cx: &mut AppContext) {
         struct Model;
 
         impl Entity for Model {
@@ -6240,7 +6112,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_focus(cx: &mut MutableAppContext) {
+    fn test_focus(cx: &mut AppContext) {
         struct View {
             name: String,
             events: Arc<Mutex<Vec<String>>>,
@@ -6381,7 +6253,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_deserialize_actions(cx: &mut MutableAppContext) {
+    fn test_deserialize_actions(cx: &mut AppContext) {
         #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
         pub struct ComplexAction {
             arg: String,
@@ -6391,8 +6263,8 @@ mod tests {
         actions!(test::something, [SimpleAction]);
         impl_actions!(test::something, [ComplexAction]);
 
-        cx.add_global_action(move |_: &SimpleAction, _: &mut MutableAppContext| {});
-        cx.add_global_action(move |_: &ComplexAction, _: &mut MutableAppContext| {});
+        cx.add_global_action(move |_: &SimpleAction, _: &mut AppContext| {});
+        cx.add_global_action(move |_: &ComplexAction, _: &mut AppContext| {});
 
         let action1 = cx
             .deserialize_action(
@@ -6417,7 +6289,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dispatch_action(cx: &mut MutableAppContext) {
+    fn test_dispatch_action(cx: &mut AppContext) {
         struct ViewA {
             id: usize,
         }
@@ -6463,7 +6335,7 @@ mod tests {
 
         cx.add_global_action({
             let actions = actions.clone();
-            move |_: &Action, _: &mut MutableAppContext| {
+            move |_: &Action, _: &mut AppContext| {
                 actions.borrow_mut().push("global".to_string());
             }
         });
@@ -6581,7 +6453,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dispatch_keystroke(cx: &mut MutableAppContext) {
+    fn test_dispatch_keystroke(cx: &mut AppContext) {
         #[derive(Clone, Deserialize, PartialEq)]
         pub struct Action(String);
 
@@ -6701,7 +6573,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_keystrokes_for_action(cx: &mut MutableAppContext) {
+    fn test_keystrokes_for_action(cx: &mut AppContext) {
         actions!(test, [Action1, Action2, GlobalAction]);
 
         struct View1 {}
@@ -6786,7 +6658,7 @@ mod tests {
         fn available_actions(
             window_id: usize,
             view_id: usize,
-            cx: &mut MutableAppContext,
+            cx: &mut AppContext,
         ) -> Vec<(&'static str, Vec<Keystroke>)> {
             cx.available_actions(window_id, view_id)
                 .map(|(action_name, _, bindings)| {
@@ -6948,7 +6820,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_refresh_windows(cx: &mut MutableAppContext) {
+    fn test_refresh_windows(cx: &mut AppContext) {
         struct View(usize);
 
         impl super::Entity for View {
@@ -7106,7 +6978,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_child_view(cx: &mut MutableAppContext) {
+    fn test_child_view(cx: &mut AppContext) {
         struct Child {
             rendered: Rc<Cell<bool>>,
             dropped: Rc<Cell<bool>>,

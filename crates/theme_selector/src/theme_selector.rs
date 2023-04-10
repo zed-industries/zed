@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity, MouseState,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, Settings};
@@ -22,7 +22,7 @@ pub struct ThemeSelector {
 
 actions!(theme_selector, [Toggle, Reload]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     Picker::<ThemeSelector>::init(cx);
     cx.add_action({
         let theme_registry = app_state.themes.clone();
@@ -83,7 +83,7 @@ impl ThemeSelector {
     }
 
     #[cfg(debug_assertions)]
-    pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut MutableAppContext) {
+    pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut AppContext) {
         let current_theme_name = cx.global::<Settings>().theme.meta.name.clone();
         themes.clear();
         match themes.get(&current_theme_name) {
@@ -131,7 +131,7 @@ impl ThemeSelector {
         }
     }
 
-    fn set_theme(theme: Arc<Theme>, cx: &mut MutableAppContext) {
+    fn set_theme(theme: Arc<Theme>, cx: &mut AppContext) {
         cx.update_global::<Settings, _, _>(|settings, cx| {
             settings.theme = theme;
             cx.refresh_windows();
@@ -243,7 +243,7 @@ impl PickerDelegate for ThemeSelector {
 impl Entity for ThemeSelector {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         if !self.selection_completed {
             Self::set_theme(self.original_theme.clone(), cx);
         }

@@ -5,9 +5,12 @@ use crate::{
 use collections::HashMap;
 use editor::Editor;
 use gpui::{
-    actions, elements::*, impl_actions, platform::CursorStyle, Action, AnyViewHandle, AppContext,
-    Entity, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View, ViewContext,
-    ViewHandle,
+    actions,
+    elements::*,
+    impl_actions,
+    platform::{CursorStyle, MouseButton},
+    Action, AnyViewHandle, AppContext, Entity, RenderContext, Subscription, Task, View,
+    ViewContext, ViewHandle,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -31,7 +34,7 @@ pub enum Event {
     UpdateLocation,
 }
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::deploy);
     cx.add_action(BufferSearchBar::dismiss);
     cx.add_action(BufferSearchBar::focus_editor);
@@ -45,7 +48,7 @@ pub fn init(cx: &mut MutableAppContext) {
     add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
 }
 
-fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut MutableAppContext) {
+fn add_toggle_option_action<A: Action>(option: SearchOption, cx: &mut AppContext) {
     cx.add_action(move |pane: &mut Pane, _: &A, cx: &mut ViewContext<Pane>| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             if search_bar.update(cx, |search_bar, cx| search_bar.show(false, false, cx)) {

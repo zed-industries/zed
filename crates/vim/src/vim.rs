@@ -15,7 +15,7 @@ use std::sync::Arc;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
-    actions, impl_actions, MutableAppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
+    actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -38,7 +38,7 @@ struct Number(u8);
 actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     editor_events::init(cx);
     normal::init(cx);
     visual::init(cx);
@@ -65,7 +65,7 @@ pub fn init(cx: &mut MutableAppContext) {
         // Otherwise forward cancel on to the editor
         let vim = Vim::read(cx);
         if vim.state.mode != Mode::Normal || vim.active_operator().is_some() {
-            MutableAppContext::defer(cx, |cx| {
+            AppContext::defer(cx, |cx| {
                 Vim::update(cx, |state, cx| {
                     state.switch_mode(Mode::Normal, false, cx);
                 });
@@ -95,7 +95,7 @@ pub fn init(cx: &mut MutableAppContext) {
     .detach();
 }
 
-pub fn observe_keystrokes(window_id: usize, cx: &mut MutableAppContext) {
+pub fn observe_keystrokes(window_id: usize, cx: &mut AppContext) {
     cx.observe_keystrokes(window_id, |_keystroke, _result, handled_by, cx| {
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
@@ -131,20 +131,20 @@ pub struct Vim {
 }
 
 impl Vim {
-    fn read(cx: &mut MutableAppContext) -> &Self {
+    fn read(cx: &mut AppContext) -> &Self {
         cx.default_global()
     }
 
-    fn update<F, S>(cx: &mut MutableAppContext, update: F) -> S
+    fn update<F, S>(cx: &mut AppContext, update: F) -> S
     where
-        F: FnOnce(&mut Self, &mut MutableAppContext) -> S,
+        F: FnOnce(&mut Self, &mut AppContext) -> S,
     {
         cx.update_default_global(update)
     }
 
     fn update_active_editor<S>(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         update: impl FnOnce(&mut Editor, &mut ViewContext<Editor>) -> S,
     ) -> Option<S> {
         self.active_editor
@@ -153,7 +153,7 @@ impl Vim {
             .map(|ae| ae.update(cx, update))
     }
 
-    fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut MutableAppContext) {
+    fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut AppContext) {
         self.state.mode = mode;
         self.state.operator_stack.clear();
 
@@ -188,12 +188,12 @@ impl Vim {
         }
     }
 
-    fn push_operator(&mut self, operator: Operator, cx: &mut MutableAppContext) {
+    fn push_operator(&mut self, operator: Operator, cx: &mut AppContext) {
         self.state.operator_stack.push(operator);
         self.sync_vim_settings(cx);
     }
 
-    fn push_number(&mut self, Number(number): &Number, cx: &mut MutableAppContext) {
+    fn push_number(&mut self, Number(number): &Number, cx: &mut AppContext) {
         if let Some(Operator::Number(current_number)) = self.active_operator() {
             self.pop_operator(cx);
             self.push_operator(Operator::Number(current_number * 10 + *number as usize), cx);
@@ -202,14 +202,14 @@ impl Vim {
         }
     }
 
-    fn pop_operator(&mut self, cx: &mut MutableAppContext) -> Operator {
+    fn pop_operator(&mut self, cx: &mut AppContext) -> Operator {
         let popped_operator = self.state.operator_stack.pop()
             .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
         self.sync_vim_settings(cx);
         popped_operator
     }
 
-    fn pop_number_operator(&mut self, cx: &mut MutableAppContext) -> usize {
+    fn pop_number_operator(&mut self, cx: &mut AppContext) -> usize {
         let mut times = 1;
         if let Some(Operator::Number(number)) = self.active_operator() {
             times = number;
@@ -218,7 +218,7 @@ impl Vim {
         times
     }
 
-    fn clear_operator(&mut self, cx: &mut MutableAppContext) {
+    fn clear_operator(&mut self, cx: &mut AppContext) {
         self.state.operator_stack.clear();
         self.sync_vim_settings(cx);
     }
@@ -227,7 +227,7 @@ impl Vim {
         self.state.operator_stack.last().copied()
     }
 
-    fn active_editor_input_ignored(text: Arc<str>, cx: &mut MutableAppContext) {
+    fn active_editor_input_ignored(text: Arc<str>, cx: &mut AppContext) {
         if text.is_empty() {
             return;
         }
@@ -248,7 +248,7 @@ impl Vim {
         }
     }
 
-    fn set_enabled(&mut self, enabled: bool, cx: &mut MutableAppContext) {
+    fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
         if self.enabled != enabled {
             self.enabled = enabled;
             self.state = Default::default();
@@ -259,7 +259,7 @@ impl Vim {
         }
     }
 
-    fn sync_vim_settings(&self, cx: &mut MutableAppContext) {
+    fn sync_vim_settings(&self, cx: &mut AppContext) {
         let state = &self.state;
         let cursor_shape = state.cursor_shape();
 
@@ -291,7 +291,7 @@ impl Vim {
         }
     }
 
-    fn unhook_vim_settings(&self, editor: ViewHandle<Editor>, cx: &mut MutableAppContext) {
+    fn unhook_vim_settings(&self, editor: ViewHandle<Editor>, cx: &mut AppContext) {
         editor.update(cx, |editor, cx| {
             editor.set_cursor_shape(CursorShape::Bar, cx);
             editor.set_clip_at_line_ends(false, cx);

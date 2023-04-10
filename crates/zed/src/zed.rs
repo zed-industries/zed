@@ -19,8 +19,8 @@ use gpui::{
     actions,
     geometry::vector::vec2f,
     impl_actions,
-    platform::{WindowBounds, WindowOptions},
-    AssetSource, Platform, PromptLevel, TitlebarOptions, ViewContext, WindowKind,
+    platform::{Platform, PromptLevel, TitlebarOptions, WindowBounds, WindowKind, WindowOptions},
+    AssetSource, ViewContext,
 };
 use language::Rope;
 pub use lsp;
@@ -72,16 +72,16 @@ actions!(
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
-pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     terminal_button::init(cx);
     cx.add_action(about);
-    cx.add_global_action(|_: &Hide, cx: &mut gpui::MutableAppContext| {
+    cx.add_global_action(|_: &Hide, cx: &mut gpui::AppContext| {
         cx.platform().hide();
     });
-    cx.add_global_action(|_: &HideOthers, cx: &mut gpui::MutableAppContext| {
+    cx.add_global_action(|_: &HideOthers, cx: &mut gpui::AppContext| {
         cx.platform().hide_other_apps();
     });
-    cx.add_global_action(|_: &ShowAll, cx: &mut gpui::MutableAppContext| {
+    cx.add_global_action(|_: &ShowAll, cx: &mut gpui::AppContext| {
         cx.platform().unhide_other_apps();
     });
     cx.add_action(
@@ -367,10 +367,10 @@ pub fn build_window_options(
     }
 }
 
-fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
+fn restart(_: &Restart, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view::<Workspace>(window_id))
+        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -411,10 +411,10 @@ fn restart(_: &Restart, cx: &mut gpui::MutableAppContext) {
     .detach_and_log_err(cx);
 }
 
-fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
+fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view::<Workspace>(window_id))
+        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -458,11 +458,7 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
 fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
     let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
-    cx.prompt(
-        gpui::PromptLevel::Info,
-        &format!("{app_name} {version}"),
-        &["OK"],
-    );
+    cx.prompt(PromptLevel::Info, &format!("{app_name} {version}"), &["OK"]);
 }
 
 fn open_config_file(
@@ -656,9 +652,7 @@ mod tests {
     use super::*;
     use assets::Assets;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
-    use gpui::{
-        executor::Deterministic, AssetSource, MutableAppContext, TestAppContext, ViewHandle,
-    };
+    use gpui::{executor::Deterministic, AppContext, AssetSource, TestAppContext, ViewHandle};
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;
     use project::{Project, ProjectPath};
@@ -717,7 +711,11 @@ mod tests {
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await;
         assert_eq!(cx.window_ids().len(), 1);
-        let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        let workspace_1 = cx
+            .root_view(cx.window_ids()[0])
+            .unwrap()
+            .downcast::<Workspace>()
+            .unwrap();
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
             assert!(workspace.left_sidebar().read(cx).is_open());
@@ -747,7 +745,12 @@ mod tests {
         })
         .await;
         assert_eq!(cx.window_ids().len(), 2);
-        let workspace_1 = cx.root_view::<Workspace>(window_id).unwrap();
+        let workspace_1 = cx
+            .root_view(window_id)
+            .unwrap()
+            .clone()
+            .downcast::<Workspace>()
+            .unwrap();
         workspace_1.read_with(cx, |workspace, cx| {
             assert_eq!(
                 workspace
@@ -775,7 +778,12 @@ mod tests {
         assert_eq!(cx.window_ids().len(), 1);
 
         // When opening the workspace, the window is not in a edited state.
-        let workspace = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        let workspace = cx
+            .root_view(cx.window_ids()[0])
+            .unwrap()
+            .clone()
+            .downcast::<Workspace>()
+            .unwrap();
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -842,7 +850,12 @@ mod tests {
             .await;
 
         let window_id = *cx.window_ids().first().unwrap();
-        let workspace = cx.root_view::<Workspace>(window_id).unwrap();
+        let workspace = cx
+            .root_view(window_id)
+            .unwrap()
+            .clone()
+            .downcast::<Workspace>()
+            .unwrap();
         let editor = workspace.update(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -950,7 +963,7 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
-                    .project_path(cx.as_ref()),
+                    .project_path(cx),
                 Some(file2.clone())
             );
         });
@@ -1251,7 +1264,7 @@ mod tests {
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(cx, |editor, cx| {
             editor.handle_input(" there", cx);
-            assert!(editor.is_dirty(cx.as_ref()));
+            assert!(editor.is_dirty(cx));
         });
         let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
         save_task.await.unwrap();
@@ -1311,7 +1324,7 @@ mod tests {
                 &languages::PLAIN_TEXT
             ));
             editor.handle_input("hi", cx);
-            assert!(editor.is_dirty(cx.as_ref()));
+            assert!(editor.is_dirty(cx));
         });
 
         // Save the buffer. This prompts for a filename.
@@ -1374,7 +1387,7 @@ mod tests {
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
-            assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
+            assert_eq!(pane2_item.project_path(cx), Some(file1.clone()));
 
             pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
@@ -1819,7 +1832,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_bundled_settings_and_themes(cx: &mut MutableAppContext) {
+    fn test_bundled_settings_and_themes(cx: &mut AppContext) {
         cx.platform()
             .fonts()
             .add_fonts(&[
@@ -1850,7 +1863,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_bundled_languages(cx: &mut MutableAppContext) {
+    fn test_bundled_languages(cx: &mut AppContext) {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);

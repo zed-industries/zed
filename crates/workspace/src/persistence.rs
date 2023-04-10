@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{Axis, WindowBounds};
+use gpui::{platform::WindowBounds, Axis};
 
 use util::{unzip_option, ResultExt};
 use uuid::Uuid;
@@ -566,7 +566,7 @@ mod tests {
                     CREATE TABLE test_table(
                         text TEXT,
                         workspace_id INTEGER,
-                        FOREIGN KEY(workspace_id) 
+                        FOREIGN KEY(workspace_id)
                             REFERENCES workspaces(workspace_id)
                         ON DELETE CASCADE
                     ) STRICT;)],

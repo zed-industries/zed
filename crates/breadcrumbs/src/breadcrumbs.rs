@@ -1,6 +1,6 @@
 use gpui::{
-    elements::*, AppContext, Entity, MouseButton, RenderContext, Subscription, View, ViewContext,
-    ViewHandle,
+    elements::*, platform::MouseButton, AppContext, Entity, RenderContext, Subscription, View,
+    ViewContext, ViewHandle,
 };
 use itertools::Itertools;
 use search::ProjectSearchView;
@@ -136,7 +136,7 @@ impl ToolbarItemView for Breadcrumbs {
         }
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut gpui::MutableAppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut gpui::AppContext) {
         self.pane_focused = pane_focused;
     }
 }

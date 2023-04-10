@@ -372,9 +372,9 @@ mod tests {
     use settings::Settings;
 
     #[gpui::test]
-    fn test_previous_word_start(cx: &mut gpui::MutableAppContext) {
+    fn test_previous_word_start(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
-        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_word_start(&snapshot, display_points[1]),
@@ -399,9 +399,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_previous_subword_start(cx: &mut gpui::MutableAppContext) {
+    fn test_previous_subword_start(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
-        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_subword_start(&snapshot, display_points[1]),
@@ -433,11 +433,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_preceding_boundary(cx: &mut gpui::MutableAppContext) {
+    fn test_find_preceding_boundary(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         fn assert(
             marked_text: &str,
-            cx: &mut gpui::MutableAppContext,
+            cx: &mut gpui::AppContext,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
@@ -465,9 +465,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_next_word_end(cx: &mut gpui::MutableAppContext) {
+    fn test_next_word_end(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
-        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_word_end(&snapshot, display_points[0]),
@@ -489,9 +489,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_next_subword_end(cx: &mut gpui::MutableAppContext) {
+    fn test_next_subword_end(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
-        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_subword_end(&snapshot, display_points[0]),
@@ -522,11 +522,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_boundary(cx: &mut gpui::MutableAppContext) {
+    fn test_find_boundary(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         fn assert(
             marked_text: &str,
-            cx: &mut gpui::MutableAppContext,
+            cx: &mut gpui::AppContext,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
@@ -554,9 +554,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_surrounding_word(cx: &mut gpui::MutableAppContext) {
+    fn test_surrounding_word(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
-        fn assert(marked_text: &str, cx: &mut gpui::MutableAppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 surrounding_word(&snapshot, display_points[1]),
@@ -575,7 +575,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
+    fn test_move_up_and_down_with_excerpts(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let family_id = cx
             .font_cache()

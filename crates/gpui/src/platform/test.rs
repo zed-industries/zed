@@ -64,7 +64,7 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
     fn on_quit(&self, _: Box<dyn FnMut()>) {}
     fn on_reopen(&self, _: Box<dyn FnMut()>) {}
-    fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
+    fn on_event(&self, _: Box<dyn FnMut(crate::platform::Event) -> bool>) {}
     fn on_open_urls(&self, _: Box<dyn FnMut(Vec<String>)>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -134,11 +134,11 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
-    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn crate::Screen>> {
+    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn crate::platform::Screen>> {
         None
     }
 
-    fn screens(&self) -> Vec<Rc<dyn crate::Screen>> {
+    fn screens(&self) -> Vec<Rc<dyn crate::platform::Screen>> {
         Default::default()
     }
 
@@ -158,7 +158,7 @@ impl super::Platform for Platform {
         None
     }
 
-    fn add_status_item(&self) -> Box<dyn crate::Window> {
+    fn add_status_item(&self) -> Box<dyn crate::platform::Window> {
         Box::new(Window::new(vec2f(24., 24.)))
     }
 
@@ -301,11 +301,11 @@ impl super::Window for Window {
         24.
     }
 
-    fn appearance(&self) -> crate::Appearance {
-        crate::Appearance::Light
+    fn appearance(&self) -> crate::platform::Appearance {
+        crate::platform::Appearance::Light
     }
 
-    fn screen(&self) -> Rc<dyn crate::Screen> {
+    fn screen(&self) -> Rc<dyn crate::platform::Screen> {
         Rc::new(Screen)
     }
 
@@ -313,9 +313,14 @@ impl super::Window for Window {
         self
     }
 
-    fn set_input_handler(&mut self, _: Box<dyn crate::InputHandler>) {}
+    fn set_input_handler(&mut self, _: Box<dyn crate::platform::InputHandler>) {}
 
-    fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str]) -> oneshot::Receiver<usize> {
+    fn prompt(
+        &self,
+        _: crate::platform::PromptLevel,
+        _: &str,
+        _: &[&str],
+    ) -> oneshot::Receiver<usize> {
         let (done_tx, done_rx) = oneshot::channel();
         self.pending_prompts.borrow_mut().push_back(done_tx);
         done_rx
@@ -343,7 +348,7 @@ impl super::Window for Window {
 
     fn toggle_full_screen(&self) {}
 
-    fn on_event(&mut self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+    fn on_event(&mut self, callback: Box<dyn FnMut(crate::platform::Event) -> bool>) {
         self.event_handlers.push(callback);
     }
 

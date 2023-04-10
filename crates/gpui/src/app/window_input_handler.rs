@@ -2,10 +2,10 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use pathfinder_geometry::rect::RectF;
 
-use crate::{AnyView, AppContext, InputHandler, MutableAppContext};
+use crate::{platform::InputHandler, AnyView, AppContext};
 
 pub struct WindowInputHandler {
-    pub app: Rc<RefCell<MutableAppContext>>,
+    pub app: Rc<RefCell<AppContext>>,
     pub window_id: usize,
 }
 
@@ -23,21 +23,21 @@ impl WindowInputHandler {
         let app = self.app.try_borrow().ok()?;
 
         let view_id = app.focused_view_id(self.window_id)?;
-        let view = app.cx.views.get(&(self.window_id, view_id))?;
+        let view = app.views.get(&(self.window_id, view_id))?;
         let result = f(view.as_ref(), &app);
         Some(result)
     }
 
     fn update_focused_view<T, F>(&mut self, f: F) -> Option<T>
     where
-        F: FnOnce(usize, usize, &mut dyn AnyView, &mut MutableAppContext) -> T,
+        F: FnOnce(usize, usize, &mut dyn AnyView, &mut AppContext) -> T,
     {
         let mut app = self.app.try_borrow_mut().ok()?;
         app.update(|app| {
             let view_id = app.focused_view_id(self.window_id)?;
-            let mut view = app.cx.views.remove(&(self.window_id, view_id))?;
+            let mut view = app.views.remove(&(self.window_id, view_id))?;
             let result = f(self.window_id, view_id, view.as_mut(), &mut *app);
-            app.cx.views.insert((self.window_id, view_id), view);
+            app.views.insert((self.window_id, view_id), view);
             Some(result)
         })
     }

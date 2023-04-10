@@ -28,7 +28,7 @@ use workspace::{
 };
 
 #[gpui::test]
-fn test_edit_events(cx: &mut MutableAppContext) {
+fn test_edit_events(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = cx.add_model(|cx| {
         let mut buffer = language::Buffer::new(0, "123456", cx);
@@ -155,7 +155,7 @@ fn test_edit_events(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
+fn test_undo_redo_with_selection_restoration(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     let mut now = Instant::now();
     let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
@@ -225,7 +225,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_ime_composition(cx: &mut MutableAppContext) {
+fn test_ime_composition(cx: &mut AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = cx.add_model(|cx| {
         let mut buffer = language::Buffer::new(0, "abcde", cx);
@@ -327,7 +327,7 @@ fn test_ime_composition(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
+fn test_selection_with_mouse(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
 
     let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
@@ -392,7 +392,7 @@ fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
+fn test_canceling_pending_selection(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -424,7 +424,7 @@ fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_clone(cx: &mut gpui::MutableAppContext) {
+fn test_clone(cx: &mut gpui::AppContext) {
     let (text, selection_ranges) = marked_text_ranges(
         indoc! {"
             one
@@ -480,7 +480,7 @@ fn test_clone(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
+fn test_navigation_history(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::item::Item;
@@ -492,7 +492,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         let handle = cx.handle();
         editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
-        fn pop_history(editor: &mut Editor, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+        fn pop_history(editor: &mut Editor, cx: &mut AppContext) -> Option<NavigationEntry> {
             editor.nav_history.as_mut().unwrap().pop_backward(cx)
         }
 
@@ -590,7 +590,7 @@ fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_cancel(cx: &mut gpui::MutableAppContext) {
+fn test_cancel(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -630,7 +630,7 @@ fn test_cancel(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_action(cx: &mut gpui::MutableAppContext) {
+fn test_fold_action(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(
         &"
@@ -717,7 +717,7 @@ fn test_fold_action(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
+fn test_move_cursor(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -793,7 +793,7 @@ fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
+fn test_move_cursor_multibyte(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -895,7 +895,7 @@ fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
+fn test_move_cursor_different_line_lengths(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -942,7 +942,7 @@ fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
+fn test_beginning_end_of_line(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("abc\n  def", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -1102,7 +1102,7 @@ fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
+fn test_prev_next_word_boundary(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -1151,7 +1151,7 @@ fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
+fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -1330,7 +1330,7 @@ async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
+fn test_delete_to_word_boundary(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("one two three four", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -1365,7 +1365,7 @@ fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_newline(cx: &mut gpui::MutableAppContext) {
+fn test_newline(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("aaaa\n    bbbb\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer.clone(), cx));
@@ -1385,7 +1385,7 @@ fn test_newline(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
+fn test_newline_with_old_selections(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(
         "
@@ -1517,7 +1517,7 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_insert_with_old_selections(cx: &mut gpui::MutableAppContext) {
+fn test_insert_with_old_selections(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
     let (_, editor) = cx.add_window(Default::default(), |cx| {
@@ -1836,7 +1836,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_indent_outdent_with_excerpts(cx: &mut gpui::MutableAppContext) {
+fn test_indent_outdent_with_excerpts(cx: &mut gpui::AppContext) {
     cx.set_global(
         Settings::test(cx)
             .with_language_defaults(
@@ -2022,7 +2022,7 @@ async fn test_delete(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_delete_line(cx: &mut gpui::MutableAppContext) {
+fn test_delete_line(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -2062,7 +2062,7 @@ fn test_delete_line(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
+fn test_duplicate_line(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -2110,7 +2110,7 @@ fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
+fn test_move_line_up_down(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -2206,7 +2206,7 @@ fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_move_line_up_down_with_blocks(cx: &mut gpui::MutableAppContext) {
+fn test_move_line_up_down_with_blocks(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
     let snapshot = buffer.read(cx).snapshot(cx);
@@ -2230,7 +2230,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_transpose(cx: &mut gpui::MutableAppContext) {
+fn test_transpose(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
 
     _ = cx
@@ -2524,7 +2524,7 @@ async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_select_all(cx: &mut gpui::MutableAppContext) {
+fn test_select_all(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("abc\nde\nfgh", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -2538,7 +2538,7 @@ fn test_select_all(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_select_line(cx: &mut gpui::MutableAppContext) {
+fn test_select_line(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -2582,7 +2582,7 @@ fn test_select_line(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
+fn test_split_selection_into_lines(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -2650,7 +2650,7 @@ fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
+fn test_add_selection_above_below(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
     let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, cx));
@@ -4928,7 +4928,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_editing_disjoint_excerpts(cx: &mut gpui::MutableAppContext) {
+fn test_editing_disjoint_excerpts(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
     let multibuffer = cx.add_model(|cx| {
@@ -4975,7 +4975,7 @@ fn test_editing_disjoint_excerpts(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
+fn test_editing_overlapping_excerpts(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let markers = vec![('[', ']').into(), ('(', ')').into()];
     let (initial_text, mut excerpt_ranges) = marked_text_ranges_by(
@@ -5048,7 +5048,7 @@ fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
+fn test_refresh_selections(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
     let mut excerpt1_id = None;
@@ -5134,7 +5134,7 @@ fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
 }
 
 #[gpui::test]
-fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::MutableAppContext) {
+fn test_refresh_selections_while_selecting_with_mouse(cx: &mut gpui::AppContext) {
     cx.set_global(Settings::test(cx));
     let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
     let mut excerpt1_id = None;
@@ -5267,7 +5267,7 @@ async fn test_extra_newline_insertion(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-fn test_highlighted_ranges(cx: &mut gpui::MutableAppContext) {
+fn test_highlighted_ranges(cx: &mut gpui::AppContext) {
     let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
 
     cx.set_global(Settings::test(cx));

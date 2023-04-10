@@ -1,6 +1,6 @@
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
-use gpui::{actions, MutableAppContext};
+use gpui::{actions, AppContext};
 use settings::{HourFormat, Settings};
 use std::{
     fs::OpenOptions,
@@ -12,11 +12,11 @@ use workspace::AppState;
 
 actions!(journal, [NewJournalEntry]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
 }
 
-pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
     let settings = cx.global::<Settings>();
     let journal_dir = match journal_dir(&settings) {
         Some(journal_dir) => journal_dir,

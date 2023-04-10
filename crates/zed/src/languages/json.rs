@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::MutableAppContext;
+use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
 use node_runtime::NodeRuntime;
 use serde_json::json;
@@ -125,7 +125,7 @@ impl LspAdapter for JsonLspAdapter {
 
     fn workspace_configuration(
         &self,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Option<BoxFuture<'static, serde_json::Value>> {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
         let theme_names = self

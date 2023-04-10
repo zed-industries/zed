@@ -1,4 +1,4 @@
-use crate::MutableAppContext;
+use crate::AppContext;
 use collections::{BTreeMap, HashMap, HashSet};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -93,10 +93,10 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
         drop(callbacks);
     }
 
-    pub fn emit<C: FnMut(&mut F, &mut MutableAppContext) -> bool>(
+    pub fn emit<C: FnMut(&mut F, &mut AppContext) -> bool>(
         &mut self,
         key: K,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         mut call_callback: C,
     ) {
         let callbacks = self.internal.lock().callbacks.remove(&key);

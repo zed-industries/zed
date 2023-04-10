@@ -1,4 +1,8 @@
-use gpui::{elements::*, CursorStyle, Entity, MouseButton, RenderContext, View, ViewContext};
+use gpui::{
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    Entity, RenderContext, View, ViewContext,
+};
 use settings::Settings;
 use workspace::{item::ItemHandle, StatusItemView};
 

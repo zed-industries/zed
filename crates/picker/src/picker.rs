@@ -3,9 +3,9 @@ use gpui::{
     elements::*,
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::KeymapContext,
-    platform::CursorStyle,
-    AnyViewHandle, AppContext, Axis, Entity, MouseButton, MouseState, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    platform::{CursorStyle, MouseButton},
+    AnyViewHandle, AppContext, Axis, Entity, MouseState, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use parking_lot::Mutex;
@@ -141,7 +141,7 @@ impl<D: PickerDelegate> View for Picker<D> {
 }
 
 impl<D: PickerDelegate> Picker<D> {
-    pub fn init(cx: &mut MutableAppContext) {
+    pub fn init(cx: &mut AppContext) {
         cx.add_action(Self::select_first);
         cx.add_action(Self::select_last);
         cx.add_action(Self::select_next);

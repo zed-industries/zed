@@ -1,15 +1,15 @@
 use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleContactsMenu};
 use client::UserStore;
 use gpui::{
-    actions, elements::*, Entity, ModelHandle, MouseButton, MutableAppContext, RenderContext, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, RenderContext,
+    View, ViewContext, ViewHandle,
 };
 use project::Project;
 use settings::Settings;
 
 actions!(contacts_popover, [ToggleContactFinder]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactsPopover::toggle_contact_finder);
 }
 

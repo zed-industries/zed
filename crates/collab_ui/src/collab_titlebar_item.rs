@@ -15,8 +15,9 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     impl_internal_actions,
     json::{self, ToJson},
-    CursorStyle, Entity, ImageData, ModelHandle, MouseButton, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Entity, ImageData, ModelHandle, RenderContext, Subscription, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -40,7 +41,7 @@ impl_internal_actions!(collab, [LeaveCall]);
 #[derive(Copy, Clone, PartialEq)]
 pub(crate) struct LeaveCall;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabTitlebarItem::toggle_collaborator_list_popover);
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);

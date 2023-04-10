@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{impl_internal_actions, MutableAppContext, Task, ViewContext};
+use gpui::{impl_internal_actions, AppContext, Task, ViewContext};
 use language::{Bias, ToOffset};
 use project::LocationLink;
 use settings::Settings;
@@ -38,7 +38,7 @@ impl_internal_actions!(
     ]
 );
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(update_go_to_definition_link);
     cx.add_action(go_to_fetched_definition);
     cx.add_action(go_to_fetched_type_definition);
@@ -358,7 +358,10 @@ fn go_to_fetched_definition_of_kind(
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
-    use gpui::{Modifiers, ModifiersChangedEvent, View};
+    use gpui::{
+        platform::{self, Modifiers, ModifiersChangedEvent},
+        View,
+    };
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
@@ -430,7 +433,7 @@ mod tests {
         // Unpress shift causes highlight to go away (normal goto-definition is not valid here)
         cx.update_editor(|editor, cx| {
             editor.modifiers_changed(
-                &gpui::ModifiersChangedEvent {
+                &platform::ModifiersChangedEvent {
                     modifiers: Modifiers {
                         cmd: true,
                         ..Default::default()

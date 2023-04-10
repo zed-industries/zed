@@ -1,7 +1,7 @@
 use fuzzy::PathMatch;
 use gpui::{
     actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -31,7 +31,7 @@ pub struct FileFinder {
 
 actions!(file_finder, [Toggle]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(FileFinder::toggle);
     Picker::<FileFinder>::init(cx);
 }

@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    elements::*, platform::CursorStyle, Action, AnyViewHandle, AppContext, ElementBox, Entity,
-    MouseButton, MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
+    ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 
@@ -21,7 +21,7 @@ pub trait ToolbarItemView: View {
         current_location
     }
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut MutableAppContext) {}
+    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut AppContext) {}
 }
 
 trait ToolbarItemViewHandle {
@@ -30,9 +30,9 @@ trait ToolbarItemViewHandle {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation;
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext);
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -263,7 +263,7 @@ impl Toolbar {
         }
     }
 
-    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext) {
+    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.pane_focus_update(pane_focused, cx);
         }
@@ -292,14 +292,14 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         })
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut MutableAppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
         self.update(cx, |this, cx| this.pane_focus_update(pane_focused, cx));
     }
 }

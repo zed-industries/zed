@@ -1,6 +1,6 @@
 use context_menu::ContextMenuItem;
 use gpui::{
-    elements::AnchorCorner, geometry::vector::Vector2F, impl_internal_actions, MutableAppContext,
+    elements::AnchorCorner, geometry::vector::Vector2F, impl_internal_actions, AppContext,
     ViewContext,
 };
 
@@ -17,7 +17,7 @@ pub struct DeployMouseContextMenu {
 
 impl_internal_actions!(editor, [DeployMouseContextMenu]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(deploy_context_menu);
 }
 

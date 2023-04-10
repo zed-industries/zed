@@ -7,7 +7,7 @@ use crate::MultiBufferSnapshot;
 use gpui::{
     fonts::{FontId, HighlightStyle},
     text_layout::LineWrapper,
-    Entity, ModelContext, ModelHandle, MutableAppContext, Task,
+    AppContext, Entity, ModelContext, ModelHandle, Task,
 };
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
@@ -79,7 +79,7 @@ impl WrapMap {
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> (ModelHandle<Self>, WrapSnapshot) {
         let handle = cx.add_model(|cx| {
             let mut this = Self {

@@ -16,8 +16,9 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    platform::KeyDownEvent,
+    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
@@ -68,7 +69,7 @@ impl_actions!(terminal, [SendText, SendKeystroke]);
 
 impl_internal_actions!(project_panel, [DeployContextMenu]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::deploy);
 
     register_deserializable_item::<TerminalView>(cx);
@@ -425,7 +426,7 @@ impl View for TerminalView {
         cx.notify();
     }
 
-    fn key_down(&mut self, event: &gpui::KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
+    fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) -> bool {
         self.clear_bel(cx);
         self.pause_cursor_blinking(cx);
 

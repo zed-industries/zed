@@ -1,8 +1,10 @@
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    elements::*, impl_internal_actions, CursorStyle, Element, ElementBox, Entity, MouseButton,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    elements::*,
+    impl_internal_actions,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::any::TypeId;
@@ -21,7 +23,7 @@ pub struct FocusTerminal {
 
 impl_internal_actions!(terminal, [FocusTerminal, DeployTerminalMenu]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalButton::deploy_terminal_menu);
     cx.add_action(TerminalButton::focus_terminal);
 }

@@ -11,8 +11,8 @@ use editor::{
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
-    AppContext, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Entity, ModelHandle, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -41,7 +41,7 @@ impl_internal_actions!(diagnostics, [Jump]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectDiagnosticsEditor::deploy);
     items::init(cx);
 }
@@ -1176,10 +1176,7 @@ mod tests {
         });
     }
 
-    fn editor_blocks(
-        editor: &ViewHandle<Editor>,
-        cx: &mut MutableAppContext,
-    ) -> Vec<(u32, String)> {
+    fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut AppContext) -> Vec<(u32, String)> {
         let mut presenter = cx.build_presenter(editor.id(), 0., Default::default());
         let mut cx = presenter.build_layout_context(Default::default(), false, cx);
         cx.render(editor, |editor, cx| {

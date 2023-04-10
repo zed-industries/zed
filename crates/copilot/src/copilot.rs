@@ -6,10 +6,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use collections::HashMap;
 use futures::{future::Shared, Future, FutureExt, TryFutureExt};
-use gpui::{
-    actions, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task,
-};
+use gpui::{actions, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, Language, ToPointUtf16};
 use log::{debug, error};
 use lsp::LanguageServer;
@@ -34,7 +31,7 @@ actions!(copilot_auth, [SignIn, SignOut]);
 const COPILOT_NAMESPACE: &'static str = "copilot";
 actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
 
-pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut MutableAppContext) {
+pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
     // Disable Copilot for stable releases.
     if *cx.global::<ReleaseChannel>() == ReleaseChannel::Stable {
         cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {

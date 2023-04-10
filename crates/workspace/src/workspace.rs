@@ -40,11 +40,13 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::{CursorStyle, WindowOptions},
+    platform::{
+        CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
+        WindowOptions,
+    },
     Action, AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext,
-    ModelHandle, MouseButton, MutableAppContext, PathPromptOptions, Platform, PromptLevel,
-    RenderContext, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowBounds,
+    ModelHandle, RenderContext, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -245,12 +247,12 @@ impl_internal_actions!(
 );
 impl_actions!(workspace, [ActivatePane]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     pane::init(cx);
     dock::init(cx);
     notifications::init(cx);
 
-    cx.add_global_action(|_: &Open, cx: &mut MutableAppContext| {
+    cx.add_global_action(|_: &Open, cx: &mut AppContext| {
         let mut paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -283,7 +285,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |action: &OpenPaths, cx: &mut MutableAppContext| {
+        move |action: &OpenPaths, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_paths(&action.paths, &app_state, None, cx).detach();
             }
@@ -315,7 +317,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &NewWindow, cx: &mut MutableAppContext| {
+        move |_: &NewWindow, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
             }
@@ -323,7 +325,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |_: &NewFile, cx: &mut MutableAppContext| {
+        move |_: &NewFile, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
                 open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
             }
@@ -444,7 +446,7 @@ type ProjectItemBuilders = HashMap<
     TypeId,
     fn(ModelHandle<Project>, AnyModelHandle, &mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
 >;
-pub fn register_project_item<I: ProjectItem>(cx: &mut MutableAppContext) {
+pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
     cx.update_default_global(|builders: &mut ProjectItemBuilders, _| {
         builders.insert(TypeId::of::<I::Item>(), |project, model, cx| {
             let item = model.downcast::<I::Item>().unwrap();
@@ -458,7 +460,7 @@ type FollowableItemBuilder = fn(
     ModelHandle<Project>,
     ViewId,
     &mut Option<proto::view::Variant>,
-    &mut MutableAppContext,
+    &mut AppContext,
 ) -> Option<Task<Result<Box<dyn FollowableItemHandle>>>>;
 type FollowableItemBuilders = HashMap<
     TypeId,
@@ -467,7 +469,7 @@ type FollowableItemBuilders = HashMap<
         fn(&AnyViewHandle) -> Box<dyn FollowableItemHandle>,
     ),
 >;
-pub fn register_followable_item<I: FollowableItem>(cx: &mut MutableAppContext) {
+pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
     cx.update_default_global(|builders: &mut FollowableItemBuilders, _| {
         builders.insert(
             TypeId::of::<I>(),
@@ -494,7 +496,7 @@ type ItemDeserializers = HashMap<
         &mut ViewContext<Pane>,
     ) -> Task<Result<Box<dyn ItemHandle>>>,
 >;
-pub fn register_deserializable_item<I: Item>(cx: &mut MutableAppContext) {
+pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
     cx.update_default_global(|deserializers: &mut ItemDeserializers, _cx| {
         if let Some(serialized_item_kind) = I::serialized_item_kind() {
             deserializers.insert(
@@ -524,7 +526,7 @@ pub struct AppState {
 
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut MutableAppContext) -> Arc<Self> {
+    pub fn test(cx: &mut AppContext) -> Arc<Self> {
         let settings = Settings::test(cx);
         cx.set_global(settings);
 
@@ -857,7 +859,7 @@ impl Workspace {
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
         requesting_window_id: Option<usize>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
@@ -1097,7 +1099,7 @@ impl Workspace {
         }
     }
 
-    pub fn close_global(_: &CloseWindow, cx: &mut MutableAppContext) {
+    pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
         let id = cx.window_ids().find(|&id| cx.window_is_active(id));
         if let Some(id) = id {
             //This can only get called when the window's project connection has been lost
@@ -1132,7 +1134,7 @@ impl Workspace {
         let window_id = cx.window_id();
         let workspace_count = cx
             .window_ids()
-            .flat_map(|window_id| cx.root_view::<Workspace>(window_id))
+            .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
             .count();
 
         cx.spawn(|this, mut cx| async move {
@@ -1313,7 +1315,7 @@ impl Workspace {
         project: ModelHandle<Project>,
         abs_path: &Path,
         visible: bool,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<(ModelHandle<Worktree>, ProjectPath)>> {
         let entry = project.update(cx, |project, cx| {
             project.find_or_create_local_worktree(abs_path, visible, cx)
@@ -1405,7 +1407,7 @@ impl Workspace {
         let project = self.project.clone();
         if let Some(item) = self.active_item(cx) {
             if !force_name_change && item.can_save(cx) {
-                if item.has_conflict(cx.as_ref()) {
+                if item.has_conflict(cx) {
                     const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
                     let mut answer = cx.prompt(
@@ -2669,7 +2671,7 @@ impl Workspace {
     fn load_from_serialized_workspace(
         workspace: WeakViewHandle<Workspace>,
         serialized_workspace: SerializedWorkspace,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) {
         cx.spawn(|mut cx| async move {
             if let Some(workspace) = workspace.upgrade(&cx) {
@@ -2990,15 +2992,15 @@ impl std::fmt::Debug for OpenPaths {
 pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 
 pub fn activate_workspace_for_project(
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
 ) -> Option<ViewHandle<Workspace>> {
     for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(workspace_handle) = cx.root_view::<Workspace>(window_id) {
+        if let Some(workspace_handle) = cx.root_view(window_id)?.downcast_ref::<Workspace>() {
             let project = workspace_handle.read(cx).project.clone();
             if project.update(cx, &predicate) {
                 cx.activate_window(window_id);
-                return Some(workspace_handle);
+                return Some(workspace_handle.clone());
             }
         }
     }
@@ -3014,7 +3016,7 @@ pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
     requesting_window_id: Option<usize>,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
 ) -> Task<(
     ViewHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
@@ -3066,7 +3068,7 @@ pub fn open_paths(
 
 pub fn open_new(
     app_state: &Arc<AppState>,
-    cx: &mut MutableAppContext,
+    cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
 ) -> Task<()> {
     let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);

@@ -39,11 +39,10 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::CursorStyle,
+    platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, MouseButton, MutableAppContext, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -261,6 +260,8 @@ actions!(
         Format,
         ToggleSoftWrap,
         RevealInFinder,
+        CopyPath,
+        CopyRelativePath,
         CopyHighlightJson
     ]
 );
@@ -295,7 +296,7 @@ pub enum Direction {
     Next,
 }
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::new_file);
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
@@ -381,6 +382,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::jump);
     cx.add_action(Editor::toggle_soft_wrap);
     cx.add_action(Editor::reveal_in_finder);
+    cx.add_action(Editor::copy_path);
+    cx.add_action(Editor::copy_relative_path);
     cx.add_action(Editor::copy_highlight_json);
     cx.add_async_action(Editor::format);
     cx.add_action(Editor::restart_language_server);
@@ -1314,7 +1317,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
+    pub fn snapshot(&mut self, cx: &mut AppContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
@@ -6168,13 +6171,13 @@ impl Editor {
         });
     }
 
-    pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
+    pub fn longest_row(&self, cx: &mut AppContext) -> u32 {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .longest_row()
     }
 
-    pub fn max_point(&self, cx: &mut MutableAppContext) -> DisplayPoint {
+    pub fn max_point(&self, cx: &mut AppContext) -> DisplayPoint {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .max_point()
@@ -6194,7 +6197,7 @@ impl Editor {
         });
     }
 
-    pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
+    pub fn display_text(&self, cx: &mut AppContext) -> String {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
             .text()
@@ -6226,7 +6229,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) -> bool {
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut AppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
@@ -6248,6 +6251,26 @@ impl Editor {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
                 cx.reveal_path(&file.abs_path(cx));
+            }
+        }
+    }
+
+    pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(path) = file.abs_path(cx).to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                }
+            }
+        }
+    }
+
+    pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+        if let Some(buffer) = self.buffer().read(cx).as_singleton() {
+            if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
+                if let Some(path) = file.path().to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new(path.to_string()));
+                }
             }
         }
     }
@@ -6766,7 +6789,7 @@ pub struct EditorReleased(pub WeakViewHandle<Editor>);
 impl Entity for Editor {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         cx.emit_global(EditorReleased(self.handle.clone()));
     }
 }
@@ -6842,7 +6865,7 @@ impl View for Editor {
 
     fn modifiers_changed(
         &mut self,
-        event: &gpui::ModifiersChangedEvent,
+        event: &gpui::platform::ModifiersChangedEvent,
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let pending_selection = self.has_pending_selection();

@@ -4,8 +4,9 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_internal_actions, CursorStyle, Entity, MouseButton, MutableAppContext, RenderContext,
-    View, ViewContext, WindowBounds, WindowKind, WindowOptions,
+    impl_internal_actions,
+    platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
+    AppContext, Entity, RenderContext, View, ViewContext,
 };
 use settings::Settings;
 use util::ResultExt;
@@ -13,7 +14,7 @@ use workspace::JoinProject;
 
 impl_internal_actions!(incoming_call_notification, [RespondToCall]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(IncomingCallNotification::respond_to_call);
 
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();

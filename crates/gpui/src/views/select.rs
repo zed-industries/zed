@@ -1,8 +1,8 @@
 use serde::Deserialize;
 
 use crate::{
-    actions, elements::*, impl_actions, AppContext, Entity, MouseButton, MutableAppContext,
-    RenderContext, View, ViewContext, WeakViewHandle,
+    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, RenderContext,
+    View, ViewContext, WeakViewHandle,
 };
 
 pub struct Select {
@@ -12,7 +12,7 @@ pub struct Select {
     item_count: usize,
     is_open: bool,
     list_state: UniformListState,
-    build_style: Option<Box<dyn FnMut(&mut MutableAppContext) -> SelectStyle>>,
+    build_style: Option<Box<dyn FnMut(&mut AppContext) -> SelectStyle>>,
 }
 
 #[derive(Clone, Default)]
@@ -35,7 +35,7 @@ impl_actions!(select, [SelectItem]);
 
 pub enum Event {}
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(Select::toggle);
     cx.add_action(Select::select_item);
 }
@@ -57,10 +57,7 @@ impl Select {
         }
     }
 
-    pub fn with_style(
-        mut self,
-        f: impl 'static + FnMut(&mut MutableAppContext) -> SelectStyle,
-    ) -> Self {
+    pub fn with_style(mut self, f: impl 'static + FnMut(&mut AppContext) -> SelectStyle) -> Self {
         self.build_style = Some(Box::new(f));
         self
     }

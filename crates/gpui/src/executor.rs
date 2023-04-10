@@ -17,7 +17,7 @@ use std::{
 
 use crate::{
     platform::{self, Dispatcher},
-    util, MutableAppContext,
+    util, AppContext,
 };
 
 pub enum Foreground {
@@ -941,7 +941,7 @@ impl<T> Task<T> {
 }
 
 impl<T: 'static, E: 'static + Display> Task<Result<T, E>> {
-    pub fn detach_and_log_err(self, cx: &mut MutableAppContext) {
+    pub fn detach_and_log_err(self, cx: &mut AppContext) {
         cx.spawn(|_| async move {
             if let Err(err) = self.await {
                 log::error!("{}", err);

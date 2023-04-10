@@ -5,7 +5,7 @@ use std::sync::Arc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
-    Element, ElementBox, Entity, MutableAppContext, Subscription, View, ViewContext,
+    AppContext, Element, ElementBox, Entity, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 
@@ -18,7 +18,7 @@ use crate::base_keymap_picker::ToggleBaseKeymapSelector;
 
 pub const FIRST_OPEN: &str = "first_open";
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
         let welcome_page = cx.add_view(WelcomePage::new);
         workspace.add_item(Box::new(welcome_page), cx)
@@ -27,7 +27,7 @@ pub fn init(cx: &mut MutableAppContext) {
     base_keymap_picker::init(cx);
 }
 
-pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_sidebar(SidebarSide::Left, cx);
         let welcome_page = cx.add_view(|cx| WelcomePage::new(cx));

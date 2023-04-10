@@ -11,8 +11,9 @@ use futures::AsyncReadExt;
 use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Svg},
-    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    platform::PromptLevel,
+    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext,
+    Task, View, ViewContext, ViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -35,7 +36,7 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 
 actions!(feedback, [GiveFeedback, SubmitFeedback]);
 
-pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action({
         move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
             FeedbackEditor::deploy(system_specs.clone(), workspace, app_state.clone(), cx);

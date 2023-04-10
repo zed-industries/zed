@@ -5,7 +5,7 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Entity,
-    MouseState, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    MouseState, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -16,7 +16,7 @@ use workspace::Workspace;
 
 actions!(outline, [Toggle]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(OutlineView::toggle);
     Picker::<OutlineView>::init(cx);
 }
@@ -38,7 +38,7 @@ pub enum Event {
 impl Entity for OutlineView {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, cx: &mut AppContext) {
         self.restore_active_editor(cx);
     }
 }
@@ -100,7 +100,7 @@ impl OutlineView {
         }
     }
 
-    fn restore_active_editor(&mut self, cx: &mut MutableAppContext) {
+    fn restore_active_editor(&mut self, cx: &mut AppContext) {
         self.active_editor.update(cx, |editor, cx| {
             editor.highlight_rows(None);
             if let Some(scroll_position) = self.prev_scroll_position {

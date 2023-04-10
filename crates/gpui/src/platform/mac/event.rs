@@ -1,9 +1,11 @@
 use crate::{
     geometry::vector::vec2f,
     keymap_matcher::Keystroke,
-    platform::{Event, NavigationDirection},
-    KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton, MouseButtonEvent,
-    MouseExitedEvent, MouseMovedEvent, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    platform::{
+        Event, KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent, MouseButton,
+        MouseButtonEvent, MouseExitedEvent, MouseMovedEvent, NavigationDirection, ScrollDelta,
+        ScrollWheelEvent, TouchPhase,
+    },
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},

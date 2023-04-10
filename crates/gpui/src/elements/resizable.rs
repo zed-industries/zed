@@ -4,8 +4,10 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
 
 use crate::{
-    geometry::rect::RectF, scene::MouseDrag, Axis, CursorStyle, Element, ElementBox,
-    ElementStateHandle, MouseButton, MouseRegion, RenderContext, View,
+    geometry::rect::RectF,
+    platform::{CursorStyle, MouseButton},
+    scene::MouseDrag,
+    Axis, Element, ElementBox, ElementStateHandle, MouseRegion, RenderContext, View,
 };
 
 use super::{ConstrainedBox, Hook};

@@ -2,7 +2,7 @@ use crate::{update_settings_file, watched_json::WatchedJsonFile, SettingsFileCon
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
-use gpui::{AssetSource, MutableAppContext};
+use gpui::{AppContext, AssetSource};
 use std::{io::ErrorKind, path::Path, sync::Arc};
 
 // TODO: Switch SettingsFile to open a worktree and buffer for synchronization
@@ -49,7 +49,7 @@ impl SettingsFile {
     }
 
     pub fn update(
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
     ) {
         let this = cx.global::<SettingsFile>();
@@ -211,7 +211,7 @@ mod tests {
     }
 
     fn assert_key_bindings_for<'a>(
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
         actions: Vec<(&'static str, &'a dyn Action)>,
         line: u32,
     ) {

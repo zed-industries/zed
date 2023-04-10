@@ -6,7 +6,7 @@ pub mod submit_feedback_button;
 use std::sync::Arc;
 
 mod system_specs;
-use gpui::{actions, impl_actions, ClipboardItem, MutableAppContext, PromptLevel, ViewContext};
+use gpui::{actions, impl_actions, platform::PromptLevel, AppContext, ClipboardItem, ViewContext};
 use serde::Deserialize;
 use system_specs::SystemSpecs;
 use workspace::{AppState, Workspace};
@@ -28,7 +28,7 @@ actions!(
     ]
 );
 
-pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     let system_specs = SystemSpecs::new(&cx);
     let system_specs_text = system_specs.to_string();
 
@@ -37,7 +37,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
 
     let url = format!(
-        "https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}", 
+        "https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml&environment={}",
         urlencoding::encode(&system_specs_text)
     );
 

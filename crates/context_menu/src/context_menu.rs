@@ -1,20 +1,24 @@
 use gpui::{
-    elements::*, geometry::vector::Vector2F, impl_internal_actions, keymap_matcher::KeymapContext,
-    platform::CursorStyle, Action, AnyViewHandle, AppContext, Axis, Entity, MouseButton,
-    MouseState, MutableAppContext, RenderContext, SizeConstraint, Subscription, View, ViewContext,
+    elements::*,
+    geometry::vector::Vector2F,
+    impl_internal_actions,
+    keymap_matcher::KeymapContext,
+    platform::{CursorStyle, MouseButton},
+    Action, AnyViewHandle, AppContext, Axis, Entity, MouseState, RenderContext, SizeConstraint,
+    Subscription, View, ViewContext,
 };
 use menu::*;
 use settings::Settings;
 use std::{any::TypeId, borrow::Cow, time::Duration};
 
-pub type StaticItem = Box<dyn Fn(&mut MutableAppContext) -> ElementBox>;
+pub type StaticItem = Box<dyn Fn(&mut AppContext) -> ElementBox>;
 
 #[derive(Copy, Clone, PartialEq)]
 struct Clicked;
 
 impl_internal_actions!(context_menu, [Clicked]);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::select_first);
     cx.add_action(ContextMenu::select_last);
     cx.add_action(ContextMenu::select_next);

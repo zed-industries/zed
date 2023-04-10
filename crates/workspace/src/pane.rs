@@ -22,10 +22,10 @@ use gpui::{
     },
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::{CursorStyle, NavigationDirection},
+    platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseButton, MouseRegion, MutableAppContext, PromptLevel, Quad, RenderContext,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseRegion, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -46,6 +46,8 @@ actions!(
         CloseActiveItem,
         CloseInactiveItems,
         CloseCleanItems,
+        CloseItemsToTheLeft,
+        CloseItemsToTheRight,
         CloseAllItems,
         ReopenClosedItem,
         SplitLeft,
@@ -106,7 +108,7 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
         pane.activate_item(action.0, true, true, cx);
     });
@@ -122,6 +124,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(Pane::close_active_item);
     cx.add_async_action(Pane::close_inactive_items);
     cx.add_async_action(Pane::close_clean_items);
+    cx.add_async_action(Pane::close_items_to_the_left);
+    cx.add_async_action(Pane::close_items_to_the_right);
     cx.add_async_action(Pane::close_all_items);
     cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
         let pane = action.pane.upgrade(cx)?;
@@ -259,13 +263,6 @@ pub enum ReorderBehavior {
     None,
     MoveAfterActive,
     MoveToIndex(usize),
-}
-
-enum ItemType {
-    Active,
-    Inactive,
-    Clean,
-    All,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -642,7 +639,7 @@ impl Pane {
         self.items.len()
     }
 
-    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> {
+    pub fn items(&self) -> impl Iterator<Item = &Box<dyn ItemHandle>> + DoubleEndedIterator {
         self.items.iter()
     }
 
@@ -741,7 +738,18 @@ impl Pane {
         _: &CloseActiveItem,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        Self::close_main(workspace, ItemType::Active, cx)
+        let pane_handle = workspace.active_pane().clone();
+        let pane = pane_handle.read(cx);
+        let active_item_id = pane.items[pane.active_item_index].id();
+
+        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
+            item_id == active_item_id
+        });
+
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
     }
 
     pub fn close_inactive_items(
@@ -749,15 +757,18 @@ impl Pane {
         _: &CloseInactiveItems,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        Self::close_main(workspace, ItemType::Inactive, cx)
-    }
+        let pane_handle = workspace.active_pane().clone();
+        let pane = pane_handle.read(cx);
+        let active_item_id = pane.items[pane.active_item_index].id();
 
-    pub fn close_all_items(
-        workspace: &mut Workspace,
-        _: &CloseAllItems,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<Task<Result<()>>> {
-        Self::close_main(workspace, ItemType::All, cx)
+        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
+            item_id != active_item_id
+        });
+
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
     }
 
     pub fn close_clean_items(
@@ -765,38 +776,84 @@ impl Pane {
         _: &CloseCleanItems,
         cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        Self::close_main(workspace, ItemType::Clean, cx)
-    }
-
-    fn close_main(
-        workspace: &mut Workspace,
-        close_item_type: ItemType,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<Task<Result<()>>> {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
-        if pane.items.is_empty() {
-            return None;
-        }
 
-        let active_item_id = pane.items[pane.active_item_index].id();
-        let clean_item_ids: Vec<_> = pane
+        let item_ids: Vec<_> = pane
             .items()
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.id())
             .collect();
-        let task =
-            Self::close_items(
-                workspace,
-                pane_handle,
-                cx,
-                move |item_id| match close_item_type {
-                    ItemType::Active => item_id == active_item_id,
-                    ItemType::Inactive => item_id != active_item_id,
-                    ItemType::Clean => clean_item_ids.contains(&item_id),
-                    ItemType::All => true,
-                },
-            );
+
+        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
+            item_ids.contains(&item_id)
+        });
+
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
+    }
+
+    pub fn close_items_to_the_left(
+        workspace: &mut Workspace,
+        _: &CloseItemsToTheLeft,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_handle = workspace.active_pane().clone();
+        let pane = pane_handle.read(cx);
+        let active_item_id = pane.items[pane.active_item_index].id();
+
+        let item_ids: Vec<_> = pane
+            .items()
+            .take_while(|item| item.id() != active_item_id)
+            .map(|item| item.id())
+            .collect();
+
+        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
+            item_ids.contains(&item_id)
+        });
+
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
+    }
+
+    pub fn close_items_to_the_right(
+        workspace: &mut Workspace,
+        _: &CloseItemsToTheRight,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_handle = workspace.active_pane().clone();
+        let pane = pane_handle.read(cx);
+        let active_item_id = pane.items[pane.active_item_index].id();
+
+        let item_ids: Vec<_> = pane
+            .items()
+            .rev()
+            .take_while(|item| item.id() != active_item_id)
+            .map(|item| item.id())
+            .collect();
+
+        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
+            item_ids.contains(&item_id)
+        });
+
+        Some(cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        }))
+    }
+
+    pub fn close_all_items(
+        workspace: &mut Workspace,
+        _: &CloseAllItems,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let pane_handle = workspace.active_pane().clone();
+
+        let task = Self::close_items(workspace, pane_handle, cx, move |_| true);
 
         Some(cx.foreground().spawn(async move {
             task.await?;
@@ -1037,7 +1094,7 @@ impl Pane {
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: ModelHandle<Project>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
             item.save(project, cx)
@@ -1683,15 +1740,15 @@ fn render_tab_bar_button<A: Action + Clone>(
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut MutableAppContext) {
+    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut AppContext) {
         self.history.borrow_mut().push(data, self.item.clone(), cx);
     }
 
-    pub fn pop_backward(&self, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+    pub fn pop_backward(&self, cx: &mut AppContext) -> Option<NavigationEntry> {
         self.history.borrow_mut().pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&self, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+    pub fn pop_forward(&self, cx: &mut AppContext) -> Option<NavigationEntry> {
         self.history
             .borrow_mut()
             .pop(NavigationMode::GoingForward, cx)
@@ -1711,7 +1768,7 @@ impl NavHistory {
         self.mode = NavigationMode::Normal;
     }
 
-    fn pop(&mut self, mode: NavigationMode, cx: &mut MutableAppContext) -> Option<NavigationEntry> {
+    fn pop(&mut self, mode: NavigationMode, cx: &mut AppContext) -> Option<NavigationEntry> {
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
                 return None
@@ -1731,7 +1788,7 @@ impl NavHistory {
         &mut self,
         data: Option<D>,
         item: Rc<dyn WeakItemHandle>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) {
         match self.mode {
             NavigationMode::Disabled => {}
@@ -1776,7 +1833,7 @@ impl NavHistory {
         self.did_update(cx);
     }
 
-    fn did_update(&self, cx: &mut MutableAppContext) {
+    fn did_update(&self, cx: &mut AppContext) {
         if let Some(pane) = self.pane.upgrade(cx) {
             cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
         }
@@ -1830,7 +1887,7 @@ impl Element for PaneBackdrop {
         let child_view_id = self.child_view;
         cx.scene.push_mouse_region(
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
-                gpui::MouseButton::Left,
+                gpui::platform::MouseButton::Left,
                 move |_, cx| {
                     let window_id = cx.window_id;
                     cx.focus(window_id, Some(child_view_id))

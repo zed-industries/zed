@@ -8,9 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyViewHandle, DebugContext, ElementBox, Entity, LayoutContext, MeasurementContext,
-    MutableAppContext, PaintContext, RenderContext, SizeConstraint, Subscription, View,
-    ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, DebugContext, ElementBox, Entity, LayoutContext, MeasurementContext,
+    PaintContext, RenderContext, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 
@@ -24,11 +23,7 @@ pub trait StatusItemView: View {
 
 trait StatusItemViewHandle {
     fn as_any(&self) -> &AnyViewHandle;
-    fn set_active_pane_item(
-        &self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut MutableAppContext,
-    );
+    fn set_active_pane_item(&self, active_pane_item: Option<&dyn ItemHandle>, cx: &mut AppContext);
 }
 
 pub struct StatusBar {
@@ -130,11 +125,7 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
         self
     }
 
-    fn set_active_pane_item(
-        &self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut MutableAppContext,
-    ) {
+    fn set_active_pane_item(&self, active_pane_item: Option<&dyn ItemHandle>, cx: &mut AppContext) {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         });

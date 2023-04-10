@@ -1,20 +1,19 @@
 use crate::{
-    app::{AppContext, MutableAppContext, WindowInvalidation},
+    app::WindowInvalidation,
     elements::Element,
     font_cache::FontCache,
     geometry::rect::RectF,
     json::{self, ToJson},
-    platform::{CursorStyle, Event},
+    platform::{Appearance, CursorStyle, Event, FontSystem, MouseButton, MouseMovedEvent},
     scene::{
         CursorRegion, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseEvent, MouseHover,
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
-    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, Appearance,
-    AssetCache, ElementBox, Entity, FontSystem, ModelHandle, MouseButton, MouseMovedEvent,
-    MouseRegion, MouseRegionId, MouseState, ParentId, ReadModel, ReadView, RenderContext,
-    RenderParams, SceneBuilder, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    Action, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
+    AssetCache, ElementBox, Entity, ModelHandle, MouseRegion, MouseRegionId, MouseState, ParentId,
+    ReadModel, ReadView, RenderContext, RenderParams, SceneBuilder, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -56,7 +55,7 @@ impl Presenter {
         font_cache: Arc<FontCache>,
         text_layout_cache: TextLayoutCache,
         asset_cache: Arc<AssetCache>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Self {
         Self {
             window_id,
@@ -80,7 +79,7 @@ impl Presenter {
         &mut self,
         invalidation: &mut WindowInvalidation,
         appearance: Appearance,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) {
         cx.start_frame();
         self.appearance = appearance;
@@ -111,7 +110,7 @@ impl Presenter {
         &mut self,
         invalidation: &mut WindowInvalidation,
         appearance: Appearance,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) {
         self.invalidate(invalidation, appearance, cx);
         for (view_id, view) in &mut self.rendered_views {
@@ -138,7 +137,7 @@ impl Presenter {
         window_size: Vector2F,
         scale_factor: f32,
         refreshing: bool,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> Scene {
         let mut scene_builder = SceneBuilder::new(scale_factor);
 
@@ -169,7 +168,7 @@ impl Presenter {
         }
     }
 
-    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut MutableAppContext) {
+    fn layout(&mut self, window_size: Vector2F, refreshing: bool, cx: &mut AppContext) {
         if let Some(root_view_id) = cx.root_view_id(self.window_id) {
             self.build_layout_context(window_size, refreshing, cx)
                 .layout(root_view_id, SizeConstraint::strict(window_size));
@@ -180,7 +179,7 @@ impl Presenter {
         &'a mut self,
         window_size: Vector2F,
         refreshing: bool,
-        cx: &'a mut MutableAppContext,
+        cx: &'a mut AppContext,
     ) -> LayoutContext<'a> {
         LayoutContext {
             window_id: self.window_id,
@@ -206,7 +205,7 @@ impl Presenter {
         &'a mut self,
         scene: &'a mut SceneBuilder,
         window_size: Vector2F,
-        cx: &'a mut MutableAppContext,
+        cx: &'a mut AppContext,
     ) -> PaintContext {
         PaintContext {
             scene,
@@ -234,7 +233,7 @@ impl Presenter {
         &mut self,
         event: Event,
         event_reused: bool,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> bool {
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
@@ -557,7 +556,7 @@ impl Presenter {
     pub fn build_event_context<'a>(
         &'a mut self,
         notified_views: &'a mut HashSet<usize>,
-        cx: &'a mut MutableAppContext,
+        cx: &'a mut AppContext,
     ) -> EventContext<'a> {
         EventContext {
             font_cache: &self.font_cache,
@@ -595,7 +594,7 @@ pub struct LayoutContext<'a> {
     pub font_system: Arc<dyn FontSystem>,
     pub text_layout_cache: &'a TextLayoutCache,
     pub asset_cache: &'a AssetCache,
-    pub app: &'a mut MutableAppContext,
+    pub app: &'a mut AppContext,
     pub refreshing: bool,
     pub window_size: Vector2F,
     titlebar_height: f32,
@@ -692,7 +691,7 @@ impl<'a> LayoutContext<'a> {
 }
 
 impl<'a> Deref for LayoutContext<'a> {
-    type Target = MutableAppContext;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.app
@@ -804,7 +803,7 @@ impl<'a> Deref for PaintContext<'a> {
 pub struct EventContext<'a> {
     pub font_cache: &'a FontCache,
     pub text_layout_cache: &'a TextLayoutCache,
-    pub app: &'a mut MutableAppContext,
+    pub app: &'a mut AppContext,
     pub window_id: usize,
     pub notify_count: usize,
     view_stack: Vec<usize>,
@@ -871,7 +870,7 @@ impl<'a> EventContext<'a> {
 }
 
 impl<'a> Deref for EventContext<'a> {
-    type Target = MutableAppContext;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.app

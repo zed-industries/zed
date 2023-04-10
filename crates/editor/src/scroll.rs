@@ -9,7 +9,7 @@ use std::{
 
 use gpui::{
     geometry::vector::{vec2f, Vector2F},
-    Axis, MutableAppContext, Task, ViewContext,
+    AppContext, Axis, Task, ViewContext,
 };
 use language::{Bias, Point};
 use util::ResultExt;
@@ -369,7 +369,7 @@ impl Editor {
     ///     Ordering::Equal => on screen
     ///     Ordering::Less => above the screen
     ///     Ordering::Greater => below the screen
-    pub fn newest_selection_on_screen(&self, cx: &mut MutableAppContext) -> Ordering {
+    pub fn newest_selection_on_screen(&self, cx: &mut AppContext) -> Ordering {
         let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let newest_head = self
             .selections

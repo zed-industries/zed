@@ -1214,7 +1214,7 @@ mod tests {
     use Bias::{Left, Right};
 
     #[gpui::test]
-    fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
+    fn test_basic_folds(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1287,7 +1287,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_adjacent_folds(cx: &mut gpui::MutableAppContext) {
+    fn test_adjacent_folds(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1334,7 +1334,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_overlapping_folds(cx: &mut gpui::MutableAppContext) {
+    fn test_overlapping_folds(cx: &mut gpui::AppContext) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
@@ -1350,7 +1350,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_merging_folds_via_edit(cx: &mut gpui::MutableAppContext) {
+    fn test_merging_folds_via_edit(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1374,7 +1374,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_folds_in_range(cx: &mut gpui::MutableAppContext) {
+    fn test_folds_in_range(cx: &mut gpui::AppContext) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
@@ -1401,7 +1401,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_folds(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+    fn test_random_folds(cx: &mut gpui::AppContext, mut rng: StdRng) {
         cx.set_global(Settings::test(cx));
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1656,7 +1656,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_buffer_rows(cx: &mut gpui::MutableAppContext) {
+    fn test_buffer_rows(cx: &mut gpui::AppContext) {
         let text = sample_text(6, 6, 'a') + "\n";
         let buffer = MultiBuffer::build_simple(&text, cx);
 

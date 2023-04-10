@@ -16,9 +16,10 @@ use futures::{
 };
 use gpui::{
     actions,
+    platform::AppVersion,
     serde_json::{self, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AppVersion,
-    AsyncAppContext, Entity, ModelHandle, MutableAppContext, Task, View, ViewContext, ViewHandle,
+    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
+    AsyncAppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -70,7 +71,7 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 actions!(client, [SignIn, SignOut]);
 
-pub fn init(client: Arc<Client>, cx: &mut MutableAppContext) {
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.add_global_action({
         let client = client.clone();
         move |_: &SignIn, cx| {

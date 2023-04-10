@@ -21,8 +21,8 @@ use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
-    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, Task, UpgradeModelHandle, WeakModelHandle,
+    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task,
+    UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     point_to_lsp,
@@ -427,7 +427,7 @@ impl Project {
         user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| {
             let (tx, rx) = mpsc::unbounded();
@@ -5902,7 +5902,7 @@ impl Project {
         &mut self,
         project_transaction: ProjectTransaction,
         peer_id: proto::PeerId,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> proto::ProjectTransaction {
         let mut serialized_transaction = proto::ProjectTransaction {
             buffer_ids: Default::default(),
@@ -5960,7 +5960,7 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         peer_id: proto::PeerId,
-        cx: &mut MutableAppContext,
+        cx: &mut AppContext,
     ) -> u64 {
         let buffer_id = buffer.read(cx).remote_id();
         if let Some(project_id) = self.remote_id() {
@@ -6573,7 +6573,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 impl Entity for Project {
     type Event = Event;
 
-    fn release(&mut self, _: &mut gpui::MutableAppContext) {
+    fn release(&mut self, _: &mut gpui::AppContext) {
         match &self.client_state {
             Some(ProjectClientState::Local { remote_id, .. }) => {
                 let _ = self.client.send(proto::UnshareProject {
@@ -6591,7 +6591,7 @@ impl Entity for Project {
 
     fn app_will_quit(
         &mut self,
-        _: &mut MutableAppContext,
+        _: &mut AppContext,
     ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
         let shutdown_futures = self
             .language_servers

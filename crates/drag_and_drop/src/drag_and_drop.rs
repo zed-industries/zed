@@ -4,9 +4,9 @@ use collections::HashSet;
 use gpui::{
     elements::{Empty, MouseEventHandler, Overlay},
     geometry::{rect::RectF, vector::Vector2F},
+    platform::{CursorStyle, MouseButton},
     scene::{MouseDown, MouseDrag},
-    CursorStyle, Element, ElementBox, EventContext, MouseButton, MutableAppContext, RenderContext,
-    View, WeakViewHandle,
+    AppContext, Element, ElementBox, EventContext, RenderContext, View, WeakViewHandle,
 };
 
 const DEAD_ZONE: f32 = 4.;
@@ -261,7 +261,7 @@ impl<V: View> DragAndDrop<V> {
             })
     }
 
-    pub fn cancel_dragging<P: Any>(&mut self, cx: &mut MutableAppContext) {
+    pub fn cancel_dragging<P: Any>(&mut self, cx: &mut AppContext) {
         if let Some(State::Dragging {
             payload, window_id, ..
         }) = &self.currently_dragged
@@ -274,13 +274,13 @@ impl<V: View> DragAndDrop<V> {
         }
     }
 
-    fn finish_dragging(&mut self, cx: &mut MutableAppContext) {
+    fn finish_dragging(&mut self, cx: &mut AppContext) {
         if let Some(State::Dragging { window_id, .. }) = self.currently_dragged.take() {
             self.notify_containers_for_window(window_id, cx);
         }
     }
 
-    fn notify_containers_for_window(&mut self, window_id: usize, cx: &mut MutableAppContext) {
+    fn notify_containers_for_window(&mut self, window_id: usize, cx: &mut AppContext) {
         self.containers.retain(|container| {
             if let Some(container) = container.upgrade(cx) {
                 if container.window_id() == window_id {

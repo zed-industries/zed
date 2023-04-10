@@ -1,7 +1,7 @@
 use gpui::{
     elements::{Flex, Label, MouseEventHandler, ParentElement, Text},
-    CursorStyle, Element, ElementBox, Entity, MouseButton, RenderContext, View, ViewContext,
-    ViewHandle,
+    platform::{CursorStyle, MouseButton},
+    Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};

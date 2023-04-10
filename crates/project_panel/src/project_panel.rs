@@ -12,9 +12,9 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap_matcher::KeymapContext,
-    platform::CursorStyle,
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, MouseButton,
-    MutableAppContext, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    platform::{CursorStyle, MouseButton, PromptLevel},
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, RenderContext, Task, View,
+    ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -24,7 +24,7 @@ use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 use theme::ProjectPanelEntry;
@@ -119,6 +119,7 @@ actions!(
         NewFile,
         Copy,
         CopyPath,
+        CopyRelativePath,
         RevealInFinder,
         Cut,
         Paste,
@@ -132,7 +133,7 @@ impl_internal_actions!(
     [Open, ToggleExpanded, DeployContextMenu, MoveProjectEntry]
 );
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectPanel::deploy_context_menu);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
@@ -146,10 +147,11 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_async_action(ProjectPanel::delete);
     cx.add_async_action(ProjectPanel::confirm);
     cx.add_action(ProjectPanel::cancel);
+    cx.add_action(ProjectPanel::cut);
     cx.add_action(ProjectPanel::copy);
     cx.add_action(ProjectPanel::copy_path);
+    cx.add_action(ProjectPanel::copy_relative_path);
     cx.add_action(ProjectPanel::reveal_in_finder);
-    cx.add_action(ProjectPanel::cut);
     cx.add_action(
         |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
             this.paste(action, cx);
@@ -307,11 +309,16 @@ impl ProjectPanel {
             }
             menu_entries.push(ContextMenuItem::item("New File", NewFile));
             menu_entries.push(ContextMenuItem::item("New Folder", NewDirectory));
-            menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
             menu_entries.push(ContextMenuItem::Separator);
-            menu_entries.push(ContextMenuItem::item("Copy", Copy));
-            menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
             menu_entries.push(ContextMenuItem::item("Cut", Cut));
+            menu_entries.push(ContextMenuItem::item("Copy", Copy));
+            menu_entries.push(ContextMenuItem::Separator);
+            menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
+            menu_entries.push(ContextMenuItem::item(
+                "Copy Relative Path",
+                CopyRelativePath,
+            ));
+            menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
             if let Some(clipboard_entry) = self.clipboard_entry {
                 if clipboard_entry.worktree_id() == worktree.id() {
                     menu_entries.push(ContextMenuItem::item("Paste", Paste));
@@ -785,10 +792,19 @@ impl ProjectPanel {
 
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let mut path = PathBuf::new();
-            path.push(worktree.root_name());
-            path.push(&entry.path);
-            cx.write_to_clipboard(ClipboardItem::new(path.to_string_lossy().to_string()));
+            cx.write_to_clipboard(ClipboardItem::new(
+                worktree
+                    .abs_path()
+                    .join(&entry.path)
+                    .to_string_lossy()
+                    .to_string(),
+            ));
+        }
+    }
+
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
+        if let Some((_, entry)) = self.selected_entry(cx) {
+            cx.write_to_clipboard(ClipboardItem::new(entry.path.to_string_lossy().to_string()));
         }
     }
 
