@@ -981,7 +981,8 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                     guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
                 assert_eq!(
                     guest_saved_version, host_saved_version,
-                    "guest saved version does not match host's for path {path:?} in project {project_id}",
+                    "guest {} saved version does not match host's for path {path:?} in project {project_id}",
+                    client.username
                 );
 
                 let host_saved_version_fingerprint =
@@ -990,26 +991,30 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                     guest_buffer.read_with(client_cx, |b, _| b.saved_version_fingerprint());
                 assert_eq!(
                     guest_saved_version_fingerprint, host_saved_version_fingerprint,
-                    "guest's saved fingerprint does not match host's for path {path:?} in project {project_id}",
+                    "guest {} saved fingerprint does not match host's for path {path:?} in project {project_id}",
+                    client.username
                 );
 
                 let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
                 let guest_saved_mtime = guest_buffer.read_with(client_cx, |b, _| b.saved_mtime());
                 assert_eq!(
                     guest_saved_mtime, host_saved_mtime,
-                    "guest's saved mtime does not match host's for path {path:?} in project {project_id}",
+                    "guest {} saved mtime does not match host's for path {path:?} in project {project_id}",
+                    client.username
                 );
 
                 let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
                 let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
                 assert_eq!(guest_is_dirty, host_is_dirty,
-                    "guest's dirty status does not match host's for path {path:?} in project {project_id}",
+                    "guest {} dirty status does not match host's for path {path:?} in project {project_id}",
+                    client.username
                 );
 
                 let host_has_conflict = host_buffer.read_with(host_cx, |b, _| b.has_conflict());
                 let guest_has_conflict = guest_buffer.read_with(client_cx, |b, _| b.has_conflict());
                 assert_eq!(guest_has_conflict, host_has_conflict,
-                    "guest's conflict status does not match host's for path {path:?} in project {project_id}",
+                    "guest {} conflict status does not match host's for path {path:?} in project {project_id}",
+                    client.username
                 );
             }
         }
