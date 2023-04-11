@@ -1290,52 +1290,52 @@ impl Pane {
         let active_item_id = self.items[self.active_item_index].id();
         let is_active_item = target_item_id == active_item_id;
 
-        let mut options = Vec::new();
-
-        // TODO: Explain why we are doing this - for the key bindings
-        options.push(if is_active_item {
-            ContextMenuItem::item("Close Active Item", CloseActiveItem)
-        } else {
-            ContextMenuItem::item(
-                "Close Inactive Item",
-                CloseItemById {
-                    item_id: target_item_id,
-                    pane: target_pane.clone(),
-                },
-            )
-        });
-        // This should really be called "close others" and the behaviour should be dynamically based on the tab the action is ran on.  Currenlty, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
-        options.push(ContextMenuItem::item(
-            "Close Inactive Items",
-            CloseInactiveItems,
-        ));
-        options.push(ContextMenuItem::item("Close Clean Items", CloseCleanItems));
-        options.push(if is_active_item {
-            ContextMenuItem::item("Close Items To The Left", CloseItemsToTheLeft)
-        } else {
-            ContextMenuItem::item(
-                "Close Items To The Left",
-                CloseItemsToTheLeftById {
-                    item_id: target_item_id,
-                    pane: target_pane.clone(),
-                },
-            )
-        });
-        options.push(if is_active_item {
-            ContextMenuItem::item("Close Items To The Right", CloseItemsToTheRight)
-        } else {
-            ContextMenuItem::item(
-                "Close Items To The Right",
-                CloseItemsToTheRightById {
-                    item_id: target_item_id,
-                    pane: target_pane.clone(),
-                },
-            )
-        });
-        options.push(ContextMenuItem::item("Close All Items", CloseAllItems));
+        // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currenlty, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
 
         self.tab_context_menu.update(cx, |menu, cx| {
-            menu.show(action.position, AnchorCorner::TopLeft, options, cx);
+            menu.show(
+                action.position,
+                AnchorCorner::TopLeft,
+                if is_active_item {
+                    vec![
+                        ContextMenuItem::item("Close Active Item", CloseActiveItem),
+                        ContextMenuItem::item("Close Inactive Items", CloseInactiveItems),
+                        ContextMenuItem::item("Close Clean Items", CloseCleanItems),
+                        ContextMenuItem::item("Close Items To The Left", CloseItemsToTheLeft),
+                        ContextMenuItem::item("Close Items To The Right", CloseItemsToTheRight),
+                        ContextMenuItem::item("Close All Items", CloseAllItems),
+                    ]
+                } else {
+                    // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
+                    vec![
+                        ContextMenuItem::item(
+                            "Close Inactive Item",
+                            CloseItemById {
+                                item_id: target_item_id,
+                                pane: target_pane.clone(),
+                            },
+                        ),
+                        ContextMenuItem::item("Close Inactive Items", CloseInactiveItems),
+                        ContextMenuItem::item("Close Clean Items", CloseCleanItems),
+                        ContextMenuItem::item(
+                            "Close Items To The Left",
+                            CloseItemsToTheLeftById {
+                                item_id: target_item_id,
+                                pane: target_pane.clone(),
+                            },
+                        ),
+                        ContextMenuItem::item(
+                            "Close Items To The Right",
+                            CloseItemsToTheRightById {
+                                item_id: target_item_id,
+                                pane: target_pane.clone(),
+                            },
+                        ),
+                        ContextMenuItem::item("Close All Items", CloseAllItems),
+                    ]
+                },
+                cx,
+            );
         });
     }
 
