@@ -221,7 +221,7 @@ impl Worktree {
                     root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
                     entries_by_path: Default::default(),
                     entries_by_id: Default::default(),
-                    scan_id: 0,
+                    scan_id: 1,
                     completed_scan_id: 0,
                 },
             };
@@ -298,7 +298,7 @@ impl Worktree {
                     .collect(),
                 entries_by_path: Default::default(),
                 entries_by_id: Default::default(),
-                scan_id: 0,
+                scan_id: 1,
                 completed_scan_id: 0,
             };
 
