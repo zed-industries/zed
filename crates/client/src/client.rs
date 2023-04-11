@@ -1649,11 +1649,13 @@ mod tests {
             },
         );
         drop(subscription1);
-        let _subscription2 =
-            client.add_message_handler(model, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+        let _subscription2 = client.add_message_handler(
+            model.clone(),
+            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
-            });
+            },
+        );
         server.send(proto::Ping {});
         done_rx2.next().await.unwrap();
     }
