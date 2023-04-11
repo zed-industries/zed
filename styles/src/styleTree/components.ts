@@ -281,14 +281,18 @@ export function border(
     }
 }
 
-
-export function svg(color: string, asset: String, width: Number, height: Number) {
+export function svg(
+    color: string,
+    asset: String,
+    width: Number,
+    height: Number
+) {
     return {
         color,
         asset,
         dimensions: {
             width,
             height,
-        }
+        },
     }
 }
