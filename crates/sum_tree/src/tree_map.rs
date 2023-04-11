@@ -154,6 +154,12 @@ impl<K> TreeSet<K>
 where
     K: Clone + Debug + Default + Ord,
 {
+    pub fn from_ordered_entries(entries: impl IntoIterator<Item = K>) -> Self {
+        Self(TreeMap::from_ordered_entries(
+            entries.into_iter().map(|key| (key, ())),
+        ))
+    }
+
     pub fn insert(&mut self, key: K) {
         self.0.insert(key, ());
     }
