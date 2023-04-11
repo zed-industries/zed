@@ -2429,17 +2429,17 @@ mod tests {
 
         add_labeled_item(&workspace, &pane, "A", true, cx);
         add_labeled_item(&workspace, &pane, "B", false, cx);
-        add_labeled_item(&workspace, &pane, "C", false, cx);
+        add_labeled_item(&workspace, &pane, "C", true, cx);
         add_labeled_item(&workspace, &pane, "D", false, cx);
         add_labeled_item(&workspace, &pane, "E", false, cx);
-        assert_item_labels(&pane, ["A", "B", "C", "D", "E*"], cx);
+        assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
 
         workspace.update(cx, |workspace, cx| {
             Pane::close_clean_items(workspace, &CloseCleanItems, cx);
         });
 
         deterministic.run_until_parked();
-        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&pane, ["A^", "C*^"], cx);
     }
 
     #[gpui::test]
@@ -2596,6 +2596,9 @@ mod tests {
                         .clone();
                     if ix == pane.active_item_index {
                         state.push('*');
+                    }
+                    if item.is_dirty(cx) {
+                        state.push('^');
                     }
                     state
                 })
