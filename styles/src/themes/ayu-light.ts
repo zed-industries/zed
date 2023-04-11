@@ -1,5 +1,5 @@
-import { createColorScheme } from "../common/ramps"
-import { ayu, buildTheme } from "../common/ayu-common"
+import { createColorScheme } from "./common/ramps"
+import { ayu, buildTheme } from "./common/ayu-common"
 
 const name = "Ayu"
 const author = "Konstantin Pschera <me@kons.ch>"
