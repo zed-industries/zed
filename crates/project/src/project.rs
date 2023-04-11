@@ -4210,7 +4210,13 @@ impl Project {
             let rpc = self.client.clone();
             let message = request.to_proto(project_id, buffer);
             return cx.spawn_weak(|this, cx| async move {
+                // Ensure the project is still alive by the time the task
+                // is scheduled.
+                this.upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project dropped"))?;
+
                 let response = rpc.request(message).await?;
+
                 let this = this
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("project dropped"))?;
