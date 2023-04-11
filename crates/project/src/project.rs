@@ -27,11 +27,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version,
     },
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt,
-    Operation, Patch, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
+    Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
+    Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt, Operation, Patch,
+    PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,

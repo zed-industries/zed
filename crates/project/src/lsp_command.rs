@@ -1346,7 +1346,7 @@ impl LspCommand for GetCompletions {
 
     async fn from_proto(
         message: proto::GetCompletions,
-        project: ModelHandle<Project>,
+        _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
