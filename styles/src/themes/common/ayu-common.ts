@@ -2,6 +2,7 @@ import { dark, light, mirage } from "ayu"
 import { ThemeSyntax } from "./syntax"
 import chroma from "chroma-js"
 import { colorRamp } from "./ramps"
+import { Meta } from "./colorScheme"
 
 export const ayu = {
     dark,
@@ -71,4 +72,19 @@ export const buildSyntax = (t: typeof dark): ThemeSyntax => {
         "string.special": { color: t.syntax.special.hex() },
         function: { color: t.syntax.func.hex() },
     }
+}
+
+export const meta: Meta = {
+    name: "Ayu",
+    author: "dempfi",
+    license: {
+        SPDX: "MIT",
+        license_text: {
+            https_url:
+                "https://raw.githubusercontent.com/dempfi/ayu/master/LICENSE",
+            license_checksum:
+                "e0af0e0d1754c18ca075649d42f5c6d9a60f8bdc03c20dfd97105f2253a94173",
+        },
+    },
+    url: "https://github.com/dempfi/ayu",
 }
