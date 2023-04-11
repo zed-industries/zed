@@ -1111,7 +1111,7 @@ impl Project {
             }),
         });
 
-        let _ = self.metadata_changed(cx);
+        self.metadata_changed(cx);
         cx.emit(Event::RemoteIdChanged(Some(project_id)));
         cx.notify();
         Ok(())
@@ -1124,7 +1124,7 @@ impl Project {
     ) -> Result<()> {
         self.shared_buffers.clear();
         self.set_collaborators_from_proto(message.collaborators, cx)?;
-        let _ = self.metadata_changed(cx);
+        self.metadata_changed(cx);
         Ok(())
     }
 
@@ -1160,6 +1160,13 @@ impl Project {
     }
 
     pub fn unshare(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+        self.unshare_internal(cx)?;
+        self.metadata_changed(cx);
+        cx.notify();
+        Ok(())
+    }
+
+    fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
         if self.is_remote() {
             return Err(anyhow!("attempted to unshare a remote project"));
         }
@@ -1192,8 +1199,6 @@ impl Project {
                 }
             }
 
-            let _ = self.metadata_changed(cx);
-            cx.notify();
             self.client.send(proto::UnshareProject {
                 project_id: remote_id,
             })?;
@@ -1205,13 +1210,21 @@ impl Project {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
+        self.disconnected_from_host_internal(cx);
+        cx.emit(Event::DisconnectedFromHost);
+        cx.notify();
+    }
+
+    fn disconnected_from_host_internal(&mut self, cx: &mut AppContext) {
         if let Some(ProjectClientState::Remote {
             sharing_has_stopped,
             ..
         }) = &mut self.client_state
         {
             *sharing_has_stopped = true;
+
             self.collaborators.clear();
+
             for worktree in &self.worktrees {
                 if let Some(worktree) = worktree.upgrade(cx) {
                     worktree.update(cx, |worktree, _| {
@@ -1221,8 +1234,17 @@ impl Project {
                     });
                 }
             }
-            cx.emit(Event::DisconnectedFromHost);
-            cx.notify();
+
+            for open_buffer in self.opened_buffers.values_mut() {
+                // Wake up any tasks waiting for peers' edits to this buffer.
+                if let Some(buffer) = open_buffer.upgrade(cx) {
+                    buffer.update(cx, |buffer, _| buffer.give_up_waiting());
+                }
+
+                if let OpenBuffer::Strong(buffer) = open_buffer {
+                    *open_buffer = OpenBuffer::Weak(buffer.downgrade());
+                }
+            }
 
             // Wake up all futures currently waiting on a buffer to get opened,
             // to give them a chance to fail now that we've disconnected.
@@ -6183,7 +6205,7 @@ impl Project {
             }
         }
 
-        let _ = self.metadata_changed(cx);
+        self.metadata_changed(cx);
         for (id, _) in old_worktrees_by_id {
             cx.emit(Event::WorktreeRemoved(id));
         }
@@ -6577,17 +6599,16 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
 impl Entity for Project {
     type Event = Event;
 
-    fn release(&mut self, _: &mut gpui::AppContext) {
+    fn release(&mut self, cx: &mut gpui::AppContext) {
         match &self.client_state {
-            Some(ProjectClientState::Local { remote_id, .. }) => {
-                let _ = self.client.send(proto::UnshareProject {
-                    project_id: *remote_id,
-                });
+            Some(ProjectClientState::Local { .. }) => {
+                let _ = self.unshare_internal(cx);
             }
             Some(ProjectClientState::Remote { remote_id, .. }) => {
                 let _ = self.client.send(proto::LeaveProject {
                     project_id: *remote_id,
                 });
+                self.disconnected_from_host_internal(cx);
             }
             _ => {}
         }
