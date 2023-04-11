@@ -973,7 +973,11 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                     host_buffer.read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
                 let guest_diff_base = guest_buffer
                     .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
-                assert_eq!(guest_diff_base, host_diff_base);
+                assert_eq!(
+                    guest_diff_base, host_diff_base,
+                    "guest {} diff base does not match host's for path {path:?} in project {project_id}",
+                    client.username
+                );
 
                 let host_saved_version =
                     host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
