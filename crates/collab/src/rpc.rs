@@ -1610,20 +1610,35 @@ async fn update_buffer(
 ) -> Result<()> {
     session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
-    let host_connection_id = {
+    let mut guest_connection_ids;
+    let mut host_connection_id = None;
+    {
         let collaborators = session
             .db()
             .await
             .project_collaborators(project_id, session.connection_id)
             .await?;
+        guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
+        for collaborator in collaborators.iter() {
+            if collaborator.is_host {
+                host_connection_id = Some(collaborator.connection_id);
+            } else {
+                guest_connection_ids.push(collaborator.connection_id);
+            }
+        }
+    }
+    let host_connection_id = host_connection_id.ok_or_else(|| anyhow!("host not found"))?;
 
-        let host = collaborators
-            .iter()
-            .find(|collaborator| collaborator.is_host)
-            .ok_or_else(|| anyhow!("host not found"))?;
-        host.connection_id
-    };
-
+    session.executor.record_backtrace();
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids,
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
     if host_connection_id != session.connection_id {
         session
             .peer
@@ -1631,25 +1646,6 @@ async fn update_buffer(
             .await?;
     }
 
-    session.executor.record_backtrace();
-    let collaborators = session
-        .db()
-        .await
-        .project_collaborators(project_id, session.connection_id)
-        .await?;
-
-    broadcast(
-        Some(session.connection_id),
-        collaborators
-            .iter()
-            .filter(|collaborator| !collaborator.is_host)
-            .map(|collaborator| collaborator.connection_id),
-        |connection_id| {
-            session
-                .peer
-                .forward_send(session.connection_id, connection_id, request.clone())
-        },
-    );
     response.send(proto::Ack {})?;
     Ok(())
 }
