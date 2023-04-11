@@ -395,10 +395,10 @@ impl CollabTitlebarItem {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
-            icon = "icons/disable_screen_sharing_12.svg";
+            icon = "icons/enable_screen_sharing_12.svg";
             tooltip = "Stop Sharing Screen"
         } else {
-            icon = "icons/enable_screen_sharing_12.svg";
+            icon = "icons/disable_screen_sharing_12.svg";
             tooltip = "Share Screen";
         }
 
