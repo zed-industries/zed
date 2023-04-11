@@ -409,7 +409,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
-        client.add_model_request_handler(Self::handle_get_code_actions);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
@@ -3704,106 +3704,9 @@ impl Project {
         range: Range<T>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
-        let buffer_handle = buffer_handle.clone();
         let buffer = buffer_handle.read(cx);
-        let snapshot = buffer.snapshot();
-        let relevant_diagnostics = snapshot
-            .diagnostics_in_range::<usize, usize>(range.to_offset(&snapshot), false)
-            .map(|entry| entry.to_lsp_diagnostic_stub())
-            .collect();
-        let buffer_id = buffer.remote_id();
-        let worktree;
-        let buffer_abs_path;
-        if let Some(file) = File::from_dyn(buffer.file()) {
-            worktree = file.worktree.clone();
-            buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
-        } else {
-            return Task::ready(Ok(Vec::new()));
-        };
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-
-        if worktree.read(cx).as_local().is_some() {
-            let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_server = if let Some((_, server)) = self.language_server_for_buffer(buffer, cx)
-            {
-                server.clone()
-            } else {
-                return Task::ready(Ok(Vec::new()));
-            };
-
-            let lsp_range = range_to_lsp(range.to_point_utf16(buffer));
-            cx.foreground().spawn(async move {
-                if lang_server.capabilities().code_action_provider.is_none() {
-                    return Ok(Vec::new());
-                }
-
-                Ok(lang_server
-                    .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
-                        text_document: lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(buffer_abs_path).unwrap(),
-                        ),
-                        range: lsp_range,
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                        context: lsp::CodeActionContext {
-                            diagnostics: relevant_diagnostics,
-                            only: lang_server.code_action_kinds(),
-                        },
-                    })
-                    .await?
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|entry| {
-                        if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
-                            Some(CodeAction {
-                                range: range.clone(),
-                                lsp_action,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect())
-            })
-        } else if let Some(project_id) = self.remote_id() {
-            let rpc = self.client.clone();
-            let version = buffer.version();
-            cx.spawn_weak(|this, mut cx| async move {
-                let response = rpc
-                    .request(proto::GetCodeActions {
-                        project_id,
-                        buffer_id,
-                        start: Some(language::proto::serialize_anchor(&range.start)),
-                        end: Some(language::proto::serialize_anchor(&range.end)),
-                        version: serialize_version(&version),
-                    })
-                    .await?;
-
-                if this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("project was dropped"))?
-                    .read_with(&cx, |this, _| this.is_read_only())
-                {
-                    return Err(anyhow!(
-                        "failed to get code actions: project was disconnected"
-                    ));
-                } else {
-                    buffer_handle
-                        .update(&mut cx, |buffer, _| {
-                            buffer.wait_for_version(deserialize_version(&response.version))
-                        })
-                        .await?;
-
-                    response
-                        .actions
-                        .into_iter()
-                        .map(language::proto::deserialize_code_action)
-                        .collect()
-                }
-            })
-        } else {
-            Task::ready(Ok(Default::default()))
-        }
+        self.request_lsp(buffer_handle.clone(), GetCodeActions { range }, cx)
     }
 
     pub fn apply_code_action(
@@ -4288,7 +4191,7 @@ impl Project {
                 self.language_server_for_buffer(buffer, cx)
                     .map(|(_, server)| server.clone()),
             ) {
-                let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
+                let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
                 return cx.spawn(|this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
@@ -5490,49 +5393,6 @@ impl Project {
                 .await?
                 .as_ref()
                 .map(language::proto::serialize_transaction),
-        })
-    }
-
-    async fn handle_get_code_actions(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::GetCodeActions>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::GetCodeActionsResponse> {
-        let start = envelope
-            .payload
-            .start
-            .and_then(language::proto::deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid start"))?;
-        let end = envelope
-            .payload
-            .end
-            .and_then(language::proto::deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid end"))?;
-        let buffer = this.update(&mut cx, |this, cx| {
-            this.opened_buffers
-                .get(&envelope.payload.buffer_id)
-                .and_then(|buffer| buffer.upgrade(cx))
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
-        })?;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&envelope.payload.version))
-            })
-            .await?;
-
-        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
-        let code_actions = this.update(&mut cx, |this, cx| {
-            Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
-        })?;
-
-        Ok(proto::GetCodeActionsResponse {
-            actions: code_actions
-                .await?
-                .iter()
-                .map(language::proto::serialize_code_action)
-                .collect(),
-            version: serialize_version(&version),
         })
     }
 
