@@ -12,4 +12,9 @@ const license = {
 const variant = ayu.light
 const theme = buildTheme(variant, true)
 
-export const light = createColorScheme(`${name} Light`, true, theme.ramps, theme.syntax)
+export const light = createColorScheme(
+    `${name} Light`,
+    true,
+    theme.ramps,
+    theme.syntax
+)

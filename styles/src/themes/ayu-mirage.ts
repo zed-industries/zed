@@ -12,4 +12,9 @@ const license = {
 const variant = ayu.mirage
 const theme = buildTheme(variant, false)
 
-export const dark = createColorScheme(`${name} Mirage`, false, theme.ramps, theme.syntax)
+export const dark = createColorScheme(
+    `${name} Mirage`,
+    false,
+    theme.ramps,
+    theme.syntax
+)

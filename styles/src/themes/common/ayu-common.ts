@@ -1,12 +1,12 @@
-import { dark, light, mirage } from 'ayu'
-import { ThemeSyntax } from './syntax'
-import chroma from 'chroma-js'
-import { colorRamp } from './ramps'
+import { dark, light, mirage } from "ayu"
+import { ThemeSyntax } from "./syntax"
+import chroma from "chroma-js"
+import { colorRamp } from "./ramps"
 
 export const ayu = {
     dark,
     light,
-    mirage
+    mirage,
 }
 
 export const buildTheme = (t: typeof dark, light: boolean) => {
@@ -53,7 +53,7 @@ export const buildTheme = (t: typeof dark, light: boolean) => {
             violet: colorRamp(chroma(color.purple)),
             magenta: colorRamp(chroma(color.lightBlue)),
         },
-        syntax
+        syntax,
     }
 }
 
