@@ -170,7 +170,7 @@ fn nav_button<A: Action + Clone>(
     action_name: &str,
     cx: &mut ViewContext<Toolbar>,
 ) -> ElementBox<Toolbar> {
-    MouseEventHandler::<A>::new(0, cx, |state, _| {
+    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state, false)
         } else {
@@ -194,10 +194,10 @@ fn nav_button<A: Action + Clone>(
     } else {
         CursorStyle::default()
     })
-    .on_click(MouseButton::Left, move |_, cx| {
+    .on_click(MouseButton::Left, move |_, _, cx| {
         cx.dispatch_action(action.clone())
     })
-    .with_tooltip::<A, _>(
+    .with_tooltip::<A>(
         0,
         action_name.to_string(),
         Some(Box::new(tooltip_action)),

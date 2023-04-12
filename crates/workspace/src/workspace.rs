@@ -928,11 +928,7 @@ impl Workspace {
                     workspace
                 };
 
-            let workspace = if let Some(window_id) = requesting_window_id {
-                cx.update(|cx| {
-                    cx.replace_root_view(window_id, |cx| build_workspace(cx, serialized_workspace))
-                })
-            } else {
+            let workspace = {
                 let (bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(bounds), None)
                 } else {
@@ -1133,7 +1129,14 @@ impl Workspace {
         let window_id = cx.window_id();
         let workspace_count = cx
             .window_ids()
-            .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|window_id| {
+                cx.app_context()
+                    .root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()
+            })
             .count();
 
         cx.spawn(|this, mut cx| async move {
@@ -1142,23 +1145,22 @@ impl Workspace {
                     && workspace_count == 1
                     && active_call.read_with(&cx, |call, _| call.room().is_some())
                 {
-                    let answer = cx
-                        .prompt(
-                            window_id,
-                            PromptLevel::Warning,
-                            "Do you want to leave the current call?",
-                            &["Close window and hang up", "Cancel"],
-                        )
-                        .next()
-                        .await;
+                    let answer = cx.prompt(
+                        window_id,
+                        PromptLevel::Warning,
+                        "Do you want to leave the current call?",
+                        &["Close window and hang up", "Cancel"],
+                    );
 
-                    if answer == Some(1) {
-                        return anyhow::Ok(false);
-                    } else {
-                        active_call
-                            .update(&mut cx, |call, cx| call.hang_up(cx))
-                            .await
-                            .log_err();
+                    if let Some(mut answer) = answer {
+                        if answer.next().await == Some(1) {
+                            return anyhow::Ok(false);
+                        } else {
+                            active_call
+                                .update(&mut cx, |call, cx| call.hang_up(cx))
+                                .await
+                                .log_err();
+                        }
                     }
                 }
             }
@@ -1621,7 +1623,7 @@ impl Workspace {
     > {
         let project = self.project().clone();
         let project_item = project.update(cx, |project, cx| project.open_path(path, cx));
-        cx.as_mut().spawn(|mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let (project_entry_id, project_item) = project_item.await?;
             let build_item = cx.update(|cx| {
                 cx.default_global::<ProjectItemBuilders>()
@@ -1802,15 +1804,14 @@ impl Workspace {
         }
 
         let item = pane.read(cx).active_item()?;
-        let maybe_pane_handle =
-            if let Some(clone) = item.clone_on_split(self.database_id(), cx.as_mut()) {
-                let new_pane = self.add_pane(cx);
-                Pane::add_item(self, &new_pane, clone, true, true, None, cx);
-                self.center.split(&pane, &new_pane, direction).unwrap();
-                Some(new_pane)
-            } else {
-                None
-            };
+        let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
+            let new_pane = self.add_pane(cx);
+            Pane::add_item(self, &new_pane, clone, true, true, None, cx);
+            self.center.split(&pane, &new_pane, direction).unwrap();
+            Some(new_pane)
+        } else {
+            None
+        };
         cx.notify();
         maybe_pane_handle
     }
@@ -2067,7 +2068,7 @@ impl Workspace {
 
         enum TitleBar {}
         ConstrainedBox::new(
-            MouseEventHandler::<TitleBar>::new(0, cx, |_, cx| {
+            MouseEventHandler::<TitleBar, _>::new(0, cx, |_, cx| {
                 Container::new(
                     Stack::new()
                         .with_children(
@@ -2080,9 +2081,9 @@ impl Workspace {
                 .with_style(container_theme)
                 .boxed()
             })
-            .on_click(MouseButton::Left, |event, cx| {
+            .on_click(MouseButton::Left, |event, _, cx| {
                 if event.click_count == 2 {
-                    cx.zoom_window(cx.window_id());
+                    cx.zoom_window();
                 }
             })
             .boxed(),
@@ -2160,7 +2161,7 @@ impl Workspace {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
-                MouseEventHandler::<DisconnectedOverlay>::new(0, cx, |_, cx| {
+                MouseEventHandler::<DisconnectedOverlay, _>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme;
                     Label::new(
                         "Your connection to the remote project has been lost.",
@@ -2828,11 +2829,11 @@ impl View for Workspace {
                                             Some(
                                                 ChildView::new(&self.left_sidebar, cx)
                                                     .constrained()
-                                                    .dynamically(|constraint, cx| {
+                                                    .dynamically(|constraint, _, cx| {
                                                         SizeConstraint::new(
                                                             Vector2F::new(20., constraint.min.y()),
                                                             Vector2F::new(
-                                                                cx.window_size.x() * 0.8,
+                                                                cx.window_size().x() * 0.8,
                                                                 constraint.max.y(),
                                                             ),
                                                         )
@@ -2874,11 +2875,11 @@ impl View for Workspace {
                                             Some(
                                                 ChildView::new(&self.right_sidebar, cx)
                                                     .constrained()
-                                                    .dynamically(|constraint, cx| {
+                                                    .dynamically(|constraint, _, cx| {
                                                         SizeConstraint::new(
                                                             Vector2F::new(20., constraint.min.y()),
                                                             Vector2F::new(
-                                                                cx.window_size.x() * 0.8,
+                                                                cx.window_size().x() * 0.8,
                                                                 constraint.max.y(),
                                                             ),
                                                         )
@@ -2998,12 +2999,21 @@ pub fn activate_workspace_for_project(
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
 ) -> Option<ViewHandle<Workspace>> {
     for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(workspace_handle) = cx.root_view(window_id)?.downcast_ref::<Workspace>() {
-            let project = workspace_handle.read(cx).project.clone();
-            if project.update(cx, &predicate) {
-                cx.activate_window(window_id);
-                return Some(workspace_handle.clone());
-            }
+        let handle = cx
+            .update_window(window_id, |cx| {
+                if let Some(workspace_handle) = cx.root_view().clone().downcast::<Workspace>() {
+                    let project = workspace_handle.read(cx).project.clone();
+                    if project.update(cx, &predicate) {
+                        cx.activate_window();
+                        return Some(workspace_handle.clone());
+                    }
+                }
+                None
+            })
+            .flatten();
+
+        if handle.is_some() {
+            return handle;
         }
     }
     None

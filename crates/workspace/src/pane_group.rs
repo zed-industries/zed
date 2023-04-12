@@ -176,7 +176,7 @@ impl Member {
                                 let leader_user = leader.user.clone();
                                 let leader_user_id = leader.user.id;
                                 Some(
-                                    MouseEventHandler::<FollowIntoExternalProject>::new(
+                                    MouseEventHandler::<FollowIntoExternalProject, _>::new(
                                         pane.id(),
                                         cx,
                                         |_, _| {
@@ -199,7 +199,7 @@ impl Member {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(MouseButton::Left, move |_, cx| {
+                                    .on_click(MouseButton::Left, move |_, _, cx| {
                                         cx.dispatch_action(JoinProject {
                                             project_id: leader_project_id,
                                             follow_user_id: leader_user_id,

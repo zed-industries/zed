@@ -1220,10 +1220,10 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
+    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
-        let pane = cx.handle();
+        let pane = cx.handle().downgrade();
         let autoscroll = if mem::take(&mut self.autoscroll) {
             Some(self.active_item_index)
         } else {
@@ -1233,7 +1233,7 @@ impl Pane {
         let pane_active = self.is_active;
 
         enum Tabs {}
-        let mut row = Flex::row().scrollable::<Tabs, _>(1, autoscroll, cx);
+        let mut row = Flex::row().scrollable::<Tabs>(1, autoscroll, cx);
         for (ix, (item, detail)) in self
             .items
             .iter()
@@ -1260,8 +1260,8 @@ impl Pane {
                             let hovered = mouse_state.hovered();
 
                             enum Tab {}
-                            MouseEventHandler::<Tab>::new(ix, cx, |_, cx| {
-                                Self::render_tab(
+                            MouseEventHandler::<Tab, Pane>::new(ix, cx, |_, cx| {
+                                Self::render_tab::<Pane>(
                                     &item,
                                     pane.clone(),
                                     ix == 0,
@@ -1271,12 +1271,12 @@ impl Pane {
                                     cx,
                                 )
                             })
-                            .on_down(MouseButton::Left, move |_, cx| {
+                            .on_down(MouseButton::Left, move |_, _, cx| {
                                 cx.dispatch_action(ActivateItem(ix));
                             })
                             .on_click(MouseButton::Middle, {
                                 let item = item.clone();
-                                move |_, cx: &mut EventContext| {
+                                move |_, _, cx: &mut EventContext<Self>| {
                                     cx.dispatch_action(CloseItem {
                                         item_id: item.id(),
                                         pane: pane.clone(),
@@ -1301,9 +1301,9 @@ impl Pane {
                             let theme = cx.global::<Settings>().theme.clone();
 
                             let detail = detail.clone();
-                            move |dragged_item, cx: &mut ViewContext<Workspace>| {
+                            move |dragged_item: &DraggedItem, cx: &mut ViewContext<Pane>| {
                                 let tab_style = &theme.workspace.tab_bar.dragged_tab;
-                                Self::render_tab(
+                                Self::render_tab::<Pane>(
                                     &dragged_item.item,
                                     dragged_item.pane.clone(),
                                     false,
@@ -1404,7 +1404,7 @@ impl Pane {
                     };
 
                     ConstrainedBox::new(
-                        Canvas::new(move |scene, bounds, _, cx| {
+                        Canvas::new(move |scene, bounds, _, _, cx| {
                             if let Some(color) = icon_color {
                                 let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                                 scene.push_quad(Quad {
@@ -1441,18 +1441,22 @@ impl Pane {
                         let item_id = item.id();
                         enum TabCloseButton {}
                         let icon = Svg::new("icons/x_mark_8.svg");
-                        MouseEventHandler::<TabCloseButton>::new(item_id, cx, |mouse_state, _| {
-                            if mouse_state.hovered() {
-                                icon.with_color(tab_style.icon_close_active).boxed()
-                            } else {
-                                icon.with_color(tab_style.icon_close).boxed()
-                            }
-                        })
+                        MouseEventHandler::<TabCloseButton, _>::new(
+                            item_id,
+                            cx,
+                            |mouse_state, _| {
+                                if mouse_state.hovered() {
+                                    icon.with_color(tab_style.icon_close_active).boxed()
+                                } else {
+                                    icon.with_color(tab_style.icon_close).boxed()
+                                }
+                            },
+                        )
                         .with_padding(Padding::uniform(4.))
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, {
                             let pane = pane.clone();
-                            move |_, cx| {
+                            move |_, _, cx| {
                                 cx.dispatch_action(CloseItem {
                                     item_id,
                                     pane: pane.clone(),
@@ -1551,13 +1555,13 @@ impl View for Pane {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
-        let this = cx.handle();
+        let this = cx.handle().downgrade();
 
         enum MouseNavigationHandler {}
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<MouseNavigationHandler>::new(0, cx, |_, cx| {
+                MouseEventHandler::<MouseNavigationHandler, _>::new(0, cx, |_, cx| {
                     let active_item_index = self.active_item_index;
 
                     if let Some(active_item) = self.active_item() {
@@ -1569,13 +1573,17 @@ impl View for Pane {
 
                                 enum TabBarEventHandler {}
                                 stack.add_child(
-                                    MouseEventHandler::<TabBarEventHandler>::new(0, cx, |_, _| {
-                                        Empty::new()
-                                            .contained()
-                                            .with_style(theme.workspace.tab_bar.container)
-                                            .boxed()
-                                    })
-                                    .on_down(MouseButton::Left, move |_, cx| {
+                                    MouseEventHandler::<TabBarEventHandler, _>::new(
+                                        0,
+                                        cx,
+                                        |_, _| {
+                                            Empty::new()
+                                                .contained()
+                                                .with_style(theme.workspace.tab_bar.container)
+                                                .boxed()
+                                        },
+                                    )
+                                    .on_down(MouseButton::Left, move |_, _, cx| {
                                         cx.dispatch_action(ActivateItem(active_item_index));
                                     })
                                     .boxed(),
@@ -1635,7 +1643,7 @@ impl View for Pane {
                         dragged_item_receiver::<EmptyPane, _>(0, 0, false, None, cx, |_, cx| {
                             self.render_blank_pane(&theme, cx)
                         })
-                        .on_down(MouseButton::Left, |_, cx| {
+                        .on_down(MouseButton::Left, |_, _, cx| {
                             cx.focus_parent_view();
                         })
                         .boxed()
@@ -1643,7 +1651,7 @@ impl View for Pane {
                 })
                 .on_down(MouseButton::Navigate(NavigationDirection::Back), {
                     let this = this.clone();
-                    move |_, cx| {
+                    move |_, _, cx| {
                         cx.dispatch_action(GoBack {
                             pane: Some(this.clone()),
                         });
@@ -1651,7 +1659,7 @@ impl View for Pane {
                 })
                 .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
                     let this = this.clone();
-                    move |_, cx| {
+                    move |_, _, cx| {
                         cx.dispatch_action(GoForward {
                             pane: Some(this.clone()),
                         })
@@ -1716,7 +1724,7 @@ fn render_tab_bar_button<A: Action + Clone>(
 
     Stack::new()
         .with_child(
-            MouseEventHandler::<TabBarButton>::new(index, cx, |mouse_state, cx| {
+            MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
                 let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
                 let style = theme.pane_button.style_for(mouse_state, false);
                 Svg::new(icon)
@@ -1730,7 +1738,7 @@ fn render_tab_bar_button<A: Action + Clone>(
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, move |_, cx| {
+            .on_click(MouseButton::Left, move |_, _, cx| {
                 cx.dispatch_action(action.clone());
             })
             .boxed(),
@@ -1895,9 +1903,9 @@ impl Element<Pane> for PaneBackdrop {
         scene.push_mouse_region(
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
                 gpui::platform::MouseButton::Left,
-                move |_, cx| {
-                    let window_id = cx.window_id;
-                    cx.focus(window_id, Some(child_view_id))
+                move |_, _: &mut Pane, cx| {
+                    let window_id = cx.window_id();
+                    cx.app_context().focus(window_id, Some(child_view_id))
                 },
             ),
         );

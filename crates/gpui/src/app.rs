@@ -802,6 +802,14 @@ impl AppContext {
             .is_some()
     }
 
+    pub fn window_is_active(&self, window_id: usize) -> bool {
+        self.windows.get(&window_id).map_or(false, |w| w.is_active)
+    }
+
+    pub fn root_view(&self, window_id: usize) -> Option<&AnyViewHandle> {
+        self.windows.get(&window_id).map(|w| w.root_view())
+    }
+
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
         self.windows.keys().copied()
     }
@@ -1646,6 +1654,18 @@ impl AppContext {
         let scene = WindowContext::new(self, &mut window, window_id).build_scene();
         window.platform_window.present_scene(scene);
         window
+    }
+
+    pub fn replace_root_view<V, F>(
+        &mut self,
+        window_id: usize,
+        build_root_view: F,
+    ) -> Option<ViewHandle<V>>
+    where
+        V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        self.update_window(window_id, |cx| cx.replace_root_view(build_root_view))
     }
 
     pub fn add_view<S, F>(&mut self, parent: &AnyViewHandle, build_view: F) -> ViewHandle<S>
@@ -3324,6 +3344,22 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
 
     pub fn is_self_focused(&self) -> bool {
         self.window.focused_view_id == Some(self.view_id)
+    }
+
+    pub fn is_parent_view_focused(&self) -> bool {
+        if let Some(parent_view_id) = self.ancestors(self.window_id, self.view_id).next().clone() {
+            self.focused_view_id() == Some(parent_view_id)
+        } else {
+            false
+        }
+    }
+
+    pub fn focus_parent_view(&mut self) {
+        let next = self.ancestors(self.window_id, self.view_id).next().clone();
+        if let Some(parent_view_id) = next {
+            let window_id = self.window_id;
+            self.window_context.focus(window_id, Some(parent_view_id));
+        }
     }
 
     pub fn is_child(&self, view: impl Into<AnyViewHandle>) -> bool {

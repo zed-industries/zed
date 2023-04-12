@@ -11,7 +11,7 @@ use collections::HashMap;
 use pathfinder_geometry::rect::RectF;
 use smallvec::SmallVec;
 
-use crate::{platform::MouseButton, window::WindowContext, View, ViewContext};
+use crate::{platform::MouseButton, window::WindowContext, ReadView, View, ViewContext};
 
 use super::{
     mouse_event::{
@@ -231,6 +231,12 @@ impl<'a, 'b, 'c, 'd, V: View> Deref for EventContext<'a, 'b, 'c, 'd, V> {
 impl<V: View> DerefMut for EventContext<'_, '_, '_, '_, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.view_context
+    }
+}
+
+impl<V: View> ReadView for EventContext<'_, '_, '_, '_, V> {
+    fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
+        self.view_context.read_view(handle)
     }
 }
 

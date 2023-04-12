@@ -195,7 +195,7 @@ impl View for Sidebar {
             ChildView::new(active_item.as_any(), cx)
                 .contained()
                 .with_style(style.container)
-                .with_resize_handle::<ResizeHandleTag, _>(
+                .with_resize_handle::<ResizeHandleTag>(
                     self.sidebar_side as usize,
                     self.sidebar_side.to_resizable_side(),
                     4.,
@@ -254,7 +254,7 @@ impl View for SidebarButtons {
                         sidebar_side,
                         item_index: ix,
                     };
-                    MouseEventHandler::<Self>::new(ix, cx, |state, cx| {
+                    MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()
@@ -283,9 +283,9 @@ impl View for SidebarButtons {
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, {
                         let action = action.clone();
-                        move |_, cx| cx.dispatch_action(action.clone())
+                        move |_, _, cx| cx.dispatch_action(action.clone())
                     })
-                    .with_tooltip::<Self, _>(
+                    .with_tooltip::<Self>(
                         ix,
                         tooltip,
                         Some(Box::new(action)),

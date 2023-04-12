@@ -244,7 +244,7 @@ pub mod simple_message_notification {
 
             let has_click_action = click_action.is_some();
 
-            MouseEventHandler::<MessageNotificationTag>::new(0, cx, |state, cx| {
+            MouseEventHandler::<MessageNotificationTag, _>::new(0, cx, |state, cx| {
                 Flex::column()
                     .with_child(
                         Flex::row()
@@ -259,7 +259,7 @@ pub mod simple_message_notification {
                                     .boxed(),
                             )
                             .with_child(
-                                MouseEventHandler::<Cancel>::new(0, cx, |state, _| {
+                                MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
                                     let style = theme.dismiss_button.style_for(state, false);
                                     Svg::new("icons/x_mark_8.svg")
                                         .with_color(style.color)
@@ -274,7 +274,7 @@ pub mod simple_message_notification {
                                         .boxed()
                                 })
                                 .with_padding(Padding::uniform(5.))
-                                .on_click(MouseButton::Left, move |_, cx| {
+                                .on_click(MouseButton::Left, move |_, _, cx| {
                                     cx.dispatch_action(CancelMessageNotification)
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
@@ -312,9 +312,9 @@ pub mod simple_message_notification {
                     .boxed()
             })
             // Since we're not using a proper overlay, we have to capture these extra events
-            .on_down(MouseButton::Left, |_, _| {})
-            .on_up(MouseButton::Left, |_, _| {})
-            .on_click(MouseButton::Left, move |_, cx| {
+            .on_down(MouseButton::Left, |_, _, _| {})
+            .on_up(MouseButton::Left, |_, _, _| {})
+            .on_click(MouseButton::Left, move |_, _, cx| {
                 if let Some(click_action) = click_action.as_ref() {
                     cx.dispatch_any_action(click_action.boxed_clone());
                     cx.dispatch_action(CancelMessageNotification)

@@ -52,7 +52,7 @@ pub trait Item: View {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox<Self>;
+    ) -> ElementBox<Pane>;
     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -134,7 +134,7 @@ pub trait Item: View {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox<Self>>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
         None
     }
 
@@ -591,7 +591,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox<Self>>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
@@ -925,7 +925,7 @@ pub(crate) mod test {
             detail: Option<usize>,
             _: &theme::Tab,
             _: &AppContext,
-        ) -> ElementBox<Self> {
+        ) -> ElementBox<Pane> {
             self.tab_detail.set(detail);
             Empty::new().boxed()
         }

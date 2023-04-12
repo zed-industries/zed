@@ -1,6 +1,6 @@
 use crate::{
     item::{Item, ItemEvent},
-    ItemNavHistory, WorkspaceId,
+    ItemNavHistory, Pane, WorkspaceId,
 };
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
@@ -68,8 +68,8 @@ impl View for SharedScreen {
         enum Focus {}
 
         let frame = self.frame.clone();
-        MouseEventHandler::<Focus>::new(0, cx, |_, cx| {
-            Canvas::new(move |scene, bounds, _, cx| {
+        MouseEventHandler::<Focus, _>::new(0, cx, |_, cx| {
+            Canvas::new(move |scene, bounds, _, _, cx| {
                 if let Some(frame) = frame.clone() {
                     let size = constrain_size_preserving_aspect_ratio(
                         bounds.size(),
@@ -86,7 +86,7 @@ impl View for SharedScreen {
             .with_style(cx.global::<Settings>().theme.shared_screen)
             .boxed()
         })
-        .on_down(MouseButton::Left, |_, cx| cx.focus_parent_view())
+        .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent_view())
         .boxed()
     }
 }
@@ -103,7 +103,7 @@ impl Item for SharedScreen {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::ElementBox<Self> {
+    ) -> gpui::ElementBox<Pane> {
         Flex::row()
             .with_child(
                 Svg::new("icons/disable_screen_sharing_12.svg")

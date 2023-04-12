@@ -12,8 +12,9 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    AnyView, AnyViewHandle, AppContext, Element, ElementBox, MouseRegion, MouseRegionId, ParentId,
-    RenderParams, SceneBuilder, View, ViewContext, ViewHandle, WindowInvalidation,
+    AnyView, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelContext, ModelHandle,
+    MouseRegion, MouseRegionId, ParentId, ReadView, RenderParams, SceneBuilder, UpdateModel, View,
+    ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -119,6 +120,22 @@ impl DerefMut for WindowContext<'_, '_> {
     }
 }
 
+impl UpdateModel for WindowContext<'_, '_> {
+    fn update_model<M: Entity, R>(
+        &mut self,
+        handle: &ModelHandle<M>,
+        update: &mut dyn FnMut(&mut M, &mut ModelContext<M>) -> R,
+    ) -> R {
+        self.app_context.update_model(handle, update)
+    }
+}
+
+impl ReadView for WindowContext<'_, '_> {
+    fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
+        self.app_context.read_view(handle)
+    }
+}
+
 impl<'a: 'b, 'b> WindowContext<'a, 'b> {
     pub fn new(app_context: &'a mut AppContext, window: &'b mut Window, window_id: usize) -> Self {
         Self {
@@ -131,6 +148,14 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
 
     pub fn window_id(&self) -> usize {
         self.window_id
+    }
+
+    pub fn app_context(&mut self) -> &mut AppContext {
+        self.app_context
+    }
+
+    pub fn root_view(&self) -> &AnyViewHandle {
+        self.window.root_view()
     }
 
     pub fn window_size(&self) -> Vector2F {
@@ -701,23 +726,22 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
     }
 
     pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
-        todo!()
+        let root_view_id = self.window.root_view().id();
+        self.window
+            .rendered_views
+            .get(&root_view_id)?
+            .rect_for_text_range(range_utf16, self, root_view_id)
     }
 
     pub fn debug_elements(&self) -> Option<json::Value> {
-        todo!()
-        // let view = self.root_view()?;
-        // Some(json!({
-        //     "root_view": view.debug_json(self),
-        //     "root_element": self.window.rendered_views.get(&view.id())
-        //         .map(|root_element| {
-        //             root_element.debug(&DebugContext {
-        //                 rendered_views: &self.window.rendered_views,
-        //                 font_cache: &self.window.font_cache,
-        //                 app: self,
-        //             })
-        //         })
-        // }))
+        let view = self.window.root_view();
+        Some(json!({
+            "root_view": view.debug_json(self),
+            "root_element": self.window.rendered_views.get(&view.id())
+                .map(|root_element| {
+                    root_element.debug(self, view.id())
+                })
+        }))
     }
 
     pub fn set_window_title(&mut self, title: &str) {
