@@ -202,7 +202,7 @@ impl ContactList {
         })
         .detach();
 
-        let list_state = ListState::new(0, Orientation::Top, 1000., cx, move |this, ix, cx| {
+        let list_state = ListState::new(0, Orientation::Top, 1000., move |this, ix, cx| {
             let theme = cx.global::<Settings>().theme.clone();
             let is_selected = this.selection == Some(ix);
             let current_project_id = this.project.read(cx).remote_id();

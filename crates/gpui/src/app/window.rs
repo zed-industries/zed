@@ -30,6 +30,8 @@ use sqlez::{
 use std::ops::{Deref, DerefMut, Range};
 use uuid::Uuid;
 
+use super::Reference;
+
 pub struct Window {
     pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
@@ -83,7 +85,7 @@ impl Window {
             appearance,
         };
 
-        let mut window_context = WindowContext::new(cx, &mut window, window_id);
+        let mut window_context = WindowContext::mutable(cx, &mut window, window_id);
         let root_view = window_context
             .build_and_insert_view(ParentId::Root, |cx| Some(build_view(cx)))
             .unwrap();
@@ -101,8 +103,8 @@ impl Window {
 }
 
 pub struct WindowContext<'a: 'b, 'b> {
-    pub(crate) app_context: &'a mut AppContext,
-    pub(crate) window: &'b mut Window, // TODO: make this private?
+    pub(crate) app_context: Reference<'a, AppContext>,
+    pub(crate) window: Reference<'b, Window>,
     pub(crate) window_id: usize,
     pub(crate) refreshing: bool,
 }
@@ -111,7 +113,7 @@ impl Deref for WindowContext<'_, '_> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
-        self.app_context
+        &self.app_context
     }
 }
 
@@ -148,10 +150,23 @@ impl UpgradeViewHandle for WindowContext<'_, '_> {
 }
 
 impl<'a: 'b, 'b> WindowContext<'a, 'b> {
-    pub fn new(app_context: &'a mut AppContext, window: &'b mut Window, window_id: usize) -> Self {
+    pub fn mutable(
+        app_context: &'a mut AppContext,
+        window: &'b mut Window,
+        window_id: usize,
+    ) -> Self {
         Self {
-            app_context,
-            window,
+            app_context: Reference::Mutable(app_context),
+            window: Reference::Mutable(window),
+            window_id,
+            refreshing: false,
+        }
+    }
+
+    pub fn immutable(app_context: &'a AppContext, window: &'b Window, window_id: usize) -> Self {
+        Self {
+            app_context: Reference::Immutable(app_context),
+            window: Reference::Immutable(window),
             window_id,
             refreshing: false,
         }
@@ -162,7 +177,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
     }
 
     pub fn app_context(&mut self) -> &mut AppContext {
-        self.app_context
+        &mut self.app_context
     }
 
     pub fn root_view(&self) -> &AnyViewHandle {
@@ -406,7 +421,8 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
                 MouseEvent::Hover(_) => {
                     let mut highest_z_index = None;
                     let mouse_position = self.window.mouse_position.clone();
-                    for (region, z_index) in self.window.mouse_regions.iter().rev() {
+                    let window = &mut *self.window;
+                    for (region, z_index) in window.mouse_regions.iter().rev() {
                         // Allow mouse regions to appear transparent to hovers
                         if !region.hoverable {
                             continue;
@@ -424,7 +440,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
                         // highest_z_index is set.
                         if contains_mouse && z_index == highest_z_index.unwrap() {
                             //Ensure that hover entrance events aren't sent twice
-                            if self.window.hovered_region_ids.insert(region.id()) {
+                            if window.hovered_region_ids.insert(region.id()) {
                                 valid_regions.push(region.clone());
                                 if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());
@@ -432,7 +448,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
                             }
                         } else {
                             // Ensure that hover exit events aren't sent twice
-                            if self.window.hovered_region_ids.remove(&region.id()) {
+                            if window.hovered_region_ids.remove(&region.id()) {
                                 valid_regions.push(region.clone());
                                 if region.notify_on_hover {
                                     notified_views.insert(region.id().view_id());

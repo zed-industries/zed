@@ -153,7 +153,7 @@ impl View for CopilotButton {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, {
                     let status = status.clone();
-                    move |_, cx| match status {
+                    move |_, _, cx| match status {
                         Status::Authorized => cx.dispatch_action(DeployCopilotMenu),
                         Status::Starting { ref task } => {
                             cx.dispatch_action(workspace::Toast::new(
@@ -162,7 +162,7 @@ impl View for CopilotButton {
                             ));
                             let window_id = cx.window_id();
                             let task = task.to_owned();
-                            cx.spawn(|mut cx| async move {
+                            cx.spawn(|this, mut cx| async move {
                                 task.await;
                                 cx.update(|cx| {
                                     if let Some(copilot) = Copilot::global(cx) {
@@ -199,13 +199,7 @@ impl View for CopilotButton {
                         _ => cx.dispatch_action(SignIn),
                     }
                 })
-                .with_tooltip::<Self, _>(
-                    0,
-                    "GitHub Copilot".into(),
-                    None,
-                    theme.tooltip.clone(),
-                    cx,
-                )
+                .with_tooltip::<Self>(0, "GitHub Copilot".into(), None, theme.tooltip.clone(), cx)
                 .boxed(),
             )
             .with_child(

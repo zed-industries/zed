@@ -2574,10 +2574,8 @@ mod tests {
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let mut presenter = cx.build_window(window_id, 30., Default::default());
-            let layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
             element
-                .layout_line_numbers(0..6, &Default::default(), false, &snapshot, &layout_cx)
+                .layout_line_numbers(0..6, &Default::default(), false, &snapshot, cx)
                 .0
         });
         assert_eq!(layouts.len(), 6);
@@ -2609,14 +2607,13 @@ mod tests {
         });
 
         let mut element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
-
-        let mut scene = SceneBuilder::new(1.0);
-        let mut presenter = cx.build_window(window_id, 30., Default::default());
-        let mut layout_cx = presenter.build_layout_context(Vector2F::zero(), false, cx);
-        let (size, mut state) = element.layout(
-            SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
-            &mut layout_cx,
-        );
+        let (size, mut state) = editor.update(cx, |editor, cx| {
+            element.layout(
+                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+                editor,
+                cx,
+            )
+        });
 
         assert_eq!(state.position_map.line_layouts.len(), 4);
         assert_eq!(
@@ -2629,8 +2626,10 @@ mod tests {
         );
 
         // Don't panic.
+        let mut scene = SceneBuilder::new(1.0);
         let bounds = RectF::new(Default::default(), size);
-        let mut paint_cx = presenter.build_paint_context(&mut scene, bounds.size(), cx);
-        element.paint(bounds, bounds, &mut state, &mut paint_cx);
+        editor.update(cx, |editor, cx| {
+            element.paint(&mut scene, bounds, bounds, &mut state, editor, cx);
+        });
     }
 }

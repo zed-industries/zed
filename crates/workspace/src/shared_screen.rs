@@ -69,7 +69,7 @@ impl View for SharedScreen {
 
         let frame = self.frame.clone();
         MouseEventHandler::<Focus, _>::new(0, cx, |_, cx| {
-            Canvas::new(move |scene, bounds, _, _, cx| {
+            Canvas::new(move |scene, bounds, _, _, _| {
                 if let Some(frame) = frame.clone() {
                     let size = constrain_size_preserving_aspect_ratio(
                         bounds.size(),

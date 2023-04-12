@@ -29,7 +29,7 @@ impl View for FeedbackInfoText {
         "FeedbackInfoText"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         Flex::row()

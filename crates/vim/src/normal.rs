@@ -570,18 +570,18 @@ mod test {
 
         cx.assert_all(indoc! {"
                 The ˇquick
-                
+
                 brown fox jumps
                 overˇ the lazy doˇg"})
             .await;
         cx.assert(indoc! {"
             The quiˇck
-            
+
             brown"})
             .await;
         cx.assert(indoc! {"
             The quiˇck
-            
+
             "})
             .await;
     }
@@ -611,16 +611,16 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["e"]);
         cx.assert_all(indoc! {"
             Thˇe quicˇkˇ-browˇn
-            
-            
+
+
             fox_jumpˇs oveˇr
             thˇe"})
             .await;
         let mut cx = cx.binding(["shift-e"]);
         cx.assert_all(indoc! {"
             Thˇe quicˇkˇ-browˇn
-            
-            
+
+
             fox_jumpˇs oveˇr
             thˇe"})
             .await;
@@ -669,7 +669,7 @@ mod test {
             ["g", "g"],
             indoc! {"
                 The qˇuick
-            
+
                 brown fox jumps
                 over ˇthe laˇzy dog"},
         )
@@ -677,8 +677,8 @@ mod test {
         cx.assert_binding_matches(
             ["g", "g"],
             indoc! {"
-                
-            
+
+
                 brown fox jumps
                 over the laˇzy dog"},
         )
@@ -687,7 +687,7 @@ mod test {
             ["2", "g", "g"],
             indoc! {"
                 ˇ
-                
+
                 brown fox jumps
                 over the lazydog"},
         )
@@ -701,7 +701,7 @@ mod test {
             ["shift-g"],
             indoc! {"
                 The qˇuick
-                
+
                 brown fox jumps
                 over ˇthe laˇzy dog"},
         )
@@ -709,8 +709,8 @@ mod test {
         cx.assert_binding_matches(
             ["shift-g"],
             indoc! {"
-                
-                
+
+
                 brown fox jumps
                 over the laˇzy dog"},
         )
@@ -719,7 +719,7 @@ mod test {
             ["2", "shift-g"],
             indoc! {"
                 ˇ
-                
+
                 brown fox jumps
                 over the lazydog"},
         )
@@ -999,7 +999,7 @@ mod test {
             let test_case = indoc! {"
                 ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
                 ˇ    ˇbˇaaˇa ˇbˇbˇb
-                ˇ   
+                ˇ
                 ˇb
             "};
 
@@ -1017,7 +1017,7 @@ mod test {
         let test_case = indoc! {"
             ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
             ˇ    ˇbˇaaˇa ˇbˇbˇb
-            ˇ   
+            ˇ
             ˇb
             "};
 

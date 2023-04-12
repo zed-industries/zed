@@ -23,7 +23,7 @@ use crate::{
     platform::{Event, InputHandler, KeyDownEvent, Platform},
     Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
     ReadModelWith, ReadViewWith, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
-    WeakHandle,
+    WeakHandle, WindowContext,
 };
 use collections::BTreeMap;
 
@@ -114,6 +114,22 @@ impl TestAppContext {
         }
     }
 
+    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
+        &self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        self.cx.borrow().read_window(window_id, callback)
+    }
+
+    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        self.cx.borrow_mut().update_window(window_id, callback)
+    }
+
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,
@@ -147,17 +163,6 @@ impl TestAppContext {
         self.cx.borrow().window_ids().collect()
     }
 
-    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
-        Some(
-            self.cx
-                .borrow()
-                .windows
-                .get(&window_id)?
-                .root_view()
-                .clone(),
-        )
-    }
-
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
         callback(&*self.cx.borrow())
     }
@@ -171,28 +176,6 @@ impl TestAppContext {
         // cases such as the closure dropping handles.
         state.flush_effects();
         result
-    }
-
-    pub fn render<F, V, T>(&mut self, handle: &ViewHandle<V>, f: F) -> T
-    where
-        F: FnOnce(&mut V, &mut ViewContext<V>) -> T,
-        V: View,
-    {
-        todo!()
-        // handle.update(&mut *self.cx.borrow_mut(), |view, cx| {
-        //     let mut render_cx = ViewContext {
-        //         app: cx,
-        //         window_id: handle.window_id(),
-        //         view_id: handle.id(),
-        //         view_type: PhantomData,
-        //         titlebar_height: 0.,
-        //         hovered_region_ids: Default::default(),
-        //         clicked_region_ids: None,
-        //         refreshing: false,
-        //         appearance: Appearance::Light,
-        //     };
-        //     f(view, &mut render_cx)
-        // })
     }
 
     pub fn to_async(&self) -> AsyncAppContext {

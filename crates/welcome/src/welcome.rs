@@ -55,7 +55,7 @@ impl View for WelcomePage {
         "WelcomePage"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox {
         let self_handle = cx.handle();
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();

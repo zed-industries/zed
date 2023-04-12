@@ -80,7 +80,6 @@ impl CollaboratorListPopover {
                 collaborators.len(),
                 Orientation::Top,
                 0.,
-                cx,
                 move |_, index, cx| match &collaborators[index] {
                     Collaborator::SelfUser { username } => render_collaborator_list_entry(
                         index,

@@ -812,7 +812,7 @@ impl Element<TerminalView> for TerminalElement {
             }
 
             if let Some(element) = &mut layout.hyperlink_tooltip {
-                Element::paint(element, scene, origin, visible_bounds, view, view, cx)
+                element.paint(scene, origin, visible_bounds, view, cx)
             }
         });
     }

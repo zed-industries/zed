@@ -936,6 +936,16 @@ impl AppContext {
         result
     }
 
+    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
+        &self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        let window = self.windows.get(&window_id)?;
+        let window_context = WindowContext::immutable(self, &window, window_id);
+        Some(callback(&window_context))
+    }
+
     pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
         window_id: usize,
@@ -943,13 +953,7 @@ impl AppContext {
     ) -> Option<T> {
         self.update(|app_context| {
             let mut window = app_context.windows.remove(&window_id)?;
-            let mut window_context = WindowContext {
-                app_context,
-                window: &mut window,
-                window_id,
-                refreshing: false,
-            };
-
+            let mut window_context = WindowContext::mutable(app_context, &mut window, window_id);
             let result = callback(&mut window_context);
             app_context.windows.insert(window_id, window);
             Some(result)
@@ -1651,7 +1655,7 @@ impl AppContext {
         }));
 
         let mut window = Window::new(window_id, platform_window, self, build_root_view);
-        let scene = WindowContext::new(self, &mut window, window_id).build_scene();
+        let scene = WindowContext::mutable(self, &mut window, window_id).build_scene();
         window.platform_window.present_scene(scene);
         window
     }
@@ -3244,7 +3248,7 @@ impl<M> DerefMut for ModelContext<'_, M> {
 }
 
 pub struct ViewContext<'a, 'b, 'c, T: ?Sized> {
-    window_context: WindowContextRef<'a, 'b, 'c>,
+    window_context: Reference<'c, WindowContext<'a, 'b>>,
     view_id: usize,
     view_type: PhantomData<T>,
 }
@@ -3266,7 +3270,7 @@ impl<T: View> DerefMut for ViewContext<'_, '_, '_, T> {
 impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     pub(crate) fn mutable(window_context: &'c mut WindowContext<'a, 'b>, view_id: usize) -> Self {
         Self {
-            window_context: WindowContextRef::Mutable(window_context),
+            window_context: Reference::Mutable(window_context),
             view_id,
             view_type: PhantomData,
         }
@@ -3274,7 +3278,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
 
     pub(crate) fn immutable(window_context: &'c WindowContext<'a, 'b>, view_id: usize) -> Self {
         Self {
-            window_context: WindowContextRef::Immutable(window_context),
+            window_context: Reference::Immutable(window_context),
             view_id,
             view_type: PhantomData,
         }
@@ -3819,29 +3823,29 @@ impl<V: View> UpdateView for ViewContext<'_, '_, '_, V> {
     }
 }
 
-enum WindowContextRef<'a, 'b, 'c> {
-    Immutable(&'c WindowContext<'a, 'b>),
-    Mutable(&'c mut WindowContext<'a, 'b>),
+pub(crate) enum Reference<'a, T> {
+    Immutable(&'a T),
+    Mutable(&'a mut T),
 }
 
-impl<'a, 'b, 'c> Deref for WindowContextRef<'a, 'b, 'c> {
-    type Target = WindowContext<'a, 'b>;
+impl<'a, T> Deref for Reference<'a, T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
         match self {
-            WindowContextRef::Immutable(window_context) => window_context,
-            WindowContextRef::Mutable(window_context) => window_context,
+            Reference::Immutable(target) => target,
+            Reference::Mutable(target) => target,
         }
     }
 }
 
-impl<'a, 'b, 'c> DerefMut for WindowContextRef<'a, 'b, 'c> {
+impl<'a, T> DerefMut for Reference<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            WindowContextRef::Immutable(_) => {
-                panic!("cannot mutably deref an immutable WindowContext. this is a bug in GPUI.");
+            Reference::Immutable(_) => {
+                panic!("cannot mutably deref an immutable reference. this is a bug in GPUI.");
             }
-            WindowContextRef::Mutable(window_context) => window_context,
+            Reference::Mutable(target) => target,
         }
     }
 }

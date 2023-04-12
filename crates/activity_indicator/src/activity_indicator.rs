@@ -361,7 +361,7 @@ impl View for ActivityIndicator {
         if let Some(action) = action {
             element = element
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_any_action(action.boxed_clone())
                 });
         }

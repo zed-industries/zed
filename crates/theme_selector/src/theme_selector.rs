@@ -226,7 +226,7 @@ impl PickerDelegate for ThemeSelector {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let theme_match = &self.matches[ix];
@@ -255,7 +255,7 @@ impl View for ThemeSelector {
         "ThemeSelector"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 

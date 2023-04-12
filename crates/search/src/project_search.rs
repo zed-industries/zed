@@ -198,7 +198,7 @@ impl View for ProjectSearchView {
                     .flex(1., true)
                     .boxed()
             })
-            .on_down(MouseButton::Left, |_, _, _, cx| {
+            .on_down(MouseButton::Left, |_, _, cx| {
                 cx.focus_parent_view();
             })
             .boxed()
@@ -775,12 +775,13 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(MouseButton::Le {
+        .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
             move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
-    _,    })
+        })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton, _            direction as usize,
+        .with_tooltip::<NavButton>(
+            direction as usize,
             tooltip.to_string(),
             Some(action),
             tooltip_style,

@@ -1238,7 +1238,7 @@ impl ProjectPanel {
                 .is_some()
             {
                 if let Some(this) = this.upgrade(cx) {
-                    this.update(cx, |this, _, _| {
+                    this.update(cx, |this, _| {
                         this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
                             path.parent().map(|parent| Arc::from(parent))
                         } else {

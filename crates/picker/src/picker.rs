@@ -33,7 +33,7 @@ pub trait PickerDelegate: View {
         state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox<Self>;
+    ) -> ElementBox<Picker<Self>>;
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }

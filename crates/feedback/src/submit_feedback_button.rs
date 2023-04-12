@@ -29,7 +29,7 @@ impl View for SubmitFeedbackButton {
         "SubmitFeedbackButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         enum SubmitFeedbackButton {}
         MouseEventHandler::<SubmitFeedbackButton>::new(0, cx, |state, _| {

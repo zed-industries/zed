@@ -1404,7 +1404,7 @@ impl Pane {
                     };
 
                     ConstrainedBox::new(
-                        Canvas::new(move |scene, bounds, _, _, cx| {
+                        Canvas::new(move |scene, bounds, _, _, _| {
                             if let Some(color) = icon_color {
                                 let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                                 scene.push_quad(Quad {

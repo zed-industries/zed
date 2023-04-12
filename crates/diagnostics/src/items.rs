@@ -163,8 +163,10 @@ impl View for DiagnosticIndicator {
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Deploy))
-            .with_tooltip::<Summary, _>(
+            .on_click(MouseButton::Left, |_, _, cx| {
+                cx.dispatch_action(crate::Deploy)
+            })
+            .with_tooltip::<Summary>(
                 0,
                 "Project Diagnostics".to_string(),
                 Some(Box::new(crate::Deploy)),
@@ -200,7 +202,7 @@ impl View for DiagnosticIndicator {
                     .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(GoToDiagnostic)
                 })
                 .boxed(),

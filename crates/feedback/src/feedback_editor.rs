@@ -13,7 +13,7 @@ use gpui::{
     elements::{ChildView, Flex, Label, ParentElement, Svg},
     platform::PromptLevel,
     serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View,
-    ViewContext, ViewContext, ViewHandle,
+    ViewContext, ViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -25,7 +25,7 @@ use util::ResultExt;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    AppState, Workspace,
+    AppState, Pane, Workspace,
 };
 
 use crate::{submit_feedback_button::SubmitFeedbackButton, system_specs::SystemSpecs};
@@ -232,7 +232,7 @@ impl View for FeedbackEditor {
         "FeedbackEditor"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.editor, cx).boxed()
     }
 
@@ -248,7 +248,12 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
-    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
+    fn tab_content(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &AppContext,
+    ) -> ElementBox<Pane> {
         Flex::row()
             .with_child(
                 Svg::new("icons/feedback_16.svg")

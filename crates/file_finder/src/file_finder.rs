@@ -50,7 +50,7 @@ impl View for FileFinder {
         "FileFinder"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -267,7 +267,7 @@ impl PickerDelegate for FileFinder {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let path_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
         let style = settings.theme.picker.item.style_for(mouse_state, selected);

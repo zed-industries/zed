@@ -348,7 +348,7 @@ impl BufferSearchBar {
                 cx.dispatch_any_action(option.to_toggle_action())
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .with_tooltip::<Self, _, _>(
+            .with_tooltip::<Self>(
                 option as usize,
                 format!("Toggle {}", option.label()),
                 Some(option.to_toggle_action()),
@@ -394,10 +394,10 @@ impl BufferSearchBar {
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            mov_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton,_ _,,  _>(
+        .with_tooltip::<NavButton>(
             direction as usize,
             tooltip.to_string(),
             Some(action),
@@ -432,7 +432,7 @@ impl BufferSearchBar {
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, _, _, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<CloseButton>(0, tooltip.to_string(), Some(action), tooltip_style, cx)

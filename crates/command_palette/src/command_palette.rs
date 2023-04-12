@@ -1,10 +1,8 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions,
-    elements::{ChildView, Flex, Label, ParentElement},
-    keymap_matcher::Keystroke,
-    Action, AnyViewHandle, AppContext, Element, Entity, MouseState, View, ViewContext, ViewHandle,
+    actions, elements::*, keymap_matcher::Keystroke, Action, AnyViewHandle, AppContext, Element,
+    Entity, MouseState, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -78,16 +76,13 @@ impl CommandPalette {
 
     fn toggle(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         let workspace = cx.handle();
-        let window_id = cx.window_id();
         let focused_view_id = cx.focused_view_id().unwrap_or_else(|| workspace.id());
 
-        cx.as_mut().defer(move |cx| {
-            let this = cx.add_view(&workspace, |cx| Self::new(focused_view_id, cx));
-            workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |_, cx| {
-                    cx.subscribe(&this, Self::on_event).detach();
-                    this
-                });
+        cx.defer(move |workspace, cx| {
+            let this = cx.add_view(|cx| Self::new(focused_view_id, cx));
+            workspace.toggle_modal(cx, |_, cx| {
+                cx.subscribe(&this, Self::on_event).detach();
+                this
             });
         });
     }
@@ -109,8 +104,7 @@ impl CommandPalette {
                 let focused_view_id = *focused_view_id;
                 let action = action.boxed_clone();
                 workspace.dismiss_modal(cx);
-                cx.as_mut()
-                    .defer(move |cx| cx.dispatch_any_action_at(window_id, focused_view_id, action))
+                cx.defer(move |_, cx| cx.dispatch_any_action_at(window_id, focused_view_id, action))
             }
         }
     }
@@ -125,7 +119,7 @@ impl View for CommandPalette {
         "CommandPalette"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -221,7 +215,7 @@ impl PickerDelegate for CommandPalette {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> gpui::ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
         let settings = cx.global::<Settings>();

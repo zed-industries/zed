@@ -1476,12 +1476,7 @@ async fn test_host_disconnect(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    cx_b.read(|cx| {
-        assert_eq!(
-            cx.focused_view_id(workspace_b.window_id()),
-            Some(editor_b.id())
-        );
-    });
+    assert!(cx_b.read(|cx| editor_b.is_focused(cx)));
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
@@ -1495,8 +1490,8 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-    cx_b.read(|cx| {
-        assert_eq!(cx.focused_view_id(workspace_b.window_id()), None);
+    cx_b.read_window(|cx| {
+        assert_eq!(cx.focused_view_id(), None);
     });
     assert!(!cx_b.is_window_edited(workspace_b.window_id()));
 
