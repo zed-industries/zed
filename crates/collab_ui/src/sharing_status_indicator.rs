@@ -40,13 +40,13 @@ impl View for SharingStatusIndicator {
         "SharingStatusIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> ElementBox {
-        let color = match cx.appearance {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+        let color = match cx.window_appearance() {
             Appearance::Light | Appearance::VibrantLight => Color::black(),
             Appearance::Dark | Appearance::VibrantDark => Color::white(),
         };
 
-        MouseEventHandler::<Self>::new(0, cx, |_, _| {
+        MouseEventHandler::<Self, Self>::new(0, cx, |_, _| {
             Svg::new("icons/disable_screen_sharing_12.svg")
                 .with_color(color)
                 .constrained()
@@ -54,7 +54,7 @@ impl View for SharingStatusIndicator {
                 .aligned()
                 .boxed()
         })
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(ToggleScreenSharing);
         })
         .boxed()

@@ -7,13 +7,14 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    Axis, DebugContext, Element, ElementBox, MeasurementContext, PaintContext, SceneBuilder,
-    ViewContext,
+    Axis, Element, ElementBox, SceneBuilder, ViewContext,
 };
+
+use crate::CollabTitlebarItem;
 
 pub(crate) struct FacePile {
     overlap: f32,
-    faces: Vec<ElementBox>,
+    faces: Vec<ElementBox<CollabTitlebarItem>>,
 }
 
 impl FacePile {
@@ -25,15 +26,15 @@ impl FacePile {
     }
 }
 
-impl<V: View> Element<V> for FacePile {
+impl Element<CollabTitlebarItem> for FacePile {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        view: &mut Self,
-        cx: &mut ViewContext<Self>,
+        view: &mut CollabTitlebarItem,
+        cx: &mut ViewContext<CollabTitlebarItem>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 
@@ -52,8 +53,8 @@ impl<V: View> Element<V> for FacePile {
         bounds: RectF,
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
-        view: &mut Self,
-        cx: &mut ViewContext<Self>,
+        view: &mut CollabTitlebarItem,
+        cx: &mut ViewContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -79,7 +80,8 @@ impl<V: View> Element<V> for FacePile {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &CollabTitlebarItem,
+        _: &ViewContext<CollabTitlebarItem>,
     ) -> Option<RectF> {
         None
     }
@@ -89,7 +91,8 @@ impl<V: View> Element<V> for FacePile {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &CollabTitlebarItem,
+        _: &ViewContext<CollabTitlebarItem>,
     ) -> serde_json::Value {
         json!({
             "type": "FacePile",
@@ -98,8 +101,8 @@ impl<V: View> Element<V> for FacePile {
     }
 }
 
-impl Extend<ElementBox<Self>> for FacePile {
-    fn extend<T: IntoIterator<Item = ElementBox<Self>>>(&mut self, children: T) {
+impl Extend<ElementBox<CollabTitlebarItem>> for FacePile {
+    fn extend<T: IntoIterator<Item = ElementBox<CollabTitlebarItem>>>(&mut self, children: T) {
         self.faces.extend(children);
     }
 }

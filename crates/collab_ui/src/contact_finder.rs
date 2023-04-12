@@ -32,7 +32,7 @@ impl View for ContactFinder {
         "ContactFinder"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -104,7 +104,7 @@ impl PickerDelegate for ContactFinder {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let theme = &cx.global::<Settings>().theme;
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);

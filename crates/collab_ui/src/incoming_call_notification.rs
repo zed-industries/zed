@@ -6,7 +6,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
-    AppContext, Entity, View, ViewContext,
+    AppContext, ElementBox, Entity, View, ViewContext,
 };
 use settings::Settings;
 use util::ResultExt;
@@ -99,7 +99,7 @@ impl IncomingCallNotification {
         }
     }
 
-    fn render_caller(&self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_caller(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = &cx.global::<Settings>().theme.incoming_call_notification;
         let default_project = proto::ParticipantProject::default();
         let initial_project = self
@@ -165,13 +165,13 @@ impl IncomingCallNotification {
             .boxed()
     }
 
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         enum Accept {}
         enum Decline {}
 
         Flex::column()
             .with_child(
-                MouseEventHandler::<Accept>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Accept, Self>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
                     Label::new("Accept", theme.accept_button.text.clone())
                         .aligned()
@@ -180,14 +180,14 @@ impl IncomingCallNotification {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(RespondToCall { accept: true });
                 })
                 .flex(1., true)
                 .boxed(),
             )
             .with_child(
-                MouseEventHandler::<Decline>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Decline, Self>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.incoming_call_notification;
                     Label::new("Decline", theme.decline_button.text.clone())
                         .aligned()
@@ -196,7 +196,7 @@ impl IncomingCallNotification {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(RespondToCall { accept: false });
                 })
                 .flex(1., true)
@@ -222,7 +222,7 @@ impl View for IncomingCallNotification {
         "IncomingCallNotification"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let background = cx
             .global::<Settings>()
             .theme

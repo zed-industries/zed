@@ -805,6 +805,10 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window.platform_window.bounds()
     }
 
+    pub fn window_appearance(&self) -> Appearance {
+        self.window.appearance
+    }
+
     pub fn window_display_uuid(&self) -> Option<Uuid> {
         self.window.platform_window.screen().display_uuid()
     }

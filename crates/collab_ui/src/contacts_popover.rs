@@ -91,14 +91,14 @@ impl View for ContactsPopover {
         "ContactsPopover"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let child = match &self.child {
             Child::ContactList(child) => ChildView::new(child, cx),
             Child::ContactFinder(child) => ChildView::new(child, cx),
         };
 
-        MouseEventHandler::<ContactsPopover>::new(0, cx, |_, _| {
+        MouseEventHandler::<ContactsPopover, Self>::new(0, cx, |_, _| {
             Flex::column()
                 .with_child(child.flex(1., true).boxed())
                 .contained()
@@ -108,7 +108,7 @@ impl View for ContactsPopover {
                 .with_height(theme.contacts_popover.height)
                 .boxed()
         })
-        .on_down_out(MouseButton::Left, move |_, cx| {
+        .on_down_out(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleContactsMenu);
         })
         .boxed()

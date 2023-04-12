@@ -104,7 +104,7 @@ impl ProjectSharedNotification {
         cx.remove_window(window_id);
     }
 
-    fn render_owner(&self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_owner(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = &cx.global::<Settings>().theme.project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
@@ -164,7 +164,7 @@ impl ProjectSharedNotification {
             .boxed()
     }
 
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         enum Open {}
         enum Dismiss {}
 
@@ -173,7 +173,7 @@ impl ProjectSharedNotification {
 
         Flex::column()
             .with_child(
-                MouseEventHandler::<Open>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Open, Self>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
                     Label::new("Open", theme.open_button.text.clone())
                         .aligned()
@@ -182,7 +182,7 @@ impl ProjectSharedNotification {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(JoinProject {
                         project_id,
                         follow_user_id: owner_user_id,
@@ -192,7 +192,7 @@ impl ProjectSharedNotification {
                 .boxed(),
             )
             .with_child(
-                MouseEventHandler::<Dismiss>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
                     Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()
@@ -201,7 +201,7 @@ impl ProjectSharedNotification {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(DismissProject);
                 })
                 .flex(1., true)
@@ -227,7 +227,7 @@ impl View for ProjectSharedNotification {
         "ProjectSharedNotification"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox<Self> {
         let background = cx
             .global::<Settings>()
             .theme

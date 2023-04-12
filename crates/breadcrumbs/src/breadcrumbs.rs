@@ -72,14 +72,14 @@ impl View for Breadcrumbs {
                 .boxed();
         }
 
-        MouseEventHandler::<Breadcrumbs>::new(0, cx, |state, _| {
+        MouseEventHandler::<Breadcrumbs, Breadcrumbs>::new(0, cx, |state, _| {
             let style = style.style_for(state, false);
             crumbs.with_style(style.container).boxed()
         })
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(outline::Toggle);
         })
-        .with_tooltip::<Breadcrumbs, _>(
+        .with_tooltip::<Breadcrumbs>(
             0,
             "Show symbol outline".to_owned(),
             Some(Box::new(outline::Toggle)),

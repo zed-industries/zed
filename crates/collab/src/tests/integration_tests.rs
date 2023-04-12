@@ -1467,7 +1467,8 @@ async fn test_host_disconnect(
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
+    let (window_id_b, workspace_b) =
+        cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
@@ -1490,7 +1491,7 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-    cx_b.read_window(|cx| {
+    cx_b.read_window(window_id_b, |cx| {
         assert_eq!(cx.focused_view_id(), None);
     });
     assert!(!cx_b.is_window_edited(workspace_b.window_id()));
