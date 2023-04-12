@@ -3,7 +3,7 @@ use std::sync::Arc;
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Axis, Entity,
-    RenderContext, View, ViewContext, ViewHandle,
+    View, ViewContext, ViewHandle,
 };
 use menu::{Cancel, Confirm};
 use settings::Settings;
@@ -156,7 +156,7 @@ impl View for GoToLine {
         "GoToLine"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(

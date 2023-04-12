@@ -106,22 +106,17 @@ impl View for Select {
             Default::default()
         };
         let mut result = Flex::column().with_child(
-            MouseEventHandler::<Header>::new(
-                self.handle.id(),
-                self,
-                cx,
-                |mouse_state, this, cx| {
-                    Container::new((self.render_item)(
-                        self.selected_item_ix,
-                        ItemType::Header,
-                        mouse_state.hovered(),
-                        cx,
-                    ))
-                    .with_style(style.header)
-                    .boxed()
-                },
-            )
-            .on_click(MouseButton::Left, move |_, cx| {
+            MouseEventHandler::<Header, _>::new(self.handle.id(), cx, |mouse_state, cx| {
+                Container::new((self.render_item)(
+                    self.selected_item_ix,
+                    ItemType::Header,
+                    mouse_state.hovered(),
+                    cx,
+                ))
+                .with_style(style.header)
+                .boxed()
+            })
+            .on_click(MouseButton::Left, move |_, _, cx| {
                 cx.dispatch_action(ToggleSelect)
             })
             .boxed(),
@@ -139,11 +134,10 @@ impl View for Select {
                                     let selected_item_ix = this.selected_item_ix;
                                     range.end = range.end.min(this.item_count);
                                     items.extend(range.map(|ix| {
-                                        MouseEventHandler::<Item>::new(
+                                        MouseEventHandler::<Item, _>::new(
                                             ix,
-                                            self,
                                             cx,
-                                            |mouse_state, this, cx| {
+                                            |mouse_state, cx| {
                                                 (this.render_item)(
                                                     ix,
                                                     if ix == selected_item_ix {
@@ -156,7 +150,7 @@ impl View for Select {
                                                 )
                                             },
                                         )
-                                        .on_click(MouseButton::Left, move |_, cx| {
+                                        .on_click(MouseButton::Left, move |_, _, cx| {
                                             cx.dispatch_action(SelectItem(ix))
                                         })
                                         .boxed()

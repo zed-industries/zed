@@ -6,7 +6,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
-    AppContext, Entity, RenderContext, View, ViewContext,
+    AppContext, Entity, View, ViewContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -104,7 +104,7 @@ impl ProjectSharedNotification {
         cx.remove_window(window_id);
     }
 
-    fn render_owner(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_owner(&self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
@@ -164,7 +164,7 @@ impl ProjectSharedNotification {
             .boxed()
     }
 
-    fn render_buttons(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox {
         enum Open {}
         enum Dismiss {}
 
@@ -227,7 +227,7 @@ impl View for ProjectSharedNotification {
         "ProjectSharedNotification"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
         let background = cx
             .global::<Settings>()
             .theme

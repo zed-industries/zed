@@ -4,8 +4,8 @@ use editor::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, Task, View,
+    ViewContext, ViewHandle,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -48,7 +48,7 @@ impl View for ProjectSymbolsView {
         "ProjectSymbolsView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         ChildView::new(&self.picker, cx).boxed()
     }
 

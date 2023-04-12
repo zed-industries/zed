@@ -236,11 +236,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn should_show_cursor(
-        &self,
-        focused: bool,
-        cx: &mut gpui::RenderContext<'_, Self>,
-    ) -> bool {
+    pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<'_, Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
             || !self.blinking_on
@@ -388,12 +384,12 @@ impl View for TerminalView {
         "Terminal"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> ElementBox {
         let terminal_handle = self.terminal.clone().downgrade();
 
         let self_id = cx.view_id();
         let focused = cx
-            .focused_view_id(cx.window_id())
+            .focused_view_id()
             .filter(|view_id| *view_id == self_id)
             .is_some();
 

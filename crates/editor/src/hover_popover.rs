@@ -4,7 +4,7 @@ use gpui::{
     elements::{Flex, MouseEventHandler, Padding, Text},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Axis, Element, ElementBox, ModelHandle, RenderContext, Task, ViewContext,
+    AppContext, Axis, Element, ElementBox, ModelHandle, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity};
 use project::{HoverBlock, Project};
@@ -282,7 +282,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
-        cx: &mut RenderContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<ElementBox>)> {
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
@@ -323,7 +323,7 @@ pub struct InfoPopover {
 }
 
 impl InfoPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox {
         MouseEventHandler::<InfoPopover>::new(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
@@ -378,7 +378,7 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox {
         enum PrimaryDiagnostic {}
 
         let mut text_style = style.hover_popover.prose.clone();

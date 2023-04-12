@@ -4,8 +4,7 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement},
     keymap_matcher::Keystroke,
-    Action, AnyViewHandle, AppContext, Element, Entity, MouseState, RenderContext, View,
-    ViewContext, ViewHandle,
+    Action, AnyViewHandle, AppContext, Element, Entity, MouseState, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -80,9 +79,7 @@ impl CommandPalette {
     fn toggle(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         let workspace = cx.handle();
         let window_id = cx.window_id();
-        let focused_view_id = cx
-            .focused_view_id(window_id)
-            .unwrap_or_else(|| workspace.id());
+        let focused_view_id = cx.focused_view_id().unwrap_or_else(|| workspace.id());
 
         cx.as_mut().defer(move |cx| {
             let this = cx.add_view(&workspace, |cx| Self::new(focused_view_id, cx));
@@ -128,7 +125,7 @@ impl View for CommandPalette {
         "CommandPalette"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
         ChildView::new(&self.picker, cx).boxed()
     }
 

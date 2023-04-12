@@ -35,7 +35,7 @@ impl<V: View> Element<V> for Hook<V> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);

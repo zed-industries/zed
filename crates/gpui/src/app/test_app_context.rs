@@ -1,6 +1,5 @@
 use std::{
     cell::RefCell,
-    marker::PhantomData,
     mem,
     path::PathBuf,
     rc::Rc,
@@ -21,7 +20,7 @@ use crate::{
     geometry::vector::Vector2F,
     keymap_matcher::Keystroke,
     platform,
-    platform::{Appearance, Event, InputHandler, KeyDownEvent, Platform},
+    platform::{Event, InputHandler, KeyDownEvent, Platform},
     Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
     ReadModelWith, ReadViewWith, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
     WeakHandle,
@@ -74,7 +73,7 @@ impl TestAppContext {
 
     pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
         let mut cx = self.cx.borrow_mut();
-        if let Some(view_id) = cx.focused_view_id {
+        if let Some(view_id) = cx.windows.get(&window_id).and_then(|w| w.focused_view_id) {
             cx.handle_dispatch_action_from_effect(window_id, Some(view_id), &action);
         }
     }
@@ -149,7 +148,14 @@ impl TestAppContext {
     }
 
     pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
-        self.cx.borrow().root_view(window_id)
+        Some(
+            self.cx
+                .borrow()
+                .windows
+                .get(&window_id)?
+                .root_view()
+                .clone(),
+        )
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {
@@ -172,20 +178,21 @@ impl TestAppContext {
         F: FnOnce(&mut V, &mut ViewContext<V>) -> T,
         V: View,
     {
-        handle.update(&mut *self.cx.borrow_mut(), |view, cx| {
-            let mut render_cx = ViewContext {
-                app: cx,
-                window_id: handle.window_id(),
-                view_id: handle.id(),
-                view_type: PhantomData,
-                titlebar_height: 0.,
-                hovered_region_ids: Default::default(),
-                clicked_region_ids: None,
-                refreshing: false,
-                appearance: Appearance::Light,
-            };
-            f(view, &mut render_cx)
-        })
+        todo!()
+        // handle.update(&mut *self.cx.borrow_mut(), |view, cx| {
+        //     let mut render_cx = ViewContext {
+        //         app: cx,
+        //         window_id: handle.window_id(),
+        //         view_id: handle.id(),
+        //         view_type: PhantomData,
+        //         titlebar_height: 0.,
+        //         hovered_region_ids: Default::default(),
+        //         clicked_region_ids: None,
+        //         refreshing: false,
+        //         appearance: Appearance::Light,
+        //     };
+        //     f(view, &mut render_cx)
+        // })
     }
 
     pub fn to_async(&self) -> AsyncAppContext {

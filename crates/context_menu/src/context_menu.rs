@@ -4,14 +4,12 @@ use gpui::{
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Axis, Entity, MouseState, RenderContext, SizeConstraint,
-    Subscription, View, ViewContext,
+    Action, AnyViewHandle, AppContext, Axis, Entity, MouseState, SizeConstraint, Subscription,
+    View, ViewContext,
 };
 use menu::*;
 use settings::Settings;
 use std::{any::TypeId, borrow::Cow, time::Duration};
-
-pub type StaticItem = Box<dyn Fn(&mut AppContext) -> ElementBox>;
 
 #[derive(Copy, Clone, PartialEq)]
 struct Clicked;
@@ -28,8 +26,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::cancel);
 }
 
+pub type StaticItem = Box<dyn Fn(&mut AppContext) -> ElementBox<ContextMenu>>;
+
 type ContextMenuItemBuilder =
-    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> ElementBox>;
+    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> ElementBox<ContextMenu>>;
 
 pub enum ContextMenuItemLabel {
     String(Cow<'static, str>),
@@ -142,7 +142,7 @@ impl View for ContextMenu {
         cx
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         if !self.visible {
             return Empty::new().boxed();
         }
@@ -152,10 +152,10 @@ impl View for ContextMenu {
         let expanded_menu = self
             .render_menu(cx)
             .constrained()
-            .dynamically(move |constraint, cx| {
+            .dynamically(move |constraint, view, cx| {
                 SizeConstraint::strict_along(
                     Axis::Horizontal,
-                    collapsed_menu.layout(constraint, cx).x(),
+                    collapsed_menu.layout(constraint, view, cx).x(),
                 )
             })
             .boxed();
@@ -315,7 +315,7 @@ impl ContextMenu {
             self.visible = true;
             self.show_count += 1;
             if !cx.is_self_focused() {
-                self.previously_focused_view_id = cx.focused_view_id(cx.window_id());
+                self.previously_focused_view_id = cx.focused_view_id();
             }
             cx.focus_self();
         } else {
@@ -328,7 +328,7 @@ impl ContextMenu {
         self.position_mode = mode;
     }
 
-    fn render_menu_for_measurement(&self, cx: &mut RenderContext<Self>) -> impl Element {
+    fn render_menu_for_measurement(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
         let window_id = cx.window_id();
         let style = cx.global::<Settings>().theme.context_menu.clone();
         Flex::row()
@@ -415,14 +415,14 @@ impl ContextMenu {
             .with_style(style.container)
     }
 
-    fn render_menu(&self, cx: &mut RenderContext<Self>) -> impl Element {
+    fn render_menu(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
         enum Menu {}
         enum MenuItem {}
 
         let style = cx.global::<Settings>().theme.context_menu.clone();
 
         let window_id = cx.window_id();
-        MouseEventHandler::<Menu>::new(0, cx, |_, cx| {
+        MouseEventHandler::<Menu, ContextMenu>::new(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
@@ -436,7 +436,7 @@ impl ContextMenu {
                                 }
                             };
 
-                            MouseEventHandler::<MenuItem>::new(ix, cx, |state, _| {
+                            MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);
 
@@ -467,14 +467,14 @@ impl ContextMenu {
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_up(MouseButton::Left, |_, _| {}) // Capture these events
-                            .on_down(MouseButton::Left, |_, _| {}) // Capture these events
-                            .on_click(MouseButton::Left, move |_, cx| {
+                            .on_up(MouseButton::Left, |_, _, _| {}) // Capture these events
+                            .on_down(MouseButton::Left, |_, _, _| {}) // Capture these events
+                            .on_click(MouseButton::Left, move |_, _, cx| {
                                 cx.dispatch_action(Clicked);
                                 let window_id = cx.window_id();
                                 cx.dispatch_any_action_at(window_id, view_id, action.boxed_clone());
                             })
-                            .on_drag(MouseButton::Left, |_, _| {})
+                            .on_drag(MouseButton::Left, |_, _, _| {})
                             .boxed()
                         }
 
@@ -492,7 +492,7 @@ impl ContextMenu {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_down_out(MouseButton::Left, |_, cx| cx.dispatch_action(Cancel))
-        .on_down_out(MouseButton::Right, |_, cx| cx.dispatch_action(Cancel))
+        .on_down_out(MouseButton::Left, |_, _, cx| cx.dispatch_action(Cancel))
+        .on_down_out(MouseButton::Right, |_, _, cx| cx.dispatch_action(Cancel))
     }
 }

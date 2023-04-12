@@ -12,9 +12,8 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, RenderContext,
-    Subscription, Task, View, ViewContext, ElementBox, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    Action, AnyViewHandle, AppContext, ElementBox, Entity, ModelContext, ModelHandle, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -178,7 +177,7 @@ impl View for ProjectSearchView {
         "ProjectSearchView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let model = &self.model.read(cx);
         if model.match_ranges.is_empty() {
             enum Status {}
@@ -747,7 +746,7 @@ impl ProjectSearchBar {
         &self,
         icon: &'static str,
         direction: Direction,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let action: Box<dyn Action>;
         let tooltip;
@@ -795,7 +794,7 @@ impl ProjectSearchBar {
         &self,
         icon: &'static str,
         option: SearchOption,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
@@ -848,7 +847,7 @@ impl View for ProjectSearchBar {
         "ProjectSearchBar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
             let theme = cx.global::<Settings>().theme.clone();

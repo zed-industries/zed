@@ -9,7 +9,7 @@ use gpui::{
     },
     json::{json, ToJson},
     AnyViewHandle, AppContext, DebugContext, ElementBox, Entity, LayoutContext, MeasurementContext,
-    PaintContext, RenderContext, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
+    PaintContext, SceneBuilder, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 
@@ -42,7 +42,7 @@ impl View for StatusBar {
         "StatusBar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
 
         StatusBarElement {
@@ -143,44 +143,49 @@ struct StatusBarElement {
     right: ElementBox,
 }
 
-impl Element for StatusBarElement {
+impl<V: View> Element<V> for StatusBarElement {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let max_width = constraint.max.x();
         constraint.min = vec2f(0., constraint.min.y());
 
-        let right_size = self.right.layout(constraint, cx);
+        let right_size = self.right.layout(constraint, view, cx);
         let constraint = SizeConstraint::new(
             vec2f(0., constraint.min.y()),
             vec2f(max_width - right_size.x(), constraint.max.y()),
         );
 
-        self.left.layout(constraint, cx);
+        self.left.layout(constraint, view, cx);
 
         (vec2f(max_width, right_size.y()), ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let origin_y = bounds.upper_right().y();
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         let left_origin = vec2f(bounds.lower_left().x(), origin_y);
-        self.left.paint(left_origin, visible_bounds, cx);
+        self.left
+            .paint(scene, left_origin, visible_bounds, view, cx);
 
         let right_origin = vec2f(bounds.upper_right().x() - self.right.size().x(), origin_y);
-        self.right.paint(right_origin, visible_bounds, cx);
+        self.right
+            .paint(scene, right_origin, visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(

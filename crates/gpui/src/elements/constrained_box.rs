@@ -157,7 +157,7 @@ impl<V: View> Element<V> for ConstrainedBox<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        cx.paint_layer(Some(visible_bounds), |cx| {
+        scene.paint_layer(Some(visible_bounds), |scene| {
             self.child
                 .paint(scene, bounds.origin(), visible_bounds, view, cx);
         })

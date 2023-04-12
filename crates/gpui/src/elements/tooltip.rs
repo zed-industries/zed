@@ -55,7 +55,6 @@ impl<V: View> Tooltip<V> {
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
         child: ElementBox<V>,
-        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self {
         struct ElementState<Tag>(Tag);
@@ -78,10 +77,10 @@ impl<V: View> Tooltip<V> {
                 Overlay::new(
                     Self::render_tooltip(cx.window_id, focused_view_id, text, style, action, false)
                         .constrained()
-                        .dynamically(move |constraint, cx| {
+                        .dynamically(move |constraint, view, cx| {
                             SizeConstraint::strict_along(
                                 Axis::Vertical,
-                                collapsed_tooltip.layout(constraint, cx).y(),
+                                collapsed_tooltip.layout(constraint, view, cx).y(),
                             )
                         })
                         .boxed(),
@@ -93,36 +92,34 @@ impl<V: View> Tooltip<V> {
         } else {
             None
         };
-        let child =
-            MouseEventHandler::<MouseEventHandlerState<Tag>>::new(id, view, cx, |_, _| child)
-                .on_hover(move |e, cx| {
-                    let position = e.position;
-                    let window_id = cx.window_id();
-                    if let Some(view_id) = cx.view_id() {
-                        if e.started {
-                            if !state.visible.get() {
-                                state.position.set(position);
+        let child = MouseEventHandler::<MouseEventHandlerState<Tag>, _>::new(id, cx, |_, _| child)
+            .on_hover(move |e, _, cx| {
+                let position = e.position;
+                let window_id = cx.window_id();
+                let view_id = cx.view_id();
+                if e.started {
+                    if !state.visible.get() {
+                        state.position.set(position);
 
-                                let mut debounce = state.debounce.borrow_mut();
-                                if debounce.is_none() {
-                                    *debounce = Some(cx.spawn({
-                                        let state = state.clone();
-                                        |mut cx| async move {
-                                            cx.background().timer(DEBOUNCE_TIMEOUT).await;
-                                            state.visible.set(true);
-                                            cx.update(|cx| cx.notify_view(window_id, view_id));
-                                        }
-                                    }));
+                        let mut debounce = state.debounce.borrow_mut();
+                        if debounce.is_none() {
+                            *debounce = Some(cx.spawn({
+                                let state = state.clone();
+                                |_, mut cx| async move {
+                                    cx.background().timer(DEBOUNCE_TIMEOUT).await;
+                                    state.visible.set(true);
+                                    cx.update(|cx| cx.notify_view(window_id, view_id));
                                 }
-                            }
-                        } else {
-                            state.visible.set(false);
-                            state.debounce.take();
-                            cx.notify();
+                            }));
                         }
                     }
-                })
-                .boxed();
+                } else {
+                    state.visible.set(false);
+                    state.debounce.take();
+                    cx.notify();
+                }
+            })
+            .boxed();
         Self {
             child,
             tooltip,
@@ -137,7 +134,7 @@ impl<V: View> Tooltip<V> {
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
         measure: bool,
-    ) -> impl Element {
+    ) -> impl Element<V> {
         Flex::row()
             .with_child({
                 let text = Text::new(text, style.text)
@@ -181,7 +178,7 @@ impl<V: View> Element<V> for Tooltip<V> {
         let size = self.child.layout(constraint, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
             tooltip.layout(
-                SizeConstraint::new(Vector2F::zero(), cx.window_size),
+                SizeConstraint::new(Vector2F::zero(), cx.window_size()),
                 view,
                 cx,
             );

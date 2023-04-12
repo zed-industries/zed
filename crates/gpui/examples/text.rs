@@ -2,7 +2,7 @@ use gpui::{
     color::Color,
     fonts::{Properties, Weight},
     text_layout::RunStyle,
-    DebugContext, Element as _, MeasurementContext, Quad,
+    Element, ElementBox, Quad, SceneBuilder, View, ViewContext,
 };
 use log::LevelFilter;
 use pathfinder_geometry::rect::RectF;
@@ -30,12 +30,12 @@ impl gpui::View for TextView {
         "View"
     }
 
-    fn render(&mut self, _: &mut gpui::RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> ElementBox<TextView> {
         TextElement.boxed()
     }
 }
 
-impl gpui::Element for TextElement {
+impl<V: View> Element<V> for TextElement {
     type LayoutState = ();
 
     type PaintState = ();
@@ -43,17 +43,20 @@ impl gpui::Element for TextElement {
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        _: &mut gpui::LayoutContext,
+        _: &mut V,
+        _: &mut ViewContext<V>,
     ) -> (pathfinder_geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let font_size = 12.;
         let family = cx
@@ -84,7 +87,7 @@ impl gpui::Element for TextElement {
         };
 
         let text = "Hello world!";
-        let line = cx.text_layout_cache.layout_str(
+        let line = cx.text_layout_cache().layout_str(
             text,
             font_size,
             &[
@@ -96,12 +99,12 @@ impl gpui::Element for TextElement {
             ],
         );
 
-        cx.scene.push_quad(Quad {
+        scene.push_quad(Quad {
             bounds,
             background: Some(Color::white()),
             ..Default::default()
         });
-        line.paint(bounds.origin(), visible_bounds, bounds.height(), cx);
+        line.paint(scene, bounds.origin(), visible_bounds, bounds.height(), cx);
     }
 
     fn rect_for_text_range(
@@ -111,7 +114,8 @@ impl gpui::Element for TextElement {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -121,7 +125,8 @@ impl gpui::Element for TextElement {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> gpui::json::Value {
         todo!()
     }

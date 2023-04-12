@@ -98,7 +98,7 @@ impl<V: View> Element<V> for Text {
         let shaped_lines = layout_highlighted_chunks(
             chunks,
             &self.style,
-            cx.text_layout_cache,
+            cx.text_layout_cache(),
             &cx.font_cache,
             usize::MAX,
             self.text.matches('\n').count() + 1,
@@ -213,9 +213,9 @@ impl<V: View> Element<V> for Text {
 /// Perform text layout on a series of highlighted chunks of text.
 pub fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
-    text_style: &'a TextStyle,
-    text_layout_cache: &'a TextLayoutCache,
-    font_cache: &'a Arc<FontCache>,
+    text_style: &TextStyle,
+    text_layout_cache: &TextLayoutCache,
+    font_cache: &Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
 ) -> Vec<Line> {
@@ -276,26 +276,22 @@ pub fn layout_highlighted_chunks<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        elements::Empty, fonts, platform, AppContext, ElementBox, Entity, View, ViewContext,
-    };
+    use crate::{elements::Empty, fonts, AppContext, ElementBox, Entity, View, ViewContext};
 
     #[crate::test(self)]
     fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
         let (window_id, root_view) = cx.add_window(Default::default(), |_| TestView);
-        let mut presenter = cx.build_window(
-            window_id,
-            root_view.into_any(),
-            Box::new(platform::test::Window::new(Vector2F::new(800., 600.))),
-        );
         fonts::with_font_cache(cx.font_cache().clone(), || {
-            let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
-            let (_, state) = text.layout(
-                SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
-                &mut presenter.build_layout_context(Default::default(), false, cx),
-            );
-            assert_eq!(state.shaped_lines.len(), 2);
-            assert_eq!(state.wrap_boundaries.len(), 2);
+            root_view.update(cx, |view, cx| {
+                let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
+                let (_, state) = text.layout(
+                    SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
+                    view,
+                    cx,
+                );
+                assert_eq!(state.shaped_lines.len(), 2);
+                assert_eq!(state.wrap_boundaries.len(), 2);
+            });
         });
     }
 

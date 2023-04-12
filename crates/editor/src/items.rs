@@ -7,8 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, RenderContext,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, Subscription, Task,
+    View, ViewContext, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -1078,7 +1078,7 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);

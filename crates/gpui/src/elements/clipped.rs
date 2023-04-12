@@ -37,10 +37,10 @@ impl<V: View> Element<V> for Clipped<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        cx.scene.push_layer(Some(bounds));
-        self.child
-            .paint(scene, bounds.origin(), visible_bounds, view, cx);
-        cx.scene.pop_layer();
+        scene.paint_layer(Some(bounds), |scene| {
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx)
+        })
     }
 
     fn rect_for_text_range(

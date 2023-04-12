@@ -3,8 +3,8 @@ use editor::{Editor, GoToDiagnostic};
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    serde_json, AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    serde_json, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::Diagnostic;
 use project::Project;
@@ -84,7 +84,7 @@ impl View for DiagnosticIndicator {
         "DiagnosticIndicator"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         enum Summary {}
         enum Message {}
 

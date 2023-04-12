@@ -62,7 +62,7 @@ impl<V: View> Element<V> for Image {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &V,
+        _: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let data = match &self.source {
@@ -94,8 +94,8 @@ impl<V: View> Element<V> for Image {
         bounds: RectF,
         _: RectF,
         layout: &mut Self::LayoutState,
-        _: &V,
-        cx: &mut ViewContext<V>,
+        _: &mut V,
+        _: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if let Some(data) = layout {
             scene.push_image(scene::Image {

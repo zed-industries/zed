@@ -273,7 +273,7 @@ impl Line {
 
     pub fn paint(
         &self,
-        scene: &SceneBuilder,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
@@ -334,7 +334,7 @@ impl Line {
                 }
 
                 if let Some((underline_origin, underline_style)) = finished_underline {
-                    cx.scene.push_underline(scene::Underline {
+                    scene.push_underline(scene::Underline {
                         origin: underline_origin,
                         width: glyph_origin.x() - underline_origin.x(),
                         thickness: underline_style.thickness.into(),
@@ -344,14 +344,14 @@ impl Line {
                 }
 
                 if glyph.is_emoji {
-                    cx.scene.push_image_glyph(scene::ImageGlyph {
+                    scene.push_image_glyph(scene::ImageGlyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
                         origin: glyph_origin,
                     });
                 } else {
-                    cx.scene.push_glyph(scene::Glyph {
+                    scene.push_glyph(scene::Glyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
@@ -364,7 +364,7 @@ impl Line {
 
         if let Some((underline_start, underline_style)) = underline.take() {
             let line_end_x = origin.x() + self.layout.width;
-            cx.scene.push_underline(scene::Underline {
+            scene.push_underline(scene::Underline {
                 origin: underline_start,
                 width: line_end_x - underline_start.x(),
                 color: underline_style.color.unwrap(),
@@ -376,7 +376,7 @@ impl Line {
 
     pub fn paint_wrapped(
         &self,
-        scene: &SceneBuilder,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,

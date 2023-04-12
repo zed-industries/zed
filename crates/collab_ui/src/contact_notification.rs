@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::notifications::render_user_notification;
 use client::{ContactEventKind, User, UserStore};
 use gpui::{
-    elements::*, impl_internal_actions, AppContext, Entity, ModelHandle, RenderContext, View,
-    ViewContext,
+    elements::*, impl_internal_actions, AppContext, Entity, ModelHandle, View, ViewContext,
 };
 use workspace::notifications::Notification;
 
@@ -43,7 +42,7 @@ impl View for ContactNotification {
         "ContactNotification"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         match self.kind {
             ContactEventKind::Requested => render_user_notification(
                 self.user.clone(),

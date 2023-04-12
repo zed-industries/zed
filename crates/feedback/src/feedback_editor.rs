@@ -12,8 +12,8 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Svg},
     platform::PromptLevel,
-    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext,
-    Task, View, ViewContext, ViewHandle,
+    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View,
+    ViewContext, ViewContext, ViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -232,7 +232,7 @@ impl View for FeedbackEditor {
         "FeedbackEditor"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         ChildView::new(&self.editor, cx).boxed()
     }
 

@@ -42,7 +42,7 @@ impl<V: View> Element<V> for Expanded<V> {
         &mut self,
         mut constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if self.full_width {
             constraint.min.set_x(constraint.max.x());

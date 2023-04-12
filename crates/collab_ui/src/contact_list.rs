@@ -11,7 +11,7 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -799,7 +799,7 @@ impl ContactList {
         is_last: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -834,7 +834,7 @@ impl ContactList {
                                 let start_y = bounds.min_y();
                                 let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                                cx.scene.push_quad(gpui::Quad {
+                                scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
                                         vec2f(start_x, start_y),
                                         vec2f(
@@ -846,7 +846,7 @@ impl ContactList {
                                     border: gpui::Border::default(),
                                     corner_radius: 0.,
                                 });
-                                cx.scene.push_quad(gpui::Quad {
+                                scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
                                         vec2f(start_x, end_y),
                                         vec2f(end_x, end_y + tree_branch.width),
@@ -898,7 +898,7 @@ impl ContactList {
         is_last: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
@@ -932,7 +932,7 @@ impl ContactList {
                                     let end_y =
                                         bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                                    cx.scene.push_quad(gpui::Quad {
+                                    scene.push_quad(gpui::Quad {
                                         bounds: RectF::from_points(
                                             vec2f(start_x, start_y),
                                             vec2f(
@@ -944,7 +944,7 @@ impl ContactList {
                                         border: gpui::Border::default(),
                                         corner_radius: 0.,
                                     });
-                                    cx.scene.push_quad(gpui::Quad {
+                                    scene.push_quad(gpui::Quad {
                                         bounds: RectF::from_points(
                                             vec2f(start_x, end_y),
                                             vec2f(end_x, end_y + tree_branch.width),
@@ -999,7 +999,7 @@ impl ContactList {
         theme: &theme::ContactList,
         is_selected: bool,
         is_collapsed: bool,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         enum Header {}
         enum LeaveCallContactList {}
@@ -1077,7 +1077,7 @@ impl ContactList {
         project: &ModelHandle<Project>,
         theme: &theme::ContactList,
         is_selected: bool,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let online = contact.online;
         let busy = contact.busy || calling;
@@ -1194,7 +1194,7 @@ impl ContactList {
         theme: &theme::ContactList,
         is_incoming: bool,
         is_selected: bool,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         enum Decline {}
         enum Accept {}
@@ -1331,7 +1331,7 @@ impl View for ContactList {
         cx
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         enum AddContact {}
         let theme = cx.global::<Settings>().theme.clone();
 

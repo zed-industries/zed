@@ -73,7 +73,7 @@ impl<V: View> Flex<V> {
         remaining_space: &mut f32,
         remaining_flex: &mut f32,
         cross_axis_max: &mut f32,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         let cross_axis = self.axis.invert();
@@ -124,7 +124,7 @@ impl<V: View> Element<V> for Flex<V> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
@@ -253,7 +253,7 @@ impl<V: View> Element<V> for Flex<V> {
         bounds: RectF,
         visible_bounds: RectF,
         remaining_space: &mut Self::LayoutState,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
@@ -261,16 +261,16 @@ impl<V: View> Element<V> for Flex<V> {
         let mut remaining_space = *remaining_space;
         let overflowing = remaining_space < 0.;
         if overflowing {
-            cx.scene.push_layer(Some(visible_bounds));
+            scene.push_layer(Some(visible_bounds));
         }
 
         if let Some(scroll_state) = &self.scroll_state {
-            cx.scene.push_mouse_region(
+            scene.push_mouse_region(
                 crate::MouseRegion::new::<Self>(scroll_state.1, 0, bounds)
                     .on_scroll({
                         let scroll_state = scroll_state.0.read(cx).clone();
                         let axis = self.axis;
-                        move |e, cx| {
+                        move |e, _: &mut V, cx| {
                             if remaining_space < 0. {
                                 let scroll_delta = e.delta.raw();
 
@@ -298,7 +298,7 @@ impl<V: View> Element<V> for Flex<V> {
                             }
                         }
                     })
-                    .on_move(|_, _| { /* Capture move events */ }),
+                    .on_move(|_, _: &mut V, _| { /* Capture move events */ }),
             )
         }
 
@@ -356,7 +356,7 @@ impl<V: View> Element<V> for Flex<V> {
         }
 
         if overflowing {
-            cx.scene.pop_layer();
+            scene.pop_layer();
         }
     }
 
@@ -372,7 +372,7 @@ impl<V: View> Element<V> for Flex<V> {
     ) -> Option<RectF> {
         self.children
             .iter()
-            .find_map(|child| child.rect_for_text_range(view, range_utf16.clone(), cx))
+            .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
     }
 
     fn debug(
@@ -431,7 +431,7 @@ impl<V: View> Element<V> for FlexItem<V> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
@@ -444,7 +444,7 @@ impl<V: View> Element<V> for FlexItem<V> {
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.child
@@ -474,7 +474,6 @@ impl<V: View> Element<V> for FlexItem<V> {
         _: &Self::LayoutState,
         _: &Self::PaintState,
         view: &V,
-
         cx: &ViewContext<V>,
     ) -> Value {
         json!({

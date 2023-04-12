@@ -9,8 +9,7 @@ use gpui::{
     elements::*,
     impl_actions,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Entity, RenderContext, Subscription, Task, View,
-    ViewContext, ViewHandle,
+    Action, AnyViewHandle, AppContext, Entity, Subscription, Task, View, ViewContext, ViewHandle,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -92,7 +91,7 @@ impl View for BufferSearchBar {
         }
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
@@ -324,7 +323,7 @@ impl BufferSearchBar {
         option_supported: bool,
         icon: &'static str,
         option: SearchOption,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<ElementBox> {
         if !option_supported {
             return None;
@@ -364,7 +363,7 @@ impl BufferSearchBar {
         &self,
         icon: &'static str,
         direction: Direction,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let action: Box<dyn Action>;
         let tooltip;
@@ -408,11 +407,7 @@ impl BufferSearchBar {
         .boxed()
     }
 
-    fn render_close_button(
-        &self,
-        theme: &theme::Search,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+    fn render_close_button(&self, theme: &theme::Search, cx: &mut ViewContext<Self>) -> ElementBox {
         let action = Box::new(Dismiss);
         let tooltip = "Dismiss Buffer Search";
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();

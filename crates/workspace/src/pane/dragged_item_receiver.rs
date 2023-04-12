@@ -5,7 +5,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
-    AppContext, Element, ElementBox, EventContext, MouseState, Quad, RenderContext, WeakViewHandle,
+    AppContext, Element, ElementBox, EventContext, MouseState, Quad, ViewContext, WeakViewHandle,
 };
 use project::ProjectEntryId;
 use settings::Settings;
@@ -22,14 +22,14 @@ pub fn dragged_item_receiver<Tag, F>(
     drop_index: usize,
     allow_same_pane: bool,
     split_margin: Option<f32>,
-    cx: &mut RenderContext<Pane>,
+    cx: &mut ViewContext<Pane>,
     render_child: F,
 ) -> MouseEventHandler<Tag>
 where
     Tag: 'static,
-    F: FnOnce(&mut MouseState, &mut RenderContext<Pane>) -> ElementBox,
+    F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> ElementBox,
 {
-    MouseEventHandler::<Tag>::above(region_id, cx, |state, cx| {
+    MouseEventHandler::<Tag>::above(region_id, cx, |state, _, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
         let drag_position = if state.hovered() {
@@ -59,7 +59,7 @@ where
                             .unwrap_or(bounds);
 
                         cx.paint_stacking_context(None, None, |cx| {
-                            cx.scene.push_quad(Quad {
+                            scene.push_quad(Quad {
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
                                 border: Default::default(),
@@ -102,7 +102,7 @@ pub fn handle_dropped_item(
     index: usize,
     allow_same_pane: bool,
     split_margin: Option<f32>,
-    cx: &mut EventContext,
+    cx: &mut ViewContext<Self>,
 ) {
     enum Action {
         Move(WeakViewHandle<Pane>, usize),
@@ -110,11 +110,11 @@ pub fn handle_dropped_item(
     }
     let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
     let action = if let Some((_, dragged_item)) =
-        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id)
+        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id())
     {
         Action::Move(dragged_item.pane.clone(), dragged_item.item.id())
     } else if let Some((_, project_entry)) =
-        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id)
+        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id())
     {
         Action::Open(*project_entry)
     } else {

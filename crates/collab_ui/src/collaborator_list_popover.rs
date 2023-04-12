@@ -1,10 +1,7 @@
 use call::ActiveCall;
 use client::UserStore;
 use gpui::Action;
-use gpui::{
-    actions, elements::*, platform::MouseButton, Entity, ModelHandle, RenderContext, View,
-    ViewContext,
-};
+use gpui::{actions, elements::*, platform::MouseButton, Entity, ModelHandle, View, ViewContext};
 use settings::Settings;
 
 use crate::collab_titlebar_item::ToggleCollaboratorList;
@@ -21,7 +18,7 @@ enum Collaborator {
 actions!(collaborator_list_popover, [NoOp]);
 
 pub(crate) struct CollaboratorListPopover {
-    list_state: ListState,
+    list_state: ListState<Self>,
 }
 
 impl Entity for CollaboratorListPopover {
@@ -33,7 +30,7 @@ impl View for CollaboratorListPopover {
         "CollaboratorListPopover"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
 
         MouseEventHandler::<Self>::new(0, cx, |_, _| {
@@ -120,7 +117,7 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
     icon: Svg,
     icon_action: IA,
     icon_tooltip: String,
-    cx: &mut RenderContext<CollaboratorListPopover>,
+    cx: &mut ViewContext<CollaboratorListPopover>,
 ) -> ElementBox {
     enum Username {}
     enum UsernameTooltip {}

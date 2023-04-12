@@ -41,12 +41,11 @@ impl<V: View> Element<V> for KeystrokeLabel {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, ElementBox<V>) {
         let mut element = if let Some(keystrokes) =
-            cx.app
-                .keystrokes_for_action(self.window_id, self.view_id, self.action.as_ref())
+            cx.keystrokes_for_action(self.window_id, self.view_id, self.action.as_ref())
         {
             Flex::row()
                 .with_children(keystrokes.iter().map(|keystroke| {
@@ -70,7 +69,7 @@ impl<V: View> Element<V> for KeystrokeLabel {
         bounds: RectF,
         visible_bounds: RectF,
         element: &mut ElementBox<V>,
-        view: &V,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         element.paint(scene, bounds.origin(), visible_bounds, view, cx);

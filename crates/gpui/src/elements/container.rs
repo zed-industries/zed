@@ -221,7 +221,7 @@ impl<V: View> Element<V> for Container<V> {
         );
 
         if let Some(shadow) = self.style.shadow.as_ref() {
-            cx.scene.push_shadow(scene::Shadow {
+            scene.push_shadow(scene::Shadow {
                 bounds: quad_bounds + shadow.offset,
                 corner_radius: self.style.corner_radius,
                 sigma: shadow.blur,
@@ -231,7 +231,7 @@ impl<V: View> Element<V> for Container<V> {
 
         if let Some(hit_bounds) = quad_bounds.intersection(visible_bounds) {
             if let Some(style) = self.style.cursor {
-                cx.scene.push_cursor_region(CursorRegion {
+                scene.push_cursor_region(CursorRegion {
                     bounds: hit_bounds,
                     style,
                 });
@@ -242,7 +242,7 @@ impl<V: View> Element<V> for Container<V> {
             quad_bounds.origin() + vec2f(self.style.padding.left, self.style.padding.top);
 
         if self.style.border.overlay {
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: Default::default(),
@@ -252,16 +252,16 @@ impl<V: View> Element<V> for Container<V> {
             self.child
                 .paint(scene, child_origin, visible_bounds, view, cx);
 
-            cx.scene.push_layer(None);
-            cx.scene.push_quad(Quad {
+            scene.push_layer(None);
+            scene.push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.overlay_color,
                 border: self.style.border,
                 corner_radius: self.style.corner_radius,
             });
-            cx.scene.pop_layer();
+            scene.pop_layer();
         } else {
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: self.style.border,
@@ -277,14 +277,14 @@ impl<V: View> Element<V> for Container<V> {
                 .paint(scene, child_origin, visible_bounds, view, cx);
 
             if self.style.overlay_color.is_some() {
-                cx.scene.push_layer(None);
-                cx.scene.push_quad(Quad {
+                scene.push_layer(None);
+                scene.push_quad(Quad {
                     bounds: quad_bounds,
                     background: self.style.overlay_color,
                     border: Default::default(),
                     corner_radius: 0.,
                 });
-                cx.scene.pop_layer();
+                scene.pop_layer();
             }
         }
     }

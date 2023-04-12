@@ -24,8 +24,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseRegion, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -1221,7 +1220,7 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut RenderContext<Self>) -> impl Element {
+    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element {
         let theme = cx.global::<Settings>().theme.clone();
 
         let pane = cx.handle();
@@ -1302,7 +1301,7 @@ impl Pane {
                             let theme = cx.global::<Settings>().theme.clone();
 
                             let detail = detail.clone();
-                            move |dragged_item, cx: &mut RenderContext<Workspace>| {
+                            move |dragged_item, cx: &mut ViewContext<Workspace>| {
                                 let tab_style = &theme.workspace.tab_bar.dragged_tab;
                                 Self::render_tab(
                                     &dragged_item.item,
@@ -1384,7 +1383,7 @@ impl Pane {
         detail: Option<usize>,
         hovered: bool,
         tab_style: &theme::Tab,
-        cx: &mut RenderContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> ElementBox {
         let title = item.tab_content(detail, &tab_style, cx);
         let mut container = tab_style.container.clone();
@@ -1408,7 +1407,7 @@ impl Pane {
                         Canvas::new(move |bounds, _, cx| {
                             if let Some(color) = icon_color {
                                 let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                                cx.scene.push_quad(Quad {
+                                scene.push_quad(Quad {
                                     bounds: square,
                                     background: Some(color),
                                     border: Default::default(),
@@ -1476,11 +1475,7 @@ impl Pane {
             .boxed()
     }
 
-    fn render_tab_bar_buttons(
-        &mut self,
-        theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+    fn render_tab_bar_buttons(&mut self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox {
         Flex::row()
             // New menu
             .with_child(render_tab_bar_button(
@@ -1529,7 +1524,7 @@ impl Pane {
             .boxed()
     }
 
-    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut ViewContext<Self>) -> ElementBox {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
@@ -1547,7 +1542,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let this = cx.handle();
 
         enum MouseNavigationHandler {}
@@ -1705,7 +1700,7 @@ impl View for Pane {
 fn render_tab_bar_button<A: Action + Clone>(
     index: usize,
     icon: &'static str,
-    cx: &mut RenderContext<Pane>,
+    cx: &mut ViewContext<Pane>,
     action: A,
     context_menu: Option<ViewHandle<ContextMenu>>,
 ) -> ElementBox {
@@ -1853,7 +1848,7 @@ impl PaneBackdrop {
     }
 }
 
-impl Element for PaneBackdrop {
+impl Element<Pane> for PaneBackdrop {
     type LayoutState = ();
 
     type PaintState = ();
@@ -1861,31 +1856,34 @@ impl Element for PaneBackdrop {
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        cx: &mut gpui::LayoutContext,
+        view: &mut Pane,
+        cx: &mut ViewContext<Pane>,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, cx);
+        let size = self.child.layout(constraint, view, cx);
         (size, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut gpui::SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
+        view: &mut Pane,
+        cx: &mut ViewContext<Pane>,
     ) -> Self::PaintState {
         let background = cx.global::<Settings>().theme.editor.background;
 
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
-        cx.scene.push_quad(gpui::Quad {
+        scene.push_quad(gpui::Quad {
             bounds: RectF::new(bounds.origin(), bounds.size()),
             background: Some(background),
             ..Default::default()
         });
 
         let child_view_id = self.child_view;
-        cx.scene.push_mouse_region(
+        scene.push_mouse_region(
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
                 gpui::platform::MouseButton::Left,
                 move |_, cx| {
@@ -1895,8 +1893,9 @@ impl Element for PaneBackdrop {
             ),
         );
 
-        cx.paint_layer(Some(bounds), |cx| {
-            self.child.paint(bounds.origin(), visible_bounds, cx)
+        scene.paint_layer(Some(bounds), |scene| {
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx)
         })
     }
 
@@ -1907,9 +1906,10 @@ impl Element for PaneBackdrop {
         _visible_bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
-        cx: &gpui::MeasurementContext,
+        view: &V,
+        cx: &gpui::ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -1917,12 +1917,13 @@ impl Element for PaneBackdrop {
         _bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
-        cx: &gpui::DebugContext,
+        view: &V,
+        cx: &gpui::ViewContext<V>,
     ) -> serde_json::Value {
         gpui::json::json!({
             "type": "Pane Back Drop",
             "view": self.child_view,
-            "child": self.child.debug(cx),
+            "child": self.child.debug(view, cx),
         })
     }
 }

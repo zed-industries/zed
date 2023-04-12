@@ -1,6 +1,4 @@
 use crate::{
-    app::WindowInvalidation,
-    elements::Element,
     geometry::rect::RectF,
     json::{self, ToJson},
     keymap_matcher::{Keystroke, MatchResult},
@@ -13,8 +11,9 @@ use crate::{
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut, Scene,
     },
     text_layout::TextLayoutCache,
-    Action, AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, ElementBox, MouseRegion,
-    MouseRegionId, RenderParams, SceneBuilder, View,
+    util::post_inc,
+    AnyView, AnyViewHandle, AppContext, Element, ElementBox, MouseRegion, MouseRegionId, ParentId,
+    RenderParams, SceneBuilder, View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -30,8 +29,7 @@ use std::ops::{Deref, DerefMut, Range};
 use uuid::Uuid;
 
 pub struct Window {
-    window_id: usize,
-    pub(crate) root_view: AnyViewHandle,
+    pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
     pub(crate) is_active: bool,
     pub(crate) is_fullscreen: bool,
@@ -43,27 +41,29 @@ pub struct Window {
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
     last_mouse_moved_event: Option<Event>,
-    hovered_region_ids: HashSet<MouseRegionId>,
-    clicked_region_ids: HashSet<MouseRegionId>,
-    clicked_button: Option<MouseButton>,
+    pub(crate) hovered_region_ids: HashSet<MouseRegionId>,
+    pub(crate) clicked_region_ids: HashSet<MouseRegionId>,
+    pub(crate) clicked_button: Option<MouseButton>,
     mouse_position: Vector2F,
     text_layout_cache: TextLayoutCache,
 }
 
 impl Window {
-    pub fn new(
+    pub fn new<V, F>(
         window_id: usize,
-        root_view: AnyViewHandle,
         platform_window: Box<dyn platform::Window>,
         cx: &mut AppContext,
-    ) -> Self {
-        let focused_view_id = Some(root_view.id());
+        build_view: F,
+    ) -> Self
+    where
+        F: FnOnce(&mut ViewContext<V>) -> V,
+        V: View,
+    {
         let titlebar_height = platform_window.titlebar_height();
         let appearance = platform_window.appearance();
-        Self {
-            window_id,
-            root_view,
-            focused_view_id,
+        let mut window = Self {
+            root_view: None,
+            focused_view_id: None,
             is_active: false,
             invalidation: None,
             is_fullscreen: false,
@@ -79,15 +79,30 @@ impl Window {
             mouse_position: vec2f(0., 0.),
             titlebar_height,
             appearance,
-        }
+        };
+
+        let mut window_context = WindowContext::new(cx, &mut window, window_id);
+        let root_view = window_context
+            .build_and_insert_view(ParentId::Root, |cx| Some(build_view(cx)))
+            .unwrap();
+        window.focused_view_id = Some(root_view.id());
+        window.root_view = Some(root_view.into_any());
+        window
+    }
+
+    pub fn root_view(&self) -> &AnyViewHandle {
+        &self
+            .root_view
+            .as_ref()
+            .expect("root_view called during window construction")
     }
 }
 
 pub struct WindowContext<'a: 'b, 'b> {
-    app_context: &'a mut AppContext,
+    pub(crate) app_context: &'a mut AppContext,
     pub(crate) window: &'b mut Window, // TODO: make this private?
     pub(crate) window_id: usize,
-    pub refreshing: bool,
+    pub(crate) refreshing: bool,
 }
 
 impl Deref for WindowContext<'_, '_> {
@@ -110,16 +125,30 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             app_context,
             window,
             window_id,
+            refreshing: false,
         }
     }
 
-    pub fn update_any_view<F, T>(&mut self, view_id: usize, f: F) -> Option<T>
+    pub fn window_id(&self) -> usize {
+        self.window_id
+    }
+
+    pub fn window_size(&self) -> Vector2F {
+        self.window.platform_window.content_size()
+    }
+
+    pub fn text_layout_cache(&self) -> &TextLayoutCache {
+        &self.window.text_layout_cache
+    }
+
+    pub(crate) fn update_any_view<F, T>(&mut self, view_id: usize, f: F) -> Option<T>
     where
         F: FnOnce(&mut dyn AnyView, &mut Self) -> T,
     {
-        let view = self.views.remove(&(self.window_id, view_id))?;
-        let result = f(view.as_any_mut(), self);
-        self.views.insert((self.window_id, view_id), view);
+        let window_id = self.window_id;
+        let mut view = self.views.remove(&(window_id, view_id))?;
+        let result = f(view.as_mut(), self);
+        self.views.insert((window_id, view_id), view);
         Some(result)
     }
 
@@ -453,8 +482,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             //3. Fire region events
             let hovered_region_ids = self.window.hovered_region_ids.clone();
             for valid_region in valid_regions.into_iter() {
-                let mut event_cx = self.build_event_context(&mut notified_views);
-
+                let mut handled = false;
                 mouse_event.set_region(valid_region.bounds);
                 if let MouseEvent::Hover(e) = &mut mouse_event {
                     e.started = hovered_region_ids.contains(&valid_region.id())
@@ -473,25 +501,25 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
                         .handlers
                         .contains(MouseEvent::down_disc(), Some(e.button));
                     if !has_down && (has_click || has_drag) {
-                        event_cx.handled = true;
+                        handled = true;
                     }
                 }
 
                 // `event_consumed` should only be true if there are any handlers for this event.
-                let mut event_consumed = event_cx.handled;
+                let mut event_consumed = handled;
                 if let Some(callbacks) = valid_region.handlers.get(&mouse_event.handler_key()) {
                     for callback in callbacks {
-                        event_cx.handled = true;
-                        event_cx.with_current_view(valid_region.id().view_id(), {
-                            let region_event = mouse_event.clone();
-                            |cx| callback(region_event, cx)
+                        handled = true;
+                        let view_id = valid_region.id().view_id();
+                        self.update_any_view(view_id, |view, cx| {
+                            handled = callback(mouse_event.clone(), view.as_any_mut(), cx, view_id);
                         });
-                        event_consumed |= event_cx.handled;
-                        any_event_handled |= event_cx.handled;
+                        event_consumed |= handled;
+                        any_event_handled |= handled;
                     }
                 }
 
-                any_event_handled |= event_cx.handled;
+                any_event_handled |= handled;
 
                 // For bubbling events, if the event was handled, don't continue dispatching.
                 // This only makes sense for local events which return false from is_capturable.
@@ -530,7 +558,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
     }
 
     pub fn dispatch_key_up(&mut self, window_id: usize, event: &KeyUpEvent) -> bool {
-        if let Some(focused_view_id) = self.window.fo {
+        if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self
                 .ancestors(window_id, focused_view_id)
                 .collect::<Vec<_>>()
@@ -645,18 +673,17 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
-        let root_view_id = self.window.root_view.id();
-        let rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
-        rendered_root.layout(root_view_id, SizeConstraint::strict(window_size), self);
+        let root_view_id = self.window.root_view().id();
+        let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
+        rendered_root.layout(SizeConstraint::strict(window_size), self, root_view_id);
 
         let mut scene_builder = SceneBuilder::new(scale_factor);
-        let paint_bounds = RectF::from_points(Vector2F::zero(), window_size);
         rendered_root.paint(
-            root_view_id,
             &mut scene_builder,
-            paint_bounds,
-            paint_bounds,
+            Vector2F::zero(),
+            RectF::from_points(Vector2F::zero(), window_size),
             self,
+            root_view_id,
         );
 
         self.window.text_layout_cache.finish_frame();
@@ -719,14 +746,6 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window.is_fullscreen
     }
 
-    pub fn root_view(&self, window_id: usize) -> &AnyViewHandle {
-        &self.window.root_view
-    }
-
-    pub fn root_view_id(&self) -> usize {
-        self.window.root_view.id()
-    }
-
     pub fn focused_view_id(&self) -> Option<usize> {
         self.window.focused_view_id
     }
@@ -739,7 +758,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window.platform_window.screen().display_uuid()
     }
 
-    fn show_character_palette(&self) {
+    pub fn show_character_palette(&self) {
         self.window.platform_window.show_character_palette();
     }
 
@@ -763,47 +782,162 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
     ) -> oneshot::Receiver<usize> {
         self.window.platform_window.prompt(level, msg, answers)
     }
+
+    fn add_view<T, F>(&mut self, parent: &AnyViewHandle, build_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        if parent.window_id == self.window_id {
+            self.build_and_insert_view(ParentId::View(parent.view_id), |cx| Some(build_view(cx)))
+                .unwrap()
+        } else {
+            self.app_context.add_view(parent, build_view)
+        }
+    }
+
+    fn add_option_view<T, F>(
+        &mut self,
+        parent_handle: impl Into<AnyViewHandle>,
+        build_view: F,
+    ) -> Option<ViewHandle<T>>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> Option<T>,
+    {
+        let parent_handle = parent_handle.into();
+        self.build_and_insert_view(ParentId::View(parent_handle.view_id), build_view)
+    }
+
+    pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
+    where
+        V: View,
+        F: FnOnce(&mut ViewContext<V>) -> V,
+    {
+        let root_view = self
+            .build_and_insert_view(ParentId::Root, |cx| Some(build_root_view(cx)))
+            .unwrap();
+        self.window.root_view = Some(root_view.clone().into_any());
+        self.window.focused_view_id = Some(root_view.id());
+        root_view
+    }
+
+    pub(crate) fn build_and_insert_view<T, F>(
+        &mut self,
+        parent_id: ParentId,
+        build_view: F,
+    ) -> Option<ViewHandle<T>>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> Option<T>,
+    {
+        let window_id = self.window_id;
+        let view_id = post_inc(&mut self.next_entity_id);
+        // Make sure we can tell child views about their parentu
+        self.parents.insert((window_id, view_id), parent_id);
+        let mut cx = ViewContext::mutable(self, view_id);
+        let handle = if let Some(view) = build_view(&mut cx) {
+            self.views.insert((window_id, view_id), Box::new(view));
+            self.window
+                .invalidation
+                .get_or_insert_with(Default::default)
+                .updated
+                .insert(view_id);
+            Some(ViewHandle::new(window_id, view_id, &self.ref_counts))
+        } else {
+            self.parents.remove(&(window_id, view_id));
+            None
+        };
+        handle
+    }
 }
 
 pub trait RenderedView {
     fn layout(
-        &self,
-        view_id: usize,
+        &mut self,
         constraint: SizeConstraint,
         cx: &mut WindowContext,
+        view_id: usize,
     ) -> Vector2F;
     fn paint(
-        &self,
-        view_id: usize,
+        &mut self,
         scene: &mut SceneBuilder,
-        bounds: RectF,
+        origin: Vector2F,
         visible_bounds: RectF,
         cx: &mut WindowContext,
+        view_id: usize,
     );
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &WindowContext,
+        view_id: usize,
+    ) -> Option<RectF>;
+    fn debug(&self, cx: &WindowContext, view_id: usize) -> serde_json::Value;
+    fn name(&self) -> Option<&str>;
 }
 
 impl<V: View> RenderedView for ElementBox<V> {
     fn layout(
-        &self,
-        view_id: usize,
+        &mut self,
         constraint: SizeConstraint,
         cx: &mut WindowContext,
+        view_id: usize,
     ) -> Vector2F {
-        cx.update_view_for_id(view_id, |view, cx| self.layout(view, constraint, cx))
-            .unwrap()
+        cx.update_any_view(view_id, |view, cx| {
+            let view = view.as_any_mut().downcast_mut::<V>().unwrap();
+            let mut cx = ViewContext::mutable(cx, view_id);
+            ElementBox::layout(self, constraint, view, &mut cx)
+        })
+        .unwrap()
     }
 
     fn paint(
-        &self,
-        view_id: usize,
+        &mut self,
         scene: &mut SceneBuilder,
-        bounds: RectF,
+        origin: Vector2F,
         visible_bounds: RectF,
         cx: &mut WindowContext,
+        view_id: usize,
     ) {
-        cx.update_view_for_id(view_id, |view, cx| {
-            self.paint(view, scene, bounds, visible_bounds, cx)
-        })
+        cx.update_any_view(view_id, |view, cx| {
+            let view = view.as_any_mut().downcast_mut::<V>().unwrap();
+            let mut cx = ViewContext::mutable(cx, view_id);
+            ElementBox::paint(self, scene, origin, visible_bounds, view, &mut cx)
+        });
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &WindowContext,
+        view_id: usize,
+    ) -> Option<RectF> {
+        let view = cx
+            .views
+            .get(&(cx.window_id, view_id))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<V>()
+            .unwrap();
+        let cx = ViewContext::immutable(cx, view_id);
+        ElementBox::rect_for_text_range(self, range_utf16, view, &cx)
+    }
+
+    fn debug(&self, cx: &WindowContext, view_id: usize) -> serde_json::Value {
+        let view = cx
+            .views
+            .get(&(cx.window_id, view_id))
+            .unwrap()
+            .as_any()
+            .downcast_ref::<V>()
+            .unwrap();
+        let cx = ViewContext::immutable(cx, view_id);
+        ElementBox::debug(self, view, &cx)
+    }
+
+    fn name(&self) -> Option<&str> {
+        ElementBox::name(self)
     }
 }
 
@@ -950,7 +1084,7 @@ impl ToJson for SizeConstraint {
 }
 
 pub struct ChildView {
-    view: AnyWeakViewHandle,
+    view_id: usize,
     view_name: &'static str,
 }
 
@@ -958,94 +1092,101 @@ impl ChildView {
     pub fn new(view: &AnyViewHandle, cx: &AppContext) -> Self {
         let view_name = cx.view_ui_name(view.window_id(), view.id()).unwrap();
         Self {
-            view: view.downgrade(),
+            view_id: view.id(),
             view_name,
         }
     }
 }
 
-// impl Element for ChildView {
-//     type LayoutState = bool;
-//     type PaintState = ();
+impl<V: View> Element<V> for ChildView {
+    type LayoutState = ();
+    type PaintState = ();
 
-//     fn layout(
-//         &mut self,
-//         constraint: SizeConstraint,
-//         cx: &mut LayoutContext,
-//     ) -> (Vector2F, Self::LayoutState) {
-//         if cx.rendered_views.contains_key(&self.view.id()) {
-//             let size = cx.layout(self.view.id(), constraint);
-//             (size, true)
-//         } else {
-//             log::error!(
-//                 "layout called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
-//                 self.view.id(),
-//                 self.view_name
-//             );
-//             (Vector2F::zero(), false)
-//         }
-//     }
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, Self::LayoutState) {
+        if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
+            let size = rendered_view.layout(constraint, cx, self.view_id);
+            cx.window.rendered_views.insert(self.view_id, rendered_view);
+            (size, ())
+        } else {
+            log::error!(
+                "layout called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view_id,
+                self.view_name
+            );
+            (Vector2F::zero(), ())
+        }
+    }
 
-//     fn paint(
-//         &mut self,
-//         bounds: RectF,
-//         visible_bounds: RectF,
-//         view_is_valid: &mut Self::LayoutState,
-//         cx: &mut PaintContext,
-//     ) {
-//         if *view_is_valid {
-//             cx.paint(self.view.id(), bounds.origin(), visible_bounds);
-//         } else {
-//             log::error!(
-//                 "paint called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
-//                 self.view.id(),
-//                 self.view_name
-//             );
-//         }
-//     }
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        _: &mut Self::LayoutState,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
+            rendered_view.paint(scene, bounds.origin(), visible_bounds, cx, self.view_id);
+            cx.window.rendered_views.insert(self.view_id, rendered_view);
+        } else {
+            log::error!(
+                "paint called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view_id,
+                self.view_name
+            );
+        }
+    }
 
-//     fn rect_for_text_range(
-//         &self,
-//         range_utf16: Range<usize>,
-//         _: RectF,
-//         _: RectF,
-//         view_is_valid: &Self::LayoutState,
-//         _: &Self::PaintState,
-//         cx: &MeasurementContext,
-//     ) -> Option<RectF> {
-//         if *view_is_valid {
-//             cx.rect_for_text_range(self.view.id(), range_utf16)
-//         } else {
-//             log::error!(
-//                 "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
-//                 self.view.id(),
-//                 self.view_name
-//             );
-//             None
-//         }
-//     }
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        if let Some(rendered_view) = cx.window.rendered_views.get(&self.view_id) {
+            rendered_view.rect_for_text_range(range_utf16, &cx.window_context, self.view_id)
+        } else {
+            log::error!(
+                "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
+                self.view_id,
+                self.view_name
+            );
+            None
+        }
+    }
 
-//     fn debug(
-//         &self,
-//         bounds: RectF,
-//         _: &Self::LayoutState,
-//         _: &Self::PaintState,
-//         cx: &DebugContext,
-//     ) -> serde_json::Value {
-//         json!({
-//             "type": "ChildView",
-//             "view_id": self.view.id(),
-//             "bounds": bounds.to_json(),
-//             "view": if let Some(view) = self.view.upgrade(cx.app) {
-//                 view.debug_json(cx.app)
-//             } else {
-//                 json!(null)
-//             },
-//             "child": if let Some(view) = cx.rendered_views.get(&self.view.id()) {
-//                 view.debug(cx)
-//             } else {
-//                 json!(null)
-//             }
-//         })
-//     }
-// }
+    fn debug(
+        &self,
+        bounds: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        json!({
+            "type": "ChildView",
+            "view_id": self.view_id,
+            "bounds": bounds.to_json(),
+            "view": if let Some(view) = cx.views.get(&(cx.window_id, self.view_id))  {
+                view.debug_json(cx)
+            } else {
+                json!(null)
+            },
+            "child": if let Some(element) = cx.window.rendered_views.get(&self.view_id) {
+                element.debug(&cx.window_context, self.view_id)
+            } else {
+                json!(null)
+            }
+        })
+    }
+}

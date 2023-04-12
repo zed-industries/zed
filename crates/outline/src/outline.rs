@@ -5,7 +5,7 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Entity,
-    MouseState, RenderContext, Task, View, ViewContext, ViewHandle,
+    MouseState, Task, View, ViewContext, ViewHandle,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -48,7 +48,7 @@ impl View for OutlineView {
         "OutlineView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         ChildView::new(&self.picker, cx).boxed()
     }
 

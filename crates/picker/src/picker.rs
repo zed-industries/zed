@@ -4,8 +4,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    AnyViewHandle, AppContext, Axis, Entity, MouseState, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use parking_lot::Mutex;
@@ -48,7 +48,7 @@ impl<D: PickerDelegate> View for Picker<D> {
         "Picker"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
         let theme = (self.theme.lock())(&cx.global::<settings::Settings>().theme);
         let query = self.query(cx);
         let delegate = self.delegate.clone();

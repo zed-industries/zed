@@ -2,7 +2,7 @@ use editor::Editor;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    Entity, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ impl View for ActiveBufferLanguage {
         "ActiveBufferLanguage"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         if let Some(active_language) = self.active_language.as_ref() {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()

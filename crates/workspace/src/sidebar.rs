@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
-    AppContext, Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, Subscription, View, ViewContext, ViewHandle,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -188,7 +188,7 @@ impl View for Sidebar {
         "Sidebar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.sidebar;
@@ -225,7 +225,7 @@ impl View for SidebarButtons {
         "SidebarToggleButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.sidebar_buttons;

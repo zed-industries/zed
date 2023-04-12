@@ -46,13 +46,13 @@ impl<V: View> Element<V> for Align<V> {
 
     fn layout(
         &mut self,
-        view: &mut V,
         mut constraint: SizeConstraint,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         constraint.min = Vector2F::zero();
-        let child_size = self.child.layout(view, constraint, cx);
+        let child_size = self.child.layout(constraint, view, cx);
         if size.x().is_infinite() {
             size.set_x(child_size.x());
         }
@@ -64,11 +64,11 @@ impl<V: View> Element<V> for Align<V> {
 
     fn paint(
         &mut self,
-        view: &mut V,
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let my_center = bounds.size() / 2.;
@@ -78,33 +78,33 @@ impl<V: View> Element<V> for Align<V> {
         let child_target = child_center + child_center * self.alignment;
 
         self.child.paint(
-            view,
             scene,
             bounds.origin() - (child_target - my_target),
             visible_bounds,
+            view,
             cx,
         );
     }
 
     fn rect_for_text_range(
         &self,
-        view: &V,
         range_utf16: std::ops::Range<usize>,
         _: RectF,
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
+        view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(view, range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
         &self,
-        view: &V,
         bounds: pathfinder_geometry::rect::RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
+        view: &V,
         cx: &ViewContext<V>,
     ) -> json::Value {
         json!({

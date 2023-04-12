@@ -35,29 +35,29 @@ use crate::{
 };
 use core::panic;
 use json::ToJson;
-use std::{any::Any, borrow::Cow, cell::RefCell, marker::PhantomData, mem, ops::Range};
+use std::{any::Any, borrow::Cow, marker::PhantomData, mem, ops::Range};
 
 trait AnyElement<V: View> {
     fn layout(
         &mut self,
-        view: &mut V,
         constraint: SizeConstraint,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Vector2F;
 
     fn paint(
         &mut self,
-        view: &mut V,
         scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     );
 
     fn rect_for_text_range(
         &self,
-        view: &V,
         range_utf16: Range<usize>,
+        view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF>;
 
@@ -118,7 +118,8 @@ pub trait Element<V: View> {
         Self: 'static + Sized,
     {
         ElementBox {
-            element: RefCell::new(Lifecycle::Init { element: self }),
+            element: Box::new(Lifecycle::Init { element: self }),
+            view_type: PhantomData,
             name: None,
         }
     }
@@ -128,7 +129,8 @@ pub trait Element<V: View> {
         Self: 'static + Sized,
     {
         ElementBox {
-            element: RefCell::new(Lifecycle::Init { element: self }),
+            element: Box::new(Lifecycle::Init { element: self }),
+            view_type: PhantomData,
             name: Some(name.into()),
         }
     }
@@ -193,7 +195,7 @@ pub trait Element<V: View> {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag>(id, text, action, style, self.boxed(), cx)
+        Tooltip::new::<Tag, V>(id, text, action, style, self.boxed(), cx)
     }
 
     fn with_resize_handle<Tag: 'static>(
@@ -207,7 +209,7 @@ pub trait Element<V: View> {
     where
         Self: 'static + Sized,
     {
-        Resizable::new::<Tag>(
+        Resizable::new::<Tag, V>(
             self.boxed(),
             element_id,
             side,
@@ -242,8 +244,8 @@ pub enum Lifecycle<V: View, E: Element<V>> {
 impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
     fn layout(
         &mut self,
-        view: &mut V,
         constraint: SizeConstraint,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Vector2F {
         let result;
@@ -252,7 +254,7 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
             Lifecycle::Init { mut element }
             | Lifecycle::PostLayout { mut element, .. }
             | Lifecycle::PostPaint { mut element, .. } => {
-                let (size, layout) = element.layout(view, constraint, cx);
+                let (size, layout) = element.layout(constraint, view, cx);
                 debug_assert!(size.x().is_finite());
                 debug_assert!(size.y().is_finite());
 
@@ -271,9 +273,9 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
     fn paint(
         &mut self,
         scene: &mut SceneBuilder,
-        view: &mut V,
         origin: Vector2F,
         visible_bounds: RectF,
+        view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
         *self = match mem::take(self) {
@@ -321,9 +323,9 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
 
     fn rect_for_text_range(
         &self,
-        view: &V,
         range_utf16: Range<usize>,
-        cx: &mut ViewContext<V>,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
         if let Lifecycle::PostPaint {
             element,
@@ -404,41 +406,40 @@ impl<V: View, E: Element<V>> Default for Lifecycle<V, E> {
 }
 
 pub struct ElementBox<V: View> {
-    element: Box<RefCell<dyn AnyElement<V>>>,
+    element: Box<dyn AnyElement<V>>,
     view_type: PhantomData<V>,
     name: Option<Cow<'static, str>>,
 }
 
 impl<V: View> ElementBox<V> {
     pub fn name(&self) -> Option<&str> {
-        self.0.name.as_deref()
+        self.name.as_deref()
     }
 
     pub fn metadata<T: 'static>(&self) -> Option<&T> {
-        // let element = unsafe { &*self.0.element.as_ptr() };
-        // element.metadata().and_then(|m| m.downcast_ref())
+        self.element
+            .metadata()
+            .and_then(|data| data.downcast_ref::<T>())
     }
 
     pub fn layout(
-        &self,
+        &mut self,
         constraint: SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Vector2F {
-        self.element.borrow_mut().layout(view, constraint, cx)
+        self.element.layout(constraint, view, cx)
     }
 
     pub fn paint(
-        &self,
+        &mut self,
         scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
-        self.element
-            .borrow_mut()
-            .paint(view, scene, origin, visible_bounds, cx);
+        self.element.paint(scene, origin, visible_bounds, view, cx);
     }
 
     pub fn rect_for_text_range(
@@ -447,17 +448,15 @@ impl<V: View> ElementBox<V> {
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.element
-            .borrow()
-            .rect_for_text_range(view, range_utf16, cx)
+        self.element.rect_for_text_range(range_utf16, view, cx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.element.borrow().size()
+        self.element.size()
     }
 
     pub fn debug(&self, view: &V, cx: &ViewContext<V>) -> json::Value {
-        let mut value = self.element.borrow().debug(view, cx);
+        let mut value = self.element.debug(view, cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {
@@ -476,8 +475,7 @@ impl<V: View> ElementBox<V> {
         T: 'static,
         F: FnOnce(Option<&T>) -> R,
     {
-        let element = self.element.borrow();
-        f(element.metadata().and_then(|m| m.downcast_ref()))
+        f(self.element.metadata().and_then(|m| m.downcast_ref()))
     }
 }
 

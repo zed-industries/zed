@@ -33,7 +33,7 @@ impl<V: View> Element<V> for Empty {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        _: &V,
+        _: &mut V,
         _: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() && !self.collapsed {
@@ -56,6 +56,7 @@ impl<V: View> Element<V> for Empty {
         _: RectF,
         _: RectF,
         _: &mut Self::LayoutState,
+        _: &mut V,
         _: &mut ViewContext<V>,
     ) -> Self::PaintState {
     }

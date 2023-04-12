@@ -4,8 +4,8 @@ pub use active_buffer_language::ActiveBufferLanguage;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState,
-    RenderContext, View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, View,
+    ViewContext, ViewHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
@@ -120,7 +120,7 @@ impl View for LanguageSelector {
         "LanguageSelector"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         ChildView::new(&self.picker, cx).boxed()
     }
 

@@ -42,7 +42,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
-    ModelHandle, RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -721,7 +721,7 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
-        cx: &mut RenderContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, ElementBox) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
@@ -774,7 +774,7 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut RenderContext<Editor>) -> ElementBox {
+    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox {
         enum CompletionTag {}
 
         let completions = self.completions.clone();
@@ -950,7 +950,7 @@ impl CodeActionsMenu {
         &self,
         mut cursor_position: DisplayPoint,
         style: EditorStyle,
-        cx: &mut RenderContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, ElementBox) {
         enum ActionTag {}
 
@@ -2928,7 +2928,7 @@ impl Editor {
         &self,
         style: &EditorStyle,
         active: bool,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
@@ -2959,7 +2959,7 @@ impl Editor {
         gutter_hovered: bool,
         line_height: f32,
         gutter_margin: f32,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Vec<Option<ElementBox>> {
         enum FoldIndicators {}
 
@@ -3027,7 +3027,7 @@ impl Editor {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
-        cx: &mut RenderContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, ElementBox)> {
         self.context_menu
             .as_ref()
@@ -6795,7 +6795,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let style = self.style(cx);
         let font_changed = self.display_map.update(cx, |map, cx| {
             map.set_fold_ellipses_color(style.folds.ellipses.text_color);
@@ -6804,7 +6804,7 @@ impl View for Editor {
 
         if font_changed {
             let handle = self.handle.clone();
-            cx.defer(move |cx| {
+            cx.defer(move |cx: &mut ViewContext<Editor>| {
                 if let Some(editor) = handle.upgrade(cx) {
                     editor.update(cx, |editor, cx| {
                         hide_hover(editor, &HideHover, cx);

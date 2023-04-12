@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{fonts::HighlightStyle, RenderContext, ElementBox};
+use gpui::{fonts::HighlightStyle, ElementBox, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -81,7 +81,7 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub cx: &'b mut RenderContext<'a, crate::Editor>,
+    pub cx: &'b mut ViewContext<'a, crate::Editor>,
     pub anchor_x: f32,
     pub scroll_x: f32,
     pub gutter_width: f32,
@@ -933,7 +933,7 @@ impl BlockDisposition {
 }
 
 impl<'a, 'b> Deref for BlockContext<'a, 'b> {
-    type Target = RenderContext<'a, crate::Editor>;
+    type Target = ViewContext<'a, crate::Editor>;
 
     fn deref(&self) -> &Self::Target {
         self.cx

@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, RenderContext, Task,
-    View, ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, Task, View,
+    ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
@@ -32,7 +32,7 @@ impl View for ContactFinder {
         "ContactFinder"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         ChildView::new(&self.picker, cx).boxed()
     }
 

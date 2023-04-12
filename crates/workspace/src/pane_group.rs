@@ -5,7 +5,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    Axis, Border, ModelHandle, RenderContext, ViewHandle,
+    Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -70,7 +70,7 @@ impl PaneGroup {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
+        cx: &mut ViewContext<Workspace>,
     ) -> ElementBox {
         self.root.render(
             project,
@@ -131,7 +131,7 @@ impl Member {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
+        cx: &mut ViewContext<Workspace>,
     ) -> ElementBox {
         enum FollowIntoExternalProject {}
 
@@ -366,7 +366,7 @@ impl PaneAxis {
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
+        cx: &mut ViewContext<Workspace>,
     ) -> ElementBox {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)

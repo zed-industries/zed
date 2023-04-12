@@ -9,8 +9,7 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Border, Element, ElementBox, RenderContext, SizeConstraint, ViewContext,
-    ViewHandle,
+    AppContext, Border, Element, ElementBox, SizeConstraint, ViewContext, ViewHandle,
 };
 use settings::{DockAnchor, Settings};
 use theme::Theme;
@@ -315,7 +314,7 @@ impl Dock {
         &self,
         theme: &Theme,
         anchor: DockAnchor,
-        cx: &mut RenderContext<Workspace>,
+        cx: &mut ViewContext<Workspace>,
     ) -> Option<ElementBox> {
         let style = &theme.workspace.dock;
 

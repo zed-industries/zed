@@ -37,7 +37,7 @@ impl<V: View> Element<V> for Svg {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &mut V,
+        _: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         match cx.asset_cache.svg(&self.path) {

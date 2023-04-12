@@ -1,7 +1,7 @@
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Entity, RenderContext, View, ViewContext,
+    Entity, View, ViewContext,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, StatusItemView};
@@ -27,7 +27,7 @@ impl View for DeployFeedbackButton {
         "DeployFeedbackButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> ElementBox {
         let active = self.active;
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()

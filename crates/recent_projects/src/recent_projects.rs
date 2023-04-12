@@ -4,8 +4,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
     elements::{ChildView, Flex, ParentElement},
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    AnyViewHandle, AppContext, Element, ElementBox, Entity, Task, View, ViewContext, ViewHandle,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
@@ -102,7 +101,7 @@ impl View for RecentProjectsView {
         "RecentProjectsView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         ChildView::new(&self.picker, cx).boxed()
     }
 

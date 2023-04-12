@@ -26,7 +26,7 @@ impl View for UpdateNotification {
         "UpdateNotification"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
         let theme = &theme.update_notification;
 

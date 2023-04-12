@@ -16,8 +16,8 @@ use gpui::{
     impl_internal_actions,
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, ModelHandle, RenderContext, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Entity, ImageData, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -68,7 +68,7 @@ impl View for CollabTitlebarItem {
         "CollabTitlebarItem"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let workspace = if let Some(workspace) = self.workspace.upgrade(cx) {
             workspace
         } else {
@@ -325,7 +325,7 @@ impl CollabTitlebarItem {
     fn render_toggle_contacts_button(
         &self,
         theme: &Theme,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
 
@@ -390,7 +390,7 @@ impl CollabTitlebarItem {
         &self,
         theme: &Theme,
         room: &ModelHandle<Room>,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let icon;
         let tooltip;
@@ -436,7 +436,7 @@ impl CollabTitlebarItem {
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<ElementBox> {
         let project = workspace.read(cx).project();
         if project.read(cx).is_remote() {
@@ -491,7 +491,7 @@ impl CollabTitlebarItem {
         )
     }
 
-    fn render_user_menu_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_user_menu_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
 
         Stack::new()
@@ -535,7 +535,7 @@ impl CollabTitlebarItem {
             .boxed()
     }
 
-    fn render_sign_in_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<SignIn>::new(0, cx, |state, _| {
             let style = titlebar.sign_in_prompt.style_for(state, false);
@@ -554,7 +554,7 @@ impl CollabTitlebarItem {
     fn render_contacts_popover_host<'a>(
         &'a self,
         _theme: &'a theme::Titlebar,
-        cx: &'a RenderContext<Self>,
+        cx: &'a ViewContext<Self>,
     ) -> Option<ElementBox> {
         self.contacts_popover.as_ref().map(|popover| {
             Overlay::new(ChildView::new(popover, cx).boxed())
@@ -573,7 +573,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         room: &ModelHandle<Room>,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Vec<ElementBox> {
         let mut participants = room
             .read(cx)
@@ -615,7 +615,7 @@ impl CollabTitlebarItem {
         theme: &Theme,
         user: &Arc<User>,
         peer_id: PeerId,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         Container::new(self.render_face_pile(
@@ -639,7 +639,7 @@ impl CollabTitlebarItem {
         location: Option<ParticipantLocation>,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let project_id = workspace.read(cx).project().read(cx).remote_id();
         let room = ActiveCall::global(cx).read(cx).room();
@@ -804,7 +804,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         location: Option<ParticipantLocation>,
         mut style: AvatarStyle,
-        cx: &RenderContext<Self>,
+        cx: &ViewContext<Self>,
     ) -> AvatarStyle {
         if let Some(location) = location {
             if let ParticipantLocation::SharedProject { project_id } = location {
@@ -840,7 +840,7 @@ impl CollabTitlebarItem {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<ElementBox> {
         enum ConnectionStatusButton {}
 
@@ -927,7 +927,7 @@ impl Element for AvatarRibbon {
         path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
         path.curve_to(bounds.lower_right(), bounds.upper_right());
         path.line_to(bounds.lower_left());
-        cx.scene.push_path(path.build(self.color, None));
+        scene.push_path(path.build(self.color, None));
     }
 
     fn rect_for_text_range(

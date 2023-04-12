@@ -1,6 +1,6 @@
 use gpui::{
-    elements::*, platform::MouseButton, AppContext, Entity, RenderContext, Subscription, View,
-    ViewContext, ViewHandle,
+    elements::*, platform::MouseButton, AppContext, Entity, Subscription, View, ViewContext,
+    ViewHandle,
 };
 use itertools::Itertools;
 use search::ProjectSearchView;
@@ -41,7 +41,7 @@ impl View for Breadcrumbs {
         "Breadcrumbs"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let active_item = match &self.active_item {
             Some(active_item) => active_item,
             None => return Empty::new().boxed(),

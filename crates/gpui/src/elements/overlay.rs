@@ -127,7 +127,7 @@ impl<V: View> Element<V> for Overlay<V> {
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let constraint = if self.anchor_position.is_some() {
-            SizeConstraint::new(Vector2F::zero(), cx.window_size)
+            SizeConstraint::new(Vector2F::zero(), cx.window_size())
         } else {
             constraint
         };
@@ -137,7 +137,7 @@ impl<V: View> Element<V> for Overlay<V> {
 
     fn paint(
         &mut self,
-        scene: SceneBuilder,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         _: RectF,
         size: &mut Self::LayoutState,
@@ -163,9 +163,9 @@ impl<V: View> Element<V> for Overlay<V> {
             OverlayFitMode::SnapToWindow => {
                 // Snap the horizontal edges of the overlay to the horizontal edges of the window if
                 // its horizontal bounds overflow
-                if bounds.max_x() > cx.window_size.x() {
+                if bounds.max_x() > cx.window_size().x() {
                     let mut lower_right = bounds.lower_right();
-                    lower_right.set_x(cx.window_size.x());
+                    lower_right.set_x(cx.window_size().x());
                     bounds = RectF::from_points(lower_right - *size, lower_right);
                 } else if bounds.min_x() < 0. {
                     let mut upper_left = bounds.origin();
@@ -175,9 +175,9 @@ impl<V: View> Element<V> for Overlay<V> {
 
                 // Snap the vertical edges of the overlay to the vertical edges of the window if
                 // its vertical bounds overflow.
-                if bounds.max_y() > cx.window_size.y() {
+                if bounds.max_y() > cx.window_size().y() {
                     let mut lower_right = bounds.lower_right();
-                    lower_right.set_y(cx.window_size.y());
+                    lower_right.set_y(cx.window_size().y());
                     bounds = RectF::from_points(lower_right - *size, lower_right);
                 } else if bounds.min_y() < 0. {
                     let mut upper_left = bounds.origin();
@@ -188,11 +188,11 @@ impl<V: View> Element<V> for Overlay<V> {
             OverlayFitMode::SwitchAnchor => {
                 let mut anchor_corner = self.anchor_corner;
 
-                if bounds.max_x() > cx.window_size.x() {
+                if bounds.max_x() > cx.window_size().x() {
                     anchor_corner = anchor_corner.switch_axis(Axis::Horizontal);
                 }
 
-                if bounds.max_y() > cx.window_size.y() {
+                if bounds.max_y() > cx.window_size().y() {
                     anchor_corner = anchor_corner.switch_axis(Axis::Vertical);
                 }
 
@@ -212,22 +212,21 @@ impl<V: View> Element<V> for Overlay<V> {
             OverlayFitMode::None => {}
         }
 
-        cx.paint_stacking_context(None, self.z_index, |cx| {
+        scene.paint_stacking_context(None, self.z_index, |scene| {
             if self.hoverable {
                 enum OverlayHoverCapture {}
                 // Block hovers in lower stacking contexts
-                cx.scene
-                    .push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
-                        cx.current_view_id(),
-                        cx.current_view_id(),
-                        bounds,
-                    ));
+                scene.push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
+                    cx.view_id(),
+                    cx.view_id(),
+                    bounds,
+                ));
             }
 
             self.child.paint(
                 scene,
                 bounds.origin(),
-                RectF::new(Vector2F::zero(), cx.window_size),
+                RectF::new(Vector2F::zero(), cx.window_size()),
                 view,
                 cx,
             );

@@ -2,12 +2,12 @@ use gpui::{
     actions,
     color::Color,
     elements::{
-        Canvas, Container, ContainerStyle, Flex, Label, Margin, MouseEventHandler, Padding,
-        ParentElement, ElementBox,
+        Canvas, Container, ContainerStyle, ElementBox, Flex, Label, Margin, MouseEventHandler,
+        Padding, ParentElement,
     },
     fonts::TextStyle,
-    AppContext, Border, Element, Entity, ModelHandle, Quad, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Border, Element, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use project::Project;
 use settings::Settings;
@@ -39,7 +39,7 @@ impl ThemeTestbench {
             Flex::row()
                 .with_children(ramp.iter().cloned().map(|color| {
                     Canvas::new(move |bounds, _, cx| {
-                        cx.scene.push_quad(Quad {
+                        scene.push_quad(Quad {
                             bounds,
                             background: Some(color),
                             ..Default::default()
@@ -67,7 +67,7 @@ impl ThemeTestbench {
     fn render_layer(
         layer_index: usize,
         layer: &Layer,
-        cx: &mut RenderContext<'_, Self>,
+        cx: &mut ViewContext<'_, Self>,
     ) -> Container {
         Flex::column()
             .with_child(
@@ -123,7 +123,7 @@ impl ThemeTestbench {
         layer_index: usize,
         set_name: &'static str,
         style_set: &StyleSet,
-        cx: &mut RenderContext<'_, Self>,
+        cx: &mut ViewContext<'_, Self>,
     ) -> Flex {
         Flex::row()
             .with_child(Self::render_button(
@@ -182,7 +182,7 @@ impl ThemeTestbench {
         text: &'static str,
         style_set: &StyleSet,
         style_override: Option<fn(&StyleSet) -> &Style>,
-        cx: &mut RenderContext<'_, Self>,
+        cx: &mut ViewContext<'_, Self>,
     ) -> ElementBox {
         enum TestBenchButton {}
         MouseEventHandler::<TestBenchButton>::new(layer_index + button_index, cx, |state, cx| {
@@ -230,7 +230,7 @@ impl ThemeTestbench {
         .boxed()
     }
 
-    fn render_label(text: String, style: &Style, cx: &mut RenderContext<'_, Self>) -> Label {
+    fn render_label(text: String, style: &Style, cx: &mut ViewContext<'_, Self>) -> Label {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();
         let family_id = settings.buffer_font_family;
@@ -262,7 +262,7 @@ impl View for ThemeTestbench {
         "ThemeTestbench"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> gpui::ElementBox {
         let color_scheme = &cx.global::<Settings>().theme.clone().color_scheme;
 
         Flex::row()

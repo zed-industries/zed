@@ -8,9 +8,16 @@ use crate::{
 
 /// Element which renders it's children in a stack on top of each other.
 /// The first child determines the size of the others.
-#[derive(Default)]
 pub struct Stack<V: View> {
     children: Vec<ElementBox<V>>,
+}
+
+impl<V: View> Default for Stack<V> {
+    fn default() -> Self {
+        Self {
+            children: Vec::new(),
+        }
+    }
 }
 
 impl<V: View> Stack<V> {
@@ -53,7 +60,7 @@ impl<V: View> Element<V> for Stack<V> {
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         for child in &mut self.children {
-            cx.paint_layer(None, |cx| {
+            scene.paint_layer(None, |scene| {
                 child.paint(scene, bounds.origin(), visible_bounds, view, cx);
             });
         }

@@ -1,8 +1,8 @@
 use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleContactsMenu};
 use client::UserStore;
 use gpui::{
-    actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, RenderContext,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, View,
+    ViewContext, ViewHandle,
 };
 use project::Project;
 use settings::Settings;
@@ -91,7 +91,7 @@ impl View for ContactsPopover {
         "ContactsPopover"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
         let child = match &self.child {
             Child::ContactList(child) => ChildView::new(child, cx),

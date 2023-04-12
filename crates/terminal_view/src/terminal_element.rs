@@ -10,8 +10,8 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, ElementBox, EventContext, FontCache, ModelContext, MouseRegion, PaintContext, Quad,
-    SizeConstraint, TextLayoutCache, WeakModelHandle, WeakViewHandle,
+    Element, ElementBox, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
+    SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -45,7 +45,7 @@ pub struct LayoutState {
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
-    hyperlink_tooltip: Option<ElementBox>,
+    hyperlink_tooltip: Option<ElementBox<TerminalView>>,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -84,10 +84,12 @@ impl LayoutCell {
 
     fn paint(
         &self,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         layout: &LayoutState,
         visible_bounds: RectF,
-        cx: &mut PaintContext,
+        view: &mut TerminalView,
+        cx: &mut ViewContext<TerminalView>,
     ) {
         let pos = {
             let point = self.point;
@@ -98,7 +100,7 @@ impl LayoutCell {
         };
 
         self.text
-            .paint(pos, visible_bounds, layout.size.line_height, cx);
+            .paint(pos, visible_bounds, layout.size.line_height, view, cx);
     }
 }
 
@@ -139,7 +141,7 @@ impl LayoutRect {
             layout.size.line_height,
         );
 
-        cx.scene.push_quad(Quad {
+        scene.push_quad(Quad {
             bounds: RectF::new(position, size),
             background: Some(self.color),
             border: Default::default(),
@@ -380,7 +382,7 @@ impl TerminalElement {
         view_id: usize,
         visible_bounds: RectF,
         mode: TermMode,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<TerminalView>,
     ) {
         let connection = self.terminal;
 
@@ -501,7 +503,7 @@ impl TerminalElement {
                 )
         }
 
-        cx.scene.push_mouse_region(region);
+        scene.push_mouse_region(region);
     }
 
     ///Configures a text style from the current settings.
@@ -553,7 +555,8 @@ impl Element for TerminalElement {
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        cx: &mut gpui::LayoutContext,
+        view: &mut TerminalView,
+        cx: &mut ViewContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();
@@ -717,23 +720,24 @@ impl Element for TerminalElement {
 
     fn paint(
         &mut self,
-        bounds: gpui::geometry::rect::RectF,
-        visible_bounds: gpui::geometry::rect::RectF,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
+        cx: &mut ViewContext<TerminalView>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
-        cx.paint_layer(clip_bounds, |cx| {
+        scene.paint_layer(clip_bounds, |scene| {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
 
-            cx.scene.push_cursor_region(gpui::CursorRegion {
+            scene.push_cursor_region(gpui::CursorRegion {
                 bounds,
                 style: if layout.hyperlink_tooltip.is_some() {
                     CursorStyle::PointingHand
@@ -742,9 +746,9 @@ impl Element for TerminalElement {
                 },
             });
 
-            cx.paint_layer(clip_bounds, |cx| {
+            scene.paint_layer(clip_bounds, |scene| {
                 //Start with a background color
-                cx.scene.push_quad(Quad {
+                scene.push_quad(Quad {
                     bounds: RectF::new(bounds.origin(), bounds.size()),
                     background: Some(layout.background_color),
                     border: Default::default(),
@@ -757,7 +761,7 @@ impl Element for TerminalElement {
             });
 
             //Draw Highlighted Backgrounds
-            cx.paint_layer(clip_bounds, |cx| {
+            scene.paint_layer(clip_bounds, |scene| {
                 for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
                 {
                     if let Some((start_y, highlighted_range_lines)) =
@@ -771,29 +775,29 @@ impl Element for TerminalElement {
                             //Copied from editor. TODO: move to theme or something
                             corner_radius: 0.15 * layout.size.line_height,
                         };
-                        hr.paint(bounds, cx.scene);
+                        hr.paint(bounds, scene);
                     }
                 }
             });
 
             //Draw the text cells
-            cx.paint_layer(clip_bounds, |cx| {
+            scene.paint_layer(clip_bounds, |scene| {
                 for cell in &layout.cells {
-                    cell.paint(origin, layout, visible_bounds, cx);
+                    cell.paint(scene, origin, layout, visible_bounds, view, cx);
                 }
             });
 
             //Draw cursor
             if self.cursor_visible {
                 if let Some(cursor) = &layout.cursor {
-                    cx.paint_layer(clip_bounds, |cx| {
-                        cursor.paint(origin, cx);
+                    scene.paint_layer(clip_bounds, |scene| {
+                        cursor.paint(scene, origin, cx);
                     })
                 }
             }
 
             if let Some(element) = &mut layout.hyperlink_tooltip {
-                element.paint(origin, visible_bounds, cx)
+                Element<TerminalView>::paint(element, scene, origin, visible_bounds, view, cx)
             }
         });
     }
@@ -804,7 +808,7 @@ impl Element for TerminalElement {
 
     fn debug(
         &self,
-        _bounds: gpui::geometry::rect::RectF,
+        _bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
         _cx: &gpui::DebugContext,

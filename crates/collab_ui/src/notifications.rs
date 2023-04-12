@@ -2,7 +2,7 @@ use client::User;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, Element, ElementBox, RenderContext, View,
+    Action, Element, ElementBox, View, ViewContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
     body: Option<&'static str>,
     dismiss_action: A,
     buttons: Vec<(&'static str, Box<dyn Action>)>,
-    cx: &mut RenderContext<V>,
+    cx: &mut ViewContext<V>,
 ) -> ElementBox {
     let theme = cx.global::<Settings>().theme.clone();
     let theme = &theme.contact_notification;

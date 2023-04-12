@@ -13,8 +13,8 @@ use gpui::{
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, RenderContext, Task, View,
-    ViewContext, ViewHandle,
+    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
+    ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -1015,8 +1015,8 @@ impl ProjectPanel {
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
-        cx: &mut RenderContext<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut RenderContext<ProjectPanel>),
+        cx: &mut ViewContext<ProjectPanel>,
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries) in &self.visible_entries {
@@ -1097,7 +1097,7 @@ impl ProjectPanel {
         padding: f32,
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
-        cx: &mut RenderContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> ElementBox {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
@@ -1154,7 +1154,7 @@ impl ProjectPanel {
         editor: &ViewHandle<Editor>,
         dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
-        cx: &mut RenderContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let this = cx.handle();
         let kind = details.kind;
@@ -1251,7 +1251,7 @@ impl ProjectPanel {
         .as_draggable(entry_id, {
             let row_container_style = theme.dragged_entry.container;
 
-            move |_, cx: &mut RenderContext<Workspace>| {
+            move |_, cx: &mut ViewContext<Workspace>| {
                 let theme = cx.global::<Settings>().theme.clone();
                 Self::render_entry_visual_element(
                     &details,
@@ -1273,7 +1273,7 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> gpui::ElementBox {
         enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;

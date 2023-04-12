@@ -3,8 +3,8 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use settings::Settings;
 use std::any::TypeId;
@@ -42,14 +42,14 @@ impl View for TerminalButton {
         "TerminalButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> ElementBox {
         let workspace = self.workspace.upgrade(cx);
         let project = match workspace {
             Some(workspace) => workspace.read(cx).project().read(cx),
             None => return Empty::new().boxed(),
         };
 
-        let focused_view = cx.focused_view_id(cx.window_id());
+        let focused_view = cx.focused_view_id();
         let active = focused_view
             .map(|view_id| {
                 cx.view_type_id(cx.window_id(), view_id) == Some(TypeId::of::<TerminalView>())

@@ -9,7 +9,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::MouseButton,
-    AppContext, Entity, RenderContext, Task, View, ViewContext,
+    AppContext, Entity, Task, View, ViewContext,
 };
 use settings::Settings;
 use smallvec::SmallVec;
@@ -64,7 +64,7 @@ impl View for SharedScreen {
         "SharedScreen"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         enum Focus {}
 
         let frame = self.frame.clone();
@@ -76,7 +76,7 @@ impl View for SharedScreen {
                         vec2f(frame.width() as f32, frame.height() as f32),
                     );
                     let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-                    cx.scene.push_surface(gpui::platform::mac::Surface {
+                    scene.push_surface(gpui::platform::mac::Surface {
                         bounds: RectF::new(origin, size),
                         image_buffer: frame.image(),
                     });

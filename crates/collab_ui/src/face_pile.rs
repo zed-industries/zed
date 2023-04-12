@@ -37,7 +37,7 @@ impl Element for FacePile {
 
         let mut width = 0.;
         for face in &mut self.faces {
-            width += face.layout(constraint, cx).x();
+            width += face.layout(constraint, view, cx).x();
         }
         width -= self.overlap * self.faces.len().saturating_sub(1) as f32;
 
@@ -60,7 +60,7 @@ impl Element for FacePile {
             let size = face.size();
             origin_x -= size.x();
             cx.paint_layer(None, |cx| {
-                face.paint(vec2f(origin_x, origin_y), visible_bounds, cx);
+                face.paint(scene, vec2f(origin_x, origin_y), visible_bounds, view, cx);
             });
             origin_x += self.overlap;
         }

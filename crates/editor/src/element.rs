@@ -31,8 +31,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, LayoutContext,
-    MouseRegion, PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, MouseRegion, Quad, SceneBuilder,
+    SizeConstraint, ViewContext, WeakViewHandle,
 };
 use itertools::Itertools;
 use json::json;
@@ -124,7 +124,7 @@ impl EditorElement {
         cx: &mut PaintContext,
     ) {
         enum EditorElementMouseHandlers {}
-        cx.scene.push_mouse_region(
+        scene.push_mouse_region(
             MouseRegion::new::<EditorElementMouseHandlers>(view.id(), view.id(), visible_bounds)
                 .on_down(MouseButton::Left, {
                     let position_map = position_map.clone();
@@ -216,7 +216,7 @@ impl EditorElement {
         );
 
         enum GutterHandlers {}
-        cx.scene.push_mouse_region(
+        scene.push_mouse_region(
             MouseRegion::new::<GutterHandlers>(view.id(), view.id() + 1, gutter_bounds).on_hover(
                 |hover, cx| {
                     cx.dispatch_action(GutterHover {
@@ -409,7 +409,7 @@ impl EditorElement {
         }: MouseMovedEvent,
         position_map: &PositionMap,
         text_bounds: RectF,
-        cx: &mut EventContext,
+        cx: &mut ViewContext<Editor>,
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
@@ -432,7 +432,7 @@ impl EditorElement {
         precise: bool,
         position_map: &PositionMap,
         bounds: RectF,
-        cx: &mut EventContext,
+        cx: &mut ViewContext<Editor>,
     ) -> bool {
         if !bounds.contains_point(position) {
             return false;
@@ -465,21 +465,22 @@ impl EditorElement {
 
     fn paint_background(
         &self,
+        scene: &mut SceneBuilder,
         gutter_bounds: RectF,
         text_bounds: RectF,
         layout: &LayoutState,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<Editor>,
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
-        cx.scene.push_quad(Quad {
+        scene.push_quad(Quad {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
-        cx.scene.push_quad(Quad {
+        c.push_quad(Quad {
             bounds: text_bounds,
             background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
@@ -507,7 +508,7 @@ impl EditorElement {
                         bounds.width(),
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
-                    cx.scene.push_quad(Quad {
+                    scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
                         background: Some(self.style.active_line_background),
                         border: Border::default(),
@@ -527,7 +528,7 @@ impl EditorElement {
                     bounds.width(),
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
-                cx.scene.push_quad(Quad {
+                scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
                     background: Some(self.style.highlighted_line_background),
                     border: Border::default(),
@@ -539,9 +540,11 @@ impl EditorElement {
 
     fn paint_gutter(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
+        editor: &mut Editor,
         cx: &mut PaintContext,
     ) {
         let line_height = layout.position_map.line_height;
@@ -569,7 +572,7 @@ impl EditorElement {
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
-                line.paint(line_origin, visible_bounds, line_height, cx);
+                line.paint(scene, line_origin, visible_bounds, line_height, cx);
             }
         }
 
@@ -586,7 +589,7 @@ impl EditorElement {
 
                 let indicator_origin = bounds.origin() + position + centering_offset;
 
-                indicator.paint(indicator_origin, visible_bounds, cx);
+                indicator.paint(scene, indicator_origin, visible_bounds, editor, cx);
             }
         }
 
@@ -595,7 +598,13 @@ impl EditorElement {
             let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
             y += (line_height - indicator.size().y()) / 2.;
-            indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
+            indicator.paint(
+                scene,
+                bounds.origin() + vec2f(x, y),
+                visible_bounds,
+                editor,
+                cx,
+            );
         }
     }
 
@@ -618,7 +627,7 @@ impl EditorElement {
                     let highlight_size = vec2f(width * 2., end_y - start_y);
                     let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
-                    cx.scene.push_quad(Quad {
+                    scene.push_quad(Quad {
                         bounds: highlight_bounds,
                         background: Some(diff_style.modified),
                         border: Border::new(0., Color::transparent_black()),
@@ -651,7 +660,7 @@ impl EditorElement {
                     let highlight_size = vec2f(width * 2., end_y - start_y);
                     let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
-                    cx.scene.push_quad(Quad {
+                    scene.push_quad(Quad {
                         bounds: highlight_bounds,
                         background: Some(diff_style.deleted),
                         border: Border::new(0., Color::transparent_black()),
@@ -673,7 +682,7 @@ impl EditorElement {
             let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()),
@@ -684,9 +693,11 @@ impl EditorElement {
 
     fn paint_text(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
+        editor: &mut Editor,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
@@ -700,9 +711,9 @@ impl EditorElement {
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
 
-        cx.scene.push_layer(Some(bounds));
+        scene.push_layer(Some(bounds));
 
-        cx.scene.push_cursor_region(CursorRegion {
+        scene.push_cursor_region(CursorRegion {
             bounds,
             style: if !view.link_go_to_definition_state.definitions.is_empty() {
                 CursorStyle::PointingHand
@@ -715,6 +726,7 @@ impl EditorElement {
             self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
         for (id, range, color) in layout.fold_ranges.iter() {
             self.paint_highlighted_range(
+                scene,
                 range.clone(),
                 *color,
                 fold_corner_radius,
@@ -736,7 +748,7 @@ impl EditorElement {
                 line_end_overshoot,
                 &layout.position_map,
             ) {
-                cx.scene.push_cursor_region(CursorRegion {
+                scene.push_cursor_region(CursorRegion {
                     bounds: bound,
                     style: CursorStyle::PointingHand,
                 });
@@ -747,7 +759,7 @@ impl EditorElement {
                     .to_point(&layout.position_map.snapshot.display_snapshot)
                     .row;
 
-                cx.scene.push_mouse_region(
+                scene.push_mouse_region(
                     MouseRegion::new::<FoldMarkers>(self.view.id(), *id as usize, bound)
                         .on_click(MouseButton::Left, move |_, cx| {
                             cx.dispatch_action(UnfoldAt { buffer_row })
@@ -760,6 +772,7 @@ impl EditorElement {
 
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
+                scene,
                 range.clone(),
                 *color,
                 0.,
@@ -781,6 +794,7 @@ impl EditorElement {
 
             for selection in selections {
                 self.paint_highlighted_range(
+                    scene,
                     selection.range.clone(),
                     selection_style.selection,
                     corner_radius,
@@ -858,6 +872,7 @@ impl EditorElement {
             for (ix, line) in layout.position_map.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;
                 line.paint(
+                    scene,
                     content_origin
                         + vec2f(
                             -scroll_left,
@@ -870,14 +885,16 @@ impl EditorElement {
             }
         }
 
-        cx.scene.push_layer(Some(bounds));
-        for cursor in cursors {
-            cursor.paint(content_origin, cx);
-        }
-        cx.scene.pop_layer();
+        scene.push_layer(Some(bounds));
+
+        scene.paint_layer(Some(bounds), |scene| {
+            for cursor in cursors {
+                cursor.paint(scene, content_origin, cx);
+            }
+        });
 
         if let Some((position, context_menu)) = layout.context_menu.as_mut() {
-            cx.scene.push_stacking_context(None, None);
+            scene.push_stacking_context(None, None);
             let cursor_row_layout =
                 &layout.position_map.line_layouts[(position.row() - start_row) as usize];
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
@@ -897,16 +914,18 @@ impl EditorElement {
             }
 
             context_menu.paint(
+                scene,
                 list_origin,
                 RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                editor,
                 cx,
             );
 
-            cx.scene.pop_stacking_context();
+            scene.pop_stacking_context();
         }
 
         if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-            cx.scene.push_stacking_context(None, None);
+            scene.push_stacking_context(None, None);
 
             // This is safe because we check on layout whether the required row is available
             let hovered_row_layout =
@@ -937,8 +956,10 @@ impl EditorElement {
                     }
 
                     hover_popover.paint(
+                        scene,
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                        editor,
                         cx,
                     );
 
@@ -957,8 +978,10 @@ impl EditorElement {
                     }
 
                     hover_popover.paint(
+                        scene,
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                        editor,
                         cx,
                     );
 
@@ -966,13 +989,19 @@ impl EditorElement {
                 }
             }
 
-            cx.scene.pop_stacking_context();
+            scene.pop_stacking_context();
         }
 
-        cx.scene.pop_layer();
+        scene.pop_layer();
     }
 
-    fn paint_scrollbar(&mut self, bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+    fn paint_scrollbar(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        layout: &mut LayoutState,
+        cx: &mut ViewContext<Editor>,
+    ) {
         enum ScrollbarMouseHandlers {}
         if layout.mode != EditorMode::Full {
             return;
@@ -1008,13 +1037,13 @@ impl EditorElement {
         let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
 
         if layout.show_scrollbars {
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds: track_bounds,
                 border: style.track.border,
                 background: style.track.background_color,
                 ..Default::default()
             });
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds: thumb_bounds,
                 border: style.thumb.border,
                 background: style.thumb.background_color,
@@ -1022,11 +1051,11 @@ impl EditorElement {
             });
         }
 
-        cx.scene.push_cursor_region(CursorRegion {
+        scene.push_cursor_region(CursorRegion {
             bounds: track_bounds,
             style: CursorStyle::Arrow,
         });
-        cx.scene.push_mouse_region(
+        scene.push_mouse_region(
             MouseRegion::new::<ScrollbarMouseHandlers>(view.id(), view.id(), track_bounds)
                 .on_move({
                     let view = view.clone();
@@ -1088,6 +1117,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
+        scene: &mut SceneBuilder,
         range: Range<DisplayPoint>,
         color: Color,
         corner_radius: f32,
@@ -1097,7 +1127,7 @@ impl EditorElement {
         scroll_top: f32,
         scroll_left: f32,
         bounds: RectF,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<Self>,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -1141,15 +1171,17 @@ impl EditorElement {
                     .collect(),
             };
 
-            highlighted_range.paint(bounds, cx.scene);
+            highlighted_range.paint(bounds, scene);
         }
     }
 
     fn paint_blocks(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
+        editor: &mut Editor,
         cx: &mut PaintContext,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -1165,7 +1197,9 @@ impl EditorElement {
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += vec2f(-scroll_left, 0.);
             }
-            block.element.paint(origin, visible_bounds, cx);
+            block
+                .element
+                .paint(scene, origin, visible_bounds, editor, cx);
         }
     }
 
@@ -1384,14 +1418,9 @@ impl EditorElement {
         style: &EditorStyle,
         line_layouts: &[text_layout::Line],
         include_root: bool,
+        editor: &mut Editor,
         cx: &mut LayoutContext,
     ) -> (f32, Vec<BlockLayout>) {
-        let editor = if let Some(editor) = self.view.upgrade(cx) {
-            editor
-        } else {
-            return Default::default();
-        };
-
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let scroll_x = snapshot.scroll_anchor.offset.x();
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -1542,6 +1571,7 @@ impl EditorElement {
                     min: Vector2F::zero(),
                     max: vec2f(width, block.height() as f32 * line_height),
                 },
+                editor,
                 cx,
             );
             element
@@ -1847,6 +1877,7 @@ impl Element for EditorElement {
             &style,
             &line_layouts,
             include_root,
+            editor,
             cx,
         );
 
@@ -1924,6 +1955,7 @@ impl Element for EditorElement {
                         (12. * line_height).min((size.y() - line_height) / 2.),
                     ),
                 },
+                editor,
                 cx,
             );
         }
@@ -1934,6 +1966,7 @@ impl Element for EditorElement {
                     Axis::Vertical,
                     line_height * style.code_actions.vertical_scale,
                 ),
+                editor,
                 cx,
             );
         }
@@ -2014,7 +2047,7 @@ impl Element for EditorElement {
         cx: &mut PaintContext,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
-        cx.scene.push_layer(Some(visible_bounds));
+        scene.push_layer(Some(visible_bounds));
 
         let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
         let text_bounds = RectF::new(
@@ -2033,20 +2066,20 @@ impl Element for EditorElement {
             cx,
         );
 
-        self.paint_background(gutter_bounds, text_bounds, layout, cx);
+        self.paint_background(scene, gutter_bounds, text_bounds, layout, cx);
         if layout.gutter_size.x() > 0. {
-            self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
+            self.paint_gutter(scene, gutter_bounds, visible_bounds, layout, editor, cx);
         }
-        self.paint_text(text_bounds, visible_bounds, layout, cx);
+        self.paint_text(scene, text_bounds, visible_bounds, layout, editor, cx);
 
-        cx.scene.push_layer(Some(bounds));
+        scene.push_layer(Some(bounds));
         if !layout.blocks.is_empty() {
-            self.paint_blocks(bounds, visible_bounds, layout, cx);
+            self.paint_blocks(scene, bounds, visible_bounds, layout, editor, cx);
         }
-        self.paint_scrollbar(bounds, layout, cx);
-        cx.scene.pop_layer();
+        self.paint_scrollbar(scene, bounds, layout, cx);
+        scene.pop_layer();
 
-        cx.scene.pop_layer();
+        scene.pop_layer();
     }
 
     fn rect_for_text_range(
@@ -2254,7 +2287,7 @@ impl Cursor {
         )
     }
 
-    pub fn paint(&self, origin: Vector2F, cx: &mut PaintContext) {
+    pub fn paint(&self, scene: &mut SceneBuilder, origin: Vector2F, cx: &mut AppContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
             CursorShape::Block | CursorShape::Hollow => RectF::new(
@@ -2269,14 +2302,14 @@ impl Cursor {
 
         //Draw background or border quad
         if matches!(self.shape, CursorShape::Hollow) {
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds,
                 background: None,
                 border: Border::all(1., self.color),
                 corner_radius: 0.,
             });
         } else {
-            cx.scene.push_quad(Quad {
+            scene.push_quad(Quad {
                 bounds,
                 background: Some(self.color),
                 border: Default::default(),
@@ -2285,7 +2318,7 @@ impl Cursor {
         }
 
         if let Some(block_text) = &self.block_text {
-            block_text.paint(self.origin + origin, bounds, self.line_height, cx);
+            block_text.paint(scene, self.origin + origin, bounds, self.line_height, cx);
         }
     }
 

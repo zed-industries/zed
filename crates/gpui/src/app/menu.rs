@@ -78,7 +78,11 @@ pub(crate) fn setup_menu_handlers(foreground_platform: &dyn ForegroundPlatform, 
         move |action| {
             let mut cx = cx.borrow_mut();
             if let Some(main_window_id) = cx.platform.main_window_id() {
-                if let Some(view_id) = cx.focused_view_id(main_window_id) {
+                if let Some(view_id) = cx
+                    .windows
+                    .get(&main_window_id)
+                    .and_then(|w| w.focused_view_id)
+                {
                     cx.handle_dispatch_action_from_effect(main_window_id, Some(view_id), action);
                     return;
                 }

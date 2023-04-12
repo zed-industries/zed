@@ -2,7 +2,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use pathfinder_geometry::rect::RectF;
 
-use crate::{platform::InputHandler, AnyView, AppContext};
+use crate::{platform::InputHandler, window::WindowContext, AnyView, AppContext};
 
 pub struct WindowInputHandler {
     pub app: Rc<RefCell<AppContext>>,
@@ -12,7 +12,7 @@ pub struct WindowInputHandler {
 impl WindowInputHandler {
     fn read_focused_view<T, F>(&self, f: F) -> Option<T>
     where
-        F: FnOnce(&dyn AnyView, &AppContext) -> T,
+        F: FnOnce(&dyn AnyView, &WindowContext) -> T,
     {
         // Input-related application hooks are sometimes called by the OS during
         // a call to a window-manipulation API, like prompting the user for file
@@ -20,26 +20,26 @@ impl WindowInputHandler {
         // InputHandler methods need to fail gracefully.
         //
         // See https://github.com/zed-industries/community/issues/444
-        let app = self.app.try_borrow().ok()?;
-
-        let view_id = app.focused_view_id(self.window_id)?;
-        let view = app.views.get(&(self.window_id, view_id))?;
-        let result = f(view.as_ref(), &app);
-        Some(result)
+        let mut app = self.app.try_borrow_mut().ok()?;
+        app.update_window(self.window_id, |cx| {
+            let view_id = cx.window.focused_view_id?;
+            let view = cx.views.get(&(self.window_id, view_id))?;
+            let result = f(view.as_ref(), &cx);
+            Some(result)
+        })
+        .flatten()
     }
 
     fn update_focused_view<T, F>(&mut self, f: F) -> Option<T>
     where
-        F: FnOnce(usize, usize, &mut dyn AnyView, &mut AppContext) -> T,
+        F: FnOnce(&mut dyn AnyView, &mut WindowContext, usize) -> T,
     {
         let mut app = self.app.try_borrow_mut().ok()?;
-        app.update(|app| {
-            let view_id = app.focused_view_id(self.window_id)?;
-            let mut view = app.views.remove(&(self.window_id, view_id))?;
-            let result = f(self.window_id, view_id, view.as_mut(), &mut *app);
-            app.views.insert((self.window_id, view_id), view);
-            Some(result)
+        app.update_window(self.window_id, |cx| {
+            let view_id = cx.window.focused_view_id?;
+            cx.update_any_view(view_id, |view, cx| f(view, cx, view_id))
         })
+        .flatten()
     }
 }
 
@@ -55,8 +55,8 @@ impl InputHandler for WindowInputHandler {
     }
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.replace_text_in_range(range, text, cx, window_id, view_id);
+        self.update_focused_view(|view, cx, view_id| {
+            view.replace_text_in_range(range, text, cx, view_id);
         });
     }
 
@@ -66,8 +66,8 @@ impl InputHandler for WindowInputHandler {
     }
 
     fn unmark_text(&mut self) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.unmark_text(cx, window_id, view_id);
+        self.update_focused_view(|view, cx, view_id| {
+            view.unmark_text(cx, view_id);
         });
     }
 
@@ -77,15 +77,8 @@ impl InputHandler for WindowInputHandler {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
     ) {
-        self.update_focused_view(|window_id, view_id, view, cx| {
-            view.replace_and_mark_text_in_range(
-                range,
-                new_text,
-                new_selected_range,
-                cx,
-                window_id,
-                view_id,
-            );
+        self.update_focused_view(|view, cx, view_id| {
+            view.replace_and_mark_text_in_range(range, new_text, new_selected_range, cx, view_id);
         });
     }
 

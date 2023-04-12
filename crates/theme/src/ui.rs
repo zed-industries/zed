@@ -11,7 +11,7 @@ use gpui::{
     platform,
     platform::MouseButton,
     scene::MouseClick,
-    Action, Element, ElementBox, EventContext, MouseState, RenderContext, View,
+    Action, Element, ElementBox, EventContext, MouseState, View, ViewContext,
 };
 use serde::Deserialize;
 
@@ -27,13 +27,13 @@ pub struct CheckboxStyle {
     pub hovered_and_checked: ContainerStyle,
 }
 
-pub fn checkbox<T: 'static, V: View>(
+pub fn checkbox<Tag: 'static, V: View>(
     label: &'static str,
     style: &CheckboxStyle,
     checked: bool,
-    cx: &mut RenderContext<V>,
-    change: fn(checked: bool, cx: &mut EventContext) -> (),
-) -> MouseEventHandler<T> {
+    cx: &mut ViewContext<V>,
+    change: fn(checked: bool, cx: &mut EventContext<V>) -> (),
+) -> MouseEventHandler<Tag, V> {
     let label = Label::new(label, style.label.text.clone())
         .contained()
         .with_style(style.label.container)
@@ -42,14 +42,14 @@ pub fn checkbox<T: 'static, V: View>(
     checkbox_with_label(label, style, checked, cx, change)
 }
 
-pub fn checkbox_with_label<T: 'static, V: View>(
-    label: ElementBox,
+pub fn checkbox_with_label<Tag: 'static, V: View>(
+    label: ElementBox<V>,
     style: &CheckboxStyle,
     checked: bool,
-    cx: &mut RenderContext<V>,
-    change: fn(checked: bool, cx: &mut EventContext) -> (),
-) -> MouseEventHandler<T> {
-    MouseEventHandler::<T>::new(0, cx, |state, _| {
+    cx: &mut ViewContext<V>,
+    change: fn(checked: bool, cx: &mut EventContext<V>) -> (),
+) -> MouseEventHandler<Tag, V> {
+    MouseEventHandler::new(0, cx, |state, _| {
         let indicator = if checked {
             svg(&style.icon)
         } else {
@@ -82,7 +82,7 @@ pub fn checkbox_with_label<T: 'static, V: View>(
             .align_children_center()
             .boxed()
     })
-    .on_click(platform::MouseButton::Left, move |_, cx| {
+    .on_click(platform::MouseButton::Left, move |_, _, cx| {
         change(!checked, cx)
     })
     .with_cursor_style(platform::CursorStyle::PointingHand)
@@ -107,7 +107,7 @@ impl Dimensions {
     }
 }
 
-pub fn svg(style: &SvgStyle) -> ConstrainedBox {
+pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
     Svg::new(style.asset.clone())
         .with_color(style.color)
         .constrained()
@@ -121,7 +121,7 @@ pub struct IconStyle {
     container: ContainerStyle,
 }
 
-pub fn icon(style: &IconStyle) -> Container {
+pub fn icon<V: View>(style: &IconStyle) -> Container<V> {
     svg(&style.icon).contained().with_style(style.container)
 }
 
@@ -130,8 +130,8 @@ pub fn keystroke_label<V: View>(
     label_style: &ContainedText,
     keystroke_style: &ContainedText,
     action: Box<dyn Action>,
-    cx: &mut RenderContext<V>,
-) -> Container {
+    cx: &mut ViewContext<V>,
+) -> Container<V> {
     // FIXME: Put the theme in it's own global so we can
     // query the keystroke style on our own
     keystroke_label_for(
@@ -144,14 +144,14 @@ pub fn keystroke_label<V: View>(
     )
 }
 
-pub fn keystroke_label_for(
+pub fn keystroke_label_for<V: View>(
     window_id: usize,
     view_id: usize,
     label_text: &'static str,
     label_style: &ContainedText,
     keystroke_style: &ContainedText,
     action: Box<dyn Action>,
-) -> Container {
+) -> Container<V> {
     Flex::row()
         .with_child(
             Label::new(label_text, label_style.text.clone())
@@ -175,37 +175,39 @@ pub fn keystroke_label_for(
 
 pub type ButtonStyle = Interactive<ContainedText>;
 
-pub fn cta_button<L, A, V>(
+pub fn cta_button<Tag, L, A, V>(
     label: L,
     action: A,
     max_width: f32,
     style: &ButtonStyle,
-    cx: &mut RenderContext<V>,
-) -> ElementBox
+    cx: &mut ViewContext<V>,
+) -> ElementBox<V>
 where
+    Tag: 'static,
     L: Into<Cow<'static, str>>,
     A: 'static + Action + Clone,
     V: View,
 {
-    cta_button_with_click(label, max_width, style, cx, move |_, cx| {
+    cta_button_with_click::<Tag, _, _, _>(label, max_width, style, cx, move |_, _, cx| {
         cx.dispatch_action(action.clone())
     })
     .boxed()
 }
 
-pub fn cta_button_with_click<L, V, F>(
+pub fn cta_button_with_click<Tag, L, V, F>(
     label: L,
     max_width: f32,
     style: &ButtonStyle,
-    cx: &mut RenderContext<V>,
+    cx: &mut ViewContext<V>,
     f: F,
-) -> MouseEventHandler<F>
+) -> MouseEventHandler<Tag, V>
 where
+    Tag: 'static,
     L: Into<Cow<'static, str>>,
     V: View,
-    F: Fn(MouseClick, &mut EventContext) + 'static,
+    F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
 {
-    MouseEventHandler::<F>::new(0, cx, |state, _| {
+    MouseEventHandler::<Tag, V>::new(0, cx, |state, _| {
         let style = style.style_for(state, false);
         Label::new(label, style.text.to_owned())
             .aligned()
@@ -234,16 +236,17 @@ impl ModalStyle {
     }
 }
 
-pub fn modal<V, I, F>(
+pub fn modal<Tag, V, I, F>(
     title: I,
     style: &ModalStyle,
-    cx: &mut RenderContext<V>,
+    cx: &mut ViewContext<V>,
     build_modal: F,
-) -> ElementBox
+) -> ElementBox<V>
 where
+    Tag: 'static,
     V: View,
     I: Into<Cow<'static, str>>,
-    F: FnOnce(&mut gpui::RenderContext<V>) -> ElementBox,
+    F: FnOnce(&mut gpui::ViewContext<V>) -> ElementBox<V>,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;
     // let active = cx.window_is_active(cx.window_id());
@@ -261,11 +264,11 @@ where
                     )
                     .boxed(),
                     // FIXME: Get a better tag type
-                    MouseEventHandler::<V>::new(999999, cx, |state, _cx| {
+                    MouseEventHandler::<Tag, V>::new(999999, cx, |state, _cx| {
                         let style = style.close_icon.style_for(state, false);
                         icon(style).boxed()
                     })
-                    .on_click(platform::MouseButton::Left, move |_, cx| {
+                    .on_click(platform::MouseButton::Left, move |_, _, cx| {
                         let window_id = cx.window_id();
                         cx.remove_window(window_id);
                     })

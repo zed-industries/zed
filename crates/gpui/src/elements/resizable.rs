@@ -154,32 +154,28 @@ impl<V: View> Element<V> for Resizable<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        cx.scene.push_stacking_context(None, None);
+        scene.push_stacking_context(None, None);
 
         let handle_region = self.side.of_rect(bounds, self.handle_size);
 
         enum ResizeHandle {}
-        cx.scene.push_mouse_region(
-            MouseRegion::new::<ResizeHandle>(
-                cx.current_view_id(),
-                self.side as usize,
-                handle_region,
-            )
-            .on_down(MouseButton::Left, |_, _| {}) // This prevents the mouse down event from being propagated elsewhere
-            .on_drag(MouseButton::Left, {
-                let state = self.state.clone();
-                let side = self.side;
-                move |e, cx| {
-                    let prev_width = state.actual_dimension.get();
-                    state
-                        .custom_dimension
-                        .set(0f32.max(prev_width + side.compute_delta(e)).round());
-                    cx.notify();
-                }
-            }),
+        scene.push_mouse_region(
+            MouseRegion::new::<ResizeHandle>(cx.view_id(), self.side as usize, handle_region)
+                .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
+                .on_drag(MouseButton::Left, {
+                    let state = self.state.clone();
+                    let side = self.side;
+                    move |e, _: &mut V, cx| {
+                        let prev_width = state.actual_dimension.get();
+                        state
+                            .custom_dimension
+                            .set(0f32.max(prev_width + side.compute_delta(e)).round());
+                        cx.notify();
+                    }
+                }),
         );
 
-        cx.scene.push_cursor_region(crate::CursorRegion {
+        scene.push_cursor_region(crate::CursorRegion {
             bounds: handle_region,
             style: match self.side.axis() {
                 Axis::Horizontal => CursorStyle::ResizeLeftRight,
@@ -187,7 +183,7 @@ impl<V: View> Element<V> for Resizable<V> {
             },
         });
 
-        cx.scene.pop_stacking_context();
+        scene.pop_stacking_context();
 
         self.child
             .paint(scene, bounds.origin(), visible_bounds, view, cx);

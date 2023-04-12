@@ -5,7 +5,7 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AppContext, Entity, ModelHandle, RenderContext, View, ViewContext, ViewHandle,
+    Action, AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
@@ -172,7 +172,7 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn content_to_render(&mut self, cx: &mut RenderContext<Self>) -> Content {
+    fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Content {
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {
@@ -314,7 +314,7 @@ impl View for ActivityIndicator {
         "ActivityIndicator"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let Content {
             icon,
             message,

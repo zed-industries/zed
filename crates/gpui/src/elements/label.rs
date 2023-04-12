@@ -134,13 +134,15 @@ impl<V: View> Element<V> for Label {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &V,
+        _: &mut V,
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let runs = self.compute_runs();
-        let line =
-            cx.text_layout_cache
-                .layout_str(&self.text, self.style.text.font_size, runs.as_slice());
+        let line = cx.text_layout_cache().layout_str(
+            &self.text,
+            self.style.text.font_size,
+            runs.as_slice(),
+        );
 
         let size = vec2f(
             line.width()
@@ -159,8 +161,8 @@ impl<V: View> Element<V> for Label {
         bounds: RectF,
         visible_bounds: RectF,
         line: &mut Self::LayoutState,
-        _: &V,
-        cx: &mut ViewContext<Self>,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         line.paint(
             scene,

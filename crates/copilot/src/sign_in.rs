@@ -96,7 +96,7 @@ impl CopilotCodeVerification {
     fn render_device_code(
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
+        cx: &mut gpui::ViewContext<Self>,
     ) -> ElementBox {
         let copied = cx
             .read_from_clipboard()
@@ -145,7 +145,7 @@ impl CopilotCodeVerification {
     fn render_prompting_modal(
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
+        cx: &mut gpui::ViewContext<Self>,
     ) -> ElementBox {
         Flex::column()
             .with_children([
@@ -205,7 +205,7 @@ impl CopilotCodeVerification {
     }
     fn render_enabled_modal(
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
+        cx: &mut gpui::ViewContext<Self>,
     ) -> ElementBox {
         let enabled_style = &style.auth.authorized;
         Flex::column()
@@ -254,7 +254,7 @@ impl CopilotCodeVerification {
     }
     fn render_unauthorized_modal(
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
+        cx: &mut gpui::ViewContext<Self>,
     ) -> ElementBox {
         let unauthorized_style = &style.auth.not_authorized;
 
@@ -333,7 +333,7 @@ impl View for CopilotCodeVerification {
         cx.notify()
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> gpui::ElementBox {
         let style = cx.global::<Settings>().theme.clone();
 
         modal("Connect Copilot to Zed", &style.copilot.modal, cx, |cx| {

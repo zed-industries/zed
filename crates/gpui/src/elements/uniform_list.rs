@@ -6,7 +6,6 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    scene::MouseScrollWheel,
     ElementBox, MouseRegion, SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
@@ -47,7 +46,7 @@ pub struct UniformList<V: View> {
     state: UniformListState,
     item_count: usize,
     #[allow(clippy::type_complexity)]
-    append_items: Box<dyn Fn(Range<usize>, &mut Vec<ElementBox<V>>, &mut V, &mut ViewContext<V>)>,
+    append_items: Box<dyn Fn(&mut V, Range<usize>, &mut Vec<ElementBox<V>>, &mut ViewContext<V>)>,
     padding_top: f32,
     padding_bottom: f32,
     get_width_from_item: Option<usize>,
@@ -63,19 +62,12 @@ impl<V: View> UniformList<V> {
     ) -> Self
     where
         V: View,
-        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox<V>>, &mut V, &mut ViewContext<V>),
+        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox<V>>, &mut ViewContext<V>),
     {
-        let handle = cx.handle();
         Self {
             state,
             item_count,
-            append_items: Box::new(move |range, items, cx| {
-                if let Some(handle) = handle.upgrade(cx) {
-                    cx.render(&handle, |view, cx| {
-                        append_items(view, range, items, cx);
-                    });
-                }
-            }),
+            append_items: Box::new(append_items),
             padding_top: 0.,
             padding_bottom: 0.,
             get_width_from_item: None,
@@ -194,18 +186,18 @@ impl<V: View> Element<V> for UniformList<V> {
         let sample_item_ix;
         let sample_item;
         if let Some(sample_ix) = self.get_width_from_item {
-            (self.append_items)(sample_ix..sample_ix + 1, &mut items, cx);
+            (self.append_items)(view, sample_ix..sample_ix + 1, &mut items, cx);
             sample_item_ix = sample_ix;
 
             if let Some(mut item) = items.pop() {
-                item_size = item.layout(constraint, cx);
+                item_size = item.layout(constraint, view, cx);
                 size.set_x(item_size.x());
                 sample_item = item;
             } else {
                 return no_items;
             }
         } else {
-            (self.append_items)(0..1, &mut items, cx);
+            (self.append_items)(view, 0..1, &mut items, cx);
             sample_item_ix = 0;
             if let Some(mut item) = items.pop() {
                 item_size = item.layout(
@@ -213,6 +205,7 @@ impl<V: View> Element<V> for UniformList<V> {
                         vec2f(constraint.max.x(), 0.0),
                         vec2f(constraint.max.x(), f32::INFINITY),
                     ),
+                    view,
                     cx,
                 );
                 item_size.set_x(size.x());
@@ -249,16 +242,16 @@ impl<V: View> Element<V> for UniformList<V> {
 
         if (start..end).contains(&sample_item_ix) {
             if sample_item_ix > start {
-                (self.append_items)(start..sample_item_ix, &mut items, cx);
+                (self.append_items)(view, start..sample_item_ix, &mut items, cx);
             }
 
             items.push(sample_item);
 
             if sample_item_ix < end {
-                (self.append_items)(sample_item_ix + 1..end, &mut items, cx);
+                (self.append_items)(view, sample_item_ix + 1..end, &mut items, cx);
             }
         } else {
-            (self.append_items)(start..end, &mut items, cx);
+            (self.append_items)(view, start..end, &mut items, cx);
         }
 
         for item in &mut items {
@@ -289,20 +282,16 @@ impl<V: View> Element<V> for UniformList<V> {
     ) -> Self::PaintState {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
 
-        cx.scene.push_layer(Some(visible_bounds));
+        scene.push_layer(Some(visible_bounds));
 
-        cx.scene.push_mouse_region(
+        scene.push_mouse_region(
             MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({
                 let scroll_max = layout.scroll_max;
                 let state = self.state.clone();
-                move |MouseScrollWheel {
-                          platform_event:
-                              ScrollWheelEvent {
-                                  position, delta, ..
-                              },
-                          ..
-                      },
-                      cx| {
+                move |event, _, cx| {
+                    let ScrollWheelEvent {
+                        position, delta, ..
+                    } = event.platform_event;
                     if !Self::scroll(
                         state.clone(),
                         position,
@@ -328,7 +317,7 @@ impl<V: View> Element<V> for UniformList<V> {
             item_origin += vec2f(0.0, layout.item_height);
         }
 
-        cx.scene.pop_layer();
+        scene.pop_layer();
     }
 
     fn rect_for_text_range(

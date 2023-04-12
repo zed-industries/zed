@@ -45,8 +45,7 @@ use gpui::{
         WindowOptions,
     },
     Action, AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext,
-    ModelHandle, RenderContext, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::LanguageRegistry;
@@ -2054,10 +2053,10 @@ impl Workspace {
         self.leader_state.followers.contains(&peer_id)
     }
 
-    fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox {
         // TODO: There should be a better system in place for this
         // (https://github.com/zed-industries/zed/issues/1290)
-        let is_fullscreen = cx.window_is_fullscreen(cx.window_id());
+        let is_fullscreen = cx.window_is_fullscreen();
         let container_theme = if is_fullscreen {
             let mut container_theme = theme.workspace.titlebar.container;
             container_theme.padding.left = container_theme.padding.right;
@@ -2154,7 +2153,7 @@ impl Workspace {
         }
     }
 
-    fn render_disconnected_overlay(&self, cx: &mut RenderContext<Workspace>) -> Option<ElementBox> {
+    fn render_disconnected_overlay(&self, cx: &mut ViewContext<Workspace>) -> Option<ElementBox> {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
@@ -2810,7 +2809,7 @@ impl View for Workspace {
         "Workspace"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(

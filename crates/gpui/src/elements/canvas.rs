@@ -25,7 +25,7 @@ where
 
 impl<V: View, F> Element<V> for Canvas<V, F>
 where
-    F: FnMut(RectF, RectF, &mut ViewContext<V>),
+    F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     type LayoutState = ();
     type PaintState = ();
@@ -58,7 +58,7 @@ where
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        self.0(bounds, visible_bounds, cx)
+        self.0(scene, bounds, visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(

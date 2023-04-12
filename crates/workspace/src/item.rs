@@ -740,8 +740,8 @@ pub(crate) mod test {
     use super::{Item, ItemEvent};
     use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext, Task,
-        View, ViewContext, ViewHandle, WeakViewHandle,
+        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View,
+        ViewContext, ViewHandle, WeakViewHandle,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use smallvec::SmallVec;
@@ -899,7 +899,7 @@ pub(crate) mod test {
             "TestItem"
         }
 
-        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox {
             Empty::new().boxed()
         }
     }

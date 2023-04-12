@@ -11,8 +11,7 @@ use editor::{
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
-    AppContext, Entity, ModelHandle, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -87,7 +86,7 @@ impl View for ProjectDiagnosticsEditor {
         "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new("No problems in workspace", theme.empty_message.clone())

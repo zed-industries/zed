@@ -13,7 +13,6 @@ pub struct List<V: View> {
     state: ListState<V>,
 }
 
-#[derive(Clone)]
 pub struct ListState<V: View>(Rc<RefCell<StateInner<V>>>);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,7 +41,7 @@ pub struct ListOffset {
 
 enum ListItem<V: View> {
     Unrendered,
-    Rendered(Rc<ElementBox<V>>),
+    Rendered(Rc<RefCell<ElementBox<V>>>),
     Removed(f32),
 }
 
@@ -145,7 +144,7 @@ impl<V: View> Element<V> for List<V> {
                 view,
                 cx,
             ) {
-                rendered_height += element.size().y();
+                rendered_height += element.borrow().size().y();
                 rendered_items.push_back(ListItem::Rendered(element));
             }
         }
@@ -162,7 +161,7 @@ impl<V: View> Element<V> for List<V> {
                     if let Some(element) =
                         state.render_item(cursor.start().0, None, item_constraint, view, cx)
                     {
-                        rendered_height += element.size().y();
+                        rendered_height += element.borrow().size().y();
                         rendered_items.push_front(ListItem::Rendered(element));
                     }
                 } else {
@@ -198,7 +197,7 @@ impl<V: View> Element<V> for List<V> {
                 if let Some(element) =
                     state.render_item(cursor.start().0, Some(item), item_constraint, view, cx)
                 {
-                    leading_overdraw += element.size().y();
+                    leading_overdraw += element.borrow().size().y();
                     rendered_items.push_front(ListItem::Rendered(element));
                 }
             } else {
@@ -264,12 +263,13 @@ impl<V: View> Element<V> for List<V> {
                 let state = self.state.clone();
                 let height = bounds.height();
                 let scroll_top = scroll_top.clone();
-                move |e, cx| {
+                move |e, view, cx| {
                     state.0.borrow_mut().scroll(
                         &scroll_top,
                         height,
                         *e.platform_event.delta.raw(),
                         e.platform_event.delta.precise(),
+                        view,
                         cx,
                     )
                 }
@@ -277,8 +277,10 @@ impl<V: View> Element<V> for List<V> {
         );
 
         let state = &mut *self.state.0.borrow_mut();
-        for (mut element, origin) in state.visible_elements(bounds, scroll_top) {
-            element.paint(scene, origin, visible_bounds, view, cx);
+        for (element, origin) in state.visible_elements(bounds, scroll_top) {
+            element
+                .borrow_mut()
+                .paint(scene, origin, visible_bounds, view, cx);
         }
 
         scene.pop_layer();
@@ -304,11 +306,15 @@ impl<V: View> Element<V> for List<V> {
             }
 
             if let ListItem::Rendered(element) = item {
-                if let Some(rect) = element.rect_for_text_range(range_utf16.clone(), view, cx) {
+                if let Some(rect) =
+                    element
+                        .borrow()
+                        .rect_for_text_range(range_utf16.clone(), view, cx)
+                {
                     return Some(rect);
                 }
 
-                item_origin.set_y(item_origin.y() + element.size().y());
+                item_origin.set_y(item_origin.y() + element.borrow().size().y());
                 cursor.next(&());
             } else {
                 unreachable!();
@@ -329,7 +335,7 @@ impl<V: View> Element<V> for List<V> {
         let state = self.state.0.borrow_mut();
         let visible_elements = state
             .visible_elements(bounds, scroll_top)
-            .map(|e| e.0.debug(view, cx))
+            .map(|e| e.0.borrow().debug(view, cx))
             .collect::<Vec<_>>();
         let visible_range = scroll_top.item_ix..(scroll_top.item_ix + visible_elements.len());
         json!({
@@ -345,8 +351,7 @@ impl<V: View> ListState<V> {
         element_count: usize,
         orientation: Orientation,
         overdraw: f32,
-        cx: &mut ViewContext<V>,
-        mut render_item: F,
+        render_item: F,
     ) -> Self
     where
         V: View,
@@ -354,14 +359,9 @@ impl<V: View> ListState<V> {
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
-        let handle = cx.weak_handle();
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
-            render_item: Box::new(move |ix, view, cx| {
-                render_item(view, ix, cx)
-                // let handle = handle.upgrade(cx)?;
-                // Some(cx.render(&handle, |view, cx| render_item(view, ix, cx)))
-            }),
+            render_item: Box::new(render_item),
             rendered_range: 0..0,
             items,
             logical_scroll_top: None,
@@ -439,6 +439,12 @@ impl<V: View> ListState<V> {
     }
 }
 
+impl<V: View> Clone for ListState<V> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 impl<V: View> StateInner<V> {
     fn render_item(
         &mut self,
@@ -447,13 +453,13 @@ impl<V: View> StateInner<V> {
         constraint: SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> Option<Rc<ElementBox<V>>> {
+    ) -> Option<Rc<RefCell<ElementBox<V>>>> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
         } else {
             let mut element = (self.render_item)(view, ix, cx);
             element.layout(constraint, view, cx);
-            Some(element.into())
+            Some(Rc::new(RefCell::new(element)))
         }
     }
 
@@ -469,7 +475,7 @@ impl<V: View> StateInner<V> {
         &'a self,
         bounds: RectF,
         scroll_top: &ListOffset,
-    ) -> impl Iterator<Item = (Rc<ElementBox<V>>, Vector2F)> + 'a {
+    ) -> impl Iterator<Item = (Rc<RefCell<ElementBox<V>>>, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
         let mut cursor = self.items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -481,7 +487,7 @@ impl<V: View> StateInner<V> {
 
                 if let ListItem::Rendered(element) = item {
                     let result = (element.clone(), item_origin);
-                    item_origin.set_y(item_origin.y() + element.size().y());
+                    item_origin.set_y(item_origin.y() + element.borrow().size().y());
                     cursor.next(&());
                     return Some(result);
                 }
@@ -526,7 +532,7 @@ impl<V: View> StateInner<V> {
 
         if self.scroll_handler.is_some() {
             let visible_range = self.visible_range(height, scroll_top);
-            self.scroll_handler.as_mut().unwrap()(visible_range, cx);
+            self.scroll_handler.as_mut().unwrap()(visible_range, view, cx);
         }
 
         cx.notify();
@@ -557,7 +563,7 @@ impl<V: View> ListItem<V> {
     fn remove(&self) -> Self {
         match self {
             ListItem::Unrendered => ListItem::Unrendered,
-            ListItem::Rendered(element) => ListItem::Removed(element.size().y()),
+            ListItem::Rendered(element) => ListItem::Removed(element.borrow().size().y()),
             ListItem::Removed(height) => ListItem::Removed(*height),
         }
     }
@@ -578,7 +584,7 @@ impl<V: View> sum_tree::Item for ListItem<V> {
                 count: 1,
                 rendered_count: 1,
                 unrendered_count: 0,
-                height: element.size().y(),
+                height: element.borrow().size().y(),
             },
             ListItem::Removed(height) => ListItemSummary {
                 count: 1,
@@ -642,7 +648,6 @@ mod tests {
     use super::*;
     use crate::{elements::Empty, geometry::vector::vec2f, Entity};
     use rand::prelude::*;
-    use std::env;
 
     #[crate::test(self)]
     fn test_layout(cx: &mut crate::AppContext) {
