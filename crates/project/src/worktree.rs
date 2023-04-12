@@ -2248,7 +2248,6 @@ impl BackgroundScanner {
     ) {
         use futures::FutureExt as _;
 
-        self.snapshot.lock().scan_id += 1;
         if self
             .status_updates_tx
             .unbounded_send(ScanState::Started)
@@ -2315,7 +2314,34 @@ impl BackgroundScanner {
             })
             .await;
 
-        self.update_ignore_statuses().await;
+        let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
+        let snapshot = self.update_ignore_statuses(ignore_queue_tx);
+        self.executor
+            .scoped(|scope| {
+                for _ in 0..self.executor.num_cpus() {
+                    scope.spawn(async {
+                        loop {
+                            select_biased! {
+                                // Process any path refresh requests before moving on to process
+                                // the queue of ignore statuses.
+                                request = self.refresh_requests_rx.recv().fuse() => {
+                                    let Ok((paths, barrier)) = request else { break };
+                                    self.reload_entries_for_paths(paths, None).await;
+                                    if !self.send_status_update(false, Some(barrier)) {
+                                        return;
+                                    }
+                                }
+
+                                job = ignore_queue_rx.recv().fuse() => {
+                                    let Ok(job) = job else { break };
+                                    self.update_ignore_status(job, &snapshot).await;
+                                }
+                            }
+                        }
+                    });
+                }
+            })
+            .await;
 
         let mut snapshot = self.snapshot.lock();
         let mut git_repositories = mem::take(&mut snapshot.git_repositories);
@@ -2476,6 +2502,8 @@ impl BackgroundScanner {
         mut abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) -> Option<Vec<Arc<Path>>> {
+        let doing_recursive_update = scan_queue_tx.is_some();
+
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(&b));
 
@@ -2490,7 +2518,13 @@ impl BackgroundScanner {
         .await;
 
         let mut snapshot = self.snapshot.lock();
-        let doing_recursive_update = scan_queue_tx.is_some();
+
+        if snapshot.completed_scan_id == snapshot.scan_id {
+            snapshot.scan_id += 1;
+            if !doing_recursive_update {
+                snapshot.completed_scan_id = snapshot.scan_id;
+            }
+        }
 
         // Remove any entries for paths that no longer exist or are being recursively
         // refreshed. Do this before adding any new entries, so that renames can be
@@ -2559,7 +2593,10 @@ impl BackgroundScanner {
         Some(event_paths)
     }
 
-    async fn update_ignore_statuses(&self) {
+    fn update_ignore_statuses(
+        &self,
+        ignore_queue_tx: Sender<UpdateIgnoreStatusJob>,
+    ) -> LocalSnapshot {
         let mut snapshot = self.snapshot.lock().clone();
         let mut ignores_to_update = Vec::new();
         let mut ignores_to_delete = Vec::new();
@@ -2584,7 +2621,6 @@ impl BackgroundScanner {
                 .remove(&parent_abs_path);
         }
 
-        let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
         ignores_to_update.sort_unstable();
         let mut ignores_to_update = ignores_to_update.into_iter().peekable();
         while let Some(parent_abs_path) = ignores_to_update.next() {
@@ -2596,28 +2632,15 @@ impl BackgroundScanner {
             }
 
             let ignore_stack = snapshot.ignore_stack_for_abs_path(&parent_abs_path, true);
-            ignore_queue_tx
-                .send(UpdateIgnoreStatusJob {
-                    abs_path: parent_abs_path,
-                    ignore_stack,
-                    ignore_queue: ignore_queue_tx.clone(),
-                })
-                .await
-                .unwrap();
+            smol::block_on(ignore_queue_tx.send(UpdateIgnoreStatusJob {
+                abs_path: parent_abs_path,
+                ignore_stack,
+                ignore_queue: ignore_queue_tx.clone(),
+            }))
+            .unwrap();
         }
-        drop(ignore_queue_tx);
 
-        self.executor
-            .scoped(|scope| {
-                for _ in 0..self.executor.num_cpus() {
-                    scope.spawn(async {
-                        while let Ok(job) = ignore_queue_rx.recv().await {
-                            self.update_ignore_status(job, &snapshot).await;
-                        }
-                    });
-                }
-            })
-            .await;
+        snapshot
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
