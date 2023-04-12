@@ -7,8 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, RenderedView,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -731,7 +731,7 @@ impl Item for Editor {
         &self,
         theme: &theme::Theme,
         cx: &AppContext,
-    ) -> Option<Vec<Box<dyn RenderedView>>> {
+    ) -> Option<Vec<Box<dyn AnyRootElement>>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
@@ -753,7 +753,7 @@ impl Item for Editor {
 
         let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
         let mut breadcrumbs =
-            vec![Box::new(filename_label.boxed() as Element<Editor>) as Box<dyn RenderedView>];
+            vec![Box::new(filename_label.into_root(cx)) as Box<dyn AnyRootElement>];
         breadcrumbs.extend(symbols.into_iter().map(|symbol| {
             Box::new(
                 Text::new(
@@ -761,8 +761,8 @@ impl Item for Editor {
                     theme.workspace.breadcrumbs.default.text.clone(),
                 )
                 .with_highlights(symbol.highlight_ranges)
-                .boxed() as Element<Editor>,
-            ) as Box<dyn RenderedView>
+                .into_root(cx) as Element<Editor>,
+            ) as Box<dyn AnyRootElement>
         }));
         Some(breadcrumbs)
     }

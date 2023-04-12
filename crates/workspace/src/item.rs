@@ -15,8 +15,8 @@ use std::{
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
-    AnyViewHandle, AppContext, Element, ModelHandle, RenderedView, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    elements::AnyRootElement, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::{Autosave, Settings};
@@ -134,7 +134,11 @@ pub trait Item: View {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<Box<dyn RenderedView>>> {
+    fn breadcrumbs(
+        &self,
+        _theme: &Theme,
+        _cx: &ViewContext<Self>,
+    ) -> Option<Vec<Box<dyn AnyRootElement>>> {
         None
     }
 
@@ -221,7 +225,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn RenderedView>>>;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn AnyRootElement>>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
 }
@@ -591,7 +595,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn RenderedView>>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn AnyRootElement>>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 

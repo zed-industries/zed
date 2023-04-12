@@ -128,6 +128,16 @@ pub trait Drawable<V: View> {
         }
     }
 
+    fn into_root(self, cx: &ViewContext<V>) -> RootElement<V>
+    where
+        Self: 'static + Sized,
+    {
+        RootElement {
+            element: self.boxed(),
+            view: cx.handle().downgrade(),
+        }
+    }
+
     fn named(self, name: impl Into<Cow<'static, str>>) -> Element<V>
     where
         Self: 'static + Sized,
