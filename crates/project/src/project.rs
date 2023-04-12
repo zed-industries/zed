@@ -4725,6 +4725,8 @@ impl Project {
             }
 
             if is_host {
+                this.opened_buffers
+                    .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
                 this.buffer_changes_tx
                     .unbounded_send(BufferMessage::Resync)
                     .unwrap();
