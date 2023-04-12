@@ -4,7 +4,7 @@ import { Color, chroma } from "@/theme/color";
 
 const TEMP_COLOR: Color = chroma("red");
 
-const baseStyle: SyntaxStyle = {
+export const baseSyntaxStyle: SyntaxStyle = {
     color: chroma("black"),
     weight: font.weight.regular,
     underline: null,
@@ -62,7 +62,7 @@ const defaultColors: Record<keyof Syntax, Color> = {
 
 function buildDefaultSyntaxColors(): Syntax {
     const defaultSyntax = Object.keys(defaultColors).reduce((acc, key) => {
-        acc[key as keyof Syntax] = { ...baseStyle, color: TEMP_COLOR };
+        acc[key as keyof Syntax] = { ...baseSyntaxStyle, color: TEMP_COLOR };
         return acc;
     }, {} as Record<keyof Syntax, SyntaxStyle>);
 
@@ -71,6 +71,7 @@ function buildDefaultSyntaxColors(): Syntax {
 
 let defaultSyntaxColors = buildDefaultSyntaxColors();
 
+// Deal with specific non-color style defaults
 defaultSyntaxColors["emphasis.strong"].weight = font.weight.bold;
 defaultSyntaxColors["linkUri"].underline = true;
 defaultSyntaxColors["linkText"].italic = true;
