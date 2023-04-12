@@ -5,7 +5,8 @@
     "main": "index.js",
     "scripts": {
         "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts"
+        "build-licenses": "ts-node ./src/buildLicenses.ts",
+        "test": "ts-node ./test.ts"
     },
     "author": "",
     "license": "ISC",
@@ -25,5 +26,8 @@
         "printWidth": 80,
         "htmlWhitespaceSensitivity": "strict",
         "tabWidth": 4
+    },
+    "devDependencies": {
+        "tsconfig-paths": "^4.2.0"
     }
 }

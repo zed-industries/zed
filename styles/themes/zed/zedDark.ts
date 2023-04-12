@@ -1,4 +1,5 @@
 import { ThemeConfig } from "@/theme/config";
+import * as font from "@/theme/font"
 
 const zedDark: ThemeConfig = {
     name: "Zed Dark",
@@ -9,19 +10,19 @@ const zedDark: ThemeConfig = {
         handle: "@johndoe",
     },
     license: "MIT",
+    url: "https://example.com/themes/zed-dark",
     colors: {
-        neutral: ["#262626", "#191919", "#333"],
+        neutral: ["#07363C", "#fef3e4"],
         accent: ["#ff6a00", "#ff8f00", "#c43e00"],
         error: "#f44336",
         info: "#2196f3",
         warning: "#ffc107",
         success: "#4caf50",
     },
-    url: "https://example.com/themes/zed-dark",
     syntax: {
         keyword: {
             color: "#c43e00",
-            weight: "bold",
+            weight: font.weight.bold,
         },
         string: {
             color: "#00bcd4",

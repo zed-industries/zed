@@ -1,6 +1,6 @@
 import * as font from "@/theme/font"
 import { Highlight } from "@/theme/highlight"
-import { Color } from "@/theme/color"
+import { Color, chroma } from "@/theme/color"
 import { Border } from "@/theme/border"
 import { defaultSyntax } from "@/theme/syntax/defaultSyntax"
 
@@ -19,7 +19,7 @@ export interface SyntaxStyleTypes {
     "comment.doc": SyntaxStyle
     constant: SyntaxStyle
     "constant.builtin"?: SyntaxStyle
-    constructor: SyntaxStyle | Function
+    // constructor: SyntaxStyle | Function & { constructor?: undefined }
     embedded: SyntaxStyle
     emphasis: SyntaxStyle
     "emphasis.strong": SyntaxStyle
@@ -60,12 +60,36 @@ export interface SyntaxStyleTypes {
     "variable.special"?: SyntaxStyle
 }
 
-export type OptionalSyntaxStyles = Partial<Syntax>
+interface InputSyntaxStyle extends Partial<Omit<SyntaxStyle, "color">> {
+    color: string;
+}
+
+export type InputSyntax = Record<keyof SyntaxStyleTypes, InputSyntaxStyle>
 export type Syntax = Record<keyof SyntaxStyleTypes, SyntaxStyle>
+
+export function buildInputSyntax(inputSyntax: InputSyntax): Syntax {
+    const syntax: Syntax = {} as Syntax;
+    for (const key in inputSyntax) {
+        const syntaxStyleType = key as keyof SyntaxStyleTypes
+
+        if (inputSyntax.hasOwnProperty(syntaxStyleType)) {
+            const inputStyle = inputSyntax[syntaxStyleType];
+            const outputStyle: any = {
+                ...defaultSyntax[syntaxStyleType],
+                ...inputStyle,
+            };
+
+            outputStyle.color = chroma(inputStyle.color) as Color
+
+            syntax[syntaxStyleType] = outputStyle as SyntaxStyle
+        }
+    }
+    return syntax;
+}
 
 export const buildSyntax = (
     defaultSyntax: Syntax,
-    themeSyntax: OptionalSyntaxStyles
+    themeSyntax: Syntax
 ): Syntax => {
     return {
         ...defaultSyntax,

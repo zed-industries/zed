@@ -1,4 +1,4 @@
-import { Syntax, SyntaxStyle } from "@/theme/syntax/syntax";
+import { Syntax, SyntaxStyle } from "@/theme/syntax";
 import * as font from "@/theme/font";
 import { Color, chroma } from "@/theme/color";
 
@@ -19,7 +19,7 @@ const defaultColors: Record<keyof Syntax, Color> = {
     "comment.doc": TEMP_COLOR,
     constant: TEMP_COLOR,
     "constant.builtin": TEMP_COLOR,
-    constructor: TEMP_COLOR,
+    // constructor: TEMP_COLOR,
     embedded: TEMP_COLOR,
     emphasis: TEMP_COLOR,
     "emphasis.strong": TEMP_COLOR,

@@ -1,4 +1,5 @@
 import chroma from "chroma-js"
+import { Theme, ThemeConfig } from "./config"
 
 export function hexToIntensity(hex: string): number {
     const hsl = chroma(hex).hsl()
@@ -25,15 +26,47 @@ export function hsbToIntensity(hsb: string): number {
     return intensity
 }
 
-export function normalizeIntensity(themeConfig: ThemeConfig): ThemeConfig {
+interface Intensity {
+    min: number
+    max: number
+}
+
+export function buildThemeIntensity(themeConfig: ThemeConfig): Intensity {
+    const neutral = themeConfig.colors.neutral;
+
+    const [firstColor, lastColor] = [neutral[0], neutral[neutral.length - 1]];
+    const minIntensity = hexToIntensity(chroma(firstColor).hex());
+    const maxIntensity = hexToIntensity(chroma(lastColor).hex());
+
+    if (minIntensity < 1 || maxIntensity > 100) {
+        throw new Error("Intensity must be between 1 and 100");
+    }
+
+    if (minIntensity > maxIntensity) {
+        throw new Error("Min intensity must be less than max intensity");
+    }
+
+    if (maxIntensity - maxIntensity > 50) {
+        throw new Error("Not enough contrast between lightest and darkest colors");
+    }
+
+    const intensity: Intensity = {
+        min: minIntensity,
+        max: maxIntensity,
+    };
+
+    return intensity;
+}
+
+export function normalizeIntensity(theme: Theme): Theme {
     const normalizedIntensity = {
-        min: (themeConfig.calculatedIntensity.min / 100) * 100,
-        max: (themeConfig.calculatedIntensity.max / 100) * 100,
+        min: (theme.intensity.min / 100) * 100,
+        max: (theme.intensity.max / 100) * 100,
     }
 
     return {
-        ...themeConfig,
-        calculatedIntensity: normalizedIntensity,
+        ...theme,
+        intensity: normalizedIntensity,
     }
 }
 
@@ -45,10 +78,10 @@ interface StateIntensities {
 }
 
 function buildStateIntensities(
-    themeConfig: ThemeConfig,
+    theme: Theme,
     baseIntensity: number
 ): StateIntensities {
-    const isLightTheme = themeConfig.appearance === "light"
+    const isLightTheme = theme.appearance === "light"
     const intensitySteps = isLightTheme ? [0, 3, 6, 9] : [0, 15, 20, 25]
 
     const calculateIntensity = (intensity: number, change: number): number => {
@@ -69,103 +102,3 @@ function buildStateIntensities(
 
     return stateIntensities
 }
-
-console.log(buildStateIntensities(lightThemeConfig, 50))
-// { default: 50, hovered: 53, pressed: 56, active: 59 }
-
-console.log(buildStateIntensities(darkThemeConfig, 50))
-// { default: 50, hovered: 65, pressed: 70, active: 75 }
-
-interface Button {
-    background: StateIntensities
-    label: {
-        text: string
-        color: StateIntensities
-    }
-    icon: {
-        intensity: StateIntensities
-    }
-}
-
-function contrastRatio(intensity1: number, intensity2: number): number {
-    const [intensityLighter, intensityDarker] =
-        intensity1 > intensity2
-            ? [intensity1, intensity2]
-            : [intensity2, intensity1]
-    return (intensityLighter + 0.5) / (intensityDarker + 0.5)
-}
-
-function hasSufficientContrast(
-    intensity1: number,
-    intensity2: number,
-    minContrast: number
-): boolean {
-    return contrastRatio(intensity1, intensity2) >= minContrast
-}
-
-function createButton(
-    themeConfig: ThemeConfig,
-    labelText: string,
-    backgroundIntensity: number,
-    labelIntensity: number,
-    iconIntensity: number
-): Button | null {
-    const backgroundStates = buildStateIntensities(
-        themeConfig,
-        backgroundIntensity
-    )
-    const labelStates = buildStateIntensities(themeConfig, labelIntensity)
-    const iconStates = buildStateIntensities(themeConfig, iconIntensity)
-
-    // Ensure sufficient contrast for all states
-    const minContrast = 3
-    const states = ["default", "hovered", "pressed", "active"] as const
-    for (const state of states) {
-        if (
-            !hasSufficientContrast(
-                backgroundStates[state],
-                labelStates[state],
-                minContrast
-            ) ||
-            !hasSufficientContrast(
-                backgroundStates[state],
-                iconStates[state],
-                minContrast
-            )
-        ) {
-            console.warn(
-                `Insufficient contrast for state "${state}". Please adjust intensities.`
-            )
-            return null
-        }
-    }
-
-    const button: Button = {
-        background: backgroundStates,
-        label: {
-            text: labelText,
-            color: labelStates,
-        },
-        icon: {
-            intensity: iconStates,
-        },
-    }
-
-    return button
-}
-
-const lightButton = createButton(lightThemeConfig, "Click me!", 50, 100, 100)
-console.log(lightButton)
-// {
-//   background: { default: 50, hovered: 53, pressed: 56, active: 59 },
-//   label: { text: 'Click me!', color: { default: 100, hovered: 100, pressed: 100, active: 100 } },
-//   icon: { intensity: { default: 100, hovered: 100, pressed: 100, active: 100 } }
-// }
-
-const darkButton = createButton(darkThemeConfig, "Click me!", 50, 1, 1)
-console.log(darkButton)
-// {
-//   background: { default: 50, hovered: 65, pressed: 70, active: 75 },
-//   label: { text: 'Click me!', color: { default: 1, hovered: 1, pressed: 1, active: 1 } },
-//   icon: { intensity: { default: 1, hovered: 1, pressed: 1, active: 1 } }
-// }

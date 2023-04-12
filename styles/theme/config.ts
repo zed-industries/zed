@@ -1,4 +1,4 @@
-import { OptionalSyntaxStyles } from "@/theme/syntax";
+import { InputSyntax } from "@/theme/syntax";
 
 interface Author {
     name: string;
@@ -24,7 +24,7 @@ export interface ThemeConfig {
         warning: InputColor;
         success: InputColor;
     };
-    syntax?: OptionalSyntaxStyles;
+    syntax?: Partial<InputSyntax>;
 }
 
 export interface CalculatedThemeProperties {
