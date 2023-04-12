@@ -1,5 +1,5 @@
 import chroma from "chroma-js"
-import { ThemeSyntax } from "../../src/themes/common/syntax"
+import { ThemeSyntax } from "@/src/themes/common/syntax"
 
 interface Author {
     name: string
