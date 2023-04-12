@@ -12,8 +12,8 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle, RenderedView,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -28,7 +28,7 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    item::{Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
@@ -364,11 +364,7 @@ impl Item for ProjectSearchView {
         }
     }
 
-    fn breadcrumbs(
-        &self,
-        theme: &theme::Theme,
-        cx: &AppContext,
-    ) -> Option<Vec<Box<dyn RenderedView>>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.results_editor.breadcrumbs(theme, cx)
     }
 

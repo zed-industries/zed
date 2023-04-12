@@ -17,8 +17,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
     platform::KeyDownEvent,
-    AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, RenderedView, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
@@ -34,7 +34,7 @@ use terminal::{
 };
 use util::ResultExt;
 use workspace::{
-    item::{Item, ItemEvent},
+    item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
     pane, register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
@@ -606,18 +606,11 @@ impl Item for TerminalView {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(
-        &self,
-        theme: &theme::Theme,
-        cx: &AppContext,
-    ) -> Option<Vec<Box<dyn RenderedView>>> {
-        Some(vec![Box::new(
-            Text::new(
-                self.terminal().read(cx).breadcrumb_text.clone(),
-                theme.workspace.breadcrumbs.default.text.clone(),
-            )
-            .boxed() as Element<TerminalView>,
-        )])
+    fn breadcrumbs(&self, _: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+        Some(vec![BreadcrumbText {
+            text: self.terminal().read(cx).breadcrumb_text.clone(),
+            highlights: None,
+        }])
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

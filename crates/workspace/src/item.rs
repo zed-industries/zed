@@ -3,6 +3,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     fmt,
+    ops::Range,
     path::PathBuf,
     rc::Rc,
     sync::{
@@ -15,7 +16,7 @@ use std::{
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
-    elements::AnyRootElement, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
+    fonts::HighlightStyle, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -36,6 +37,12 @@ pub enum ItemEvent {
     UpdateTab,
     UpdateBreadcrumbs,
     Edit,
+}
+
+// TODO: Combine this with existing HighlightedText struct?
+pub struct BreadcrumbText {
+    pub text: String,
+    pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
 }
 
 pub trait Item: View {
@@ -134,11 +141,7 @@ pub trait Item: View {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(
-        &self,
-        _theme: &Theme,
-        _cx: &ViewContext<Self>,
-    ) -> Option<Vec<Box<dyn AnyRootElement>>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -225,7 +228,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn AnyRootElement>>>;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
 }
@@ -595,7 +598,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn AnyRootElement>>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 

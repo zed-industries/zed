@@ -28,7 +28,7 @@ use std::{
 };
 use text::Selection;
 use util::{ResultExt, TryFutureExt};
-use workspace::item::FollowableItemHandle;
+use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -727,11 +727,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(
-        &self,
-        theme: &theme::Theme,
-        cx: &AppContext,
-    ) -> Option<Vec<Box<dyn AnyRootElement>>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
@@ -751,18 +747,13 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
-        let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
-        let mut breadcrumbs =
-            vec![Box::new(filename_label.into_root(cx)) as Box<dyn AnyRootElement>];
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| {
-            Box::new(
-                Text::new(
-                    symbol.text,
-                    theme.workspace.breadcrumbs.default.text.clone(),
-                )
-                .with_highlights(symbol.highlight_ranges)
-                .into_root(cx) as Element<Editor>,
-            ) as Box<dyn AnyRootElement>
+        let mut breadcrumbs = vec![BreadcrumbText {
+            text: filename,
+            highlights: None,
+        }];
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+            text: symbol.text,
+            highlights: Some(symbol.highlight_ranges),
         }));
         Some(breadcrumbs)
     }

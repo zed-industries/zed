@@ -54,10 +54,22 @@ impl View for Breadcrumbs {
         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
             Some(breadcrumbs) => breadcrumbs,
             None => return Empty::new().boxed(),
-        };
+        }
+        .into_iter()
+        .map(|breadcrumb| {
+            let text = Text::new(
+                breadcrumb.text,
+                theme.workspace.breadcrumbs.default.text.clone(),
+            );
+            if let Some(highlights) = breadcrumb.highlights {
+                text.with_highlights(highlights).boxed()
+            } else {
+                text.boxed()
+            }
+        });
 
         let crumbs = Flex::row()
-            .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
+            .with_children(Itertools::intersperse_with(breadcrumbs, || {
                 Label::new(" 〉 ", style.default.text.clone()).boxed()
             }))
             .constrained()

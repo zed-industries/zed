@@ -6,8 +6,7 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Drawable, Element, Entity, MouseState, Subscription, View, ViewContext,
-    ViewHandle,
+    AppContext, Drawable, Element, Entity, MouseState, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
 use workspace::{
