@@ -23,7 +23,6 @@ export default function simpleMessageNotification(
                 right: 7,
             },
 
-
             margin: { left: headerPadding, top: 6, bottom: 6 },
             hover: {
                 ...text(layer, "sans", "default", { size: "xs" }),
