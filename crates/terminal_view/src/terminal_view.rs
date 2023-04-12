@@ -396,7 +396,7 @@ impl View for TerminalView {
         Stack::new()
             .with_child(
                 TerminalElement::new(
-                    cx.handle(),
+                    cx.handle().downgrade(),
                     terminal_handle,
                     focused,
                     self.should_show_cursor(focused, cx),

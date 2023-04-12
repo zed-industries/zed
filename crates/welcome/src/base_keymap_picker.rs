@@ -161,7 +161,7 @@ impl PickerDelegate for BaseKeymapSelector {
         mouse_state: &mut gpui::MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> gpui::ElementBox {
+    ) -> gpui::ElementBox<Picker<Self>> {
         let theme = &cx.global::<Settings>().theme;
         let keymap_match = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);

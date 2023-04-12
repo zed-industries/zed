@@ -1,8 +1,8 @@
 use serde::Deserialize;
 
 use crate::{
-    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, View,
-    ViewContext, WeakViewHandle,
+    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, EventContext,
+    View, ViewContext, WeakViewHandle,
 };
 
 pub struct Select {
@@ -116,9 +116,10 @@ impl View for Select {
                 .with_style(style.header)
                 .boxed()
             })
-            .on_click(MouseButton::Left, move |_, _, cx| {
-                cx.dispatch_action(ToggleSelect)
-            })
+            .on_click(
+                MouseButton::Left,
+                move |_, _, cx: &mut EventContext<Self>| cx.dispatch_action(ToggleSelect),
+            )
             .boxed(),
         );
         if self.is_open {
@@ -150,9 +151,12 @@ impl View for Select {
                                                 )
                                             },
                                         )
-                                        .on_click(MouseButton::Left, move |_, _, cx| {
-                                            cx.dispatch_action(SelectItem(ix))
-                                        })
+                                        .on_click(
+                                            MouseButton::Left,
+                                            move |_, _, cx: &mut EventContext<Self>| {
+                                                cx.dispatch_action(SelectItem(ix))
+                                            },
+                                        )
                                         .boxed()
                                     }))
                                 },

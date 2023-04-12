@@ -7,7 +7,8 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    Axis, DebugContext, Element, ElementBox, MeasurementContext, PaintContext,
+    Axis, DebugContext, Element, ElementBox, MeasurementContext, PaintContext, SceneBuilder,
+    ViewContext,
 };
 
 pub(crate) struct FacePile {
@@ -24,14 +25,15 @@ impl FacePile {
     }
 }
 
-impl Element for FacePile {
+impl<V: View> Element<V> for FacePile {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        cx: &mut gpui::LayoutContext,
+        view: &mut Self,
+        cx: &mut ViewContext<Self>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 
@@ -46,10 +48,12 @@ impl Element for FacePile {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut Self,
+        cx: &mut ViewContext<Self>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -59,7 +63,7 @@ impl Element for FacePile {
         for face in self.faces.iter_mut().rev() {
             let size = face.size();
             origin_x -= size.x();
-            cx.paint_layer(None, |cx| {
+            scene.paint_layer(None, |scene| {
                 face.paint(scene, vec2f(origin_x, origin_y), visible_bounds, view, cx);
             });
             origin_x += self.overlap;
@@ -94,8 +98,8 @@ impl Element for FacePile {
     }
 }
 
-impl Extend<ElementBox> for FacePile {
-    fn extend<T: IntoIterator<Item = ElementBox>>(&mut self, children: T) {
+impl Extend<ElementBox<Self>> for FacePile {
+    fn extend<T: IntoIterator<Item = ElementBox<Self>>>(&mut self, children: T) {
         self.faces.extend(children);
     }
 }

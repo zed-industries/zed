@@ -1176,9 +1176,7 @@ mod tests {
     }
 
     fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut AppContext) -> Vec<(u32, String)> {
-        let mut presenter = cx.build_window(editor.id(), 0., Default::default());
-        let mut cx = presenter.build_layout_context(Default::default(), false, cx);
-        cx.render(editor, |editor, cx| {
+        editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot
                 .blocks_in_range(0..snapshot.max_point().row())

@@ -3823,6 +3823,94 @@ impl<V: View> UpdateView for ViewContext<'_, '_, '_, V> {
     }
 }
 
+pub struct EventContext<'a, 'b, 'c, 'd, V: View> {
+    view_context: &'d mut ViewContext<'a, 'b, 'c, V>,
+    pub(crate) handled: bool,
+}
+
+impl<'a, 'b, 'c, 'd, V: View> EventContext<'a, 'b, 'c, 'd, V> {
+    pub(crate) fn new(view_context: &'d mut ViewContext<'a, 'b, 'c, V>) -> Self {
+        EventContext {
+            view_context,
+            handled: true,
+        }
+    }
+
+    pub fn propagate_event(&mut self) {
+        self.handled = false;
+    }
+}
+
+impl<'a, 'b, 'c, 'd, V: View> Deref for EventContext<'a, 'b, 'c, 'd, V> {
+    type Target = ViewContext<'a, 'b, 'c, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view_context
+    }
+}
+
+impl<V: View> DerefMut for EventContext<'_, '_, '_, '_, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.view_context
+    }
+}
+
+impl<V: View> UpdateModel for EventContext<'_, '_, '_, '_, V> {
+    fn update_model<T: Entity, O>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
+    ) -> O {
+        self.view_context.update_model(handle, update)
+    }
+}
+
+impl<V: View> ReadView for EventContext<'_, '_, '_, '_, V> {
+    fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
+        self.view_context.read_view(handle)
+    }
+}
+
+impl<V: View> UpdateView for EventContext<'_, '_, '_, '_, V> {
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
+    where
+        T: View,
+    {
+        self.view_context.update_view(handle, update)
+    }
+}
+
+impl<V: View> UpgradeModelHandle for EventContext<'_, '_, '_, '_, V> {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: &WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.view_context.upgrade_model_handle(handle)
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.view_context.model_handle_is_upgradable(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.view_context.upgrade_any_model_handle(handle)
+    }
+}
+
+impl<V: View> UpgradeViewHandle for EventContext<'_, '_, '_, '_, V> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.view_context.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.view_context.upgrade_any_view_handle(handle)
+    }
+}
+
 pub(crate) enum Reference<'a, T> {
     Immutable(&'a T),
     Mutable(&'a mut T),

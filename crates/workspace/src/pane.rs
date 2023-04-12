@@ -1851,13 +1851,13 @@ impl NavHistory {
     }
 }
 
-pub struct PaneBackdrop {
+pub struct PaneBackdrop<V: View> {
     child_view: usize,
-    child: ElementBox<Pane>,
+    child: ElementBox<V>,
 }
 
-impl PaneBackdrop {
-    pub fn new(pane_item_view: usize, child: ElementBox<Pane>) -> Self {
+impl<V: View> PaneBackdrop<V> {
+    pub fn new(pane_item_view: usize, child: ElementBox<V>) -> Self {
         PaneBackdrop {
             child,
             child_view: pane_item_view,
@@ -1865,7 +1865,7 @@ impl PaneBackdrop {
     }
 }
 
-impl Element<Pane> for PaneBackdrop {
+impl<V: View> Element<V> for PaneBackdrop<V> {
     type LayoutState = ();
 
     type PaintState = ();
@@ -1873,8 +1873,8 @@ impl Element<Pane> for PaneBackdrop {
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        view: &mut Pane,
-        cx: &mut ViewContext<Pane>,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         (size, ())
@@ -1886,8 +1886,8 @@ impl Element<Pane> for PaneBackdrop {
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        view: &mut Pane,
-        cx: &mut ViewContext<Pane>,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let background = cx.global::<Settings>().theme.editor.background;
 
@@ -1903,7 +1903,7 @@ impl Element<Pane> for PaneBackdrop {
         scene.push_mouse_region(
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
                 gpui::platform::MouseButton::Left,
-                move |_, _: &mut Pane, cx| {
+                move |_, _: &mut V, cx| {
                     let window_id = cx.window_id();
                     cx.app_context().focus(window_id, Some(child_view_id))
                 },
@@ -1923,8 +1923,8 @@ impl Element<Pane> for PaneBackdrop {
         _visible_bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
-        view: &Pane,
-        cx: &gpui::ViewContext<Pane>,
+        view: &V,
+        cx: &gpui::ViewContext<V>,
     ) -> Option<RectF> {
         self.child.rect_for_text_range(range_utf16, view, cx)
     }
@@ -1934,8 +1934,8 @@ impl Element<Pane> for PaneBackdrop {
         _bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
-        view: &Pane,
-        cx: &gpui::ViewContext<Pane>,
+        view: &V,
+        cx: &gpui::ViewContext<V>,
     ) -> serde_json::Value {
         gpui::json::json!({
             "type": "Pane Back Drop",

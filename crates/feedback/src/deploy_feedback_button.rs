@@ -32,7 +32,7 @@ impl View for DeployFeedbackButton {
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, |state, _| {
+                MouseEventHandler::<Self, Self>::new(0, cx, |state, _| {
                     let style = &theme
                         .workspace
                         .status_bar
@@ -53,12 +53,12 @@ impl View for DeployFeedbackButton {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     if !active {
                         cx.dispatch_action(GiveFeedback)
                     }
                 })
-                .with_tooltip::<Self, _>(
+                .with_tooltip::<Self>(
                     0,
                     "Send Feedback".into(),
                     Some(Box::new(GiveFeedback)),

@@ -10,7 +10,7 @@ use gpui::{
 use settings::{settings_file::SettingsFile, Settings};
 
 use workspace::{
-    item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
+    item::Item, open_new, sidebar::SidebarSide, AppState, Pane, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
 };
 
@@ -55,7 +55,7 @@ impl View for WelcomePage {
         "WelcomePage"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
         let self_handle = cx.handle();
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
@@ -203,7 +203,7 @@ impl Item for WelcomePage {
         _detail: Option<usize>,
         style: &theme::Tab,
         _cx: &gpui::AppContext,
-    ) -> gpui::ElementBox {
+    ) -> ElementBox<Pane> {
         Flex::row()
             .with_child(
                 Label::new("Welcome to Zed!", style.label.clone())

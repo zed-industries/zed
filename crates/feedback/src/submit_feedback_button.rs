@@ -32,7 +32,7 @@ impl View for SubmitFeedbackButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         enum SubmitFeedbackButton {}
-        MouseEventHandler::<SubmitFeedbackButton>::new(0, cx, |state, _| {
+        MouseEventHandler::<SubmitFeedbackButton, Self>::new(0, cx, |state, _| {
             let style = theme.feedback.submit_button.style_for(state, false);
             Label::new("Submit as Markdown", style.text.clone())
                 .contained()
@@ -40,13 +40,13 @@ impl View for SubmitFeedbackButton {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(SubmitFeedback)
         })
         .aligned()
         .contained()
         .with_margin_left(theme.feedback.button_margin)
-        .with_tooltip::<Self, _>(
+        .with_tooltip::<Self>(
             0,
             "cmd-s".into(),
             Some(Box::new(SubmitFeedback)),

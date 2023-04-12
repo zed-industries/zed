@@ -175,7 +175,7 @@ pub fn keystroke_label_for<V: View>(
 
 pub type ButtonStyle = Interactive<ContainedText>;
 
-pub fn cta_button<Tag, L, A, V>(
+pub fn cta_button<L, A, V>(
     label: L,
     action: A,
     max_width: f32,
@@ -183,12 +183,11 @@ pub fn cta_button<Tag, L, A, V>(
     cx: &mut ViewContext<V>,
 ) -> ElementBox<V>
 where
-    Tag: 'static,
     L: Into<Cow<'static, str>>,
     A: 'static + Action + Clone,
     V: View,
 {
-    cta_button_with_click::<Tag, _, _, _>(label, max_width, style, cx, move |_, _, cx| {
+    cta_button_with_click::<A, _, _, _>(label, max_width, style, cx, move |_, _, cx| {
         cx.dispatch_action(action.clone())
     })
     .boxed()

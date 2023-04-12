@@ -101,7 +101,7 @@ impl View for RecentProjectsView {
         "RecentProjectsView"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -183,7 +183,7 @@ impl PickerDelegate for RecentProjectsView {
         mouse_state: &mut gpui::MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = settings.theme.picker.item.style_for(mouse_state, selected);

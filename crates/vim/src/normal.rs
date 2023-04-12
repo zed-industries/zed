@@ -251,7 +251,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                if let Some(item) = cx.as_mut().read_from_clipboard() {
+                if let Some(item) = cx.read_from_clipboard() {
                     let mut clipboard_text = Cow::Borrowed(item.text());
                     if let Some(mut clipboard_selections) =
                         item.metadata::<Vec<ClipboardSelection>>()

@@ -43,7 +43,7 @@ impl View for FeedbackInfoText {
                 .boxed(),
             )
             .with_child(
-                MouseEventHandler::<OpenZedCommunityRepo>::new(0, cx, |state, _| {
+                MouseEventHandler::<OpenZedCommunityRepo, Self>::new(0, cx, |state, _| {
                     let contained_text = if state.hovered() {
                         &theme.feedback.link_text_hover
                     } else {
@@ -58,7 +58,7 @@ impl View for FeedbackInfoText {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(OpenZedCommunityRepo)
                 })
                 .boxed(),

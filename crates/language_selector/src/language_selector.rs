@@ -120,7 +120,7 @@ impl View for LanguageSelector {
         "LanguageSelector"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -210,7 +210,7 @@ impl PickerDelegate for LanguageSelector {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let mat = &self.matches[ix];

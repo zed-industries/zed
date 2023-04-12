@@ -50,7 +50,7 @@ impl View for ActiveBufferLanguage {
         "ActiveBufferLanguage"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         if let Some(active_language) = self.active_language.as_ref() {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
@@ -58,7 +58,7 @@ impl View for ActiveBufferLanguage {
                 "Unknown".to_string()
             };
 
-            MouseEventHandler::<Self>::new(0, cx, |state, cx| {
+            MouseEventHandler::<Self, Self>::new(0, cx, |state, cx| {
                 let theme = &cx.global::<Settings>().theme.workspace.status_bar;
                 let style = theme.active_language.style_for(state, false);
                 Label::new(active_language_text, style.text.clone())
@@ -67,7 +67,9 @@ impl View for ActiveBufferLanguage {
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Toggle))
+            .on_click(MouseButton::Left, |_, _, cx| {
+                cx.dispatch_action(crate::Toggle)
+            })
             .boxed()
         } else {
             Empty::new().boxed()

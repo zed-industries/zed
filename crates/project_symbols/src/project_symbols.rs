@@ -48,7 +48,7 @@ impl View for ProjectSymbolsView {
         "ProjectSymbolsView"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -238,7 +238,7 @@ impl PickerDelegate for ProjectSymbolsView {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Picker<Self>> {
         let string_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
         let style = &settings.theme.picker.item;

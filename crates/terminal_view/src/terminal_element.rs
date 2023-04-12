@@ -410,7 +410,7 @@ impl TerminalElement {
                 ),
             )
             // Update drag selections
-            .on_drag(MouseButton::Left, move |event, _, cx| {
+            .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
                 if cx.is_parent_view_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
@@ -432,7 +432,7 @@ impl TerminalElement {
                 ),
             )
             // Context menu
-            .on_click(MouseButton::Right, move |e, _, cx| {
+            .on_click(MouseButton::Right, move |e, _: &mut TerminalView, cx| {
                 let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx) {
                     conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(e.shift))
                 } else {
@@ -445,7 +445,7 @@ impl TerminalElement {
                     });
                 }
             })
-            .on_move(move |event, _, cx| {
+            .on_move(move |event, _: &mut TerminalView, cx| {
                 if cx.is_parent_view_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
@@ -455,7 +455,7 @@ impl TerminalElement {
                     }
                 }
             })
-            .on_scroll(move |event, _, cx| {
+            .on_scroll(move |event, _: &mut TerminalView, cx| {
                 if let Some(conn_handle) = connection.upgrade(cx) {
                     conn_handle.update(cx, |terminal, cx| {
                         terminal.scroll_wheel(event, origin);
@@ -598,27 +598,25 @@ impl Element<TerminalView> for TerminalElement {
         });
 
         let view_handle = self.view.clone();
-        let hyperlink_tooltip = last_hovered_hyperlink.and_then(|(uri, _, id)| {
-            // last_mouse.and_then(|_last_mouse| {
-            view_handle.upgrade(cx).map(|handle| {
-                let mut tooltip = cx.render(&handle, |_, cx| {
-                    Overlay::new(
-                        Empty::new()
-                            .contained()
-                            .constrained()
-                            .with_width(dimensions.width())
-                            .with_height(dimensions.height())
-                            .with_tooltip::<TerminalElement, _>(id, uri, None, tooltip_style, cx)
-                            .boxed(),
-                    )
-                    .with_position_mode(gpui::elements::OverlayPositionMode::Local)
-                    .boxed()
-                });
+        let hyperlink_tooltip = last_hovered_hyperlink.map(|(uri, _, id)| {
+            let mut tooltip = Overlay::new(
+                Empty::new()
+                    .contained()
+                    .constrained()
+                    .with_width(dimensions.width())
+                    .with_height(dimensions.height())
+                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx)
+                    .boxed(),
+            )
+            .with_position_mode(gpui::elements::OverlayPositionMode::Local)
+            .boxed();
 
-                tooltip.layout(SizeConstraint::new(Vector2F::zero(), cx.window_size), cx);
-                tooltip
-            })
-            // })
+            tooltip.layout(
+                SizeConstraint::new(Vector2F::zero(), cx.window_size()),
+                view,
+                cx,
+            );
+            tooltip
         });
 
         let TerminalContent {
@@ -647,7 +645,7 @@ impl Element<TerminalView> for TerminalElement {
             cells,
             &text_style,
             &terminal_theme,
-            cx.text_layout_cache,
+            cx.text_layout_cache(),
             cx.font_cache(),
             last_hovered_hyperlink
                 .as_ref()
@@ -669,7 +667,7 @@ impl Element<TerminalView> for TerminalElement {
                     terminal_theme.foreground
                 };
 
-                cx.text_layout_cache.layout_str(
+                cx.text_layout_cache().layout_str(
                     &str_trxt,
                     text_style.font_size,
                     &[(
@@ -744,11 +742,11 @@ impl Element<TerminalView> for TerminalElement {
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             self.attach_mouse_handlers(
+                scene,
                 origin,
                 self.view.id(),
                 visible_bounds,
                 layout.mode,
-                view,
                 cx,
             );
 
