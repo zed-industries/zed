@@ -236,7 +236,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<'_, Self>) -> bool {
+    pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
             || !self.blinking_on
@@ -384,7 +384,7 @@ impl View for TerminalView {
         "Terminal"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
         let terminal_handle = self.terminal.clone().downgrade();
 
         let self_id = cx.view_id();
@@ -544,7 +544,7 @@ impl Item for TerminalView {
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Pane> {
         let title = self.terminal().read(cx).title();
 
         Flex::row()
@@ -606,7 +606,7 @@ impl Item for TerminalView {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
         Some(vec![Text::new(
             self.terminal().read(cx).breadcrumb_text.clone(),
             theme.workspace.breadcrumbs.default.text.clone(),

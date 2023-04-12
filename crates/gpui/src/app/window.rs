@@ -12,9 +12,10 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    AnyView, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelContext, ModelHandle,
-    MouseRegion, MouseRegionId, ParentId, ReadView, RenderParams, SceneBuilder, UpdateModel, View,
-    ViewContext, ViewHandle, WindowInvalidation,
+    AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Element, ElementBox, Entity,
+    ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadView, RenderParams,
+    SceneBuilder, UpdateModel, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowInvalidation,
 };
 use anyhow::bail;
 use collections::{HashMap, HashSet};
@@ -121,10 +122,10 @@ impl DerefMut for WindowContext<'_, '_> {
 }
 
 impl UpdateModel for WindowContext<'_, '_> {
-    fn update_model<M: Entity, R>(
+    fn update_model<T: Entity, R>(
         &mut self,
-        handle: &ModelHandle<M>,
-        update: &mut dyn FnMut(&mut M, &mut ModelContext<M>) -> R,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> R,
     ) -> R {
         self.app_context.update_model(handle, update)
     }
@@ -133,6 +134,16 @@ impl UpdateModel for WindowContext<'_, '_> {
 impl ReadView for WindowContext<'_, '_> {
     fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
         self.app_context.read_view(handle)
+    }
+}
+
+impl UpgradeViewHandle for WindowContext<'_, '_> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.app_context.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.app_context.upgrade_any_view_handle(handle)
     }
 }
 

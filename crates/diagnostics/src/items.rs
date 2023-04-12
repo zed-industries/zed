@@ -84,14 +84,14 @@ impl View for DiagnosticIndicator {
         "DiagnosticIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         enum Summary {}
         enum Message {}
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
-            MouseEventHandler::<Summary>::new(0, cx, |state, cx| {
+            MouseEventHandler::<Summary, _>::new(0, cx, |state, cx| {
                 let style = cx
                     .global::<Settings>()
                     .theme
@@ -189,7 +189,7 @@ impl View for DiagnosticIndicator {
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message_style = style.diagnostic_message.clone();
             element.add_child(
-                MouseEventHandler::<Message>::new(1, cx, |state, _| {
+                MouseEventHandler::<Message, _>::new(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
                         message_style.style_for(state, false).text.clone(),

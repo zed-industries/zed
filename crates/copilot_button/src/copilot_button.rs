@@ -91,7 +91,7 @@ impl View for CopilotButton {
         "CopilotButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let settings = cx.global::<Settings>();
 
         if !settings.enable_copilot_integration {
@@ -111,7 +111,7 @@ impl View for CopilotButton {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, {
+                MouseEventHandler::<Self, _>::new(0, cx, {
                     let theme = theme.clone();
                     let status = status.clone();
                     move |state, _cx| {

@@ -4,8 +4,8 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AnyViewHandle, AppContext, Axis, ElementBox, Entity, MouseState, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use parking_lot::Mutex;
@@ -33,7 +33,7 @@ pub trait PickerDelegate: View {
         state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox;
+    ) -> ElementBox<Self>;
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
@@ -48,11 +48,11 @@ impl<D: PickerDelegate> View for Picker<D> {
         "Picker"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = (self.theme.lock())(&cx.global::<settings::Settings>().theme);
         let query = self.query(cx);
         let delegate = self.delegate.clone();
-        let match_count = if let Some(delegate) = delegate.upgrade(cx.app) {
+        let match_count = if let Some(delegate) = delegate.upgrade(cx) {
             delegate.read(cx).match_count()
         } else {
             0
@@ -97,15 +97,15 @@ impl<D: PickerDelegate> View for Picker<D> {
                             let selected_ix = delegate.read(cx).selected_index();
                             range.end = cmp::min(range.end, delegate.read(cx).match_count());
                             items.extend(range.map(move |ix| {
-                                MouseEventHandler::<D>::new(ix, cx, |state, cx| {
+                                MouseEventHandler::<D, _>::new(ix, cx, |state, cx| {
                                     delegate
                                         .read(cx)
                                         .render_match(ix, state, ix == selected_ix, cx)
                                 })
                                 // Capture mouse events
-                                .on_down(MouseButton::Left, |_, _| {})
-                                .on_up(MouseButton::Left, |_, _| {})
-                                .on_click(MouseButton::Left, move |_, cx| {
+                                .on_down(MouseButton::Left, |_, _, _| {})
+                                .on_up(MouseButton::Left, |_, _, _| {})
+                                .on_click(MouseButton::Left, move |_, _, cx| {
                                     cx.dispatch_action(SelectIndex(ix))
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)

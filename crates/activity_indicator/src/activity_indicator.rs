@@ -314,14 +314,14 @@ impl View for ActivityIndicator {
         "ActivityIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let Content {
             icon,
             message,
             action,
         } = self.content_to_render(cx);
 
-        let mut element = MouseEventHandler::<Self>::new(0, cx, |state, cx| {
+        let mut element = MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
             let theme = &cx
                 .global::<Settings>()
                 .theme

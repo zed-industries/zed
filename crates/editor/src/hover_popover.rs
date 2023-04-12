@@ -283,7 +283,7 @@ impl HoverState {
         style: &EditorStyle,
         visible_rows: Range<u32>,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, Vec<ElementBox>)> {
+    ) -> Option<(DisplayPoint, Vec<ElementBox<Editor>>)> {
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -323,9 +323,9 @@ pub struct InfoPopover {
 }
 
 impl InfoPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox {
-        MouseEventHandler::<InfoPopover>::new(0, cx, |_, cx| {
-            let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock, _>(1, None, cx);
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox<Editor> {
+        MouseEventHandler::<InfoPopover, _>::new(0, cx, |_, cx| {
+            let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
                 let languages = self.project.read(cx).languages();
                 if let Some(language) = content.language.clone().and_then(|language| {
@@ -360,7 +360,7 @@ impl InfoPopover {
                 .with_style(style.hover_popover.container)
                 .boxed()
         })
-        .on_move(|_, _| {}) // Consume move events so they don't reach regions underneath.
+        .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
         .with_cursor_style(CursorStyle::Arrow)
         .with_padding(Padding {
             bottom: HOVER_POPOVER_GAP,
@@ -378,7 +378,7 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox {
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox<Editor> {
         enum PrimaryDiagnostic {}
 
         let mut text_style = style.hover_popover.prose.clone();
@@ -394,7 +394,7 @@ impl DiagnosticPopover {
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
-        MouseEventHandler::<DiagnosticPopover>::new(0, cx, |_, _| {
+        MouseEventHandler::<DiagnosticPopover, _>::new(0, cx, |_, _| {
             Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
                 .with_soft_wrap(true)
                 .contained()
@@ -406,12 +406,12 @@ impl DiagnosticPopover {
             bottom: HOVER_POPOVER_GAP,
             ..Default::default()
         })
-        .on_move(|_, _| {}) // Consume move events so they don't reach regions underneath.
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(GoToDiagnostic)
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<PrimaryDiagnostic, _>(
+        .with_tooltip::<PrimaryDiagnostic>(
             0,
             "Go To Diagnostic".to_string(),
             Some(Box::new(crate::GoToDiagnostic)),

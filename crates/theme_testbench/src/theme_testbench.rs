@@ -34,11 +34,11 @@ impl ThemeTestbench {
         workspace.add_item(Box::new(view), cx);
     }
 
-    fn render_ramps(color_scheme: &ColorScheme) -> Flex {
-        fn display_ramp(ramp: &Vec<Color>) -> ElementBox {
+    fn render_ramps(color_scheme: &ColorScheme) -> Flex<Self> {
+        fn display_ramp(ramp: &Vec<Color>) -> ElementBox<ThemeTestbench> {
             Flex::row()
                 .with_children(ramp.iter().cloned().map(|color| {
-                    Canvas::new(move |bounds, _, cx| {
+                    Canvas::new(move |scene, bounds, _, _, _| {
                         scene.push_quad(Quad {
                             bounds,
                             background: Some(color),
@@ -67,8 +67,8 @@ impl ThemeTestbench {
     fn render_layer(
         layer_index: usize,
         layer: &Layer,
-        cx: &mut ViewContext<'_, Self>,
-    ) -> Container {
+        cx: &mut ViewContext<Self>,
+    ) -> Container<Self> {
         Flex::column()
             .with_child(
                 Self::render_button_set(0, layer_index, "base", &layer.base, cx)
@@ -123,8 +123,8 @@ impl ThemeTestbench {
         layer_index: usize,
         set_name: &'static str,
         style_set: &StyleSet,
-        cx: &mut ViewContext<'_, Self>,
-    ) -> Flex {
+        cx: &mut ViewContext<Self>,
+    ) -> Flex<Self> {
         Flex::row()
             .with_child(Self::render_button(
                 set_index * 6,
@@ -182,10 +182,10 @@ impl ThemeTestbench {
         text: &'static str,
         style_set: &StyleSet,
         style_override: Option<fn(&StyleSet) -> &Style>,
-        cx: &mut ViewContext<'_, Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> ElementBox<Self> {
         enum TestBenchButton {}
-        MouseEventHandler::<TestBenchButton>::new(layer_index + button_index, cx, |state, cx| {
+        MouseEventHandler::<TestBenchButton, _>::new(layer_index + button_index, cx, |state, cx| {
             let style = if let Some(style_override) = style_override {
                 style_override(&style_set)
             } else if state.clicked().is_some() {
@@ -230,7 +230,7 @@ impl ThemeTestbench {
         .boxed()
     }
 
-    fn render_label(text: String, style: &Style, cx: &mut ViewContext<'_, Self>) -> Label {
+    fn render_label(text: String, style: &Style, cx: &mut ViewContext<Self>) -> Label {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();
         let family_id = settings.buffer_font_family;
@@ -262,7 +262,7 @@ impl View for ThemeTestbench {
         "ThemeTestbench"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
         let color_scheme = &cx.global::<Settings>().theme.clone().color_scheme;
 
         Flex::row()
@@ -303,7 +303,7 @@ impl Item for ThemeTestbench {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::ElementBox {
+    ) -> ElementBox<Pane> {
         Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()

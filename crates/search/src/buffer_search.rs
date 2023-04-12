@@ -91,7 +91,7 @@ impl View for BufferSearchBar {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
@@ -324,7 +324,7 @@ impl BufferSearchBar {
         icon: &'static str,
         option: SearchOption,
         cx: &mut ViewContext<Self>,
-    ) -> Option<ElementBox> {
+    ) -> Option<ElementBox<Self>> {
         if !option_supported {
             return None;
         }
@@ -332,7 +332,7 @@ impl BufferSearchBar {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_search_option_enabled(option);
         Some(
-            MouseEventHandler::<Self>::new(option as usize, cx, |state, cx| {
+            MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
                 let style = cx
                     .global::<Settings>()
                     .theme
@@ -344,11 +344,11 @@ impl BufferSearchBar {
                     .with_style(style.container)
                     .boxed()
             })
-            .on_click(MouseButton::Left, move |_, cx| {
+            .on_click(MouseButton::Left, move |_, _, cx| {
                 cx.dispatch_any_action(option.to_toggle_action())
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .with_tooltip::<Self, _>(
+            .with_tooltip::<Self, _, _>(
                 option as usize,
                 format!("Toggle {}", option.label()),
                 Some(option.to_toggle_action()),
@@ -364,7 +364,7 @@ impl BufferSearchBar {
         icon: &'static str,
         direction: Direction,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox {
+    ) -> ElementBox<Self> {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -380,7 +380,7 @@ impl BufferSearchBar {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::<NavButton>::new(direction as usize, cx, |state, cx| {
+        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
             let style = cx
                 .global::<Settings>()
                 .theme
@@ -394,10 +394,10 @@ impl BufferSearchBar {
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
+            mov_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton, _>(
+        .with_tooltip::<NavButton,_ _,,  _>(
             direction as usize,
             tooltip.to_string(),
             Some(action),
@@ -407,13 +407,17 @@ impl BufferSearchBar {
         .boxed()
     }
 
-    fn render_close_button(&self, theme: &theme::Search, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_close_button(
+        &self,
+        theme: &theme::Search,
+        cx: &mut ViewContext<Self>,
+    ) -> ElementBox<Self> {
         let action = Box::new(Dismiss);
         let tooltip = "Dismiss Buffer Search";
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         enum CloseButton {}
-        MouseEventHandler::<CloseButton>::new(0, cx, |state, _| {
+        MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
             let style = theme.dismiss_button.style_for(state, false);
             Svg::new("icons/x_mark_8.svg")
                 .with_color(style.color)
@@ -428,10 +432,10 @@ impl BufferSearchBar {
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, _, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<CloseButton, _>(0, tooltip.to_string(), Some(action), tooltip_style, cx)
+        .with_tooltip::<CloseButton>(0, tooltip.to_string(), Some(action), tooltip_style, cx)
         .boxed()
     }
 

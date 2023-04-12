@@ -31,8 +31,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, MouseRegion, Quad, SceneBuilder,
-    SizeConstraint, ViewContext, WeakViewHandle,
+    AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, MouseRegion, Quad,
+    SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -98,10 +98,6 @@ impl EditorElement {
         }
     }
 
-    fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
-        self.view.upgrade(cx).unwrap().read(cx)
-    }
-
     fn update_view<F, T>(&self, cx: &mut AppContext, f: F) -> T
     where
         F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
@@ -114,6 +110,7 @@ impl EditorElement {
     }
 
     fn attach_mouse_handlers(
+        scene: &mut SceneBuilder,
         view: &WeakViewHandle<Editor>,
         position_map: &Arc<PositionMap>,
         has_popovers: bool,
@@ -121,14 +118,14 @@ impl EditorElement {
         text_bounds: RectF,
         gutter_bounds: RectF,
         bounds: RectF,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<Editor>,
     ) {
         enum EditorElementMouseHandlers {}
         scene.push_mouse_region(
             MouseRegion::new::<EditorElementMouseHandlers>(view.id(), view.id(), visible_bounds)
                 .on_down(MouseButton::Left, {
                     let position_map = position_map.clone();
-                    move |e, cx| {
+                    move |e, _, cx| {
                         if !Self::mouse_down(
                             e.platform_event,
                             position_map.as_ref(),
@@ -142,7 +139,7 @@ impl EditorElement {
                 })
                 .on_down(MouseButton::Right, {
                     let position_map = position_map.clone();
-                    move |e, cx| {
+                    move |e, _, cx| {
                         if !Self::mouse_right_down(
                             e.position,
                             position_map.as_ref(),
@@ -156,7 +153,7 @@ impl EditorElement {
                 .on_up(MouseButton::Left, {
                     let view = view.clone();
                     let position_map = position_map.clone();
-                    move |e, cx| {
+                    move |e, _, cx| {
                         if !Self::mouse_up(
                             view.clone(),
                             e.position,
@@ -173,7 +170,7 @@ impl EditorElement {
                 .on_drag(MouseButton::Left, {
                     let view = view.clone();
                     let position_map = position_map.clone();
-                    move |e, cx| {
+                    move |e, _, cx| {
                         if !Self::mouse_dragged(
                             view.clone(),
                             e.platform_event,
@@ -187,20 +184,20 @@ impl EditorElement {
                 })
                 .on_move({
                     let position_map = position_map.clone();
-                    move |e, cx| {
+                    move |e, _, cx| {
                         if !Self::mouse_moved(e.platform_event, &position_map, text_bounds, cx) {
                             cx.propagate_event()
                         }
                     }
                 })
-                .on_move_out(move |_, cx| {
+                .on_move_out(move |_, _: &mut Editor, cx| {
                     if has_popovers {
                         cx.dispatch_action(HideHover);
                     }
                 })
                 .on_scroll({
                     let position_map = position_map.clone();
-                    move |e, cx| {
+                    move |e, _, cx| {
                         if !Self::scroll(
                             e.position,
                             *e.delta.raw(),
@@ -218,7 +215,7 @@ impl EditorElement {
         enum GutterHandlers {}
         scene.push_mouse_region(
             MouseRegion::new::<GutterHandlers>(view.id(), view.id() + 1, gutter_bounds).on_hover(
-                |hover, cx| {
+                |hover, _: &mut Editor, cx| {
                     cx.dispatch_action(GutterHover {
                         hovered: hover.started,
                     })
@@ -244,7 +241,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_bounds: RectF,
         gutter_bounds: RectF,
-        cx: &mut EventContext,
+        cx: &mut EventContext<Editor>,
     ) -> bool {
         if gutter_bounds.contains_point(position) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
@@ -279,7 +276,7 @@ impl EditorElement {
         position: Vector2F,
         position_map: &PositionMap,
         text_bounds: RectF,
-        cx: &mut EventContext,
+        cx: &mut EventContext<Editor>,
     ) -> bool {
         if !text_bounds.contains_point(position) {
             return false;
@@ -298,9 +295,9 @@ impl EditorElement {
         shift: bool,
         position_map: &PositionMap,
         text_bounds: RectF,
-        cx: &mut EventContext,
+        cx: &mut EventContext<Editor>,
     ) -> bool {
-        let view = view.upgrade(cx.app).unwrap().read(cx.app);
+        let view = view.upgrade(cx).unwrap().read(cx);
         let end_selection = view.has_pending_selection();
         let pending_nonempty_selections = view.has_pending_nonempty_selection();
 
@@ -334,7 +331,7 @@ impl EditorElement {
         }: MouseMovedEvent,
         position_map: &PositionMap,
         text_bounds: RectF,
-        cx: &mut EventContext,
+        cx: &mut EventContext<Editor>,
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
@@ -355,7 +352,7 @@ impl EditorElement {
             shift_held: shift,
         });
 
-        let view = view.upgrade(cx.app).unwrap().read(cx.app);
+        let view = view.upgrade(cx).unwrap().read(cx);
         if view.has_pending_selection() {
             let mut scroll_delta = Vector2F::zero();
 
@@ -480,7 +477,7 @@ impl EditorElement {
             border: Border::new(0., Color::transparent_black()),
             corner_radius: 0.,
         });
-        c.push_quad(Quad {
+        scene.push_quad(Quad {
             bounds: text_bounds,
             background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()),
@@ -545,7 +542,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<Editor>,
     ) {
         let line_height = layout.position_map.line_height;
 
@@ -561,7 +558,7 @@ impl EditorElement {
         );
 
         if show_gutter {
-            Self::paint_diff_hunks(bounds, layout, cx);
+            Self::paint_diff_hunks(scene, bounds, layout, cx);
         }
 
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
@@ -608,7 +605,12 @@ impl EditorElement {
         }
     }
 
-    fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut PaintContext) {
+    fn paint_diff_hunks(
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        layout: &mut LayoutState,
+        cx: &mut ViewContext<Editor>,
+    ) {
         let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
         let line_height = layout.position_map.line_height;
 
@@ -698,11 +700,10 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<Editor>,
     ) {
-        let view = self.view(cx.app);
         let style = &self.style;
-        let local_replica_id = view.replica_id(cx);
+        let local_replica_id = editor.replica_id(cx);
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = layout.visible_display_row_range.start;
         let scroll_top = scroll_position.y() * layout.position_map.line_height;
@@ -715,7 +716,7 @@ impl EditorElement {
 
         scene.push_cursor_region(CursorRegion {
             bounds,
-            style: if !view.link_go_to_definition_state.definitions.is_empty() {
+            style: if !editor.link_go_to_definition_state.definitions.is_empty() {
                 CursorStyle::PointingHand
             } else {
                 CursorStyle::IBeam
@@ -761,7 +762,7 @@ impl EditorElement {
 
                 scene.push_mouse_region(
                     MouseRegion::new::<FoldMarkers>(self.view.id(), *id as usize, bound)
-                        .on_click(MouseButton::Left, move |_, cx| {
+                        .on_click(MouseButton::Left, move |_, _: &mut Editor, cx| {
                             cx.dispatch_action(UnfoldAt { buffer_row })
                         })
                         .with_notify_on_hover(true)
@@ -807,7 +808,7 @@ impl EditorElement {
                     cx,
                 );
 
-                if view.show_local_cursors(cx) || *replica_id != local_replica_id {
+                if editor.show_local_cursors(cx) || *replica_id != local_replica_id {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range
@@ -834,7 +835,7 @@ impl EditorElement {
                                         cursor_row_layout.font_for_index(cursor_column)?;
                                     let text = character.to_string();
 
-                                    Some(cx.text_layout_cache.layout_str(
+                                    Some(cx.text_layout_cache().layout_str(
                                         &text,
                                         cursor_row_layout.font_size(),
                                         &[(
@@ -905,8 +906,8 @@ impl EditorElement {
 
             // Snap the right edge of the list to the right edge of the window if
             // its horizontal bounds overflow.
-            if list_origin.x() + list_width > cx.window_size.x() {
-                list_origin.set_x((cx.window_size.x() - list_width).max(0.));
+            if list_origin.x() + list_width > cx.window_size().x() {
+                list_origin.set_x((cx.window_size().x() - list_width).max(0.));
             }
 
             if list_origin.y() + list_height > bounds.max_y() {
@@ -1059,7 +1060,7 @@ impl EditorElement {
             MouseRegion::new::<ScrollbarMouseHandlers>(view.id(), view.id(), track_bounds)
                 .on_move({
                     let view = view.clone();
-                    move |_, cx| {
+                    move |_, _: &mut Editor, cx| {
                         if let Some(view) = view.upgrade(cx.deref_mut()) {
                             view.update(cx.deref_mut(), |view, cx| {
                                 view.scroll_manager.show_scrollbar(cx);
@@ -1070,7 +1071,7 @@ impl EditorElement {
                 .on_down(MouseButton::Left, {
                     let view = view.clone();
                     let row_range = row_range.clone();
-                    move |e, cx| {
+                    move |e, _: &mut Editor, cx| {
                         let y = e.position.y();
                         if let Some(view) = view.upgrade(cx.deref_mut()) {
                             view.update(cx.deref_mut(), |view, cx| {
@@ -1092,7 +1093,7 @@ impl EditorElement {
                 })
                 .on_drag(MouseButton::Left, {
                     let view = view.clone();
-                    move |e, cx| {
+                    move |e, _: &mut Editor, cx| {
                         let y = e.prev_mouse_position.y();
                         let new_y = e.position.y();
                         if thumb_top < y && y < thumb_bottom {
@@ -1127,7 +1128,7 @@ impl EditorElement {
         scroll_top: f32,
         scroll_left: f32,
         bounds: RectF,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Editor>,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -1182,7 +1183,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<Editor>,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_left = scroll_position.x() * layout.position_map.em_width;
@@ -1203,11 +1204,11 @@ impl EditorElement {
         }
     }
 
-    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &LayoutContext) -> f32 {
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &ViewContext<Editor>) -> f32 {
         let digit_count = (snapshot.max_buffer_row() as f32).log10().floor() as usize + 1;
         let style = &self.style;
 
-        cx.text_layout_cache
+        cx.text_layout_cache()
             .layout_str(
                 "1".repeat(digit_count).as_str(),
                 style.text.font_size,
@@ -1252,7 +1253,7 @@ impl EditorElement {
         active_rows: &BTreeMap<u32, bool>,
         is_singleton: bool,
         snapshot: &EditorSnapshot,
-        cx: &LayoutContext,
+        cx: &ViewContext<Editor>,
     ) -> (
         Vec<Option<text_layout::Line>>,
         Vec<Option<(FoldStatus, BufferRow, bool)>>,
@@ -1277,7 +1278,7 @@ impl EditorElement {
                 if include_line_numbers {
                     line_number.clear();
                     write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-                    line_number_layouts.push(Some(cx.text_layout_cache.layout_str(
+                    line_number_layouts.push(Some(cx.text_layout_cache().layout_str(
                         &line_number,
                         style.text.font_size,
                         &[(
@@ -1312,7 +1313,7 @@ impl EditorElement {
         &mut self,
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
-        cx: &LayoutContext,
+        cx: &ViewContext<Editor>,
     ) -> Vec<text_layout::Line> {
         if rows.start >= rows.end {
             return Vec::new();
@@ -1335,7 +1336,7 @@ impl EditorElement {
                 .take(rows.len());
             placeholder_lines
                 .map(|line| {
-                    cx.text_layout_cache.layout_str(
+                    cx.text_layout_cache().layout_str(
                         line,
                         placeholder_style.font_size,
                         &[(
@@ -1395,8 +1396,8 @@ impl EditorElement {
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
-                cx.text_layout_cache,
-                cx.font_cache,
+                cx.text_layout_cache(),
+                cx.font_cache(),
                 MAX_LINE_LEN,
                 rows.len() as usize,
             )
@@ -1419,7 +1420,7 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         include_root: bool,
         editor: &mut Editor,
-        cx: &mut LayoutContext,
+        cx: &mut ViewContext<Editor>,
     ) -> (f32, Vec<BlockLayout>) {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let scroll_x = snapshot.scroll_anchor.offset.x();
@@ -1441,20 +1442,18 @@ impl EditorElement {
                             line_layouts[(align_to.row() - rows.start) as usize]
                                 .x_for_index(align_to.column() as usize)
                         } else {
-                            layout_line(align_to.row(), snapshot, style, cx.text_layout_cache)
+                            layout_line(align_to.row(), snapshot, style, cx.text_layout_cache())
                                 .x_for_index(align_to.column() as usize)
                         };
 
-                    cx.render(&editor, |_, cx| {
-                        block.render(&mut BlockContext {
-                            cx,
-                            anchor_x,
-                            gutter_padding,
-                            line_height,
-                            scroll_x,
-                            gutter_width,
-                            em_width,
-                        })
+                    block.render(&mut BlockContext {
+                        view_context: cx,
+                        anchor_x,
+                        gutter_padding,
+                        line_height,
+                        scroll_x,
+                        gutter_width,
+                        em_width,
                     })
                 }
                 TransformBlock::ExcerptHeader {
@@ -1480,36 +1479,34 @@ impl EditorElement {
                         };
 
                         enum JumpIcon {}
-                        cx.render(&editor, |_, cx| {
-                            MouseEventHandler::<JumpIcon>::new(id.into(), cx, |state, _| {
-                                let style = style.jump_icon.style_for(state, false);
-                                Svg::new("icons/arrow_up_right_8.svg")
-                                    .with_color(style.color)
-                                    .constrained()
-                                    .with_width(style.icon_width)
-                                    .aligned()
-                                    .contained()
-                                    .with_style(style.container)
-                                    .constrained()
-                                    .with_width(style.button_width)
-                                    .with_height(style.button_width)
-                                    .boxed()
-                            })
-                            .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(MouseButton::Left, move |_, cx| {
-                                cx.dispatch_action(jump_action.clone())
-                            })
-                            .with_tooltip::<JumpIcon, _>(
-                                id.into(),
-                                "Jump to Buffer".to_string(),
-                                Some(Box::new(crate::OpenExcerpts)),
-                                tooltip_style.clone(),
-                                cx,
-                            )
-                            .aligned()
-                            .flex_float()
-                            .boxed()
+                        MouseEventHandler::<JumpIcon, _>::new(id.into(), cx, |state, _| {
+                            let style = style.jump_icon.style_for(state, false);
+                            Svg::new("icons/arrow_up_right_8.svg")
+                                .with_color(style.color)
+                                .constrained()
+                                .with_width(style.icon_width)
+                                .aligned()
+                                .contained()
+                                .with_style(style.container)
+                                .constrained()
+                                .with_width(style.button_width)
+                                .with_height(style.button_width)
+                                .boxed()
                         })
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, move |_, _, cx| {
+                            cx.dispatch_action(jump_action.clone())
+                        })
+                        .with_tooltip::<JumpIcon>(
+                            id.into(),
+                            "Jump to Buffer".to_string(),
+                            Some(Box::new(crate::OpenExcerpts)),
+                            tooltip_style.clone(),
+                            cx,
+                        )
+                        .aligned()
+                        .flex_float()
+                        .boxed()
                     });
 
                     if *starts_new_buffer {
@@ -1614,31 +1611,32 @@ impl EditorElement {
     }
 }
 
-impl Element for EditorElement {
+impl Element<Editor> for EditorElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         if size.x().is_infinite() {
             unimplemented!("we don't yet handle an infinite width constraint on buffer elements");
         }
 
-        let snapshot = self.snapshot(cx.app);
+        let snapshot = self.snapshot(cx);
         let style = self.style.clone();
-        let line_height = style.text.line_height(cx.font_cache);
+        let line_height = style.text.line_height(cx.font_cache());
 
         let gutter_padding;
         let gutter_width;
         let gutter_margin;
         if snapshot.mode == EditorMode::Full {
-            gutter_padding = style.text.em_width(cx.font_cache) * style.gutter_padding_factor;
+            gutter_padding = style.text.em_width(cx.font_cache()) * style.gutter_padding_factor;
             gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
-            gutter_margin = -style.text.descent(cx.font_cache);
+            gutter_margin = -style.text.descent(cx.font_cache());
         } else {
             gutter_padding = 0.0;
             gutter_width = 0.0;
@@ -1646,10 +1644,10 @@ impl Element for EditorElement {
         };
 
         let text_width = size.x() - gutter_width;
-        let em_width = style.text.em_width(cx.font_cache);
-        let em_advance = style.text.em_advance(cx.font_cache);
+        let em_width = style.text.em_width(cx.font_cache());
+        let em_advance = style.text.em_advance(cx.font_cache());
         let overscroll = vec2f(em_width, 0.);
-        let snapshot = self.update_view(cx.app, |view, cx| {
+        let snapshot = self.update_view(cx, |view, cx| {
             view.set_visible_line_count(size.y() / line_height);
 
             let editor_width = text_width - gutter_margin - overscroll.x() - em_width;
@@ -1686,7 +1684,7 @@ impl Element for EditorElement {
         let gutter_size = vec2f(gutter_width, size.y());
         let text_size = vec2f(text_width, size.y());
 
-        let (autoscroll_horizontally, mut snapshot) = self.update_view(cx.app, |view, cx| {
+        let (autoscroll_horizontally, mut snapshot) = self.update_view(cx, |view, cx| {
             let autoscroll_horizontally = view.autoscroll_vertically(size.y(), line_height, cx);
             let snapshot = view.snapshot(cx);
             (autoscroll_horizontally, snapshot)
@@ -1728,7 +1726,7 @@ impl Element for EditorElement {
         let mut show_scrollbars = false;
         let mut include_root = false;
         let mut is_singleton = false;
-        self.update_view(cx.app, |view, cx| {
+        self.update_view(cx, |view, cx| {
             is_singleton = view.is_singleton(cx);
 
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -1859,11 +1857,11 @@ impl Element for EditorElement {
             snapshot.longest_row(),
             &snapshot,
             &style,
-            cx.text_layout_cache,
+            cx.text_layout_cache(),
         )
         .width();
         let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
-        let em_width = style.text.em_width(cx.font_cache);
+        let em_width = style.text.em_width(cx.font_cache());
         let (scroll_width, blocks) = self.layout_blocks(
             start_row..end_row,
             &snapshot,
@@ -1886,7 +1884,7 @@ impl Element for EditorElement {
             max_row as f32,
         );
 
-        self.update_view(cx.app, |view, cx| {
+        self.update_view(cx, |view, cx| {
             let clamped = view.scroll_manager.clamp_scroll_left(scroll_max.x());
 
             let autoscrolled = if autoscroll_horizontally {
@@ -1911,47 +1909,52 @@ impl Element for EditorElement {
         let mut code_actions_indicator = None;
         let mut hover = None;
         let mut mode = EditorMode::Full;
-        let mut fold_indicators = cx.render(&self.view.upgrade(cx).unwrap(), |view, cx| {
-            let newest_selection_head = view
+        let mut fold_indicators = {
+            let newest_selection_head = editor
                 .selections
                 .newest::<usize>(cx)
                 .head()
                 .to_display_point(&snapshot);
 
-            let style = view.style(cx);
+            let style = editor.style(cx);
             if (start_row..end_row).contains(&newest_selection_head.row()) {
-                if view.context_menu_visible() {
+                if editor.context_menu_visible() {
                     context_menu =
-                        view.render_context_menu(newest_selection_head, style.clone(), cx);
+                        editor.render_context_menu(newest_selection_head, style.clone(), cx);
                 }
 
-                let active = matches!(view.context_menu, Some(crate::ContextMenu::CodeActions(_)));
+                let active = matches!(
+                    editor.context_menu,
+                    Some(crate::ContextMenu::CodeActions(_))
+                );
 
-                code_actions_indicator = view
+                code_actions_indicator = editor
                     .render_code_actions_indicator(&style, active, cx)
                     .map(|indicator| (newest_selection_head.row(), indicator));
             }
 
             let visible_rows = start_row..start_row + line_layouts.len() as u32;
-            hover = view.hover_state.render(&snapshot, &style, visible_rows, cx);
-            mode = view.mode;
+            hover = editor
+                .hover_state
+                .render(&snapshot, &style, visible_rows, cx);
+            mode = editor.mode;
 
-            view.render_fold_indicators(
+            editor.render_fold_indicators(
                 fold_statuses,
                 &style,
-                view.gutter_hovered,
+                editor.gutter_hovered,
                 line_height,
                 gutter_margin,
                 cx,
             )
-        });
+        };
 
         if let Some((_, context_menu)) = context_menu.as_mut() {
             context_menu.layout(
                 SizeConstraint {
                     min: Vector2F::zero(),
                     max: vec2f(
-                        cx.window_size.x() * 0.7,
+                        cx.window_size().x() * 0.7,
                         (12. * line_height).min((size.y() - line_height) / 2.),
                     ),
                 },
@@ -1978,6 +1981,7 @@ impl Element for EditorElement {
                         Axis::Vertical,
                         line_height * style.code_actions.vertical_scale,
                     ),
+                    editor,
                     cx,
                 );
             }
@@ -1997,6 +2001,7 @@ impl Element for EditorElement {
                                 .max(MIN_POPOVER_LINE_HEIGHT * line_height), // Apply minimum height of 4 lines
                         ),
                     },
+                    editor,
                     cx,
                 );
             }
@@ -2041,10 +2046,12 @@ impl Element for EditorElement {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        editor: &mut Editor,
+        cx: &mut ViewContext<Editor>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         scene.push_layer(Some(visible_bounds));
@@ -2056,6 +2063,7 @@ impl Element for EditorElement {
         );
 
         Self::attach_mouse_handlers(
+            scene,
             &self.view,
             &layout.position_map,
             layout.hover_popovers.is_some(),
@@ -2089,7 +2097,8 @@ impl Element for EditorElement {
         _: RectF,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &gpui::MeasurementContext,
+        _: &Editor,
+        _: &ViewContext<Editor>,
     ) -> Option<RectF> {
         let text_bounds = RectF::new(
             bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
@@ -2132,7 +2141,8 @@ impl Element for EditorElement {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &gpui::DebugContext,
+        _: &Editor,
+        _: &ViewContext<Editor>,
     ) -> json::Value {
         json!({
             "type": "BufferElement",
@@ -2162,10 +2172,10 @@ pub struct LayoutState {
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     max_row: u32,
-    context_menu: Option<(DisplayPoint, ElementBox)>,
-    code_actions_indicator: Option<(u32, ElementBox)>,
-    hover_popovers: Option<(DisplayPoint, Vec<ElementBox>)>,
-    fold_indicators: Vec<Option<ElementBox>>,
+    context_menu: Option<(DisplayPoint, ElementBox<Editor>)>,
+    code_actions_indicator: Option<(u32, ElementBox<Editor>)>,
+    hover_popovers: Option<(DisplayPoint, Vec<ElementBox<Editor>>)>,
+    fold_indicators: Vec<Option<ElementBox<Editor>>>,
 }
 
 pub struct PositionMap {
@@ -2216,7 +2226,7 @@ impl PositionMap {
 
 struct BlockLayout {
     row: u32,
-    element: ElementBox,
+    element: ElementBox<Editor>,
     style: BlockStyle,
 }
 
@@ -2287,7 +2297,7 @@ impl Cursor {
         )
     }
 
-    pub fn paint(&self, scene: &mut SceneBuilder, origin: Vector2F, cx: &mut AppContext) {
+    pub fn paint(&self, scene: &mut SceneBuilder, origin: Vector2F, cx: &mut WindowContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
             CursorShape::Block | CursorShape::Hollow => RectF::new(

@@ -11,7 +11,11 @@ use collections::HashMap;
 use pathfinder_geometry::rect::RectF;
 use smallvec::SmallVec;
 
-use crate::{platform::MouseButton, window::WindowContext, ReadView, View, ViewContext};
+use crate::{
+    platform::MouseButton, window::WindowContext, AnyModelHandle, AnyViewHandle,
+    AnyWeakModelHandle, AnyWeakViewHandle, Entity, ModelHandle, ReadView, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+};
 
 use super::{
     mouse_event::{
@@ -237,6 +241,33 @@ impl<V: View> DerefMut for EventContext<'_, '_, '_, '_, V> {
 impl<V: View> ReadView for EventContext<'_, '_, '_, '_, V> {
     fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
         self.view_context.read_view(handle)
+    }
+}
+
+impl<V: View> UpgradeModelHandle for EventContext<'_, '_, '_, '_, V> {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: &WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.view_context.upgrade_model_handle(handle)
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.view_context.model_handle_is_upgradable(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.view_context.upgrade_any_model_handle(handle)
+    }
+}
+
+impl<V: View> UpgradeViewHandle for EventContext<'_, '_, '_, '_, V> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.view_context.upgrade_view_handle(handle)
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        self.view_context.upgrade_any_view_handle(handle)
     }
 }
 

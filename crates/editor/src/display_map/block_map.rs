@@ -2,7 +2,7 @@ use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     TextHighlights,
 };
-use crate::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
+use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{fonts::HighlightStyle, ElementBox, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
@@ -50,7 +50,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> ElementBox>;
+pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> ElementBox<Editor>>;
 
 pub struct Block {
     id: BlockId,
@@ -69,7 +69,7 @@ where
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Arc<dyn Fn(&mut BlockContext) -> ElementBox>,
+    pub render: Arc<dyn Fn(&mut BlockContext) -> ElementBox<Editor>>,
     pub disposition: BlockDisposition,
 }
 
@@ -80,8 +80,8 @@ pub enum BlockStyle {
     Sticky,
 }
 
-pub struct BlockContext<'a, 'b> {
-    pub cx: &'b mut ViewContext<'a, crate::Editor>,
+pub struct BlockContext<'a, 'b, 'c, 'd> {
+    pub view_context: &'d mut ViewContext<'a, 'b, 'c, Editor>,
     pub anchor_x: f32,
     pub scroll_x: f32,
     pub gutter_width: f32,
@@ -932,22 +932,22 @@ impl BlockDisposition {
     }
 }
 
-impl<'a, 'b> Deref for BlockContext<'a, 'b> {
-    type Target = ViewContext<'a, crate::Editor>;
+impl<'a, 'b, 'c, 'd> Deref for BlockContext<'a, 'b, 'c, 'd> {
+    type Target = ViewContext<'a, 'b, 'c, Editor>;
 
     fn deref(&self) -> &Self::Target {
-        self.cx
+        self.view_context
     }
 }
 
-impl<'a, 'b> DerefMut for BlockContext<'a, 'b> {
+impl DerefMut for BlockContext<'_, '_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.cx
+        self.view_context
     }
 }
 
 impl Block {
-    pub fn render(&self, cx: &mut BlockContext) -> ElementBox {
+    pub fn render(&self, cx: &mut BlockContext) -> ElementBox<Editor> {
         self.render.lock()(cx)
     }
 

@@ -1098,7 +1098,7 @@ impl ProjectPanel {
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
         cx: &mut ViewContext<V>,
-    ) -> ElementBox {
+    ) -> ElementBox<V> {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
@@ -1155,8 +1155,8 @@ impl ProjectPanel {
         dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox {
-        let this = cx.handle();
+    ) -> ElementBox<Self> {
+        let this = cx.handle().downgrade();
         let kind = details.kind;
         let path = details.path.clone();
         let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
@@ -1171,7 +1171,7 @@ impl ProjectPanel {
 
         let show_editor = details.is_editing && !details.is_processing;
 
-        MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
+        MouseEventHandler::<Self, _>::new(entry_id.to_usize(), cx, |state, cx| {
             let mut style = entry_style.style_for(state, details.is_selected).clone();
 
             if cx
@@ -1201,7 +1201,7 @@ impl ProjectPanel {
                 cx,
             )
         })
-        .on_click(MouseButton::Left, move |e, cx| {
+        .on_click(MouseButton::Left, move |e, _, cx| {
             if !show_editor {
                 if kind == EntryKind::Dir {
                     cx.dispatch_action(ToggleExpanded(entry_id))
@@ -1213,13 +1213,13 @@ impl ProjectPanel {
                 }
             }
         })
-        .on_down(MouseButton::Right, move |e, cx| {
+        .on_down(MouseButton::Right, move |e, _, cx| {
             cx.dispatch_action(DeployContextMenu {
                 entry_id,
                 position: e.position,
             })
         })
-        .on_up(MouseButton::Left, move |_, cx| {
+        .on_up(MouseButton::Left, move |_, _, cx| {
             if let Some((_, dragged_entry)) = cx
                 .global::<DragAndDrop<Workspace>>()
                 .currently_dragged::<ProjectEntryId>(cx.window_id())
@@ -1231,14 +1231,14 @@ impl ProjectPanel {
                 });
             }
         })
-        .on_move(move |_, cx| {
+        .on_move(move |_, _, cx| {
             if cx
                 .global::<DragAndDrop<Workspace>>()
                 .currently_dragged::<ProjectEntryId>(cx.window_id())
                 .is_some()
             {
-                if let Some(this) = this.upgrade(cx.app) {
-                    this.update(cx.app, |this, _| {
+                if let Some(this) = this.upgrade(cx) {
+                    this.update(cx, |this, _, _| {
                         this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
                             path.parent().map(|parent| Arc::from(parent))
                         } else {
@@ -1251,7 +1251,7 @@ impl ProjectPanel {
         .as_draggable(entry_id, {
             let row_container_style = theme.dragged_entry.container;
 
-            move |_, cx: &mut ViewContext<Workspace>| {
+            move |_, _, cx: &mut ViewContext<Workspace>| {
                 let theme = cx.global::<Settings>().theme.clone();
                 Self::render_entry_visual_element(
                     &details,
@@ -1273,7 +1273,7 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox<Self> {
         enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
@@ -1285,7 +1285,7 @@ impl View for ProjectPanel {
         if has_worktree {
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
+                    MouseEventHandler::<ProjectPanel, _>::new(0, cx, |_, cx| {
                         UniformList::new(
                             self.list.clone(),
                             self.visible_entries
@@ -1317,7 +1317,7 @@ impl View for ProjectPanel {
                         .expanded()
                         .boxed()
                     })
-                    .on_down(MouseButton::Right, move |e, cx| {
+                    .on_down(MouseButton::Right, move |e, _, cx| {
                         // When deploying the context menu anywhere below the last project entry,
                         // act as if the user clicked the root of the last worktree.
                         if let Some(entry_id) = last_worktree_root_id {
@@ -1334,7 +1334,7 @@ impl View for ProjectPanel {
         } else {
             Flex::column()
                 .with_child(
-                    MouseEventHandler::<Self>::new(2, cx, {
+                    MouseEventHandler::<Self, _>::new(2, cx, {
                         let button_style = theme.open_project_button.clone();
                         let context_menu_item_style =
                             cx.global::<Settings>().theme.context_menu.item.clone();
@@ -1353,7 +1353,7 @@ impl View for ProjectPanel {
                             .boxed()
                         }
                     })
-                    .on_click(MouseButton::Left, move |_, cx| {
+                    .on_click(MouseButton::Left, move |_, _, cx| {
                         cx.dispatch_action(workspace::Open)
                     })
                     .with_cursor_style(CursorStyle::PointingHand)

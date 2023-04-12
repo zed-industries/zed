@@ -8,7 +8,7 @@ use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, Subscription, Task,
-    View, ViewContext, ViewContext, ViewHandle, WeakViewHandle,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -526,7 +526,7 @@ impl Item for Editor {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Pane> {
         Flex::row()
             .with_child(
                 Label::new(self.title(cx).to_string(), style.label.clone())
@@ -606,7 +606,7 @@ impl Item for Editor {
         self.report_event("save editor", cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
-        cx.as_mut().spawn(|mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             format.await?;
 
             if buffers.len() == 1 {
@@ -727,7 +727,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
@@ -1078,7 +1078,7 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);

@@ -100,7 +100,7 @@ impl LayoutCell {
         };
 
         self.text
-            .paint(pos, visible_bounds, layout.size.line_height, view, cx);
+            .paint(scene, pos, visible_bounds, layout.size.line_height, cx);
     }
 }
 
@@ -128,7 +128,14 @@ impl LayoutRect {
         }
     }
 
-    fn paint(&self, origin: Vector2F, layout: &LayoutState, cx: &mut PaintContext) {
+    fn paint(
+        &self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        layout: &LayoutState,
+        view: &mut TerminalView,
+        cx: &mut ViewContext<TerminalView>,
+    ) {
         let position = {
             let point = self.point;
             vec2f(
@@ -363,11 +370,11 @@ impl TerminalElement {
         connection: WeakModelHandle<Terminal>,
         origin: Vector2F,
         f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(E, &mut EventContext) {
-        move |event, cx| {
+    ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
+        move |event, _: &mut TerminalView, cx| {
             cx.focus_parent_view();
-            if let Some(conn_handle) = connection.upgrade(cx.app) {
-                conn_handle.update(cx.app, |terminal, cx| {
+            if let Some(conn_handle) = connection.upgrade(cx) {
+                conn_handle.update(cx, |terminal, cx| {
                     f(terminal, origin, event, cx);
 
                     cx.notify();
@@ -378,6 +385,7 @@ impl TerminalElement {
 
     fn attach_mouse_handlers(
         &self,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         view_id: usize,
         visible_bounds: RectF,
@@ -402,10 +410,10 @@ impl TerminalElement {
                 ),
             )
             // Update drag selections
-            .on_drag(MouseButton::Left, move |event, cx| {
+            .on_drag(MouseButton::Left, move |event, _, cx| {
                 if cx.is_parent_view_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, cx| {
+                    if let Some(conn_handle) = connection.upgrade(cx) {
+                        conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_drag(event, origin);
                             cx.notify();
                         })
@@ -424,9 +432,9 @@ impl TerminalElement {
                 ),
             )
             // Context menu
-            .on_click(MouseButton::Right, move |e, cx| {
-                let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
-                    conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
+            .on_click(MouseButton::Right, move |e, _, cx| {
+                let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx) {
+                    conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(e.shift))
                 } else {
                     // If we can't get the model handle, probably can't deploy the context menu
                     true
@@ -437,20 +445,19 @@ impl TerminalElement {
                     });
                 }
             })
-            .on_move(move |event, cx| {
+            .on_move(move |event, _, cx| {
                 if cx.is_parent_view_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, cx| {
+                    if let Some(conn_handle) = connection.upgrade(cx) {
+                        conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_move(&event, origin);
                             cx.notify();
                         })
                     }
                 }
             })
-            .on_scroll(move |event, cx| {
-                // cx.focus_parent_view();
-                if let Some(conn_handle) = connection.upgrade(cx.app) {
-                    conn_handle.update(cx.app, |terminal, cx| {
+            .on_scroll(move |event, _, cx| {
+                if let Some(conn_handle) = connection.upgrade(cx) {
+                    conn_handle.update(cx, |terminal, cx| {
                         terminal.scroll_wheel(event, origin);
                         cx.notify();
                     })
@@ -548,7 +555,7 @@ impl TerminalElement {
     }
 }
 
-impl Element for TerminalElement {
+impl Element<TerminalView> for TerminalElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -584,7 +591,7 @@ impl Element for TerminalElement {
         let background_color = terminal_theme.background;
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let last_hovered_hyperlink = terminal_handle.update(cx.app, |terminal, cx| {
+        let last_hovered_hyperlink = terminal_handle.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
             terminal.last_content.last_hovered_hyperlink.clone()
@@ -724,6 +731,7 @@ impl Element for TerminalElement {
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
+        view: &mut TerminalView,
         cx: &mut ViewContext<TerminalView>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
@@ -735,7 +743,14 @@ impl Element for TerminalElement {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
+            self.attach_mouse_handlers(
+                origin,
+                self.view.id(),
+                visible_bounds,
+                layout.mode,
+                view,
+                cx,
+            );
 
             scene.push_cursor_region(gpui::CursorRegion {
                 bounds,
@@ -756,7 +771,7 @@ impl Element for TerminalElement {
                 });
 
                 for rect in &layout.rects {
-                    rect.paint(origin, layout, cx)
+                    rect.paint(scene, origin, layout, view, cx)
                 }
             });
 
@@ -797,7 +812,7 @@ impl Element for TerminalElement {
             }
 
             if let Some(element) = &mut layout.hyperlink_tooltip {
-                Element<TerminalView>::paint(element, scene, origin, visible_bounds, view, cx)
+                Element::paint(element, scene, origin, visible_bounds, view, view, cx)
             }
         });
     }
@@ -808,10 +823,11 @@ impl Element for TerminalElement {
 
     fn debug(
         &self,
-        _bounds: RectF,
-        _layout: &Self::LayoutState,
-        _paint: &Self::PaintState,
-        _cx: &gpui::DebugContext,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &TerminalView,
+        _: &gpui::ViewContext<TerminalView>,
     ) -> gpui::serde_json::Value {
         json!({
             "type": "TerminalElement",
@@ -825,7 +841,8 @@ impl Element for TerminalElement {
         _: RectF,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &gpui::MeasurementContext,
+        _: &TerminalView,
+        _: &gpui::ViewContext<TerminalView>,
     ) -> Option<RectF> {
         // Use the same origin that's passed to `Cursor::paint` in the paint
         // method bove.

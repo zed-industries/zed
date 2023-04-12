@@ -86,7 +86,7 @@ impl View for ProjectDiagnosticsEditor {
         "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new("No problems in workspace", theme.empty_message.clone())
@@ -509,7 +509,7 @@ impl Item for ProjectDiagnosticsEditor {
         _detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Pane> {
         render_summary(
             &self.summary,
             &style.label.text,
@@ -691,7 +691,7 @@ pub(crate) fn render_summary(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,
-) -> ElementBox {
+) -> ElementBox<Pane> {
     if summary.error_count == 0 && summary.warning_count == 0 {
         Label::new("No problems", text_style.clone()).boxed()
     } else {
@@ -1186,7 +1186,7 @@ mod tests {
                     let name = match block {
                         TransformBlock::Custom(block) => block
                             .render(&mut BlockContext {
-                                cx,
+                                view_context: cx,
                                 anchor_x: 0.,
                                 scroll_x: 0.,
                                 gutter_padding: 0.,

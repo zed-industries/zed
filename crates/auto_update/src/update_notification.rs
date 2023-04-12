@@ -26,13 +26,13 @@ impl View for UpdateNotification {
         "UpdateNotification"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let theme = &theme.update_notification;
 
         let app_name = cx.global::<ReleaseChannel>().display_name();
 
-        MouseEventHandler::<ViewReleaseNotes>::new(0, cx, |state, cx| {
+        MouseEventHandler::<ViewReleaseNotes, _>::new(0, cx, |state, cx| {
             Flex::column()
                 .with_child(
                     Flex::row()
@@ -50,7 +50,7 @@ impl View for UpdateNotification {
                             .boxed(),
                         )
                         .with_child(
-                            MouseEventHandler::<Cancel>::new(0, cx, |state, _| {
+                            MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
                                 let style = theme.dismiss_button.style_for(state, false);
                                 Svg::new("icons/x_mark_8.svg")
                                     .with_color(style.color)
@@ -65,7 +65,9 @@ impl View for UpdateNotification {
                                     .boxed()
                             })
                             .with_padding(Padding::uniform(5.))
-                            .on_click(MouseButton::Left, move |_, cx| cx.dispatch_action(Cancel))
+                            .on_click(MouseButton::Left, move |_, _, cx| {
+                                cx.dispatch_action(Cancel)
+                            })
                             .aligned()
                             .constrained()
                             .with_height(cx.font_cache().line_height(theme.message.text.font_size))
@@ -87,7 +89,7 @@ impl View for UpdateNotification {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(ViewReleaseNotes)
         })
         .boxed()

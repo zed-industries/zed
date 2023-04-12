@@ -42,7 +42,7 @@ impl View for TerminalButton {
         "TerminalButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let workspace = self.workspace.upgrade(cx);
         let project = match workspace {
             Some(workspace) => workspace.read(cx).project().read(cx),
@@ -62,7 +62,7 @@ impl View for TerminalButton {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, {
+                MouseEventHandler::<Self, _>::new(0, cx, {
                     let theme = theme.clone();
                     move |state, _cx| {
                         let style = theme
@@ -96,7 +96,7 @@ impl View for TerminalButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     if has_terminals {
                         cx.dispatch_action(DeployTerminalMenu);
                     } else {
@@ -105,7 +105,7 @@ impl View for TerminalButton {
                         }
                     };
                 })
-                .with_tooltip::<Self, _>(
+                .with_tooltip::<Self>(
                     0,
                     "Show Terminal".into(),
                     Some(Box::new(FocusDock)),

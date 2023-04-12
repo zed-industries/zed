@@ -722,7 +722,7 @@ impl ContextMenu {
         cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, ElementBox) {
+    ) -> (DisplayPoint, ElementBox<Editor>) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
@@ -774,7 +774,7 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox {
+    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox<Editor> {
         enum CompletionTag {}
 
         let completions = self.completions.clone();
@@ -791,7 +791,7 @@ impl CompletionsMenu {
                     let completion = &completions[mat.candidate_id];
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::<CompletionTag>::new(
+                        MouseEventHandler::<CompletionTag, _>::new(
                             mat.candidate_id,
                             cx,
                             |state, _| {
@@ -820,7 +820,7 @@ impl CompletionsMenu {
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, cx| {
+                        .on_down(MouseButton::Left, move |_, _, cx| {
                             cx.dispatch_action(ConfirmCompletion {
                                 item_ix: Some(item_ix),
                             });
@@ -951,7 +951,7 @@ impl CodeActionsMenu {
         mut cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, ElementBox) {
+    ) -> (DisplayPoint, ElementBox<Editor>) {
         enum ActionTag {}
 
         let container_style = style.autocomplete.container;
@@ -966,7 +966,7 @@ impl CodeActionsMenu {
                 for (ix, action) in actions[range].iter().enumerate() {
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::<ActionTag>::new(item_ix, cx, |state, _| {
+                        MouseEventHandler::<ActionTag, _>::new(item_ix, cx, |state, _| {
                             let item_style = if item_ix == selected_item {
                                 style.autocomplete.selected_item
                             } else if state.hovered() {
@@ -982,7 +982,7 @@ impl CodeActionsMenu {
                                 .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, cx| {
+                        .on_down(MouseButton::Left, move |_, _, cx| {
                             cx.dispatch_action(ConfirmCodeAction {
                                 item_ix: Some(item_ix),
                             });
@@ -2929,18 +2929,18 @@ impl Editor {
         style: &EditorStyle,
         active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<ElementBox> {
+    ) -> Option<ElementBox<Self>> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
-                MouseEventHandler::<CodeActions>::new(0, cx, |state, _| {
+                MouseEventHandler::<CodeActions, _>::new(0, cx, |state, _| {
                     Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions.indicator.style_for(state, active).color)
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
-                .on_down(MouseButton::Left, |_, cx| {
+                .on_down(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(ToggleCodeActions {
                         deployed_from_indicator: true,
                     });
@@ -2960,7 +2960,7 @@ impl Editor {
         line_height: f32,
         gutter_margin: f32,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<ElementBox>> {
+    ) -> Vec<Option<ElementBox<Self>>> {
         enum FoldIndicators {}
 
         let style = style.folds.clone();
@@ -2972,10 +2972,10 @@ impl Editor {
                 fold_data
                     .map(|(fold_status, buffer_row, active)| {
                         (active || gutter_hovered || fold_status == FoldStatus::Folded).then(|| {
-                            MouseEventHandler::<FoldIndicators>::new(
+                            MouseEventHandler::<FoldIndicators, _>::new(
                                 ix as usize,
                                 cx,
-                                |mouse_state, _| -> ElementBox {
+                                |mouse_state, _| -> ElementBox<Editor> {
                                     Svg::new(match fold_status {
                                         FoldStatus::Folded => style.folded_icon.clone(),
                                         FoldStatus::Foldable => style.foldable_icon.clone(),
@@ -3002,7 +3002,7 @@ impl Editor {
                             .with_cursor_style(CursorStyle::PointingHand)
                             .with_padding(Padding::uniform(3.))
                             .on_click(MouseButton::Left, {
-                                move |_, cx| {
+                                move |_, _, cx| {
                                     cx.dispatch_any_action(match fold_status {
                                         FoldStatus::Folded => Box::new(UnfoldAt { buffer_row }),
                                         FoldStatus::Foldable => Box::new(FoldAt { buffer_row }),
@@ -3028,7 +3028,7 @@ impl Editor {
         cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, ElementBox)> {
+    ) -> Option<(DisplayPoint, ElementBox<Editor>)> {
         self.context_menu
             .as_ref()
             .map(|menu| menu.render(cursor_position, style, cx))
@@ -3911,7 +3911,7 @@ impl Editor {
 
     pub fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            if let Some(item) = cx.as_mut().read_from_clipboard() {
+            if let Some(item) = cx.read_from_clipboard() {
                 let mut clipboard_text = Cow::Borrowed(item.text());
                 if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
                     let old_selections = this.selections.all::<usize>(cx);
@@ -5793,7 +5793,7 @@ impl Editor {
         self.pending_rename.as_ref()
     }
 
-    fn format(&mut self, _: &Format, cx: &mut ViewContext<'_, Self>) -> Option<Task<Result<()>>> {
+    fn format(&mut self, _: &Format, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         let project = match &self.project {
             Some(project) => project.clone(),
             None => return None,
@@ -5806,7 +5806,7 @@ impl Editor {
         &mut self,
         project: ModelHandle<Project>,
         trigger: FormatTrigger,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         let buffers = buffer.read(cx).all_buffers();
@@ -6795,7 +6795,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let style = self.style(cx);
         let font_changed = self.display_map.update(cx, |map, cx| {
             map.set_fold_ellipses_color(style.folds.ellipses.text_color);
@@ -6804,7 +6804,7 @@ impl View for Editor {
 
         if font_changed {
             let handle = self.handle.clone();
-            cx.defer(move |cx: &mut ViewContext<Editor>| {
+            cx.defer(move |_, cx: &mut ViewContext<Editor>| {
                 if let Some(editor) = handle.upgrade(cx) {
                     editor.update(cx, |editor, cx| {
                         hide_hover(editor, &HideHover, cx);
