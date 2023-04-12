@@ -71,7 +71,7 @@ impl PaneGroup {
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
-    ) -> ElementBox {
+    ) -> ElementBox<Workspace> {
         self.root.render(
             project,
             theme,
@@ -132,7 +132,7 @@ impl Member {
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
-    ) -> ElementBox {
+    ) -> ElementBox<Workspace> {
         enum FollowIntoExternalProject {}
 
         match self {
@@ -367,7 +367,7 @@ impl PaneAxis {
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
-    ) -> ElementBox {
+    ) -> ElementBox<Workspace> {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {

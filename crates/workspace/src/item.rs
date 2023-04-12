@@ -47,8 +47,12 @@ pub trait Item: View {
     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
         None
     }
-    fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
-        -> ElementBox;
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> ElementBox<Self>;
     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -130,7 +134,7 @@ pub trait Item: View {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox<Self>>> {
         None
     }
 
@@ -163,8 +167,12 @@ pub trait ItemHandle: 'static + fmt::Debug {
         handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
-    fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
-        -> ElementBox;
+    fn tab_content(
+        &self,
+        detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> ElementBox<Pane>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
@@ -213,7 +221,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>>;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
 }
@@ -257,7 +265,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> ElementBox<Pane> {
         self.read(cx).tab_content(detail, style, cx)
     }
 
@@ -583,7 +591,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox<Self>>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
@@ -899,7 +907,7 @@ pub(crate) mod test {
             "TestItem"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
             Empty::new().boxed()
         }
     }
@@ -912,7 +920,12 @@ pub(crate) mod test {
             })
         }
 
-        fn tab_content(&self, detail: Option<usize>, _: &theme::Tab, _: &AppContext) -> ElementBox {
+        fn tab_content(
+            &self,
+            detail: Option<usize>,
+            _: &theme::Tab,
+            _: &AppContext,
+        ) -> ElementBox<Self> {
             self.tab_detail.set(detail);
             Empty::new().boxed()
         }

@@ -5,7 +5,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
-    AppContext, Element, ElementBox, EventContext, MouseState, Quad, ViewContext, WeakViewHandle,
+    AppContext, Element, ElementBox, MouseState, Quad, ViewContext, WeakViewHandle,
 };
 use project::ProjectEntryId;
 use settings::Settings;
@@ -24,10 +24,10 @@ pub fn dragged_item_receiver<Tag, F>(
     split_margin: Option<f32>,
     cx: &mut ViewContext<Pane>,
     render_child: F,
-) -> MouseEventHandler<Tag>
+) -> MouseEventHandler<Tag, Pane>
 where
     Tag: 'static,
-    F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> ElementBox,
+    F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> ElementBox<Pane>,
 {
     MouseEventHandler::<Tag>::above(region_id, cx, |state, _, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
@@ -48,7 +48,7 @@ where
         Stack::new()
             .with_child(render_child(state, cx))
             .with_children(drag_position.map(|drag_position| {
-                Canvas::new(move |bounds, _, cx| {
+                Canvas::new(move |scene, bounds, _, cx| {
                     if bounds.contains_point(drag_position) {
                         let overlay_region = split_margin
                             .and_then(|split_margin| {
@@ -58,7 +58,7 @@ where
                             .map(|(dir, margin)| dir.along_edge(bounds, margin))
                             .unwrap_or(bounds);
 
-                        cx.paint_stacking_context(None, None, |cx| {
+                        scene.paint_stacking_context(None, None, |cx| {
                             scene.push_quad(Quad {
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
@@ -102,7 +102,7 @@ pub fn handle_dropped_item(
     index: usize,
     allow_same_pane: bool,
     split_margin: Option<f32>,
-    cx: &mut ViewContext<Self>,
+    cx: &mut ViewContext<Pane>,
 ) {
     enum Action {
         Move(WeakViewHandle<Pane>, usize),

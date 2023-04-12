@@ -2053,7 +2053,7 @@ impl Workspace {
         self.leader_state.followers.contains(&peer_id)
     }
 
-    fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         // TODO: There should be a better system in place for this
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen();
@@ -2153,7 +2153,10 @@ impl Workspace {
         }
     }
 
-    fn render_disconnected_overlay(&self, cx: &mut ViewContext<Workspace>) -> Option<ElementBox> {
+    fn render_disconnected_overlay(
+        &self,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<ElementBox<Workspace>> {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
@@ -2181,7 +2184,7 @@ impl Workspace {
         &self,
         theme: &theme::Workspace,
         cx: &AppContext,
-    ) -> Option<ElementBox> {
+    ) -> Option<ElementBox<Workspace>> {
         if self.notifications.is_empty() {
             None
         } else {
@@ -2809,7 +2812,7 @@ impl View for Workspace {
         "Workspace"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(

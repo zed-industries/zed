@@ -1383,8 +1383,8 @@ impl Pane {
         detail: Option<usize>,
         hovered: bool,
         tab_style: &theme::Tab,
-        cx: &mut ViewContext<V>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> ElementBox<Self> {
         let title = item.tab_content(detail, &tab_style, cx);
         let mut container = tab_style.container.clone();
         if first {
@@ -1404,7 +1404,7 @@ impl Pane {
                     };
 
                     ConstrainedBox::new(
-                        Canvas::new(move |bounds, _, cx| {
+                        Canvas::new(move |scene, bounds, _, cx| {
                             if let Some(color) = icon_color {
                                 let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
                                 scene.push_quad(Quad {
@@ -1475,7 +1475,11 @@ impl Pane {
             .boxed()
     }
 
-    fn render_tab_bar_buttons(&mut self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_tab_bar_buttons(
+        &mut self,
+        theme: &Theme,
+        cx: &mut ViewContext<Self>,
+    ) -> ElementBox<Self> {
         Flex::row()
             // New menu
             .with_child(render_tab_bar_button(
@@ -1524,7 +1528,11 @@ impl Pane {
             .boxed()
     }
 
-    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render_blank_pane(
+        &mut self,
+        theme: &Theme,
+        _cx: &mut ViewContext<Self>,
+    ) -> ElementBox<Self> {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
@@ -1542,7 +1550,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let this = cx.handle();
 
         enum MouseNavigationHandler {}
@@ -1703,7 +1711,7 @@ fn render_tab_bar_button<A: Action + Clone>(
     cx: &mut ViewContext<Pane>,
     action: A,
     context_menu: Option<ViewHandle<ContextMenu>>,
-) -> ElementBox {
+) -> ElementBox<Pane> {
     enum TabBarButton {}
 
     Stack::new()
@@ -1837,10 +1845,11 @@ impl NavHistory {
 
 pub struct PaneBackdrop {
     child_view: usize,
-    child: ElementBox,
+    child: ElementBox<Pane>,
 }
+
 impl PaneBackdrop {
-    pub fn new(pane_item_view: usize, child: ElementBox) -> Self {
+    pub fn new(pane_item_view: usize, child: ElementBox<Pane>) -> Self {
         PaneBackdrop {
             child,
             child_view: pane_item_view,
@@ -1906,8 +1915,8 @@ impl Element<Pane> for PaneBackdrop {
         _visible_bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
-        view: &V,
-        cx: &gpui::ViewContext<V>,
+        view: &Pane,
+        cx: &gpui::ViewContext<Pane>,
     ) -> Option<RectF> {
         self.child.rect_for_text_range(range_utf16, view, cx)
     }
@@ -1917,8 +1926,8 @@ impl Element<Pane> for PaneBackdrop {
         _bounds: RectF,
         _layout: &Self::LayoutState,
         _paint: &Self::PaintState,
-        view: &V,
-        cx: &gpui::ViewContext<V>,
+        view: &Pane,
+        cx: &gpui::ViewContext<Pane>,
     ) -> serde_json::Value {
         gpui::json::json!({
             "type": "Pane Back Drop",

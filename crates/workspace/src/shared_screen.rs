@@ -64,12 +64,12 @@ impl View for SharedScreen {
         "SharedScreen"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         enum Focus {}
 
         let frame = self.frame.clone();
         MouseEventHandler::<Focus>::new(0, cx, |_, cx| {
-            Canvas::new(move |bounds, _, cx| {
+            Canvas::new(move |scene, bounds, _, cx| {
                 if let Some(frame) = frame.clone() {
                     let size = constrain_size_preserving_aspect_ratio(
                         bounds.size(),
@@ -103,7 +103,7 @@ impl Item for SharedScreen {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::ElementBox {
+    ) -> gpui::ElementBox<Self> {
         Flex::row()
             .with_child(
                 Svg::new("icons/disable_screen_sharing_12.svg")

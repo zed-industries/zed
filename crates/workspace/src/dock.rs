@@ -315,7 +315,7 @@ impl Dock {
         theme: &Theme,
         anchor: DockAnchor,
         cx: &mut ViewContext<Workspace>,
-    ) -> Option<ElementBox> {
+    ) -> Option<ElementBox<Self>> {
         let style = &theme.workspace.dock;
 
         self.position

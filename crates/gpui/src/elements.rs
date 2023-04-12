@@ -25,6 +25,8 @@ pub use self::{
     keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
     stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
+pub use crate::window::ChildView;
+
 use self::{clipped::Clipped, expanded::Expanded};
 use crate::{
     geometry::{

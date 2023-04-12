@@ -34,7 +34,7 @@ impl View for ToggleDockButton {
         "Dock Toggle"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
         let workspace = self.workspace.upgrade(cx);
 
         if workspace.is_none() {

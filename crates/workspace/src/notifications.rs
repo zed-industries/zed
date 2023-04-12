@@ -229,7 +229,7 @@ pub mod simple_message_notification {
             "MessageNotification"
         }
 
-        fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> gpui::ElementBox {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox<Self> {
             let theme = cx.global::<Settings>().theme.clone();
             let theme = &theme.simple_message_notification;
 

@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyViewHandle, AppContext, DebugContext, ElementBox, Entity, LayoutContext, MeasurementContext,
-    PaintContext, SceneBuilder, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, ElementBox, Entity, SceneBuilder, SizeConstraint, Subscription,
+    View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 
@@ -42,7 +42,7 @@ impl View for StatusBar {
         "StatusBar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
 
         StatusBarElement {
@@ -139,19 +139,19 @@ impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
 }
 
 struct StatusBarElement {
-    left: ElementBox,
-    right: ElementBox,
+    left: ElementBox<StatusBar>,
+    right: ElementBox<StatusBar>,
 }
 
-impl<V: View> Element<V> for StatusBarElement {
+impl Element<StatusBar> for StatusBarElement {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
+        view: &mut StatusBar,
+        cx: &mut ViewContext<StatusBar>,
     ) -> (Vector2F, Self::LayoutState) {
         let max_width = constraint.max.x();
         constraint.min = vec2f(0., constraint.min.y());
@@ -173,8 +173,8 @@ impl<V: View> Element<V> for StatusBarElement {
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
+        view: &mut StatusBar,
+        cx: &mut ViewContext<StatusBar>,
     ) -> Self::PaintState {
         let origin_y = bounds.upper_right().y();
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
@@ -195,7 +195,8 @@ impl<V: View> Element<V> for StatusBarElement {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &StatusBar,
+        _: &ViewContext<StatusBar>,
     ) -> Option<RectF> {
         None
     }
@@ -205,7 +206,8 @@ impl<V: View> Element<V> for StatusBarElement {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &StatusBar,
+        _: &ViewContext<StatusBar>,
     ) -> serde_json::Value {
         json!({
             "type": "StatusBarElement",
