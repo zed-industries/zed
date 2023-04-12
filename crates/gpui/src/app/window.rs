@@ -841,7 +841,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window.platform_window.zoom();
     }
 
-    pub fn toggle_window_full_screen(&self) {
+    pub fn toggle_full_screen(&self) {
         self.window.platform_window.toggle_full_screen();
     }
 

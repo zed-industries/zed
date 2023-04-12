@@ -1943,7 +1943,8 @@ mod tests {
         let mut result = Vec::new();
         let mut project_entries = HashSet::new();
         let mut has_editor = false;
-        cx.render(panel, |panel, cx| {
+
+        panel.update(cx, |panel, cx| {
             panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
                 if details.is_editing {
                     assert!(!has_editor, "duplicate editor entry");

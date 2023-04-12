@@ -105,7 +105,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
                 .titlebar_item()
                 .and_then(|item| item.downcast::<CollabTitlebarItem>())
             {
-                cx.as_mut().defer(move |cx| {
+                cx.defer(move |_, cx| {
                     item.update(cx, |item, cx| {
                         item.toggle_contacts_popover(&Default::default(), cx);
                     });
@@ -380,17 +380,18 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx
-                .prompt(
-                    workspace.window_id(),
-                    PromptLevel::Info,
-                    "Are you sure you want to restart?",
-                    &["Restart", "Cancel"],
-                )
-                .next()
-                .await;
-            if answer != Some(0) {
-                return Ok(());
+            let answer = cx.prompt(
+                workspace.window_id(),
+                PromptLevel::Info,
+                "Are you sure you want to restart?",
+                &["Restart", "Cancel"],
+            );
+
+            if let Some(mut answer) = answer {
+                let answer = answer.next().await;
+                if answer != Some(0) {
+                    return Ok(());
+                }
             }
         }
 
@@ -424,17 +425,18 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx
-                .prompt(
-                    workspace.window_id(),
-                    PromptLevel::Info,
-                    "Are you sure you want to quit?",
-                    &["Quit", "Cancel"],
-                )
-                .next()
-                .await;
-            if answer != Some(0) {
-                return Ok(());
+            let answer = cx.prompt(
+                workspace.window_id(),
+                PromptLevel::Info,
+                "Are you sure you want to quit?",
+                &["Quit", "Cancel"],
+            );
+
+            if let Some(mut answer) = answer {
+                let answer = answer.next().await;
+                if answer != Some(0) {
+                    return Ok(());
+                }
             }
         }
 
@@ -712,7 +714,7 @@ mod tests {
             .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx
-            .root_view(cx.window_ids()[0])
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
             .unwrap()
             .downcast::<Workspace>()
             .unwrap();
@@ -746,9 +748,8 @@ mod tests {
         .await;
         assert_eq!(cx.window_ids().len(), 2);
         let workspace_1 = cx
-            .root_view(window_id)
+            .read_window(window_id, |cx| cx.root_view().clone())
             .unwrap()
-            .clone()
             .downcast::<Workspace>()
             .unwrap();
         workspace_1.read_with(cx, |workspace, cx| {
@@ -779,9 +780,8 @@ mod tests {
 
         // When opening the workspace, the window is not in a edited state.
         let workspace = cx
-            .root_view(cx.window_ids()[0])
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
             .unwrap()
-            .clone()
             .downcast::<Workspace>()
             .unwrap();
         let editor = workspace.read_with(cx, |workspace, cx| {
@@ -851,11 +851,11 @@ mod tests {
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx
-            .root_view(window_id)
+            .read_window(window_id, |cx| cx.root_view().clone())
             .unwrap()
-            .clone()
             .downcast::<Workspace>()
             .unwrap();
+
         let editor = workspace.update(cx, |workspace, cx| {
             workspace
                 .active_item(cx)

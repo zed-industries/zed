@@ -388,6 +388,7 @@ impl AsyncAppContext {
         self.update_window(window_id, |cx| cx.activate_window());
     }
 
+    // TODO: Can we eliminate this method and move it to WindowContext then call it with update_window?s
     pub fn prompt(
         &mut self,
         window_id: usize,
