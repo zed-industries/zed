@@ -10,7 +10,10 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use futures::{future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use futures::{
+    future::LocalBoxFuture, AsyncReadExt, FutureExt, SinkExt, StreamExt, TryFutureExt as _,
+    TryStreamExt,
+};
 use gpui::{
     actions,
     platform::AppVersion,
@@ -471,18 +474,22 @@ impl Client {
     pub fn subscribe_to_entity<T: Entity>(
         self: &Arc<Self>,
         remote_id: u64,
-    ) -> PendingEntitySubscription<T> {
+    ) -> Result<PendingEntitySubscription<T>> {
         let id = (TypeId::of::<T>(), remote_id);
-        self.state
-            .write()
-            .entities_by_type_and_remote_id
-            .insert(id, WeakSubscriber::Pending(Default::default()));
 
-        PendingEntitySubscription {
-            client: self.clone(),
-            remote_id,
-            consumed: false,
-            _entity_type: PhantomData,
+        let mut state = self.state.write();
+        if state.entities_by_type_and_remote_id.contains_key(&id) {
+            return Err(anyhow!("already subscribed to entity"));
+        } else {
+            state
+                .entities_by_type_and_remote_id
+                .insert(id, WeakSubscriber::Pending(Default::default()));
+            Ok(PendingEntitySubscription {
+                client: self.clone(),
+                remote_id,
+                consumed: false,
+                _entity_type: PhantomData,
+            })
         }
     }
 
@@ -1188,6 +1195,14 @@ impl Client {
         &self,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
+        self.request_envelope(request)
+            .map_ok(|envelope| envelope.payload)
+    }
+
+    pub fn request_envelope<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
         let client_id = self.id;
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1196,7 +1211,7 @@ impl Client {
         );
         let response = self
             .connection_id()
-            .map(|conn_id| self.peer.request(conn_id, request));
+            .map(|conn_id| self.peer.request_envelope(conn_id, request));
         async move {
             let response = response?.await;
             log::debug!(
@@ -1595,14 +1610,17 @@ mod tests {
 
         let _subscription1 = client
             .subscribe_to_entity(1)
+            .unwrap()
             .set_model(&model1, &mut cx.to_async());
         let _subscription2 = client
             .subscribe_to_entity(2)
+            .unwrap()
             .set_model(&model2, &mut cx.to_async());
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = client
             .subscribe_to_entity(3)
+            .unwrap()
             .set_model(&model3, &mut cx.to_async());
         drop(subscription3);
 
@@ -1631,11 +1649,13 @@ mod tests {
             },
         );
         drop(subscription1);
-        let _subscription2 =
-            client.add_message_handler(model, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+        let _subscription2 = client.add_message_handler(
+            model.clone(),
+            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
-            });
+            },
+        );
         server.send(proto::Ping {});
         done_rx2.next().await.unwrap();
     }

@@ -228,7 +228,7 @@ impl Server {
             .add_message_handler(update_buffer_file)
             .add_message_handler(buffer_reloaded)
             .add_message_handler(buffer_saved)
-            .add_request_handler(save_buffer)
+            .add_request_handler(forward_project_request::<proto::SaveBuffer>)
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
             .add_request_handler(request_contact)
@@ -1591,51 +1591,6 @@ where
     Ok(())
 }
 
-async fn save_buffer(
-    request: proto::SaveBuffer,
-    response: Response<proto::SaveBuffer>,
-    session: Session,
-) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.project_id);
-    let host_connection_id = {
-        let collaborators = session
-            .db()
-            .await
-            .project_collaborators(project_id, session.connection_id)
-            .await?;
-        collaborators
-            .iter()
-            .find(|collaborator| collaborator.is_host)
-            .ok_or_else(|| anyhow!("host not found"))?
-            .connection_id
-    };
-    let response_payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request.clone())
-        .await?;
-
-    let mut collaborators = session
-        .db()
-        .await
-        .project_collaborators(project_id, session.connection_id)
-        .await?;
-    collaborators.retain(|collaborator| collaborator.connection_id != session.connection_id);
-    let project_connection_ids = collaborators
-        .iter()
-        .map(|collaborator| collaborator.connection_id);
-    broadcast(
-        Some(host_connection_id),
-        project_connection_ids,
-        |conn_id| {
-            session
-                .peer
-                .forward_send(host_connection_id, conn_id, response_payload.clone())
-        },
-    );
-    response.send(response_payload)?;
-    Ok(())
-}
-
 async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
     session: Session,
@@ -1655,23 +1610,42 @@ async fn update_buffer(
 ) -> Result<()> {
     session.executor.record_backtrace();
     let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db()
-        .await
-        .project_connection_ids(project_id, session.connection_id)
-        .await?;
+    let mut guest_connection_ids;
+    let mut host_connection_id = None;
+    {
+        let collaborators = session
+            .db()
+            .await
+            .project_collaborators(project_id, session.connection_id)
+            .await?;
+        guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
+        for collaborator in collaborators.iter() {
+            if collaborator.is_host {
+                host_connection_id = Some(collaborator.connection_id);
+            } else {
+                guest_connection_ids.push(collaborator.connection_id);
+            }
+        }
+    }
+    let host_connection_id = host_connection_id.ok_or_else(|| anyhow!("host not found"))?;
 
     session.executor.record_backtrace();
-
     broadcast(
         Some(session.connection_id),
-        project_connection_ids.iter().copied(),
+        guest_connection_ids,
         |connection_id| {
             session
                 .peer
                 .forward_send(session.connection_id, connection_id, request.clone())
         },
     );
+    if host_connection_id != session.connection_id {
+        session
+            .peer
+            .forward_request(session.connection_id, host_connection_id, request.clone())
+            .await?;
+    }
+
     response.send(proto::Ack {})?;
     Ok(())
 }

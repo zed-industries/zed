@@ -46,6 +46,7 @@ pub fn run_test(
         Arc<executor::Deterministic>,
         u64,
     )),
+    on_fail_fn: Option<fn()>,
     fn_name: String,
 ) {
     // let _profiler = dhat::Profiler::new_heap();
@@ -178,6 +179,7 @@ pub fn run_test(
                     if is_randomized {
                         eprintln!("failing seed: {}", atomic_seed.load(SeqCst));
                     }
+                    on_fail_fn.map(|f| f());
                     panic::resume_unwind(error);
                 }
             }

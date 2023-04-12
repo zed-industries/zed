@@ -175,25 +175,39 @@ impl Database {
                 .map(|participant| participant.user_id)
                 .collect::<Vec<_>>();
 
-            // Delete participants who failed to reconnect.
+            // Delete participants who failed to reconnect and cancel their calls.
+            let mut canceled_calls_to_user_ids = Vec::new();
             room_participant::Entity::delete_many()
                 .filter(stale_participant_filter)
                 .exec(&*tx)
                 .await?;
+            let called_participants = room_participant::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(
+                            room_participant::Column::CallingUserId
+                                .is_in(stale_participant_user_ids.iter().copied()),
+                        )
+                        .add(room_participant::Column::AnsweringConnectionId.is_null()),
+                )
+                .all(&*tx)
+                .await?;
+            room_participant::Entity::delete_many()
+                .filter(
+                    room_participant::Column::Id
+                        .is_in(called_participants.iter().map(|participant| participant.id)),
+                )
+                .exec(&*tx)
+                .await?;
+            canceled_calls_to_user_ids.extend(
+                called_participants
+                    .into_iter()
+                    .map(|participant| participant.user_id),
+            );
 
             let room = self.get_room(room_id, &tx).await?;
-            let mut canceled_calls_to_user_ids = Vec::new();
-            // Delete the room if it becomes empty and cancel pending calls.
+            // Delete the room if it becomes empty.
             if room.participants.is_empty() {
-                canceled_calls_to_user_ids.extend(
-                    room.pending_participants
-                        .iter()
-                        .map(|pending_participant| UserId::from_proto(pending_participant.user_id)),
-                );
-                room_participant::Entity::delete_many()
-                    .filter(room_participant::Column::RoomId.eq(room_id))
-                    .exec(&*tx)
-                    .await?;
                 project::Entity::delete_many()
                     .filter(project::Column::RoomId.eq(room_id))
                     .exec(&*tx)

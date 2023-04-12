@@ -7,7 +7,7 @@ use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
     stream::BoxStream,
-    FutureExt, SinkExt, StreamExt,
+    FutureExt, SinkExt, StreamExt, TryFutureExt,
 };
 use parking_lot::{Mutex, RwLock};
 use serde::{ser::SerializeStruct, Serialize};
@@ -71,6 +71,7 @@ impl<T> Clone for Receipt<T> {
 
 impl<T> Copy for Receipt<T> {}
 
+#[derive(Clone, Debug)]
 pub struct TypedEnvelope<T> {
     pub sender_id: ConnectionId,
     pub original_sender_id: Option<PeerId>,
@@ -371,6 +372,15 @@ impl Peer {
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
         self.request_internal(None, receiver_id, request)
+            .map_ok(|envelope| envelope.payload)
+    }
+
+    pub fn request_envelope<T: RequestMessage>(
+        &self,
+        receiver_id: ConnectionId,
+        request: T,
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+        self.request_internal(None, receiver_id, request)
     }
 
     pub fn forward_request<T: RequestMessage>(
@@ -380,6 +390,7 @@ impl Peer {
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
         self.request_internal(Some(sender_id), receiver_id, request)
+            .map_ok(|envelope| envelope.payload)
     }
 
     pub fn request_internal<T: RequestMessage>(
@@ -387,7 +398,7 @@ impl Peer {
         original_sender_id: Option<ConnectionId>,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
         let (tx, rx) = oneshot::channel();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
@@ -410,6 +421,7 @@ impl Peer {
         async move {
             send?;
             let (response, _barrier) = rx.await.map_err(|_| anyhow!("connection was closed"))?;
+
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 Err(anyhow!(
                     "RPC request {} failed - {}",
@@ -417,8 +429,13 @@ impl Peer {
                     error.message
                 ))
             } else {
-                T::Response::from_envelope(response)
-                    .ok_or_else(|| anyhow!("received response of the wrong type"))
+                Ok(TypedEnvelope {
+                    message_id: response.id,
+                    sender_id: receiver_id,
+                    original_sender_id: response.original_sender_id,
+                    payload: T::Response::from_envelope(response)
+                        .ok_or_else(|| anyhow!("received response of the wrong type"))?,
+                })
             }
         }
     }

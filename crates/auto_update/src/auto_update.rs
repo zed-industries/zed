@@ -63,10 +63,10 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
             cx.observe_global::<Settings, _>(move |updater, cx| {
                 if cx.global::<Settings>().auto_update {
                     if update_subscription.is_none() {
-                        *(&mut update_subscription) = Some(updater.start_polling(cx))
+                        update_subscription = Some(updater.start_polling(cx))
                     }
                 } else {
-                    (&mut update_subscription).take();
+                    update_subscription.take();
                 }
             })
             .detach();

@@ -221,7 +221,7 @@ impl Worktree {
                     root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
                     entries_by_path: Default::default(),
                     entries_by_id: Default::default(),
-                    scan_id: 0,
+                    scan_id: 1,
                     completed_scan_id: 0,
                 },
             };
@@ -298,7 +298,7 @@ impl Worktree {
                     .collect(),
                 entries_by_path: Default::default(),
                 entries_by_id: Default::default(),
-                scan_id: 0,
+                scan_id: 1,
                 completed_scan_id: 0,
             };
 
@@ -1063,7 +1063,7 @@ impl RemoteWorktree {
                     version: serialize_version(&version),
                 })
                 .await?;
-            let version = deserialize_version(response.version);
+            let version = deserialize_version(&response.version);
             let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
             let mtime = response
                 .mtime
@@ -1223,11 +1223,10 @@ impl Snapshot {
         let mut entries_by_path_edits = Vec::new();
         let mut entries_by_id_edits = Vec::new();
         for entry_id in update.removed_entries {
-            let entry = self
-                .entry_for_id(ProjectEntryId::from_proto(entry_id))
-                .ok_or_else(|| anyhow!("unknown entry {}", entry_id))?;
-            entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
-            entries_by_id_edits.push(Edit::Remove(entry.id));
+            if let Some(entry) = self.entry_for_id(ProjectEntryId::from_proto(entry_id)) {
+                entries_by_path_edits.push(Edit::Remove(PathKey(entry.path.clone())));
+                entries_by_id_edits.push(Edit::Remove(entry.id));
+            }
         }
 
         for entry in update.updated_entries {
@@ -3725,7 +3724,7 @@ mod tests {
     ) {
         let mut files = Vec::new();
         let mut dirs = Vec::new();
-        for path in fs.as_fake().paths().await {
+        for path in fs.as_fake().paths() {
             if path.starts_with(root_path) {
                 if fs.is_file(&path).await {
                     files.push(path);
