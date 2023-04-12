@@ -26,10 +26,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::cancel);
 }
 
-pub type StaticItem = Box<dyn Fn(&mut AppContext) -> ElementBox<ContextMenu>>;
+pub type StaticItem = Box<dyn Fn(&mut AppContext) -> Element<ContextMenu>>;
 
 type ContextMenuItemBuilder =
-    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> ElementBox<ContextMenu>>;
+    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> Element<ContextMenu>>;
 
 pub enum ContextMenuItemLabel {
     String(Cow<'static, str>),
@@ -142,7 +142,7 @@ impl View for ContextMenu {
         cx
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if !self.visible {
             return Empty::new().boxed();
         }
@@ -328,7 +328,10 @@ impl ContextMenu {
         self.position_mode = mode;
     }
 
-    fn render_menu_for_measurement(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
+    fn render_menu_for_measurement(
+        &self,
+        cx: &mut ViewContext<Self>,
+    ) -> impl Drawable<ContextMenu> {
         let window_id = cx.window_id();
         let style = cx.global::<Settings>().theme.context_menu.clone();
         Flex::row()
@@ -415,7 +418,7 @@ impl ContextMenu {
             .with_style(style.container)
     }
 
-    fn render_menu(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
+    fn render_menu(&self, cx: &mut ViewContext<Self>) -> impl Drawable<ContextMenu> {
         enum Menu {}
         enum MenuItem {}
 

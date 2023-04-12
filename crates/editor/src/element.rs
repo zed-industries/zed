@@ -31,7 +31,7 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, CursorRegion, Element, ElementBox, EventContext, MouseRegion, Quad,
+    AppContext, Axis, Border, CursorRegion, Drawable, Element, EventContext, MouseRegion, Quad,
     SceneBuilder, SizeConstraint, ViewContext, WeakViewHandle, WindowContext,
 };
 use itertools::Itertools;
@@ -1611,7 +1611,7 @@ impl EditorElement {
     }
 }
 
-impl Element<Editor> for EditorElement {
+impl Drawable<Editor> for EditorElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -2172,10 +2172,10 @@ pub struct LayoutState {
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     max_row: u32,
-    context_menu: Option<(DisplayPoint, ElementBox<Editor>)>,
-    code_actions_indicator: Option<(u32, ElementBox<Editor>)>,
-    hover_popovers: Option<(DisplayPoint, Vec<ElementBox<Editor>>)>,
-    fold_indicators: Vec<Option<ElementBox<Editor>>>,
+    context_menu: Option<(DisplayPoint, Element<Editor>)>,
+    code_actions_indicator: Option<(u32, Element<Editor>)>,
+    hover_popovers: Option<(DisplayPoint, Vec<Element<Editor>>)>,
+    fold_indicators: Vec<Option<Element<Editor>>>,
 }
 
 pub struct PositionMap {
@@ -2226,7 +2226,7 @@ impl PositionMap {
 
 struct BlockLayout {
     row: u32,
-    element: ElementBox<Editor>,
+    element: Element<Editor>,
     style: BlockStyle,
 }
 

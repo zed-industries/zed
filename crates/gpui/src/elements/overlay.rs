@@ -3,12 +3,12 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    Axis, Element, ElementBox, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
+    Axis, Drawable, Element, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde_json::json;
 
 pub struct Overlay<V: View> {
-    child: ElementBox<V>,
+    child: Element<V>,
     anchor_position: Option<Vector2F>,
     anchor_corner: AnchorCorner,
     fit_mode: OverlayFitMode,
@@ -73,7 +73,7 @@ impl AnchorCorner {
 }
 
 impl<V: View> Overlay<V> {
-    pub fn new(child: ElementBox<V>) -> Self {
+    pub fn new(child: Element<V>) -> Self {
         Self {
             child,
             anchor_position: None,
@@ -116,7 +116,7 @@ impl<V: View> Overlay<V> {
     }
 }
 
-impl<V: View> Element<V> for Overlay<V> {
+impl<V: View> Drawable<V> for Overlay<V> {
     type LayoutState = Vector2F;
     type PaintState = ();
 

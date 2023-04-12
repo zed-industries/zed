@@ -41,7 +41,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
-    AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
+    AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Drawable, Element, Entity,
     ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -722,7 +722,7 @@ impl ContextMenu {
         cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, ElementBox<Editor>) {
+    ) -> (DisplayPoint, Element<Editor>) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
@@ -774,7 +774,7 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> ElementBox<Editor> {
+    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> Element<Editor> {
         enum CompletionTag {}
 
         let completions = self.completions.clone();
@@ -951,7 +951,7 @@ impl CodeActionsMenu {
         mut cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, ElementBox<Editor>) {
+    ) -> (DisplayPoint, Element<Editor>) {
         enum ActionTag {}
 
         let container_style = style.autocomplete.container;
@@ -2929,7 +2929,7 @@ impl Editor {
         style: &EditorStyle,
         active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<ElementBox<Self>> {
+    ) -> Option<Element<Self>> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
@@ -2960,7 +2960,7 @@ impl Editor {
         line_height: f32,
         gutter_margin: f32,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<ElementBox<Self>>> {
+    ) -> Vec<Option<Element<Self>>> {
         enum FoldIndicators {}
 
         let style = style.folds.clone();
@@ -2975,7 +2975,7 @@ impl Editor {
                             MouseEventHandler::<FoldIndicators, _>::new(
                                 ix as usize,
                                 cx,
-                                |mouse_state, _| -> ElementBox<Editor> {
+                                |mouse_state, _| -> Element<Editor> {
                                     Svg::new(match fold_status {
                                         FoldStatus::Folded => style.folded_icon.clone(),
                                         FoldStatus::Foldable => style.foldable_icon.clone(),
@@ -3028,7 +3028,7 @@ impl Editor {
         cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, ElementBox<Editor>)> {
+    ) -> Option<(DisplayPoint, Element<Editor>)> {
         self.context_menu
             .as_ref()
             .map(|menu| menu.render(cursor_position, style, cx))
@@ -6795,7 +6795,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let style = self.style(cx);
         let font_changed = self.display_map.update(cx, |map, cx| {
             map.set_fold_ellipses_color(style.folds.ellipses.text_color);

@@ -3,7 +3,7 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Element, ElementBox, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
+    AppContext, Drawable, Element, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
     WeakViewHandle,
 };
 use settings::Settings;
@@ -42,7 +42,7 @@ impl View for TerminalButton {
         "TerminalButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let workspace = self.workspace.upgrade(cx);
         let project = match workspace {
             Some(workspace) => workspace.read(cx).project().read(cx),

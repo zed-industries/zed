@@ -3,7 +3,7 @@ use gpui::{
     elements::*,
     geometry::rect::RectF,
     platform::{WindowBounds, WindowKind, WindowOptions},
-    AnyViewHandle, AppContext, ClipboardItem, Element, ElementBox, Entity, View, ViewContext,
+    AnyViewHandle, AppContext, ClipboardItem, Drawable, Element, Entity, View, ViewContext,
     ViewHandle,
 };
 use settings::Settings;
@@ -98,7 +98,7 @@ impl CopilotCodeVerification {
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let copied = cx
             .read_from_clipboard()
             .map(|item| item.text() == &data.user_code)
@@ -147,7 +147,7 @@ impl CopilotCodeVerification {
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         enum ConnectButton {}
 
         Flex::column()
@@ -206,10 +206,7 @@ impl CopilotCodeVerification {
             .align_children_center()
             .boxed()
     }
-    fn render_enabled_modal(
-        style: &theme::Copilot,
-        cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    fn render_enabled_modal(style: &theme::Copilot, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum DoneButton {}
 
         let enabled_style = &style.auth.authorized;
@@ -260,7 +257,7 @@ impl CopilotCodeVerification {
     fn render_unauthorized_modal(
         style: &theme::Copilot,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let unauthorized_style = &style.auth.not_authorized;
 
         Flex::column()
@@ -338,7 +335,7 @@ impl View for CopilotCodeVerification {
         cx.notify()
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum ConnectModal {}
 
         let style = cx.global::<Settings>().theme.clone();

@@ -2,7 +2,7 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    Axis, Element, ElementBox, ElementStateHandle, SceneBuilder, SizeConstraint, Vector2FExt, View,
+    Axis, Drawable, Element, ElementStateHandle, SceneBuilder, SizeConstraint, Vector2FExt, View,
     ViewContext,
 };
 use pathfinder_geometry::{
@@ -19,7 +19,7 @@ struct ScrollState {
 
 pub struct Flex<V: View> {
     axis: Axis,
-    children: Vec<ElementBox<V>>,
+    children: Vec<Element<V>>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
     child_alignment: f32,
 }
@@ -111,13 +111,13 @@ impl<V: View> Flex<V> {
     }
 }
 
-impl<V: View> Extend<ElementBox<V>> for Flex<V> {
-    fn extend<T: IntoIterator<Item = ElementBox<V>>>(&mut self, children: T) {
+impl<V: View> Extend<Element<V>> for Flex<V> {
+    fn extend<T: IntoIterator<Item = Element<V>>>(&mut self, children: T) {
         self.children.extend(children);
     }
 }
 
-impl<V: View> Element<V> for Flex<V> {
+impl<V: View> Drawable<V> for Flex<V> {
     type LayoutState = f32;
     type PaintState = ();
 
@@ -399,11 +399,11 @@ struct FlexParentData {
 
 pub struct FlexItem<V: View> {
     metadata: FlexParentData,
-    child: ElementBox<V>,
+    child: Element<V>,
 }
 
 impl<V: View> FlexItem<V> {
-    pub fn new(child: ElementBox<V>) -> Self {
+    pub fn new(child: Element<V>) -> Self {
         FlexItem {
             metadata: FlexParentData {
                 flex: None,
@@ -424,7 +424,7 @@ impl<V: View> FlexItem<V> {
     }
 }
 
-impl<V: View> Element<V> for FlexItem<V> {
+impl<V: View> Drawable<V> for FlexItem<V> {
     type LayoutState = ();
     type PaintState = ();
 

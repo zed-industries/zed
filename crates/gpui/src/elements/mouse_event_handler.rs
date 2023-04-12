@@ -10,14 +10,14 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    Element, ElementBox, EventContext, MouseRegion, MouseState, SceneBuilder, SizeConstraint, View,
+    Drawable, Element, EventContext, MouseRegion, MouseState, SceneBuilder, SizeConstraint, View,
     ViewContext,
 };
 use serde_json::json;
 use std::{marker::PhantomData, ops::Range};
 
 pub struct MouseEventHandler<Tag: 'static, V: View> {
-    child: ElementBox<V>,
+    child: Element<V>,
     region_id: usize,
     cursor_style: Option<CursorStyle>,
     handlers: HandlerSet,
@@ -35,7 +35,7 @@ impl<Tag, V: View> MouseEventHandler<Tag, V> {
     pub fn new<F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
     where
         V: View,
-        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> ElementBox<V>,
+        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> Element<V>,
     {
         let mut mouse_state = cx.mouse_state::<Tag>(region_id);
         let child = render_child(&mut mouse_state, cx);
@@ -61,7 +61,7 @@ impl<Tag, V: View> MouseEventHandler<Tag, V> {
     pub fn above<F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
     where
         V: View,
-        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> ElementBox<V>,
+        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> Element<V>,
     {
         let mut handler = Self::new(region_id, cx, render_child);
         handler.above = true;
@@ -212,7 +212,7 @@ impl<Tag, V: View> MouseEventHandler<Tag, V> {
     }
 }
 
-impl<Tag, V: View> Element<V> for MouseEventHandler<Tag, V> {
+impl<Tag, V: View> Drawable<V> for MouseEventHandler<Tag, V> {
     type LayoutState = ();
     type PaintState = ();
 

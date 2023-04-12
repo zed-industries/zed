@@ -7,7 +7,7 @@ use crate::{
 
 pub struct Select {
     handle: WeakViewHandle<Self>,
-    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> ElementBox<Self>>,
+    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> Element<Self>>,
     selected_item_ix: usize,
     item_count: usize,
     is_open: bool,
@@ -41,7 +41,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl Select {
-    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> ElementBox<Self>>(
+    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> Element<Self>>(
         item_count: usize,
         cx: &mut ViewContext<Self>,
         render_item: F,
@@ -92,7 +92,7 @@ impl View for Select {
         "Select"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if self.item_count == 0 {
             return Empty::new().boxed();
         }

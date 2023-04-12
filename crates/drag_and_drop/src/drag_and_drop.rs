@@ -6,7 +6,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
     scene::{MouseDown, MouseDrag},
-    AppContext, Element, ElementBox, View, ViewContext, WeakViewHandle,
+    AppContext, Drawable, Element, View, ViewContext, WeakViewHandle,
 };
 
 const DEAD_ZONE: f32 = 4.;
@@ -26,7 +26,7 @@ enum State<V: View> {
         region_offset: Vector2F,
         region: RectF,
         payload: Rc<dyn Any + 'static>,
-        render: Rc<dyn Fn(Rc<dyn Any>, &mut ViewContext<V>) -> ElementBox<V>>,
+        render: Rc<dyn Fn(Rc<dyn Any>, &mut ViewContext<V>) -> Element<V>>,
     },
     Canceled,
 }
@@ -124,7 +124,7 @@ impl<V: View> DragAndDrop<V> {
         event: MouseDrag,
         payload: Rc<T>,
         cx: &mut ViewContext<V>,
-        render: Rc<impl 'static + Fn(&T, &mut ViewContext<V>) -> ElementBox<V>>,
+        render: Rc<impl 'static + Fn(&T, &mut ViewContext<V>) -> Element<V>>,
     ) {
         let window_id = cx.window_id();
         cx.update_global(|this: &mut Self, cx| {
@@ -178,7 +178,7 @@ impl<V: View> DragAndDrop<V> {
         });
     }
 
-    pub fn render(cx: &mut ViewContext<V>) -> Option<ElementBox<V>> {
+    pub fn render(cx: &mut ViewContext<V>) -> Option<Element<V>> {
         enum DraggedElementHandler {}
         cx.global::<Self>()
             .currently_dragged
@@ -300,7 +300,7 @@ pub trait Draggable<V: View> {
     fn as_draggable<P: Any>(
         self,
         payload: P,
-        render: impl 'static + Fn(&P, &mut ViewContext<V>) -> ElementBox<V>,
+        render: impl 'static + Fn(&P, &mut ViewContext<V>) -> Element<V>,
     ) -> Self
     where
         Self: Sized;
@@ -310,7 +310,7 @@ impl<Tag, V: View> Draggable<V> for MouseEventHandler<Tag, V> {
     fn as_draggable<P: Any>(
         self,
         payload: P,
-        render: impl 'static + Fn(&P, &mut ViewContext<V>) -> ElementBox<V>,
+        render: impl 'static + Fn(&P, &mut ViewContext<V>) -> Element<V>,
     ) -> Self
     where
         Self: Sized,

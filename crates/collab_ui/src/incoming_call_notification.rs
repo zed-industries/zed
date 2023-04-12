@@ -6,7 +6,7 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
-    AppContext, ElementBox, Entity, View, ViewContext,
+    AppContext, Element, Entity, View, ViewContext,
 };
 use settings::Settings;
 use util::ResultExt;
@@ -99,7 +99,7 @@ impl IncomingCallNotification {
         }
     }
 
-    fn render_caller(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render_caller(&self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.incoming_call_notification;
         let default_project = proto::ParticipantProject::default();
         let initial_project = self
@@ -165,7 +165,7 @@ impl IncomingCallNotification {
             .boxed()
     }
 
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum Accept {}
         enum Decline {}
 
@@ -222,7 +222,7 @@ impl View for IncomingCallNotification {
         "IncomingCallNotification"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let background = cx
             .global::<Settings>()
             .theme

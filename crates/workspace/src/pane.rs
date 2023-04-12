@@ -1220,7 +1220,7 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
+    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Drawable<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         let pane = cx.handle().downgrade();
@@ -1384,7 +1384,7 @@ impl Pane {
         hovered: bool,
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let title = item.tab_content(detail, &tab_style, cx);
         let mut container = tab_style.container.clone();
         if first {
@@ -1483,7 +1483,7 @@ impl Pane {
         &mut self,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         Flex::row()
             // New menu
             .with_child(render_tab_bar_button(
@@ -1536,7 +1536,7 @@ impl Pane {
         &mut self,
         theme: &Theme,
         _cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
@@ -1554,7 +1554,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let this = cx.handle().downgrade();
 
         enum MouseNavigationHandler {}
@@ -1719,7 +1719,7 @@ fn render_tab_bar_button<A: Action + Clone>(
     cx: &mut ViewContext<Pane>,
     action: A,
     context_menu: Option<ViewHandle<ContextMenu>>,
-) -> ElementBox<Pane> {
+) -> Element<Pane> {
     enum TabBarButton {}
 
     Stack::new()
@@ -1853,11 +1853,11 @@ impl NavHistory {
 
 pub struct PaneBackdrop<V: View> {
     child_view: usize,
-    child: ElementBox<V>,
+    child: Element<V>,
 }
 
 impl<V: View> PaneBackdrop<V> {
-    pub fn new(pane_item_view: usize, child: ElementBox<V>) -> Self {
+    pub fn new(pane_item_view: usize, child: Element<V>) -> Self {
         PaneBackdrop {
             child,
             child_view: pane_item_view,
@@ -1865,7 +1865,7 @@ impl<V: View> PaneBackdrop<V> {
     }
 }
 
-impl<V: View> Element<V> for PaneBackdrop<V> {
+impl<V: View> Drawable<V> for PaneBackdrop<V> {
     type LayoutState = ();
 
     type PaintState = ();

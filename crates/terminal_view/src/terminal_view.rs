@@ -17,8 +17,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
     platform::KeyDownEvent,
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, RenderedView, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
@@ -384,7 +384,7 @@ impl View for TerminalView {
         "Terminal"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
         let terminal_handle = self.terminal.clone().downgrade();
 
         let self_id = cx.view_id();
@@ -544,7 +544,7 @@ impl Item for TerminalView {
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
-    ) -> ElementBox<Pane> {
+    ) -> Element<Pane> {
         let title = self.terminal().read(cx).title();
 
         Flex::row()
@@ -606,12 +606,18 @@ impl Item for TerminalView {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
-        Some(vec![Text::new(
-            self.terminal().read(cx).breadcrumb_text.clone(),
-            theme.workspace.breadcrumbs.default.text.clone(),
-        )
-        .boxed()])
+    fn breadcrumbs(
+        &self,
+        theme: &theme::Theme,
+        cx: &AppContext,
+    ) -> Option<Vec<Box<dyn RenderedView>>> {
+        Some(vec![Box::new(
+            Text::new(
+                self.terminal().read(cx).breadcrumb_text.clone(),
+                theme.workspace.breadcrumbs.default.text.clone(),
+            )
+            .boxed() as Element<TerminalView>,
+        )])
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

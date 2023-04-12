@@ -12,7 +12,7 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Svg},
     platform::PromptLevel,
-    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View,
+    serde_json, AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, Task, View,
     ViewContext, ViewHandle,
 };
 use isahc::Request;
@@ -232,7 +232,7 @@ impl View for FeedbackEditor {
         "FeedbackEditor"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         ChildView::new(&self.editor, cx).boxed()
     }
 
@@ -253,7 +253,7 @@ impl Item for FeedbackEditor {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> ElementBox<Pane> {
+    ) -> Element<Pane> {
         Flex::row()
             .with_child(
                 Svg::new("icons/feedback_16.svg")

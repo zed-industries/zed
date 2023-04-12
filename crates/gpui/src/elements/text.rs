@@ -7,7 +7,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle, ShapedBoundary},
-    Element, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View, ViewContext,
+    Drawable, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -52,7 +52,7 @@ impl Text {
     }
 }
 
-impl<V: View> Element<V> for Text {
+impl<V: View> Drawable<V> for Text {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -276,7 +276,7 @@ pub fn layout_highlighted_chunks<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::Empty, fonts, AppContext, ElementBox, Entity, View, ViewContext};
+    use crate::{elements::Empty, fonts, AppContext, Element, Entity, View, ViewContext};
 
     #[crate::test(self)]
     fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
@@ -306,7 +306,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
             Empty::new().boxed()
         }
     }

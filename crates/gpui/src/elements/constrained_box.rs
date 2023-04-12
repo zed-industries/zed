@@ -5,11 +5,11 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, Element, ElementBox, SceneBuilder, SizeConstraint, View, ViewContext,
+    json, Drawable, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 pub struct ConstrainedBox<V: View> {
-    child: ElementBox<V>,
+    child: Element<V>,
     constraint: Constraint<V>,
 }
 
@@ -28,7 +28,7 @@ impl<V: View> ToJson for Constraint<V> {
 }
 
 impl<V: View> ConstrainedBox<V> {
-    pub fn new(child: ElementBox<V>) -> Self {
+    pub fn new(child: Element<V>) -> Self {
         Self {
             child,
             constraint: Constraint::Static(Default::default()),
@@ -130,7 +130,7 @@ impl<V: View> ConstrainedBox<V> {
     }
 }
 
-impl<V: View> Element<V> for ConstrainedBox<V> {
+impl<V: View> Drawable<V> for ConstrainedBox<V> {
     type LayoutState = ();
     type PaintState = ();
 

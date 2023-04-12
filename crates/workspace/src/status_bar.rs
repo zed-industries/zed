@@ -8,7 +8,7 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyViewHandle, AppContext, ElementBox, Entity, SceneBuilder, SizeConstraint, Subscription,
+    AnyViewHandle, AppContext, Element, Entity, SceneBuilder, SizeConstraint, Subscription,
     View, ViewContext, ViewHandle,
 };
 use settings::Settings;
@@ -42,7 +42,7 @@ impl View for StatusBar {
         "StatusBar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
 
         StatusBarElement {
@@ -139,11 +139,11 @@ impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
 }
 
 struct StatusBarElement {
-    left: ElementBox<StatusBar>,
-    right: ElementBox<StatusBar>,
+    left: Element<StatusBar>,
+    right: Element<StatusBar>,
 }
 
-impl Element<StatusBar> for StatusBarElement {
+impl Drawable<StatusBar> for StatusBarElement {
     type LayoutState = ();
     type PaintState = ();
 

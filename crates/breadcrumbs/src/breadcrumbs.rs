@@ -41,7 +41,7 @@ impl View for Breadcrumbs {
         "Breadcrumbs"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let active_item = match &self.active_item {
             Some(active_item) => active_item,
             None => return Empty::new().boxed(),

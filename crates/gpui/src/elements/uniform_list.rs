@@ -1,4 +1,4 @@
-use super::{Element, SizeConstraint};
+use super::{Drawable, SizeConstraint};
 use crate::{
     geometry::{
         rect::RectF,
@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    ElementBox, MouseRegion, SceneBuilder, View, ViewContext,
+    Element, MouseRegion, SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -39,14 +39,14 @@ struct StateInner {
 pub struct LayoutState<V: View> {
     scroll_max: f32,
     item_height: f32,
-    items: Vec<ElementBox<V>>,
+    items: Vec<Element<V>>,
 }
 
 pub struct UniformList<V: View> {
     state: UniformListState,
     item_count: usize,
     #[allow(clippy::type_complexity)]
-    append_items: Box<dyn Fn(&mut V, Range<usize>, &mut Vec<ElementBox<V>>, &mut ViewContext<V>)>,
+    append_items: Box<dyn Fn(&mut V, Range<usize>, &mut Vec<Element<V>>, &mut ViewContext<V>)>,
     padding_top: f32,
     padding_bottom: f32,
     get_width_from_item: Option<usize>,
@@ -62,7 +62,7 @@ impl<V: View> UniformList<V> {
     ) -> Self
     where
         V: View,
-        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<ElementBox<V>>, &mut ViewContext<V>),
+        F: 'static + Fn(&mut V, Range<usize>, &mut Vec<Element<V>>, &mut ViewContext<V>),
     {
         Self {
             state,
@@ -151,7 +151,7 @@ impl<V: View> UniformList<V> {
     }
 }
 
-impl<V: View> Element<V> for UniformList<V> {
+impl<V: View> Drawable<V> for UniformList<V> {
     type LayoutState = LayoutState<V>;
     type PaintState = ();
 

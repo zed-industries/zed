@@ -84,7 +84,7 @@ impl View for DiagnosticIndicator {
         "DiagnosticIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum Summary {}
         enum Message {}
 

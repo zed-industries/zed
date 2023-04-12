@@ -5,7 +5,7 @@ use std::sync::Arc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
-    AppContext, Element, ElementBox, Entity, Subscription, View, ViewContext,
+    AppContext, Drawable, Element, Entity, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 
@@ -55,7 +55,7 @@ impl View for WelcomePage {
         "WelcomePage"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
         let self_handle = cx.handle();
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
@@ -203,7 +203,7 @@ impl Item for WelcomePage {
         _detail: Option<usize>,
         style: &theme::Tab,
         _cx: &gpui::AppContext,
-    ) -> ElementBox<Pane> {
+    ) -> Element<Pane> {
         Flex::row()
             .with_child(
                 Label::new("Welcome to Zed!", style.label.clone())

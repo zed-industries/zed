@@ -7,8 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, RenderedView,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -526,7 +526,7 @@ impl Item for Editor {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox<Pane> {
+    ) -> Element<Pane> {
         Flex::row()
             .with_child(
                 Label::new(self.title(cx).to_string(), style.label.clone())
@@ -727,7 +727,11 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
+    fn breadcrumbs(
+        &self,
+        theme: &theme::Theme,
+        cx: &AppContext,
+    ) -> Option<Vec<Box<dyn RenderedView>>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
@@ -748,14 +752,17 @@ impl Item for Editor {
             .unwrap_or_else(|| "untitled".to_string());
 
         let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
-        let mut breadcrumbs = vec![filename_label.boxed()];
+        let mut breadcrumbs =
+            vec![Box::new(filename_label.boxed() as Element<Editor>) as Box<dyn RenderedView>];
         breadcrumbs.extend(symbols.into_iter().map(|symbol| {
-            Text::new(
-                symbol.text,
-                theme.workspace.breadcrumbs.default.text.clone(),
-            )
-            .with_highlights(symbol.highlight_ranges)
-            .boxed()
+            Box::new(
+                Text::new(
+                    symbol.text,
+                    theme.workspace.breadcrumbs.default.text.clone(),
+                )
+                .with_highlights(symbol.highlight_ranges)
+                .boxed() as Element<Editor>,
+            ) as Box<dyn RenderedView>
         }));
         Some(breadcrumbs)
     }
@@ -1078,7 +1085,7 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);

@@ -68,7 +68,7 @@ impl View for CollabTitlebarItem {
         "CollabTitlebarItem"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let workspace = if let Some(workspace) = self.workspace.upgrade(cx) {
             workspace
         } else {
@@ -326,7 +326,7 @@ impl CollabTitlebarItem {
         &self,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let titlebar = &theme.workspace.titlebar;
 
         let badge = if self
@@ -391,7 +391,7 @@ impl CollabTitlebarItem {
         theme: &Theme,
         room: &ModelHandle<Room>,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
@@ -437,7 +437,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> Option<ElementBox<Self>> {
+    ) -> Option<Element<Self>> {
         let project = workspace.read(cx).project();
         if project.read(cx).is_remote() {
             return None;
@@ -491,11 +491,7 @@ impl CollabTitlebarItem {
         )
     }
 
-    fn render_user_menu_button(
-        &self,
-        theme: &Theme,
-        cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    fn render_user_menu_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> Element<Self> {
         let titlebar = &theme.workspace.titlebar;
 
         Stack::new()
@@ -539,7 +535,7 @@ impl CollabTitlebarItem {
             .boxed()
     }
 
-    fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> Element<Self> {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
             let style = titlebar.sign_in_prompt.style_for(state, false);
@@ -559,7 +555,7 @@ impl CollabTitlebarItem {
         &'a self,
         _theme: &'a theme::Titlebar,
         cx: &'a ViewContext<Self>,
-    ) -> Option<ElementBox<Self>> {
+    ) -> Option<Element<Self>> {
         self.contacts_popover.as_ref().map(|popover| {
             Overlay::new(ChildView::new(popover, cx).boxed())
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
@@ -578,7 +574,7 @@ impl CollabTitlebarItem {
         theme: &Theme,
         room: &ModelHandle<Room>,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<ElementBox<Self>> {
+    ) -> Vec<Element<Self>> {
         let mut participants = room
             .read(cx)
             .remote_participants()
@@ -620,7 +616,7 @@ impl CollabTitlebarItem {
         user: &Arc<User>,
         peer_id: PeerId,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         Container::new(self.render_face_pile(
             user,
@@ -644,7 +640,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let project_id = workspace.read(cx).project().read(cx).remote_id();
         let room = ActiveCall::global(cx).read(cx).room();
         let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
@@ -824,11 +820,11 @@ impl CollabTitlebarItem {
         style
     }
 
-    fn render_face(
+    fn render_face<V: View>(
         avatar: Arc<ImageData>,
         avatar_style: AvatarStyle,
         background_color: Color,
-    ) -> ElementBox<Self> {
+    ) -> Element<V> {
         Image::from_data(avatar)
             .with_style(avatar_style.image)
             .aligned()
@@ -846,7 +842,7 @@ impl CollabTitlebarItem {
         &self,
         status: &client::Status,
         cx: &mut ViewContext<Self>,
-    ) -> Option<ElementBox<Self>> {
+    ) -> Option<Element<Self>> {
         enum ConnectionStatusButton {}
 
         let theme = &cx.global::<Settings>().theme.clone();
@@ -903,7 +899,7 @@ impl AvatarRibbon {
     }
 }
 
-impl Element<CollabTitlebarItem> for AvatarRibbon {
+impl Drawable<CollabTitlebarItem> for AvatarRibbon {
     type LayoutState = ();
 
     type PaintState = ();

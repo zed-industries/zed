@@ -188,7 +188,7 @@ impl View for Sidebar {
         "Sidebar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.sidebar;
@@ -225,7 +225,7 @@ impl View for SidebarButtons {
         "SidebarToggleButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.sidebar_buttons;

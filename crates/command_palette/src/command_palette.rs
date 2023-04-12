@@ -1,7 +1,7 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, keymap_matcher::Keystroke, Action, AnyViewHandle, AppContext, Element,
+    actions, elements::*, keymap_matcher::Keystroke, Action, AnyViewHandle, AppContext, Drawable,
     Entity, MouseState, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
@@ -119,7 +119,7 @@ impl View for CommandPalette {
         "CommandPalette"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -215,7 +215,7 @@ impl PickerDelegate for CommandPalette {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> ElementBox<Picker<Self>> {
+    ) -> Element<Picker<Self>> {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
         let settings = cx.global::<Settings>();

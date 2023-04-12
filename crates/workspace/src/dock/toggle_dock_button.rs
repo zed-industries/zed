@@ -2,7 +2,7 @@ use gpui::{
     elements::{Empty, MouseEventHandler, Svg},
     platform::CursorStyle,
     platform::MouseButton,
-    Element, ElementBox, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
+    Drawable, Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 
@@ -34,7 +34,7 @@ impl View for ToggleDockButton {
         "Dock Toggle"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
         let workspace = self.workspace.upgrade(cx);
 
         if workspace.is_none() {

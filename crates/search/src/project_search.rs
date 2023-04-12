@@ -12,8 +12,8 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, ElementBox, Entity, ModelContext, ModelHandle, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    Action, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle, RenderedView,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -177,7 +177,7 @@ impl View for ProjectSearchView {
         "ProjectSearchView"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let model = &self.model.read(cx);
         if model.match_ranges.is_empty() {
             enum Status {}
@@ -249,7 +249,7 @@ impl Item for ProjectSearchView {
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox<Pane> {
+    ) -> Element<Pane> {
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifying_glass_12.svg")
@@ -364,7 +364,11 @@ impl Item for ProjectSearchView {
         }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
+    fn breadcrumbs(
+        &self,
+        theme: &theme::Theme,
+        cx: &AppContext,
+    ) -> Option<Vec<Box<dyn RenderedView>>> {
         self.results_editor.breadcrumbs(theme, cx)
     }
 
@@ -747,7 +751,7 @@ impl ProjectSearchBar {
         icon: &'static str,
         direction: Direction,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -795,7 +799,7 @@ impl ProjectSearchBar {
         icon: &'static str,
         option: SearchOption,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
         MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
@@ -847,7 +851,7 @@ impl View for ProjectSearchBar {
         "ProjectSearchBar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
             let theme = cx.global::<Settings>().theme.clone();

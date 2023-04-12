@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
-    elements::{ChildView, Element as _, Label},
+    elements::{ChildView, Drawable as _, Label},
     AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
@@ -74,7 +74,7 @@ impl View for BaseKeymapSelector {
         "BaseKeymapSelector"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -161,7 +161,7 @@ impl PickerDelegate for BaseKeymapSelector {
         mouse_state: &mut gpui::MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> gpui::ElementBox<Picker<Self>> {
+    ) -> gpui::Element<Picker<Self>> {
         let theme = &cx.global::<Settings>().theme;
         let keymap_match = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);

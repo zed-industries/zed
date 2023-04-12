@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{fonts::HighlightStyle, ElementBox, ViewContext};
+use gpui::{fonts::HighlightStyle, Element, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -50,7 +50,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> ElementBox<Editor>>;
+pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> Element<Editor>>;
 
 pub struct Block {
     id: BlockId,
@@ -69,7 +69,7 @@ where
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Arc<dyn Fn(&mut BlockContext) -> ElementBox<Editor>>,
+    pub render: Arc<dyn Fn(&mut BlockContext) -> Element<Editor>>,
     pub disposition: BlockDisposition,
 }
 
@@ -947,7 +947,7 @@ impl DerefMut for BlockContext<'_, '_, '_, '_> {
 }
 
 impl Block {
-    pub fn render(&self, cx: &mut BlockContext) -> ElementBox<Editor> {
+    pub fn render(&self, cx: &mut BlockContext) -> Element<Editor> {
         self.render.lock()(cx)
     }
 
@@ -994,7 +994,7 @@ mod tests {
     use crate::display_map::suggestion_map::SuggestionMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use crate::multi_buffer::MultiBuffer;
-    use gpui::{elements::Empty, Element};
+    use gpui::{elements::Empty, Drawable};
     use rand::prelude::*;
     use settings::Settings;
     use std::env;

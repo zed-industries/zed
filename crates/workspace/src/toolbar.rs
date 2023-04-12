@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
-    ElementBox, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
+    Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 
@@ -59,7 +59,7 @@ impl View for Toolbar {
         "Toolbar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.toolbar;
 
         let mut primary_left_items = Vec::new();
@@ -169,7 +169,7 @@ fn nav_button<A: Action + Clone>(
     tooltip_action: A,
     action_name: &str,
     cx: &mut ViewContext<Toolbar>,
-) -> ElementBox<Toolbar> {
+) -> Element<Toolbar> {
     MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state, false)

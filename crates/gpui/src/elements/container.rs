@@ -10,7 +10,7 @@ use crate::{
     json::ToJson,
     platform::CursorStyle,
     scene::{self, Border, CursorRegion, Quad},
-    Element, ElementBox, SceneBuilder, SizeConstraint, View, ViewContext,
+    Drawable, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -36,12 +36,12 @@ pub struct ContainerStyle {
 }
 
 pub struct Container<V: View> {
-    child: ElementBox<V>,
+    child: Element<V>,
     style: ContainerStyle,
 }
 
 impl<V: View> Container<V> {
-    pub fn new(child: ElementBox<V>) -> Self {
+    pub fn new(child: Element<V>) -> Self {
         Self {
             child,
             style: Default::default(),
@@ -184,7 +184,7 @@ impl<V: View> Container<V> {
     }
 }
 
-impl<V: View> Element<V> for Container<V> {
+impl<V: View> Drawable<V> for Container<V> {
     type LayoutState = ();
     type PaintState = ();
 

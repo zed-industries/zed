@@ -1,5 +1,5 @@
 use super::{
-    ContainerStyle, Element, ElementBox, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
+    ContainerStyle, Drawable, Element, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
     OverlayFitMode, ParentElement, Text,
 };
 use crate::{
@@ -19,8 +19,8 @@ use std::{
 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub struct Tooltip<V: View> {
-    child: ElementBox<V>,
-    tooltip: Option<ElementBox<V>>,
+    child: Element<V>,
+    tooltip: Option<Element<V>>,
     _state: ElementStateHandle<Rc<TooltipState>>,
 }
 
@@ -54,7 +54,7 @@ impl<V: View> Tooltip<V> {
         text: String,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
-        child: ElementBox<V>,
+        child: Element<V>,
         cx: &mut ViewContext<V>,
     ) -> Self {
         struct ElementState<Tag>(Tag);
@@ -134,7 +134,7 @@ impl<V: View> Tooltip<V> {
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
         measure: bool,
-    ) -> impl Element<V> {
+    ) -> impl Drawable<V> {
         Flex::row()
             .with_child({
                 let text = Text::new(text, style.text)
@@ -165,7 +165,7 @@ impl<V: View> Tooltip<V> {
     }
 }
 
-impl<V: View> Element<V> for Tooltip<V> {
+impl<V: View> Drawable<V> for Tooltip<V> {
     type LayoutState = ();
     type PaintState = ();
 

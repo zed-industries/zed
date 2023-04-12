@@ -91,7 +91,7 @@ impl View for BufferSearchBar {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
@@ -324,7 +324,7 @@ impl BufferSearchBar {
         icon: &'static str,
         option: SearchOption,
         cx: &mut ViewContext<Self>,
-    ) -> Option<ElementBox<Self>> {
+    ) -> Option<Element<Self>> {
         if !option_supported {
             return None;
         }
@@ -364,7 +364,7 @@ impl BufferSearchBar {
         icon: &'static str,
         direction: Direction,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -411,7 +411,7 @@ impl BufferSearchBar {
         &self,
         theme: &theme::Search,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let action = Box::new(Dismiss);
         let tooltip = "Dismiss Buffer Search";
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();

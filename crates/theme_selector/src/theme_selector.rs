@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Element, ElementBox, Entity, MouseState, View,
-    ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Drawable, Element, Entity, MouseState,
+    View, ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, Settings};
@@ -226,7 +226,7 @@ impl PickerDelegate for ThemeSelector {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox<Picker<Self>> {
+    ) -> Element<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let theme_match = &self.matches[ix];
@@ -255,7 +255,7 @@ impl View for ThemeSelector {
         "ThemeSelector"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 

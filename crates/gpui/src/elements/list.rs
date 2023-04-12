@@ -4,7 +4,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    Element, ElementBox, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
+    Drawable, Element, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -23,7 +23,7 @@ pub enum Orientation {
 
 struct StateInner<V: View> {
     last_layout_width: Option<f32>,
-    render_item: Box<dyn FnMut(&mut V, usize, &mut ViewContext<V>) -> ElementBox<V>>,
+    render_item: Box<dyn FnMut(&mut V, usize, &mut ViewContext<V>) -> Element<V>>,
     rendered_range: Range<usize>,
     items: SumTree<ListItem<V>>,
     logical_scroll_top: Option<ListOffset>,
@@ -41,7 +41,7 @@ pub struct ListOffset {
 
 enum ListItem<V: View> {
     Unrendered,
-    Rendered(Rc<RefCell<ElementBox<V>>>),
+    Rendered(Rc<RefCell<Element<V>>>),
     Removed(f32),
 }
 
@@ -91,7 +91,7 @@ impl<V: View> List<V> {
     }
 }
 
-impl<V: View> Element<V> for List<V> {
+impl<V: View> Drawable<V> for List<V> {
     type LayoutState = ListOffset;
     type PaintState = ();
 
@@ -355,7 +355,7 @@ impl<V: View> ListState<V> {
     ) -> Self
     where
         V: View,
-        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> ElementBox<V>,
+        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> Element<V>,
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
@@ -453,7 +453,7 @@ impl<V: View> StateInner<V> {
         constraint: SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> Option<Rc<RefCell<ElementBox<V>>>> {
+    ) -> Option<Rc<RefCell<Element<V>>>> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
         } else {
@@ -475,7 +475,7 @@ impl<V: View> StateInner<V> {
         &'a self,
         bounds: RectF,
         scroll_top: &ListOffset,
-    ) -> impl Iterator<Item = (Rc<RefCell<ElementBox<V>>>, Vector2F)> + 'a {
+    ) -> impl Iterator<Item = (Rc<RefCell<Element<V>>>, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
         let mut cursor = self.items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -922,7 +922,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
             Empty::new().boxed()
         }
     }
@@ -941,7 +941,7 @@ mod tests {
         }
     }
 
-    impl<V: View> Element<V> for TestElement {
+    impl<V: View> Drawable<V> for TestElement {
         type LayoutState = ();
         type PaintState = ();
 

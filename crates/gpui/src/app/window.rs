@@ -1,4 +1,5 @@
 use crate::{
+    elements::AnyRootElement,
     geometry::rect::RectF,
     json::{self, ToJson},
     keymap_matcher::{Keystroke, MatchResult},
@@ -12,9 +13,9 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Element, ElementBox, Entity,
-    ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadView, RenderParams,
-    SceneBuilder, UpdateModel, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Drawable, Entity, ModelContext,
+    ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadView, RenderParams, SceneBuilder,
+    UpdateModel, UpdateView, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakViewHandle,
     WindowInvalidation,
 };
 use anyhow::bail;
@@ -28,6 +29,7 @@ use sqlez::{
     statement::Statement,
 };
 use std::ops::{Deref, DerefMut, Range};
+use util::ResultExt;
 use uuid::Uuid;
 
 use super::Reference;
@@ -39,7 +41,7 @@ pub struct Window {
     pub(crate) is_fullscreen: bool,
     pub(crate) invalidation: Option<WindowInvalidation>,
     pub(crate) platform_window: Box<dyn platform::Window>,
-    pub(crate) rendered_views: HashMap<usize, Box<dyn RenderedView>>,
+    pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
     titlebar_height: f32,
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
@@ -136,6 +138,19 @@ impl UpdateModel for WindowContext<'_, '_> {
 impl ReadView for WindowContext<'_, '_> {
     fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
         self.app_context.read_view(handle)
+    }
+}
+
+impl UpdateView for WindowContext<'_, '_> {
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
+    where
+        T: View,
+    {
+        self.app_context.update_view(handle, update)
     }
 }
 
@@ -727,7 +742,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
 
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
-        rendered_root.layout(SizeConstraint::strict(window_size), self, root_view_id);
+        rendered_root.layout(SizeConstraint::strict(window_size), self);
 
         let mut scene_builder = SceneBuilder::new(scale_factor);
         rendered_root.paint(
@@ -735,7 +750,6 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             Vector2F::zero(),
             RectF::from_points(Vector2F::zero(), window_size),
             self,
-            root_view_id,
         );
 
         self.window.text_layout_cache.finish_frame();
@@ -757,7 +771,9 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window
             .rendered_views
             .get(&root_view_id)?
-            .rect_for_text_range(range_utf16, self, root_view_id)
+            .rect_for_text_range(range_utf16, self)
+            .log_err()
+            .flatten()
     }
 
     pub fn debug_elements(&self) -> Option<json::Value> {
@@ -765,8 +781,8 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         Some(json!({
             "root_view": view.debug_json(self),
             "root_element": self.window.rendered_views.get(&view.id())
-                .map(|root_element| {
-                    root_element.debug(self, view.id())
+                .and_then(|root_element| {
+                    root_element.debug(self).log_err()
                 })
         }))
     }
@@ -904,95 +920,6 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             None
         };
         handle
-    }
-}
-
-pub trait RenderedView {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        cx: &mut WindowContext,
-        view_id: usize,
-    ) -> Vector2F;
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        origin: Vector2F,
-        visible_bounds: RectF,
-        cx: &mut WindowContext,
-        view_id: usize,
-    );
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        cx: &WindowContext,
-        view_id: usize,
-    ) -> Option<RectF>;
-    fn debug(&self, cx: &WindowContext, view_id: usize) -> serde_json::Value;
-    fn name(&self) -> Option<&str>;
-}
-
-impl<V: View> RenderedView for ElementBox<V> {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        cx: &mut WindowContext,
-        view_id: usize,
-    ) -> Vector2F {
-        cx.update_any_view(view_id, |view, cx| {
-            let view = view.as_any_mut().downcast_mut::<V>().unwrap();
-            let mut cx = ViewContext::mutable(cx, view_id);
-            ElementBox::layout(self, constraint, view, &mut cx)
-        })
-        .unwrap()
-    }
-
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        origin: Vector2F,
-        visible_bounds: RectF,
-        cx: &mut WindowContext,
-        view_id: usize,
-    ) {
-        cx.update_any_view(view_id, |view, cx| {
-            let view = view.as_any_mut().downcast_mut::<V>().unwrap();
-            let mut cx = ViewContext::mutable(cx, view_id);
-            ElementBox::paint(self, scene, origin, visible_bounds, view, &mut cx)
-        });
-    }
-
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        cx: &WindowContext,
-        view_id: usize,
-    ) -> Option<RectF> {
-        let view = cx
-            .views
-            .get(&(cx.window_id, view_id))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<V>()
-            .unwrap();
-        let cx = ViewContext::immutable(cx, view_id);
-        ElementBox::rect_for_text_range(self, range_utf16, view, &cx)
-    }
-
-    fn debug(&self, cx: &WindowContext, view_id: usize) -> serde_json::Value {
-        let view = cx
-            .views
-            .get(&(cx.window_id, view_id))
-            .unwrap()
-            .as_any()
-            .downcast_ref::<V>()
-            .unwrap();
-        let cx = ViewContext::immutable(cx, view_id);
-        ElementBox::debug(self, view, &cx)
-    }
-
-    fn name(&self) -> Option<&str> {
-        ElementBox::name(self)
     }
 }
 
@@ -1153,7 +1080,7 @@ impl ChildView {
     }
 }
 
-impl<V: View> Element<V> for ChildView {
+impl<V: View> Drawable<V> for ChildView {
     type LayoutState = ();
     type PaintState = ();
 
@@ -1164,7 +1091,10 @@ impl<V: View> Element<V> for ChildView {
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
-            let size = rendered_view.layout(constraint, cx, self.view_id);
+            let size = rendered_view
+                .layout(constraint, cx)
+                .log_err()
+                .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);
             (size, ())
         } else {
@@ -1187,7 +1117,9 @@ impl<V: View> Element<V> for ChildView {
         cx: &mut ViewContext<V>,
     ) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
-            rendered_view.paint(scene, bounds.origin(), visible_bounds, cx, self.view_id);
+            rendered_view
+                .paint(scene, bounds.origin(), visible_bounds, cx)
+                .log_err();
             cx.window.rendered_views.insert(self.view_id, rendered_view);
         } else {
             log::error!(
@@ -1209,7 +1141,10 @@ impl<V: View> Element<V> for ChildView {
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
         if let Some(rendered_view) = cx.window.rendered_views.get(&self.view_id) {
-            rendered_view.rect_for_text_range(range_utf16, &cx.window_context, self.view_id)
+            rendered_view
+                .rect_for_text_range(range_utf16, &cx.window_context)
+                .log_err()
+                .flatten()
         } else {
             log::error!(
                 "rect_for_text_range called on a ChildView element whose underlying view was dropped (view_id: {}, name: {:?})",
@@ -1238,7 +1173,7 @@ impl<V: View> Element<V> for ChildView {
                 json!(null)
             },
             "child": if let Some(element) = cx.window.rendered_views.get(&self.view_id) {
-                element.debug(&cx.window_context, self.view_id)
+                element.debug(&cx.window_context).log_err().unwrap_or_else(|| json!(null))
             } else {
                 json!(null)
             }

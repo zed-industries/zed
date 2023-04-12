@@ -6,7 +6,7 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Element, ElementBox, Entity, MouseState, Subscription, View, ViewContext,
+    AppContext, Drawable, Element, Entity, MouseState, Subscription, View, ViewContext,
     ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
@@ -91,7 +91,7 @@ impl View for CopilotButton {
         "CopilotButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let settings = cx.global::<Settings>();
 
         if !settings.enable_copilot_integration {

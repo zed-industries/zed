@@ -91,7 +91,7 @@ impl View for ContactsPopover {
         "ContactsPopover"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let child = match &self.child {
             Child::ContactList(child) => ChildView::new(child, cx),

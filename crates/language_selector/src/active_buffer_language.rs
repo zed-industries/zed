@@ -50,7 +50,7 @@ impl View for ActiveBufferLanguage {
         "ActiveBufferLanguage"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(active_language) = self.active_language.as_ref() {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()

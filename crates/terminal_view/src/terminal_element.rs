@@ -10,7 +10,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, ElementBox, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
+    Drawable, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
     SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use itertools::Itertools;
@@ -45,7 +45,7 @@ pub struct LayoutState {
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
-    hyperlink_tooltip: Option<ElementBox<TerminalView>>,
+    hyperlink_tooltip: Option<Element<TerminalView>>,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -555,7 +555,7 @@ impl TerminalElement {
     }
 }
 
-impl Element<TerminalView> for TerminalElement {
+impl Drawable<TerminalView> for TerminalElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 

@@ -748,7 +748,7 @@ impl ContactList {
         is_pending: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
@@ -800,7 +800,7 @@ impl ContactList {
         is_selected: bool,
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -899,7 +899,7 @@ impl ContactList {
         is_selected: bool,
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -1000,7 +1000,7 @@ impl ContactList {
         is_selected: bool,
         is_collapsed: bool,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         enum Header {}
         enum LeaveCallContactList {}
 
@@ -1078,7 +1078,7 @@ impl ContactList {
         theme: &theme::ContactList,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
@@ -1195,7 +1195,7 @@ impl ContactList {
         is_incoming: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         enum Decline {}
         enum Accept {}
         enum Cancel {}
@@ -1331,7 +1331,7 @@ impl View for ContactList {
         cx
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum AddContact {}
         let theme = cx.global::<Settings>().theme.clone();
 
@@ -1387,7 +1387,7 @@ impl View for ContactList {
     }
 }
 
-fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<ContactList> {
+fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Drawable<ContactList> {
     Svg::new(svg_path)
         .with_color(style.color)
         .constrained()

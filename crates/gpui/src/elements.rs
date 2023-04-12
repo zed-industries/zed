@@ -33,13 +33,15 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, SceneBuilder, SizeConstraint, View, ViewContext,
+    json, Action, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle, WindowContext,
 };
+use anyhow::{anyhow, Result};
 use core::panic;
 use json::ToJson;
 use std::{any::Any, borrow::Cow, marker::PhantomData, mem, ops::Range};
+use util::ResultExt;
 
-trait AnyElement<V: View> {
+trait AnyDrawable<V: View> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
@@ -70,7 +72,7 @@ trait AnyElement<V: View> {
     fn metadata(&self) -> Option<&dyn Any>;
 }
 
-pub trait Element<V: View> {
+pub trait Drawable<V: View> {
     type LayoutState;
     type PaintState;
 
@@ -115,22 +117,22 @@ pub trait Element<V: View> {
         cx: &ViewContext<V>,
     ) -> serde_json::Value;
 
-    fn boxed(self) -> ElementBox<V>
+    fn boxed(self) -> Element<V>
     where
         Self: 'static + Sized,
     {
-        ElementBox {
+        Element {
             element: Box::new(Lifecycle::Init { element: self }),
             view_type: PhantomData,
             name: None,
         }
     }
 
-    fn named(self, name: impl Into<Cow<'static, str>>) -> ElementBox<V>
+    fn named(self, name: impl Into<Cow<'static, str>>) -> Element<V>
     where
         Self: 'static + Sized,
     {
-        ElementBox {
+        Element {
             element: Box::new(Lifecycle::Init { element: self }),
             view_type: PhantomData,
             name: Some(name.into()),
@@ -222,7 +224,7 @@ pub trait Element<V: View> {
     }
 }
 
-pub enum Lifecycle<V: View, E: Element<V>> {
+pub enum Lifecycle<V: View, E: Drawable<V>> {
     Empty,
     Init {
         element: E,
@@ -243,7 +245,7 @@ pub enum Lifecycle<V: View, E: Element<V>> {
     },
 }
 
-impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
+impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
@@ -401,19 +403,19 @@ impl<V: View, E: Element<V>> AnyElement<V> for Lifecycle<V, E> {
     }
 }
 
-impl<V: View, E: Element<V>> Default for Lifecycle<V, E> {
+impl<V: View, E: Drawable<V>> Default for Lifecycle<V, E> {
     fn default() -> Self {
         Self::Empty
     }
 }
 
-pub struct ElementBox<V: View> {
-    element: Box<dyn AnyElement<V>>,
+pub struct Element<V: View> {
+    element: Box<dyn AnyDrawable<V>>,
     view_type: PhantomData<V>,
     name: Option<Cow<'static, str>>,
 }
 
-impl<V: View> ElementBox<V> {
+impl<V: View> Element<V> {
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
@@ -481,26 +483,165 @@ impl<V: View> ElementBox<V> {
     }
 }
 
-pub trait ParentElement<'a, V: View>: Extend<ElementBox<V>> + Sized {
-    fn add_children(&mut self, children: impl IntoIterator<Item = ElementBox<V>>) {
+pub struct RootElement<V: View> {
+    element: Element<V>,
+    view: WeakViewHandle<V>,
+}
+
+impl<V: View> RootElement<V> {
+    pub fn new(element: Element<V>, view: WeakViewHandle<V>) -> Self {
+        Self { element, view }
+    }
+}
+
+pub trait AnyRootElement {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F>;
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        cx: &mut WindowContext,
+    ) -> Result<()>;
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &WindowContext,
+    ) -> Result<Option<RectF>>;
+    fn debug(&self, cx: &WindowContext) -> Result<serde_json::Value>;
+    fn name(&self) -> Option<&str>;
+}
+
+impl<V: View> AnyRootElement for RootElement<V> {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F> {
+        let view = self
+            .view
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
+        view.update(cx, |view, cx| Ok(self.element.layout(constraint, view, cx)))
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        cx: &mut WindowContext,
+    ) -> Result<()> {
+        let view = self
+            .view
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("paint called on a root element for a dropped view"))?;
+
+        view.update(cx, |view, cx| {
+            self.element.paint(scene, origin, visible_bounds, view, cx);
+            Ok(())
+        })
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &WindowContext,
+    ) -> Result<Option<RectF>> {
+        let view = self.view.upgrade(cx).ok_or_else(|| {
+            anyhow!("rect_for_text_range called on a root element for a dropped view")
+        })?;
+        let view = view.read(cx);
+        let view_context = ViewContext::immutable(cx, self.view.id());
+        Ok(self
+            .element
+            .rect_for_text_range(range_utf16, view, &view_context))
+    }
+
+    fn debug(&self, cx: &WindowContext) -> Result<serde_json::Value> {
+        let view = self
+            .view
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("debug called on a root element for a dropped view"))?;
+        let view = view.read(cx);
+        let view_context = ViewContext::immutable(cx, self.view.id());
+        Ok(self.element.debug(view, &view_context))
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.element.name()
+    }
+}
+
+impl<V: View, R: View> Drawable<V> for RootElement<R> {
+    type LayoutState = ();
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, Self::LayoutState) {
+        let size = AnyRootElement::layout(self, constraint, cx)
+            .log_err()
+            .unwrap_or_else(|| Vector2F::zero());
+        (size, ())
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &mut Self::LayoutState,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Self::PaintState {
+        todo!()
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        bounds: RectF,
+        visible_bounds: RectF,
+        layout: &Self::LayoutState,
+        paint: &Self::PaintState,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        todo!()
+    }
+
+    fn debug(
+        &self,
+        bounds: RectF,
+        layout: &Self::LayoutState,
+        paint: &Self::PaintState,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        todo!()
+    }
+}
+
+pub trait ParentElement<'a, V: View>: Extend<Element<V>> + Sized {
+    fn add_children(&mut self, children: impl IntoIterator<Item = Element<V>>) {
         self.extend(children);
     }
 
-    fn add_child(&mut self, child: ElementBox<V>) {
+    fn add_child(&mut self, child: Element<V>) {
         self.add_children(Some(child));
     }
 
-    fn with_children(mut self, children: impl IntoIterator<Item = ElementBox<V>>) -> Self {
+    fn with_children(mut self, children: impl IntoIterator<Item = Element<V>>) -> Self {
         self.add_children(children);
         self
     }
 
-    fn with_child(self, child: ElementBox<V>) -> Self {
+    fn with_child(self, child: Element<V>) -> Self {
         self.with_children(Some(child))
     }
 }
 
-impl<'a, V: View, T> ParentElement<'a, V> for T where T: Extend<ElementBox<V>> {}
+impl<'a, V: View, T> ParentElement<'a, V> for T where T: Extend<Element<V>> {}
 
 pub fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
     if max_size.x().is_infinite() && max_size.y().is_infinite() {

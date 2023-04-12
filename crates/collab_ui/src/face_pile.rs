@@ -7,14 +7,14 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    Axis, Element, ElementBox, SceneBuilder, ViewContext,
+    Axis, Drawable, Element, SceneBuilder, ViewContext,
 };
 
 use crate::CollabTitlebarItem;
 
 pub(crate) struct FacePile {
     overlap: f32,
-    faces: Vec<ElementBox<CollabTitlebarItem>>,
+    faces: Vec<Element<CollabTitlebarItem>>,
 }
 
 impl FacePile {
@@ -26,7 +26,7 @@ impl FacePile {
     }
 }
 
-impl Element<CollabTitlebarItem> for FacePile {
+impl Drawable<CollabTitlebarItem> for FacePile {
     type LayoutState = ();
     type PaintState = ();
 
@@ -101,8 +101,8 @@ impl Element<CollabTitlebarItem> for FacePile {
     }
 }
 
-impl Extend<ElementBox<CollabTitlebarItem>> for FacePile {
-    fn extend<T: IntoIterator<Item = ElementBox<CollabTitlebarItem>>>(&mut self, children: T) {
+impl Extend<Element<CollabTitlebarItem>> for FacePile {
+    fn extend<T: IntoIterator<Item = Element<CollabTitlebarItem>>>(&mut self, children: T) {
         self.faces.extend(children);
     }
 }

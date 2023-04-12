@@ -314,7 +314,7 @@ impl View for ActivityIndicator {
         "ActivityIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let Content {
             icon,
             message,

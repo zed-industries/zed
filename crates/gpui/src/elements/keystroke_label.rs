@@ -2,7 +2,7 @@ use crate::{
     elements::*,
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
-    Action, ElementBox, SizeConstraint,
+    Action, Element, SizeConstraint,
 };
 use serde_json::json;
 
@@ -34,8 +34,8 @@ impl KeystrokeLabel {
     }
 }
 
-impl<V: View> Element<V> for KeystrokeLabel {
-    type LayoutState = ElementBox<V>;
+impl<V: View> Drawable<V> for KeystrokeLabel {
+    type LayoutState = Element<V>;
     type PaintState = ();
 
     fn layout(
@@ -43,7 +43,7 @@ impl<V: View> Element<V> for KeystrokeLabel {
         constraint: SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> (Vector2F, ElementBox<V>) {
+    ) -> (Vector2F, Element<V>) {
         let mut element = if let Some(keystrokes) =
             cx.keystrokes_for_action(self.window_id, self.view_id, self.action.as_ref())
         {
@@ -68,7 +68,7 @@ impl<V: View> Element<V> for KeystrokeLabel {
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        element: &mut ElementBox<V>,
+        element: &mut Element<V>,
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
@@ -91,7 +91,7 @@ impl<V: View> Element<V> for KeystrokeLabel {
     fn debug(
         &self,
         _: RectF,
-        element: &ElementBox<V>,
+        element: &Element<V>,
         _: &(),
         view: &V,
         cx: &ViewContext<V>,

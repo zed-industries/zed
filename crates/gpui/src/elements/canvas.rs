@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use super::Element;
+use super::Drawable;
 use crate::{
     json::{self, json},
     SceneBuilder, View, ViewContext,
@@ -23,7 +23,7 @@ where
     }
 }
 
-impl<V: View, F> Element<V> for Canvas<V, F>
+impl<V: View, F> Drawable<V> for Canvas<V, F>
 where
     F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {

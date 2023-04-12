@@ -1,7 +1,7 @@
 use gpui::{
     elements::{Label, MouseEventHandler},
     platform::{CursorStyle, MouseButton},
-    Element, ElementBox, Entity, View, ViewContext, ViewHandle,
+    Drawable, Element, Entity, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
@@ -29,7 +29,7 @@ impl View for SubmitFeedbackButton {
         "SubmitFeedbackButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         enum SubmitFeedbackButton {}
         MouseEventHandler::<SubmitFeedbackButton, Self>::new(0, cx, |state, _| {

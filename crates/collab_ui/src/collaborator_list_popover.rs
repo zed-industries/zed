@@ -30,7 +30,7 @@ impl View for CollaboratorListPopover {
         "CollaboratorListPopover"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         MouseEventHandler::<Self, Self>::new(0, cx, |_, _| {
@@ -117,7 +117,7 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
     icon_action: IA,
     icon_tooltip: String,
     cx: &mut ViewContext<CollaboratorListPopover>,
-) -> ElementBox<CollaboratorListPopover> {
+) -> Element<CollaboratorListPopover> {
     enum Username {}
     enum UsernameTooltip {}
     enum Icon {}

@@ -15,8 +15,8 @@ use std::{
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
-    AnyViewHandle, AppContext, ElementBox, ModelHandle, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AnyViewHandle, AppContext, Element, ModelHandle, RenderedView, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::{Autosave, Settings};
@@ -52,7 +52,7 @@ pub trait Item: View {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox<Pane>;
+    ) -> Element<Pane>;
     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -134,7 +134,7 @@ pub trait Item: View {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<Box<dyn RenderedView>>> {
         None
     }
 
@@ -172,7 +172,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox<Pane>;
+    ) -> Element<Pane>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
@@ -221,7 +221,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>>;
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn RenderedView>>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
     fn show_toolbar(&self, cx: &AppContext) -> bool;
 }
@@ -265,7 +265,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox<Pane> {
+    ) -> Element<Pane> {
         self.read(cx).tab_content(detail, style, cx)
     }
 
@@ -591,7 +591,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).breadcrumb_location()
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<ElementBox<Pane>>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<Box<dyn RenderedView>>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
@@ -748,7 +748,7 @@ pub(crate) mod test {
     use super::{Item, ItemEvent};
     use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        elements::Empty, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View,
+        elements::Empty, AppContext, Drawable, Element, Entity, ModelHandle, Task, View,
         ViewContext, ViewHandle, WeakViewHandle,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
@@ -907,7 +907,7 @@ pub(crate) mod test {
             "TestItem"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
             Empty::new().boxed()
         }
     }
@@ -925,7 +925,7 @@ pub(crate) mod test {
             detail: Option<usize>,
             _: &theme::Tab,
             _: &AppContext,
-        ) -> ElementBox<Pane> {
+        ) -> Element<Pane> {
             self.tab_detail.set(detail);
             Empty::new().boxed()
         }

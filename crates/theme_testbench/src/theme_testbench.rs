@@ -2,11 +2,11 @@ use gpui::{
     actions,
     color::Color,
     elements::{
-        Canvas, Container, ContainerStyle, ElementBox, Flex, Label, Margin, MouseEventHandler,
+        Canvas, Container, ContainerStyle, Element, Flex, Label, Margin, MouseEventHandler,
         Padding, ParentElement,
     },
     fonts::TextStyle,
-    AppContext, Border, Element, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
+    AppContext, Border, Drawable, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 use project::Project;
@@ -35,7 +35,7 @@ impl ThemeTestbench {
     }
 
     fn render_ramps(color_scheme: &ColorScheme) -> Flex<Self> {
-        fn display_ramp(ramp: &Vec<Color>) -> ElementBox<ThemeTestbench> {
+        fn display_ramp(ramp: &Vec<Color>) -> Element<ThemeTestbench> {
             Flex::row()
                 .with_children(ramp.iter().cloned().map(|color| {
                     Canvas::new(move |scene, bounds, _, _, _| {
@@ -183,7 +183,7 @@ impl ThemeTestbench {
         style_set: &StyleSet,
         style_override: Option<fn(&StyleSet) -> &Style>,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         enum TestBenchButton {}
         MouseEventHandler::<TestBenchButton, _>::new(layer_index + button_index, cx, |state, cx| {
             let style = if let Some(style_override) = style_override {
@@ -262,7 +262,7 @@ impl View for ThemeTestbench {
         "ThemeTestbench"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
         let color_scheme = &cx.global::<Settings>().theme.clone().color_scheme;
 
         Flex::row()
@@ -298,12 +298,7 @@ impl View for ThemeTestbench {
 }
 
 impl Item for ThemeTestbench {
-    fn tab_content(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        _: &AppContext,
-    ) -> ElementBox<Pane> {
+    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> Element<Pane> {
         Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()

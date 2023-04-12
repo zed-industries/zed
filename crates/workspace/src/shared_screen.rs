@@ -64,7 +64,7 @@ impl View for SharedScreen {
         "SharedScreen"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum Focus {}
 
         let frame = self.frame.clone();
@@ -103,7 +103,7 @@ impl Item for SharedScreen {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::ElementBox<Pane> {
+    ) -> gpui::Element<Pane> {
         Flex::row()
             .with_child(
                 Svg::new("icons/disable_screen_sharing_12.svg")

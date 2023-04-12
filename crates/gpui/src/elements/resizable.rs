@@ -7,7 +7,7 @@ use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
-    Axis, Element, ElementBox, ElementStateHandle, MouseRegion, SceneBuilder, View, ViewContext,
+    Axis, Drawable, Element, ElementStateHandle, MouseRegion, SceneBuilder, View, ViewContext,
 };
 
 use super::{ConstrainedBox, Hook};
@@ -78,14 +78,14 @@ struct ResizeHandleState {
 pub struct Resizable<V: View> {
     side: Side,
     handle_size: f32,
-    child: ElementBox<V>,
+    child: Element<V>,
     state: Rc<ResizeHandleState>,
     _state_handle: ElementStateHandle<Rc<ResizeHandleState>>,
 }
 
 impl<V: View> Resizable<V> {
     pub fn new<Tag: 'static, T: View>(
-        child: ElementBox<V>,
+        child: Element<V>,
         element_id: usize,
         side: Side,
         handle_size: f32,
@@ -132,7 +132,7 @@ impl<V: View> Resizable<V> {
     }
 }
 
-impl<V: View> Element<V> for Resizable<V> {
+impl<V: View> Drawable<V> for Resizable<V> {
     type LayoutState = ();
     type PaintState = ();
 

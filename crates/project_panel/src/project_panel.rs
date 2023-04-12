@@ -13,7 +13,7 @@ use gpui::{
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
+    AppContext, ClipboardItem, Drawable, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -1098,7 +1098,7 @@ impl ProjectPanel {
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
         cx: &mut ViewContext<V>,
-    ) -> ElementBox<V> {
+    ) -> Element<V> {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
@@ -1155,7 +1155,7 @@ impl ProjectPanel {
         dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
-    ) -> ElementBox<Self> {
+    ) -> Element<Self> {
         let this = cx.handle().downgrade();
         let kind = details.kind;
         let path = details.path.clone();
@@ -1273,7 +1273,7 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::ElementBox<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
         enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;

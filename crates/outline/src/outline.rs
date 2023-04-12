@@ -48,7 +48,7 @@ impl View for OutlineView {
         "OutlineView"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         ChildView::new(&self.picker, cx).boxed()
     }
 
@@ -238,7 +238,7 @@ impl PickerDelegate for OutlineView {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox<Picker<Self>> {
+    ) -> Element<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = settings.theme.picker.item.style_for(mouse_state, selected);

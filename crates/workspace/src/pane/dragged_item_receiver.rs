@@ -5,7 +5,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
-    AppContext, Element, ElementBox, EventContext, MouseState, Quad, View, ViewContext,
+    AppContext, Drawable, Element, EventContext, MouseState, Quad, View, ViewContext,
     WeakViewHandle,
 };
 use project::ProjectEntryId;
@@ -28,7 +28,7 @@ pub fn dragged_item_receiver<Tag, F>(
 ) -> MouseEventHandler<Tag, Pane>
 where
     Tag: 'static,
-    F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> ElementBox<Pane>,
+    F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> Element<Pane>,
 {
     MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless

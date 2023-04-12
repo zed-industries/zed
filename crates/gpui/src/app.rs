@@ -41,7 +41,7 @@ pub use test_app_context::{ContextHandle, TestAppContext};
 use window_input_handler::WindowInputHandler;
 
 use crate::{
-    elements::ElementBox,
+    elements::{AnyRootElement, Element, RootElement},
     executor::{self, Task},
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
@@ -53,7 +53,7 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId,
 };
 
-use self::{ref_counts::RefCounts, window::RenderedView};
+use self::ref_counts::RefCounts;
 
 pub trait Entity: 'static {
     type Event;
@@ -69,7 +69,7 @@ pub trait Entity: 'static {
 
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
-    fn render(&mut self, cx: &mut ViewContext<'_, '_, '_, Self>) -> ElementBox<Self>;
+    fn render(&mut self, cx: &mut ViewContext<'_, '_, '_, Self>) -> Element<Self>;
     fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn key_down(&mut self, _: &KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
@@ -871,7 +871,7 @@ impl AppContext {
         self.active_labeled_tasks.values().cloned()
     }
 
-    pub fn render_view(&mut self, params: RenderParams) -> Result<Box<dyn RenderedView>> {
+    pub fn render_view(&mut self, params: RenderParams) -> Result<Box<dyn AnyRootElement>> {
         todo!()
         // let window_id = params.window_id;
         // let view_id = params.view_id;
@@ -889,7 +889,7 @@ impl AppContext {
         window_id: usize,
         titlebar_height: f32,
         appearance: Appearance,
-    ) -> HashMap<usize, Box<dyn RenderedView>> {
+    ) -> HashMap<usize, Box<dyn AnyRootElement>> {
         todo!()
         // self.start_frame();
         // #[allow(clippy::needless_collect)]
@@ -2838,7 +2838,7 @@ pub trait AnyView {
         cx: &mut AppContext,
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
-    fn render(&mut self, params: RenderParams, cx: &mut WindowContext) -> Box<dyn RenderedView>;
+    fn render(&mut self, cx: &mut WindowContext, view_id: usize) -> Box<dyn AnyRootElement>;
     fn focus_in<'a, 'b>(
         &mut self,
         focused_id: usize,
@@ -2886,9 +2886,9 @@ pub trait AnyView {
     }
 }
 
-impl<T> AnyView for T
+impl<V> AnyView for V
 where
-    T: View,
+    V: View,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -2910,12 +2910,14 @@ where
     }
 
     fn ui_name(&self) -> &'static str {
-        T::ui_name()
+        V::ui_name()
     }
 
-    fn render(&mut self, params: RenderParams, cx: &mut WindowContext) -> Box<dyn RenderedView> {
-        todo!()
-        // Box::new(View::render(self, &mut ViewContext::new(params.view_id, cx)))
+    fn render(&mut self, cx: &mut WindowContext, view_id: usize) -> Box<dyn AnyRootElement> {
+        let mut view_context = ViewContext::mutable(cx, view_id);
+        let element = V::render(self, &mut view_context);
+        let view = WeakViewHandle::new(cx.window_id, view_id);
+        Box::new(RootElement::new(element, view))
     }
 
     fn focus_in(&mut self, focused_id: usize, cx: &mut WindowContext, view_id: usize) {
@@ -5017,7 +5019,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 post_inc(&mut self.render_count);
                 Empty::new().boxed()
             }
@@ -5070,7 +5072,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
 
@@ -5134,7 +5136,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
                 enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
                 MouseEventHandler::<Handler, _>::new(0, cx, |_, _| Empty::new().boxed())
@@ -5200,7 +5202,7 @@ mod tests {
                 "View"
             }
 
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
         }
@@ -5718,7 +5720,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
 
@@ -5783,7 +5785,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
 
@@ -5959,7 +5961,7 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
 
@@ -5977,7 +5979,7 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
 
@@ -6129,7 +6131,7 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
 
@@ -6256,7 +6258,7 @@ mod tests {
         }
 
         impl super::View for View1 {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
             fn ui_name() -> &'static str {
@@ -6264,7 +6266,7 @@ mod tests {
             }
         }
         impl super::View for View2 {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
             fn ui_name() -> &'static str {
@@ -6439,7 +6441,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
         }
@@ -6501,7 +6503,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().named(format!("render count: {}", post_inc(&mut self.0)))
             }
         }
@@ -6590,7 +6592,7 @@ mod tests {
                 "test view"
             }
 
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 Empty::new().boxed()
             }
         }
@@ -6670,7 +6672,7 @@ mod tests {
                 "child view"
             }
 
-            fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 self.rendered.set(true);
                 Empty::new().boxed()
             }
@@ -6695,7 +6697,7 @@ mod tests {
                 "parent view"
             }
 
-            fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
                 if let Some(child) = self.child.as_ref() {
                     ChildView::new(child, cx).boxed()
                 } else {
@@ -6737,7 +6739,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> ElementBox<Self> {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
             Empty::new().boxed()
         }
     }

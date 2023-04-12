@@ -4,7 +4,7 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    AnyViewHandle, AppContext, Axis, ElementBox, Entity, MouseState, Task, View, ViewContext,
+    AnyViewHandle, AppContext, Axis, Element, Entity, MouseState, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
@@ -33,7 +33,7 @@ pub trait PickerDelegate: View {
         state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox<Picker<Self>>;
+    ) -> Element<Picker<Self>>;
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
@@ -48,7 +48,7 @@ impl<D: PickerDelegate> View for Picker<D> {
         "Picker"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = (self.theme.lock())(&cx.global::<settings::Settings>().theme);
         let query = self.query(cx);
         let delegate = self.delegate.clone();

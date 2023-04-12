@@ -104,7 +104,7 @@ impl ProjectSharedNotification {
         cx.remove_window(window_id);
     }
 
-    fn render_owner(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render_owner(&self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
@@ -164,7 +164,7 @@ impl ProjectSharedNotification {
             .boxed()
     }
 
-    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum Open {}
         enum Dismiss {}
 
@@ -227,7 +227,7 @@ impl View for ProjectSharedNotification {
         "ProjectSharedNotification"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::Element<Self> {
         let background = cx
             .global::<Settings>()
             .theme

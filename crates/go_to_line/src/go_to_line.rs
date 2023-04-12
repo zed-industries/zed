@@ -156,7 +156,7 @@ impl View for GoToLine {
         "GoToLine"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> ElementBox<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
