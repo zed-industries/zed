@@ -6620,13 +6620,15 @@ impl Editor {
                 .as_singleton()
                 .and_then(|b| b.read(cx).file()),
         ) {
+            let settings = cx.global::<Settings>();
+
             let extension = Path::new(file.file_name(cx))
                 .extension()
                 .and_then(|e| e.to_str());
             project.read(cx).client().report_event(
                 name,
-                json!({ "File Extension": extension }),
-                cx.global::<Settings>().telemetry(),
+                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode  }),
+                settings.telemetry(),
             );
         }
     }
