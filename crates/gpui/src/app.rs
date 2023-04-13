@@ -2108,55 +2108,59 @@ impl AppContext {
         });
     }
 
-    fn handle_focus_effect(&mut self, window_id: usize, focused_id: Option<usize>) {
-        todo!()
-        // if self
-        //     .windows
-        //     .get(&window_id)
-        //     .map(|w| w.focused_view_id)
-        //     .map_or(false, |cur_focused| cur_focused == focused_id)
-        // {
-        //     return;
-        // }
+    fn handle_focus_effect(&mut self, window_id: usize, mut focused_id: Option<usize>) {
+        let mut blurred_id = None;
+        println!("FOCUS: {:?}", focused_id);
+        self.update_window(window_id, |cx| {
+            println!(
+                "INSIDE FOCUS: {:?}. PREVIOUS FOCUS: {:?}",
+                focused_id,
+                cx.focused_view_id()
+            );
+            if cx.window.focused_view_id == focused_id {
+                focused_id = None;
+                return;
+            }
+            blurred_id = cx.window.focused_view_id;
+            cx.window.focused_view_id = focused_id;
 
-        // self.update(|this| {
-        //     let blurred_id = this.windows.get_mut(&window_id).and_then(|window| {
-        //         let blurred_id = window.focused_view_id;
-        //         window.focused_view_id = focused_id;
-        //         blurred_id
-        //     });
+            let blurred_parents = blurred_id
+                .map(|blurred_id| cx.ancestors(window_id, blurred_id).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let focused_parents = focused_id
+                .map(|focused_id| cx.ancestors(window_id, focused_id).collect::<Vec<_>>())
+                .unwrap_or_default();
 
-        //     let blurred_parents = blurred_id
-        //         .map(|blurred_id| this.ancestors(window_id, blurred_id).collect::<Vec<_>>())
-        //         .unwrap_or_default();
-        //     let focused_parents = focused_id
-        //         .map(|focused_id| this.ancestors(window_id, focused_id).collect::<Vec<_>>())
-        //         .unwrap_or_default();
+            if let Some(blurred_id) = blurred_id {
+                for view_id in blurred_parents.iter().copied() {
+                    if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                        view.focus_out(blurred_id, cx, view_id);
+                        cx.views.insert((window_id, view_id), view);
+                    }
+                }
+            }
 
-        //     if let Some(blurred_id) = blurred_id {
-        //         for view_id in blurred_parents.iter().copied() {
-        //             if let Some(mut view) = this.views.remove(&(window_id, view_id)) {
-        //                 view.focus_out(this, window_id, view_id, blurred_id);
-        //                 this.views.insert((window_id, view_id), view);
-        //             }
-        //         }
+            if let Some(focused_id) = focused_id {
+                for view_id in focused_parents {
+                    if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                        view.focus_in(focused_id, cx, view_id);
+                        cx.views.insert((window_id, view_id), view);
+                    }
+                }
+            }
+        });
 
-        //         let mut subscriptions = this.focus_observations.clone();
-        //         subscriptions.emit(blurred_id, this, |callback, this| callback(false, this));
-        //     }
+        self.update(|cx| {
+            if let Some(blurred_id) = blurred_id {
+                let mut subscriptions = cx.focus_observations.clone();
+                subscriptions.emit(blurred_id, cx, |callback, this| callback(false, this));
+            }
 
-        //     if let Some(focused_id) = focused_id {
-        //         for view_id in focused_parents {
-        //             if let Some(mut view) = this.views.remove(&(window_id, view_id)) {
-        //                 view.focus_in(this, window_id, view_id, focused_id);
-        //                 this.views.insert((window_id, view_id), view);
-        //             }
-        //         }
-
-        //         let mut subscriptions = this.focus_observations.clone();
-        //         subscriptions.emit(focused_id, this, |callback, this| callback(true, this));
-        //     }
-        // })
+            if let Some(focused_id) = focused_id {
+                let mut subscriptions = cx.focus_observations.clone();
+                subscriptions.emit(focused_id, cx, |callback, this| callback(true, this));
+            }
+        });
     }
 
     fn handle_dispatch_action_from_effect(
