@@ -2189,6 +2189,7 @@ impl BackgroundScanner {
         .unwrap();
         drop(scan_job_tx);
         self.scan_dirs(true, scan_job_rx).await;
+        self.send_status_update(false, None);
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -2199,6 +2200,7 @@ impl BackgroundScanner {
                 paths.extend(more_events.into_iter().map(|e| e.path));
             }
             self.process_events(paths).await;
+            self.send_status_update(false, None);
         }
 
         self.finished_initial_scan = true;
@@ -2223,12 +2225,15 @@ impl BackgroundScanner {
                         paths.extend(more_events.into_iter().map(|e| e.path));
                     }
                     self.process_events(paths).await;
+                    self.send_status_update(false, None);
                 }
             }
         }
     }
 
     async fn process_events(&mut self, paths: Vec<PathBuf>) {
+        use futures::FutureExt as _;
+
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         if let Some(mut paths) = self
             .reload_entries_for_paths(paths, Some(scan_job_tx.clone()))
@@ -2239,6 +2244,43 @@ impl BackgroundScanner {
         }
         drop(scan_job_tx);
         self.scan_dirs(false, scan_job_rx).await;
+
+        let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
+        let snapshot = self.update_ignore_statuses(ignore_queue_tx);
+        self.executor
+            .scoped(|scope| {
+                for _ in 0..self.executor.num_cpus() {
+                    scope.spawn(async {
+                        loop {
+                            select_biased! {
+                                // Process any path refresh requests before moving on to process
+                                // the queue of ignore statuses.
+                                request = self.refresh_requests_rx.recv().fuse() => {
+                                    let Ok((paths, barrier)) = request else { break };
+                                    self.reload_entries_for_paths(paths, None).await;
+                                    if !self.send_status_update(false, Some(barrier)) {
+                                        return;
+                                    }
+                                }
+
+                                // Recursively process directories whose ignores have changed.
+                                job = ignore_queue_rx.recv().fuse() => {
+                                    let Ok(job) = job else { break };
+                                    self.update_ignore_status(job, &snapshot).await;
+                                }
+                            }
+                        }
+                    });
+                }
+            })
+            .await;
+
+        let mut snapshot = self.snapshot.lock();
+        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
+        git_repositories.retain(|repo| snapshot.entry_for_path(&repo.git_dir_path).is_some());
+        snapshot.git_repositories = git_repositories;
+        snapshot.removed_entry_ids.clear();
+        snapshot.completed_scan_id = snapshot.scan_id;
     }
 
     async fn scan_dirs(
@@ -2313,45 +2355,6 @@ impl BackgroundScanner {
                 }
             })
             .await;
-
-        let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
-        let snapshot = self.update_ignore_statuses(ignore_queue_tx);
-        self.executor
-            .scoped(|scope| {
-                for _ in 0..self.executor.num_cpus() {
-                    scope.spawn(async {
-                        loop {
-                            select_biased! {
-                                // Process any path refresh requests before moving on to process
-                                // the queue of ignore statuses.
-                                request = self.refresh_requests_rx.recv().fuse() => {
-                                    let Ok((paths, barrier)) = request else { break };
-                                    self.reload_entries_for_paths(paths, None).await;
-                                    if !self.send_status_update(false, Some(barrier)) {
-                                        return;
-                                    }
-                                }
-
-                                job = ignore_queue_rx.recv().fuse() => {
-                                    let Ok(job) = job else { break };
-                                    self.update_ignore_status(job, &snapshot).await;
-                                }
-                            }
-                        }
-                    });
-                }
-            })
-            .await;
-
-        let mut snapshot = self.snapshot.lock();
-        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
-        git_repositories.retain(|repo| snapshot.entry_for_path(&repo.git_dir_path).is_some());
-        snapshot.git_repositories = git_repositories;
-        snapshot.removed_entry_ids.clear();
-        snapshot.completed_scan_id = snapshot.scan_id;
-        drop(snapshot);
-
-        self.send_status_update(false, None);
     }
 
     fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
