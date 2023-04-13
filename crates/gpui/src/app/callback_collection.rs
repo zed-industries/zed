@@ -1,4 +1,3 @@
-use crate::AppContext;
 use collections::{BTreeMap, HashMap, HashSet};
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -93,12 +92,10 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
         drop(callbacks);
     }
 
-    pub fn emit<C: FnMut(&mut F, &mut AppContext) -> bool>(
-        &mut self,
-        key: K,
-        cx: &mut AppContext,
-        mut call_callback: C,
-    ) {
+    pub fn emit<C>(&mut self, key: K, mut call_callback: C)
+    where
+        C: FnMut(&mut F) -> bool,
+    {
         let callbacks = self.internal.lock().callbacks.remove(&key);
         if let Some(callbacks) = callbacks {
             for (subscription_id, mut callback) in callbacks {
@@ -110,7 +107,7 @@ impl<K: Clone + Hash + Eq + Copy, F> CallbackCollection<K, F> {
                 }
 
                 drop(this);
-                let alive = call_callback(&mut callback, cx);
+                let alive = call_callback(&mut callback);
 
                 // If this callback's subscription was dropped while invoking the callback
                 // itself, or if the callback returns false, then just drop the callback.

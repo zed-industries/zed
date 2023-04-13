@@ -496,7 +496,7 @@ type SubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool>;
 type GlobalSubscriptionCallback = Box<dyn FnMut(&dyn Any, &mut AppContext)>;
 type ObservationCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
 type GlobalObservationCallback = Box<dyn FnMut(&mut AppContext)>;
-type FocusObservationCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
+type FocusObservationCallback = Box<dyn FnMut(bool, &mut WindowContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut AppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut AppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
@@ -1025,7 +1025,7 @@ impl AppContext {
 
     fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(ViewHandle<V>, bool, &mut AppContext) -> bool,
+        F: 'static + FnMut(ViewHandle<V>, bool, &mut WindowContext) -> bool,
         V: View,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
@@ -1705,9 +1705,8 @@ impl AppContext {
 
                         Effect::Event { entity_id, payload } => {
                             let mut subscriptions = self.subscriptions.clone();
-                            subscriptions.emit(entity_id, self, |callback, this| {
-                                callback(payload.as_ref(), this)
-                            })
+                            subscriptions
+                                .emit(entity_id, |callback| callback(payload.as_ref(), self))
                         }
 
                         Effect::GlobalSubscription {
@@ -1732,7 +1731,7 @@ impl AppContext {
 
                         Effect::ModelNotification { model_id } => {
                             let mut observations = self.observations.clone();
-                            observations.emit(model_id, self, |callback, this| callback(this));
+                            observations.emit(model_id, |callback| callback(self));
                         }
 
                         Effect::ViewNotification { window_id, view_id } => {
@@ -1741,8 +1740,8 @@ impl AppContext {
 
                         Effect::GlobalNotification { type_id } => {
                             let mut subscriptions = self.global_observations.clone();
-                            subscriptions.emit(type_id, self, |callback, this| {
-                                callback(this);
+                            subscriptions.emit(type_id, |callback| {
+                                callback(self);
                                 true
                             });
                         }
@@ -2000,8 +1999,8 @@ impl AppContext {
         let type_id = (&*payload).type_id();
 
         let mut subscriptions = self.global_subscriptions.clone();
-        subscriptions.emit(type_id, self, |callback, this| {
-            callback(payload.as_ref(), this);
+        subscriptions.emit(type_id, |callback| {
+            callback(payload.as_ref(), self);
             true //Always alive
         });
     }
@@ -2024,15 +2023,15 @@ impl AppContext {
             }
 
             let mut observations = self.observations.clone();
-            observations.emit(observed_view_id, self, |callback, this| callback(this));
+            observations.emit(observed_view_id, |callback| callback(self));
         }
     }
 
     fn handle_entity_release_effect(&mut self, entity_id: usize, entity: &dyn Any) {
         self.release_observations
             .clone()
-            .emit(entity_id, self, |callback, this| {
-                callback(entity, this);
+            .emit(entity_id, |callback| {
+                callback(entity, self);
                 // Release observations happen one time. So clear the callback by returning false
                 false
             })
@@ -2043,15 +2042,12 @@ impl AppContext {
             cx.window.is_fullscreen = is_fullscreen;
 
             let mut fullscreen_observations = cx.window_fullscreen_observations.clone();
-            fullscreen_observations.emit(window_id, cx, |callback, this| {
-                callback(is_fullscreen, this)
-            });
+            fullscreen_observations.emit(window_id, |callback| callback(is_fullscreen, cx));
 
             if let Some(uuid) = cx.window_display_uuid() {
                 let bounds = cx.window_bounds();
                 let mut bounds_observations = cx.window_bounds_observations.clone();
-                bounds_observations
-                    .emit(window_id, cx, |callback, this| callback(bounds, uuid, this));
+                bounds_observations.emit(window_id, |callback| callback(bounds, uuid, cx));
             }
 
             Some(())
@@ -2067,8 +2063,8 @@ impl AppContext {
     ) {
         self.update(|this| {
             let mut observations = this.keystroke_observations.clone();
-            observations.emit(window_id, this, {
-                move |callback, this| callback(&keystroke, &result, handled_by.as_ref(), this)
+            observations.emit(window_id, move |callback| {
+                callback(&keystroke, &result, handled_by.as_ref(), this)
             });
         });
     }
@@ -2102,7 +2098,7 @@ impl AppContext {
             });
 
             let mut observations = cx.window_activation_observations.clone();
-            observations.emit(window_id, cx, |callback, this| callback(active, this));
+            observations.emit(window_id, |callback| callback(active, cx));
 
             Some(())
         });
@@ -2110,13 +2106,7 @@ impl AppContext {
 
     fn handle_focus_effect(&mut self, window_id: usize, mut focused_id: Option<usize>) {
         let mut blurred_id = None;
-        println!("FOCUS: {:?}", focused_id);
         self.update_window(window_id, |cx| {
-            println!(
-                "INSIDE FOCUS: {:?}. PREVIOUS FOCUS: {:?}",
-                focused_id,
-                cx.focused_view_id()
-            );
             if cx.window.focused_view_id == focused_id {
                 focused_id = None;
                 return;
@@ -2138,6 +2128,9 @@ impl AppContext {
                         cx.views.insert((window_id, view_id), view);
                     }
                 }
+
+                let mut subscriptions = cx.focus_observations.clone();
+                subscriptions.emit(blurred_id, |callback| callback(false, cx));
             }
 
             if let Some(focused_id) = focused_id {
@@ -2147,18 +2140,9 @@ impl AppContext {
                         cx.views.insert((window_id, view_id), view);
                     }
                 }
-            }
-        });
 
-        self.update(|cx| {
-            if let Some(blurred_id) = blurred_id {
                 let mut subscriptions = cx.focus_observations.clone();
-                subscriptions.emit(blurred_id, cx, |callback, this| callback(false, this));
-            }
-
-            if let Some(focused_id) = focused_id {
-                let mut subscriptions = cx.focus_observations.clone();
-                subscriptions.emit(focused_id, cx, |callback, this| callback(true, this));
+                subscriptions.emit(focused_id, |callback| callback(true, cx));
             }
         });
     }
@@ -2215,8 +2199,8 @@ impl AppContext {
     fn handle_action_dispatch_notification_effect(&mut self, action_id: TypeId) {
         self.action_dispatch_observations
             .clone()
-            .emit((), self, |callback, this| {
-                callback(action_id, this);
+            .emit((), |callback| {
+                callback(action_id, self);
                 true
             });
     }
@@ -2240,8 +2224,8 @@ impl AppContext {
                 let bounds = cx.window_bounds();
                 cx.window_bounds_observations
                     .clone()
-                    .emit(window_id, cx, move |callback, this| {
-                        callback(bounds, display, this);
+                    .emit(window_id, move |callback| {
+                        callback(bounds, display, cx);
                         true
                     });
             }
@@ -2251,8 +2235,8 @@ impl AppContext {
     fn handle_active_labeled_tasks_changed_effect(&mut self) {
         self.active_labeled_task_observations
             .clone()
-            .emit((), self, move |callback, this| {
-                callback(this);
+            .emit((), move |callback| {
+                callback(self);
                 true
             });
     }
@@ -5789,6 +5773,7 @@ mod tests {
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
+
         assert!(cx.is_child_focused(&view_1));
         assert!(!cx.is_child_focused(&view_2));
         assert_eq!(
