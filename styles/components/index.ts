@@ -1,3 +1,3 @@
-import { buttonWithIconStyle } from "./button";
+import { buttonWithIconStyle } from "./button"
 
 export { buttonWithIconStyle }

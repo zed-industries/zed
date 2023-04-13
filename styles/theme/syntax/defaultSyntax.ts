@@ -1,8 +1,8 @@
-import { Syntax, SyntaxStyle } from "@/theme/syntax";
-import * as font from "@/theme/font";
-import { Color, chroma } from "@/theme/color";
+import { Syntax, SyntaxStyle } from "@/theme/syntax"
+import * as font from "@/theme/font"
+import { Color, chroma } from "@/theme/color"
 
-const TEMP_COLOR: Color = chroma("red");
+const TEMP_COLOR: Color = chroma("red")
 
 export const baseSyntaxStyle: SyntaxStyle = {
     color: chroma("black"),
@@ -10,7 +10,7 @@ export const baseSyntaxStyle: SyntaxStyle = {
     underline: null,
     italic: false,
     highlight: null,
-};
+}
 
 const defaultColors: Record<keyof Syntax, Color> = {
     attribute: TEMP_COLOR,
@@ -58,22 +58,22 @@ const defaultColors: Record<keyof Syntax, Color> = {
     variant: TEMP_COLOR,
     variable: TEMP_COLOR,
     "variable.special": TEMP_COLOR,
-};
+}
 
 function buildDefaultSyntaxColors(): Syntax {
     const defaultSyntax = Object.keys(defaultColors).reduce((acc, key) => {
-        acc[key as keyof Syntax] = { ...baseSyntaxStyle, color: TEMP_COLOR };
-        return acc;
-    }, {} as Record<keyof Syntax, SyntaxStyle>);
+        acc[key as keyof Syntax] = { ...baseSyntaxStyle, color: TEMP_COLOR }
+        return acc
+    }, {} as Record<keyof Syntax, SyntaxStyle>)
 
-    return defaultSyntax;
+    return defaultSyntax
 }
 
-let defaultSyntaxColors = buildDefaultSyntaxColors();
+let defaultSyntaxColors = buildDefaultSyntaxColors()
 
 // Deal with specific non-color style defaults
-defaultSyntaxColors["emphasis.strong"].weight = font.weight.bold;
-defaultSyntaxColors["linkUri"].underline = true;
-defaultSyntaxColors["linkText"].italic = true;
+defaultSyntaxColors["emphasis.strong"].weight = font.weight.bold
+defaultSyntaxColors["linkUri"].underline = true
+defaultSyntaxColors["linkText"].italic = true
 
-export const defaultSyntax: Syntax = defaultSyntaxColors;
+export const defaultSyntax: Syntax = defaultSyntaxColors

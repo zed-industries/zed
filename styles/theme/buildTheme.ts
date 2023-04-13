@@ -1,9 +1,9 @@
-import { Theme, ThemeConfig } from "@/theme/config";
-import { buildThemeIntensity } from "@/theme/intensity";
-import { buildThemeScales } from "./color";
+import { Theme, ThemeConfig } from "@/theme/config"
+import { buildThemeIntensity } from "@/theme/intensity"
+import { buildThemeScales } from "./color"
 
 export function buildTheme(themeConfig: ThemeConfig): Theme {
-    const intensity = buildThemeIntensity(themeConfig);
+    const intensity = buildThemeIntensity(themeConfig)
     const color = buildThemeScales(themeConfig)
 
     const theme: Theme = {
@@ -14,5 +14,5 @@ export function buildTheme(themeConfig: ThemeConfig): Theme {
 
     console.log(JSON.stringify(theme, null, 2))
 
-    return theme;
+    return theme
 }

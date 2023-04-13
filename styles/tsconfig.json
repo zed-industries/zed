@@ -8,17 +8,11 @@
         "preserveConstEnums": true,
         "sourceMap": true,
         "paths": {
-            "@/*": [
-                "./*"
-            ]
+            "@/*": ["./*"]
         }
     },
-    "exclude": [
-        "node_modules"
-    ],
+    "exclude": ["node_modules"],
     "ts-node": {
-        "require": [
-            "tsconfig-paths/register"
-        ]
+        "require": ["tsconfig-paths/register"]
     }
 }

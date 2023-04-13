@@ -32,30 +32,32 @@ interface Intensity {
 }
 
 export function buildThemeIntensity(themeConfig: ThemeConfig): Intensity {
-    const neutral = themeConfig.colors.neutral;
+    const neutral = themeConfig.colors.neutral
 
-    const [firstColor, lastColor] = [neutral[0], neutral[neutral.length - 1]];
-    const minIntensity = hexToIntensity(chroma(firstColor).hex());
-    const maxIntensity = hexToIntensity(chroma(lastColor).hex());
+    const [firstColor, lastColor] = [neutral[0], neutral[neutral.length - 1]]
+    const minIntensity = hexToIntensity(chroma(firstColor).hex())
+    const maxIntensity = hexToIntensity(chroma(lastColor).hex())
 
     if (minIntensity < 1 || maxIntensity > 100) {
-        throw new Error("Intensity must be between 1 and 100");
+        throw new Error("Intensity must be between 1 and 100")
     }
 
     if (minIntensity > maxIntensity) {
-        throw new Error("Min intensity must be less than max intensity");
+        throw new Error("Min intensity must be less than max intensity")
     }
 
     if (maxIntensity - maxIntensity > 50) {
-        throw new Error("Not enough contrast between lightest and darkest colors");
+        throw new Error(
+            "Not enough contrast between lightest and darkest colors"
+        )
     }
 
     const intensity: Intensity = {
         min: minIntensity,
         max: maxIntensity,
-    };
+    }
 
-    return intensity;
+    return intensity
 }
 
 export function normalizeIntensity(theme: Theme): Theme {

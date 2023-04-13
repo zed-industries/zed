@@ -1,4 +1,4 @@
-import { ThemeConfig } from "@/theme/config";
+import { ThemeConfig } from "@/theme/config"
 import * as font from "@/theme/font"
 
 const zedDark: ThemeConfig = {
@@ -39,6 +39,6 @@ const zedDark: ThemeConfig = {
             color: "#c43e00",
         },
     },
-};
+}
 
-export default zedDark;
+export default zedDark

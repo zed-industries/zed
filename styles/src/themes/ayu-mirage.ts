@@ -3,7 +3,7 @@ import { ayu, meta as themeMeta, buildTheme } from "./common/ayu-common"
 
 export const meta = {
     ...themeMeta,
-    name: `${themeMeta.name} Mirage`
+    name: `${themeMeta.name} Mirage`,
 }
 
 const variant = ayu.mirage
