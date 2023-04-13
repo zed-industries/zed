@@ -738,6 +738,9 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             RectF::from_points(Vector2F::zero(), window_size),
             self,
         );
+        self.window
+            .rendered_views
+            .insert(root_view_id, rendered_root);
 
         self.window.text_layout_cache.finish_frame();
         let scene = scene_builder.build();

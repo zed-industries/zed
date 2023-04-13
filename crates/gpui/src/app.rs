@@ -1985,6 +1985,9 @@ impl AppContext {
         for window_id in window_ids {
             self.update_window(window_id, |cx| {
                 let mut invalidation = cx.window.invalidation.take().unwrap_or_default();
+                invalidation
+                    .updated
+                    .extend(cx.window.rendered_views.keys().copied());
                 cx.invalidate(&mut invalidation, cx.window.platform_window.appearance());
                 cx.refreshing = true;
                 let scene = cx.build_scene();
