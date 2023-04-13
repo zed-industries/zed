@@ -1040,7 +1040,8 @@ impl CopilotState {
         let completion = self.completions.get(self.active_completion_index)?;
         let excerpt_id = self.excerpt_id?;
         let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
-        if !completion.range.start.is_valid(completion_buffer)
+        if excerpt_id != cursor.excerpt_id
+            || !completion.range.start.is_valid(completion_buffer)
             || !completion.range.end.is_valid(completion_buffer)
         {
             return None;
