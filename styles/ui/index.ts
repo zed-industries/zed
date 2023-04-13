@@ -1,9 +1,10 @@
-import { buttonWithIconStyle } from "@/components"
-import { buildTheme } from "@/theme/buildTheme"
-import zedDark from "@/themes/zed/zedDark"
+import { find } from "./editor/find"
+import { Theme } from "@/theme"
 
-const theme = buildTheme(zedDark)
+const buildUI = (theme: Theme) => {
+    return {
+        find: find(theme)
+    }
+}
 
-const iconButton = buttonWithIconStyle(theme)
-
-console.log(JSON.stringify(iconButton))
+export default buildUI
