@@ -2183,7 +2183,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_save_file(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
