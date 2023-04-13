@@ -45,7 +45,7 @@ use crate::{
     executor::{self, Task},
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
-        self, Appearance, FontSystem, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
+        self, FontSystem, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
         PathPromptOptions, Platform, PromptLevel, WindowBounds, WindowOptions,
     },
     util::post_inc,
@@ -870,60 +870,6 @@ impl AppContext {
         &'a self,
     ) -> impl DoubleEndedIterator<Item = &'static str> + 'a {
         self.active_labeled_tasks.values().cloned()
-    }
-
-    pub fn render_view(&mut self, params: RenderParams) -> Result<Box<dyn AnyRootElement>> {
-        todo!()
-        // let window_id = params.window_id;
-        // let view_id = params.view_id;
-        // let mut view = self
-        //     .views
-        //     .remove(&(window_id, view_id))
-        //     .ok_or_else(|| anyhow!("view not found"))?;
-        // let element = view.render(params, self);
-        // self.views.insert((window_id, view_id), view);
-        // Ok(element)
-    }
-
-    pub fn render_views(
-        &mut self,
-        window_id: usize,
-        titlebar_height: f32,
-        appearance: Appearance,
-    ) -> HashMap<usize, Box<dyn AnyRootElement>> {
-        todo!()
-        // self.start_frame();
-        // #[allow(clippy::needless_collect)]
-        // let view_ids = self
-        //     .views
-        //     .keys()
-        //     .filter_map(|(win_id, view_id)| {
-        //         if *win_id == window_id {
-        //             Some(*view_id)
-        //         } else {
-        //             None
-        //         }
-        //     })
-        //     .collect::<Vec<_>>();
-
-        // view_ids
-        //     .into_iter()
-        //     .map(|view_id| {
-        //         (
-        //             view_id,
-        //             self.render_view(RenderParams {
-        //                 window_id,
-        //                 view_id,
-        //                 titlebar_height,
-        //                 hovered_region_ids: Default::default(),
-        //                 clicked_region_ids: None,
-        //                 refreshing: false,
-        //                 appearance,
-        //             })
-        //             .unwrap(),
-        //         )
-        //     })
-        //     .collect()
     }
 
     pub(crate) fn start_frame(&mut self) {
@@ -2488,19 +2434,8 @@ impl UpdateView for AppContext {
     where
         T: View,
     {
-        self.update_window(handle.window_id, |cx| {
-            cx.update_any_view(handle.view_id, |view, cx| {
-                let mut cx = ViewContext::mutable(cx, handle.view_id);
-                update(
-                    view.as_any_mut()
-                        .downcast_mut()
-                        .expect("downcast is type safe"),
-                    &mut cx,
-                )
-            })
-            .unwrap() // TODO: Are these unwraps safe?
-        })
-        .unwrap()
+        self.update_window(handle.window_id, |cx| cx.update_view(handle, update))
+            .unwrap() // TODO: Is this unwrap safe?
     }
 }
 
@@ -3939,16 +3874,6 @@ impl<'a, T> DerefMut for Reference<'a, T> {
             Reference::Mutable(target) => target,
         }
     }
-}
-
-pub struct RenderParams {
-    pub window_id: usize,
-    pub view_id: usize,
-    pub titlebar_height: f32,
-    pub hovered_region_ids: HashSet<MouseRegionId>,
-    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
-    pub refreshing: bool,
-    pub appearance: Appearance,
 }
 
 #[derive(Debug, Clone, Default)]

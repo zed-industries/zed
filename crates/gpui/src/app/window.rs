@@ -14,11 +14,11 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Drawable, Entity, ModelContext,
-    ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadView, RenderParams, SceneBuilder,
-    UpdateModel, UpdateView, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadView, SceneBuilder, UpdateModel,
+    UpdateView, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakViewHandle,
     WindowInvalidation,
 };
-use anyhow::bail;
+use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use postage::oneshot;
@@ -74,7 +74,7 @@ impl Window {
             invalidation: None,
             is_fullscreen: false,
             platform_window,
-            rendered_views: cx.render_views(window_id, titlebar_height, appearance),
+            rendered_views: Default::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
@@ -91,6 +91,9 @@ impl Window {
         let root_view = window_context
             .build_and_insert_view(ParentId::Root, |cx| Some(build_view(cx)))
             .unwrap();
+        if let Some(mut invalidation) = window_context.window.invalidation.take() {
+            window_context.invalidate(&mut invalidation, appearance);
+        }
         window.focused_view_id = Some(root_view.id());
         window.root_view = Some(root_view.into_any());
         window
@@ -150,7 +153,16 @@ impl UpdateView for WindowContext<'_, '_> {
     where
         T: View,
     {
-        self.app_context.update_view(handle, update)
+        self.update_any_view(handle.view_id, |view, cx| {
+            let mut cx = ViewContext::mutable(cx, handle.view_id);
+            update(
+                view.as_any_mut()
+                    .downcast_mut()
+                    .expect("downcast is type safe"),
+                &mut cx,
+            )
+        })
+        .unwrap() // TODO: Is this unwrap safe?
     }
 }
 
@@ -678,7 +690,6 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             self.window.rendered_views.remove(view_id);
         }
         for view_id in &invalidation.updated {
-            let window_id = self.window_id;
             let titlebar_height = self.window.titlebar_height;
             let hovered_region_ids = self.window.hovered_region_ids.clone();
             let clicked_region_ids = self
@@ -688,7 +699,6 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
 
             let element = self
                 .render_view(RenderParams {
-                    window_id,
                     view_id: *view_id,
                     titlebar_height,
                     hovered_region_ids,
@@ -701,39 +711,16 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         }
     }
 
-    pub fn refresh(&mut self, invalidation: &mut WindowInvalidation, appearance: Appearance) {
-        self.invalidate(invalidation, appearance);
-
-        let view_ids = self
-            .window
-            .rendered_views
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-
-        for view_id in view_ids {
-            if !invalidation.updated.contains(&view_id) {
-                let window_id = self.window_id;
-                let titlebar_height = self.window.titlebar_height;
-                let hovered_region_ids = self.window.hovered_region_ids.clone();
-                let clicked_region_ids = self
-                    .window
-                    .clicked_button
-                    .map(|button| (self.window.clicked_region_ids.clone(), button));
-                let element = self
-                    .render_view(RenderParams {
-                        window_id,
-                        view_id,
-                        titlebar_height,
-                        hovered_region_ids,
-                        clicked_region_ids,
-                        refreshing: true,
-                        appearance,
-                    })
-                    .unwrap();
-                self.window.rendered_views.insert(view_id, element);
-            }
-        }
+    pub fn render_view(&mut self, params: RenderParams) -> Result<Box<dyn AnyRootElement>> {
+        let window_id = self.window_id;
+        let view_id = params.view_id;
+        let mut view = self
+            .views
+            .remove(&(window_id, view_id))
+            .ok_or_else(|| anyhow!("view not found"))?;
+        let element = view.render(self, view_id);
+        self.views.insert((window_id, view_id), view);
+        Ok(element)
     }
 
     pub fn build_scene(&mut self) -> Scene {
@@ -854,32 +841,6 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window.platform_window.prompt(level, msg, answers)
     }
 
-    fn add_view<T, F>(&mut self, parent: &AnyViewHandle, build_view: F) -> ViewHandle<T>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> T,
-    {
-        if parent.window_id == self.window_id {
-            self.build_and_insert_view(ParentId::View(parent.view_id), |cx| Some(build_view(cx)))
-                .unwrap()
-        } else {
-            self.app_context.add_view(parent, build_view)
-        }
-    }
-
-    fn add_option_view<T, F>(
-        &mut self,
-        parent_handle: impl Into<AnyViewHandle>,
-        build_view: F,
-    ) -> Option<ViewHandle<T>>
-    where
-        T: View,
-        F: FnOnce(&mut ViewContext<T>) -> Option<T>,
-    {
-        let parent_handle = parent_handle.into();
-        self.build_and_insert_view(ParentId::View(parent_handle.view_id), build_view)
-    }
-
     pub fn replace_root_view<V, F>(&mut self, build_root_view: F) -> ViewHandle<V>
     where
         V: View,
@@ -921,6 +882,15 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         };
         handle
     }
+}
+
+pub struct RenderParams {
+    pub view_id: usize,
+    pub titlebar_height: f32,
+    pub hovered_region_ids: HashSet<MouseRegionId>,
+    pub clicked_region_ids: Option<(HashSet<MouseRegionId>, MouseButton)>,
+    pub refreshing: bool,
+    pub appearance: Appearance,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
