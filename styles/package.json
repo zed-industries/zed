@@ -6,7 +6,7 @@
     "scripts": {
         "build": "ts-node ./src/buildThemes.ts",
         "build-licenses": "ts-node ./src/buildLicenses.ts",
-        "test": "ts-node ./test.ts"
+        "test": "ts-node ./ui/index.ts"
     },
     "author": "",
     "license": "ISC",

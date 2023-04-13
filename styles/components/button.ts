@@ -1,93 +1,49 @@
-// interface Button {
-//     background: StateIntensities
-//     label: {
-//         text: string
-//         color: StateIntensities
-//     }
-//     icon: {
-//         intensity: StateIntensities
-//     }
-// }
+import { Border, Theme, useColors } from "@/theme";
 
-// function contrastRatio(intensity1: number, intensity2: number): number {
-//     const [intensityLighter, intensityDarker] =
-//         intensity1 > intensity2
-//             ? [intensity1, intensity2]
-//             : [intensity2, intensity1]
-//     return (intensityLighter + 0.5) / (intensityDarker + 0.5)
-// }
+type Margin = [number, number, number, number];
+type Padding = [number, number, number, number];
 
-// function hasSufficientContrast(
-//     intensity1: number,
-//     intensity2: number,
-//     minContrast: number
-// ): boolean {
-//     return contrastRatio(intensity1, intensity2) >= minContrast
-// }
+interface ContainerStyle {
+    background: string;
+    margin: Margin;
+    padding: Padding;
+    border: Border;
+}
 
-// function createButton(
-//     themeConfig: Theme,
-//     labelText: string,
-//     backgroundIntensity: number,
-//     labelIntensity: number,
-//     iconIntensity: number
-// ): Button | null {
-//     const backgroundStates = buildStateIntensities(
-//         themeConfig,
-//         backgroundIntensity
-//     )
-//     const labelStates = buildStateIntensities(themeConfig, labelIntensity)
-//     const iconStates = buildStateIntensities(themeConfig, iconIntensity)
+enum IconSize {
+    "Small" = 7,
+    "Medium" = 11,
+    "Large" = 15
+}
 
-//     // Ensure sufficient contrast for all states
-//     const minContrast = 3
-//     const states = ["default", "hovered", "pressed", "active"] as const
-//     for (const state of states) {
-//         if (
-//             !hasSufficientContrast(
-//                 backgroundStates[state],
-//                 labelStates[state],
-//                 minContrast
-//             ) ||
-//             !hasSufficientContrast(
-//                 backgroundStates[state],
-//                 iconStates[state],
-//                 minContrast
-//             )
-//         ) {
-//             console.warn(
-//                 `Insufficient contrast for state "${state}". Please adjust intensities.`
-//             )
-//             return null
-//         }
-//     }
+interface IconStyle {
+    color: string;
+    size: IconSize;
+}
 
-//     const button: Button = {
-//         background: backgroundStates,
-//         label: {
-//             text: labelText,
-//             color: labelStates,
-//         },
-//         icon: {
-//             intensity: iconStates,
-//         },
-//     }
+interface ButtonWithIconStyle {
+    container: ContainerStyle;
+    icon: IconStyle;
+}
 
-//     return button
-// }
+export function buttonWithIconStyle(theme: Theme): ButtonWithIconStyle {
+    const color = useColors(theme);
 
-// const lightButton = createButton(lightTheme, "Click me!", 50, 100, 100)
-// console.log(lightButton)
-// // {
-// //   background: { default: 50, hovered: 53, pressed: 56, active: 59 },
-// //   label: { text: 'Click me!', color: { default: 100, hovered: 100, pressed: 100, active: 100 } },
-// //   icon: { intensity: { default: 100, hovered: 100, pressed: 100, active: 100 } }
-// // }
-
-// const darkButton = createButton(darkTheme, "Click me!", 50, 1, 1)
-// console.log(darkButton)
-// // {
-// //   background: { default: 50, hovered: 65, pressed: 70, active: 75 },
-// //   label: { text: 'Click me!', color: { default: 1, hovered: 1, pressed: 1, active: 1 } },
-// //   icon: { intensity: { default: 1, hovered: 1, pressed: 1, active: 1 } }
-// // }
+    return {
+        container: {
+            background: color.neutral(26),
+            margin: [0, 0, 0, 0],
+            padding: [4, 4, 4, 4],
+            border: {
+                width: 0,
+                color: color.neutral(40),
+                style: "solid",
+                inset: false
+            }
+        },
+        icon: {
+            color: color.neutral(100),
+            size: IconSize.Medium
+        }
+    };
+}

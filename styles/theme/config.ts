@@ -32,6 +32,7 @@ export interface CalculatedThemeProperties {
         min: number;
         max: number;
     };
+    color: Record<keyof ThemeConfig["colors"], chroma.Scale>;
 }
 
 export type Theme = ThemeConfig & CalculatedThemeProperties;
