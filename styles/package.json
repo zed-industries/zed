@@ -1,13 +1,10 @@
 {
     "name": "styles",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "",
     "main": "index.js",
     "scripts": {
-        "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts",
-        "test": "ts-node ./ui/index.ts",
-        "test-app": "ts-node ./app.ts"
+        "build": "ts-node ./app.ts"
     },
     "author": "",
     "license": "ISC",

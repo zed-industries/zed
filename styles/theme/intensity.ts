@@ -3,26 +3,9 @@ import { Theme, ThemeConfig } from "./config"
 
 export function hexToIntensity(hex: string): number {
     const hsl = chroma(hex).hsl()
-    const intensity = hsl[2] * 100
-    return intensity
-}
 
-export function rgbToIntensity(rgb: string): number {
-    const hsl = chroma(rgb).hsl()
-    const intensity = hsl[2] * 100
-    return intensity
-}
-
-export function hslToIntensity(hsl: string): number {
-    const hslArray = chroma(hsl).hsl()
-    const intensity = hslArray[2] * 100
-    return intensity
-}
-
-export function hsbToIntensity(hsb: string): number {
-    const hsbArray = hsb.match(/\d+/g).map(Number)
-    const hsl = chroma.hsv(hsbArray[0], hsbArray[1], hsbArray[2]).hsl()
-    const intensity = hsl[2] * 100
+    // Round intensity up so that we never end up with a value of 0
+    const intensity = Math.ceil(hsl[2] * 100)
     return intensity
 }
 
@@ -33,23 +16,41 @@ interface Intensity {
 
 export function buildThemeIntensity(themeConfig: ThemeConfig): Intensity {
     const neutral = themeConfig.colors.neutral
+    const appearance = themeConfig.appearance // "light" or "dark"
 
-    const [firstColor, lastColor] = [neutral[0], neutral[neutral.length - 1]]
-    const minIntensity = hexToIntensity(chroma(firstColor).hex())
-    const maxIntensity = hexToIntensity(chroma(lastColor).hex())
+    if (appearance === 'light' && Array.isArray(neutral)) {
+        neutral.reverse()
+    }
 
-    if (minIntensity < 1 || maxIntensity > 100) {
-        throw new Error("Intensity must be between 1 and 100")
+    let firstColor = neutral[0]
+    let lastColor = neutral[neutral.length - 1]
+
+    let minIntensity = hexToIntensity(chroma(firstColor).hex())
+    let maxIntensity = hexToIntensity(chroma(lastColor).hex())
+
+    if (appearance === 'light') {
+        [minIntensity, maxIntensity] = [maxIntensity, minIntensity]
+    }
+
+    console.log('firstColor:', firstColor)
+    console.log('lastColor:', lastColor)
+    console.log('minIntensity:', minIntensity)
+    console.log('maxIntensity:', maxIntensity)
+
+    if (minIntensity < 1) {
+        throw new Error(
+            `Intensity ${minIntensity} too low. Intensity must be between 1 and 100`
+        )
+    }
+
+    if (maxIntensity > 100) {
+        throw new Error(
+            `Intensity ${maxIntensity} too high. Intensity must be between 1 and 100`
+        )
     }
 
     if (minIntensity > maxIntensity) {
         throw new Error("Min intensity must be less than max intensity")
-    }
-
-    if (maxIntensity - maxIntensity > 50) {
-        throw new Error(
-            "Not enough contrast between lightest and darkest colors"
-        )
     }
 
     const intensity: Intensity = {
@@ -59,6 +60,7 @@ export function buildThemeIntensity(themeConfig: ThemeConfig): Intensity {
 
     return intensity
 }
+
 
 export function normalizeIntensity(theme: Theme): Theme {
     const normalizedIntensity = {

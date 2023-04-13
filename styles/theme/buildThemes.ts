@@ -1,6 +1,6 @@
 import fs from 'fs';
 import * as themeConfigs from '@/themes';
-import buildUI from '@/ui';
+import { buildUI } from '@/ui';
 import { buildTheme } from './buildTheme';
 
 const EXPORT_PATH = './target'
@@ -19,7 +19,6 @@ export function writeThemeToDisk(name: string, json: string, path: string): void
 }
 
 export function buildThemes(): void {
-
     for (const themeConfig of Object.values(themeConfigs)) {
         const theme = buildTheme(themeConfig)
         const ui = buildUI(theme)

@@ -36,7 +36,7 @@ export function buttonWithIconStyle(theme: Theme): ButtonWithIconStyle {
             padding: [4, 4, 4, 4],
             border: {
                 width: 0,
-                color: color.neutral(40),
+                color: color.neutral(32),
                 style: "solid",
                 inset: false,
             },

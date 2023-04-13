@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Build",
+            "runtimeArgs": [
+                "-r",
+                "ts-node/register",
+                "-r",
+                "tsconfig-paths/register"
+            ],
+            "args": ["${workspaceFolder}/app.ts"],
+            "cwd": "${workspaceFolder}",
+            "outputCapture": "std",
+            "sourceMaps": true
+        }
+    ]
+}

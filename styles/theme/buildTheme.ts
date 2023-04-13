@@ -9,10 +9,8 @@ export function buildTheme(themeConfig: ThemeConfig): Theme {
     const theme: Theme = {
         ...themeConfig,
         intensity,
-        color,
+        color
     }
-
-    console.log(JSON.stringify(theme, null, 2))
 
     return theme
 }

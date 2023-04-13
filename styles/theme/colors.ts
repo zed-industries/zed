@@ -1,5 +1,5 @@
 import { Intensity } from "./color"
-import { color as buildColor } from "./color"
+import { useIntensityColor } from "./color"
 import { Theme } from "./config"
 
 function getColor(
@@ -7,7 +7,7 @@ function getColor(
     colorKey: keyof Theme["colors"],
     intensity: Intensity
 ) {
-    return buildColor(theme, colorKey, intensity)
+    return useIntensityColor(theme, colorKey, intensity)
 }
 
 interface ColorFunctions {

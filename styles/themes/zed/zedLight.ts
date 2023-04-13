@@ -2,8 +2,8 @@ import { ThemeConfig } from "@/theme/config"
 import * as font from "@/theme/font"
 
 const zedDark: ThemeConfig = {
-    name: "Zed Dark",
-    appearance: "dark",
+    name: "Zed Light",
+    appearance: "light",
     author: {
         name: "Nate Butler",
         email: "iamnbutler@gmail.com",
