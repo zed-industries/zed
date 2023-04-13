@@ -118,7 +118,6 @@ impl EditorElement {
         text_bounds: RectF,
         gutter_bounds: RectF,
         bounds: RectF,
-        cx: &mut ViewContext<Editor>,
     ) {
         enum EditorElementMouseHandlers {}
         scene.push_mouse_region(
@@ -466,7 +465,6 @@ impl EditorElement {
         gutter_bounds: RectF,
         text_bounds: RectF,
         layout: &LayoutState,
-        cx: &mut ViewContext<Editor>,
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top =
@@ -737,7 +735,6 @@ impl EditorElement {
                 scroll_top,
                 scroll_left,
                 bounds,
-                cx,
             );
 
             for bound in range_to_bounds(
@@ -783,7 +780,6 @@ impl EditorElement {
                 scroll_top,
                 scroll_left,
                 bounds,
-                cx,
             );
         }
 
@@ -805,7 +801,6 @@ impl EditorElement {
                     scroll_top,
                     scroll_left,
                     bounds,
-                    cx,
                 );
 
                 if editor.show_local_cursors(cx) || *replica_id != local_replica_id {
@@ -1128,7 +1123,6 @@ impl EditorElement {
         scroll_top: f32,
         scroll_left: f32,
         bounds: RectF,
-        cx: &mut ViewContext<Editor>,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -2071,10 +2065,9 @@ impl Drawable<Editor> for EditorElement {
             text_bounds,
             gutter_bounds,
             bounds,
-            cx,
         );
 
-        self.paint_background(scene, gutter_bounds, text_bounds, layout, cx);
+        self.paint_background(scene, gutter_bounds, text_bounds, layout);
         if layout.gutter_size.x() > 0. {
             self.paint_gutter(scene, gutter_bounds, visible_bounds, layout, editor, cx);
         }

@@ -827,7 +827,7 @@ impl ContactList {
                 .with_child(
                     Stack::new()
                         .with_child(
-                            Canvas::new(move |scene, bounds, _, _, cx| {
+                            Canvas::new(move |scene, bounds, _, _, _| {
                                 let start_x = bounds.min_x() + (bounds.width() / 2.)
                                     - (tree_branch.width / 2.);
                                 let end_x = bounds.max_x();
@@ -924,7 +924,7 @@ impl ContactList {
                     .with_child(
                         Stack::new()
                             .with_child(
-                                Canvas::new(move |scene, bounds, _, _, cx| {
+                                Canvas::new(move |scene, bounds, _, _, _| {
                                     let start_x = bounds.min_x() + (bounds.width() / 2.)
                                         - (tree_branch.width / 2.);
                                     let end_x = bounds.max_x();
