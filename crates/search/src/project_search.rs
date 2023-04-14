@@ -22,6 +22,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    borrow::Cow,
     mem,
     ops::Range,
     path::PathBuf,
@@ -225,6 +226,10 @@ impl View for ProjectSearchView {
 }
 
 impl Item for ProjectSearchView {
+    fn tab_tooltip_text<'a>(&'a self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+        Some(self.query_editor.read(cx).text(cx).into())
+    }
+
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,

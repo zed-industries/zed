@@ -1386,6 +1386,9 @@ impl Pane {
                         let detail = detail.clone();
 
                         let theme = cx.global::<Settings>().theme.clone();
+                        let mut tooltip_theme = theme.tooltip.clone();
+                        tooltip_theme.max_text_width = None;
+                        let tab_tooltip_text = item.tab_tooltip_text(cx).map(|a| a.to_string());
 
                         move |mouse_state, cx| {
                             let tab_style =
@@ -1393,39 +1396,56 @@ impl Pane {
                             let hovered = mouse_state.hovered();
 
                             enum Tab {}
-                            MouseEventHandler::<Tab>::new(ix, cx, |_, cx| {
-                                Self::render_tab(
-                                    &item,
-                                    pane.clone(),
-                                    ix == 0,
-                                    detail,
-                                    hovered,
-                                    tab_style,
-                                    cx,
-                                )
-                            })
-                            .on_down(MouseButton::Left, move |_, cx| {
-                                cx.dispatch_action(ActivateItem(ix));
-                            })
-                            .on_click(MouseButton::Middle, {
-                                let item = item.clone();
-                                let pane = pane.clone();
-                                move |_, cx: &mut EventContext| {
-                                    cx.dispatch_action(CloseItemById {
-                                        item_id: item.id(),
-                                        pane: pane.clone(),
-                                    })
-                                }
-                            })
-                            .on_down(MouseButton::Right, move |e, cx| {
-                                let item = item.clone();
-                                cx.dispatch_action(DeployTabContextMenu {
-                                    position: e.position,
-                                    item_id: item.id(),
-                                    pane: pane.clone(),
-                                });
-                            })
-                            .boxed()
+                            let mouse_event_handler =
+                                MouseEventHandler::<Tab>::new(ix, cx, |_, cx| {
+                                    Self::render_tab(
+                                        &item,
+                                        pane.clone(),
+                                        ix == 0,
+                                        detail,
+                                        hovered,
+                                        tab_style,
+                                        cx,
+                                    )
+                                })
+                                .on_down(MouseButton::Left, move |_, cx| {
+                                    cx.dispatch_action(ActivateItem(ix));
+                                })
+                                .on_click(MouseButton::Middle, {
+                                    let item = item.clone();
+                                    let pane = pane.clone();
+                                    move |_, cx: &mut EventContext| {
+                                        cx.dispatch_action(CloseItemById {
+                                            item_id: item.id(),
+                                            pane: pane.clone(),
+                                        })
+                                    }
+                                })
+                                .on_down(
+                                    MouseButton::Right,
+                                    move |e, cx| {
+                                        let item = item.clone();
+                                        cx.dispatch_action(DeployTabContextMenu {
+                                            position: e.position,
+                                            item_id: item.id(),
+                                            pane: pane.clone(),
+                                        });
+                                    },
+                                );
+
+                            if let Some(tab_tooltip_text) = tab_tooltip_text {
+                                return mouse_event_handler
+                                    .with_tooltip::<Self, _>(
+                                        ix,
+                                        tab_tooltip_text,
+                                        None,
+                                        tooltip_theme,
+                                        cx,
+                                    )
+                                    .boxed();
+                            }
+
+                            mouse_event_handler.boxed()
                         }
                     });
 

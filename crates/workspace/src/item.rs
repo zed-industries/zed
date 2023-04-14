@@ -44,6 +44,9 @@ pub trait Item: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
     }
+    fn tab_tooltip_text<'a>(&'a self, _: &'a AppContext) -> Option<Cow<'a, str>> {
+        None
+    }
     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
         None
     }
@@ -162,6 +165,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription;
+    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
@@ -246,6 +250,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 handler(item_event, cx)
             }
         })
+    }
+
+    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+        self.read(cx).tab_tooltip_text(cx)
     }
 
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {

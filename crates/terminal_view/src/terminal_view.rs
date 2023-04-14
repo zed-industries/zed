@@ -3,6 +3,7 @@ pub mod terminal_button;
 pub mod terminal_element;
 
 use std::{
+    borrow::Cow,
     ops::RangeInclusive,
     path::{Path, PathBuf},
     time::Duration,
@@ -543,6 +544,10 @@ impl View for TerminalView {
 }
 
 impl Item for TerminalView {
+    fn tab_tooltip_text<'a>(&'a self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+        Some(self.terminal().read(cx).title().into())
+    }
+
     fn tab_content(
         &self,
         _detail: Option<usize>,

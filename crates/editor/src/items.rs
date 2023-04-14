@@ -514,6 +514,23 @@ impl Item for Editor {
         }
     }
 
+    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+        let file_path = self
+            .buffer()
+            .read(cx)
+            .as_singleton()?
+            .read(cx)
+            .file()
+            .and_then(|f| f.as_local())?
+            .abs_path(cx);
+
+        let file_path = util::paths::compact(&file_path)
+            .to_string_lossy()
+            .to_string();
+
+        Some(file_path.into())
+    }
+
     fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
         match path_for_buffer(&self.buffer, detail, true, cx)? {
             Cow::Borrowed(path) => Some(path.to_string_lossy()),
