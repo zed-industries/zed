@@ -43,7 +43,7 @@ impl CommandPalette {
     pub fn new(focused_view_id: usize, cx: &mut ViewContext<Self>) -> Self {
         let this = cx.weak_handle();
         let actions = cx
-            .available_actions(cx.window_id(), focused_view_id)
+            .available_actions(focused_view_id)
             .filter_map(|(name, action, bindings)| {
                 if cx.has_global::<CommandPaletteFilter>() {
                     let filter = cx.global::<CommandPaletteFilter>();

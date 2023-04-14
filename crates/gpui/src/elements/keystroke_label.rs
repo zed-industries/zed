@@ -45,7 +45,7 @@ impl<V: View> Drawable<V> for KeystrokeLabel {
         cx: &mut ViewContext<V>,
     ) -> (Vector2F, Element<V>) {
         let mut element = if let Some(keystrokes) =
-            cx.keystrokes_for_action(self.window_id, self.view_id, self.action.as_ref())
+            cx.keystrokes_for_action(self.view_id, self.action.as_ref())
         {
             Flex::row()
                 .with_children(keystrokes.iter().map(|keystroke| {

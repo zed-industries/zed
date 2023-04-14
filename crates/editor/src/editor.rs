@@ -42,7 +42,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
     AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Drawable, Element, Entity,
-    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HideHover, HoverState};
@@ -1317,7 +1317,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut AppContext) -> EditorSnapshot {
+    pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),

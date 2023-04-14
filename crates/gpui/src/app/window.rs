@@ -2,7 +2,7 @@ use crate::{
     elements::AnyRootElement,
     geometry::rect::RectF,
     json::{self, ToJson},
-    keymap_matcher::{Keystroke, MatchResult},
+    keymap_matcher::{Binding, Keystroke, MatchResult},
     platform::{
         self, Appearance, CursorStyle, Event, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent,
         MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
@@ -13,10 +13,10 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Drawable, Entity, ModelContext,
-    ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadView, SceneBuilder, UpdateModel,
-    UpdateView, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowInvalidation,
+    Action, AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Drawable, Effect, Entity,
+    ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView,
+    SceneBuilder, UpdateModel, UpdateView, UpgradeViewHandle, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -28,7 +28,10 @@ use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use std::ops::{Deref, DerefMut, Range};
+use std::{
+    any::TypeId,
+    ops::{Deref, DerefMut, Range},
+};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -125,6 +128,12 @@ impl Deref for WindowContext<'_, '_> {
 impl DerefMut for WindowContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app_context
+    }
+}
+
+impl ReadModel for WindowContext<'_, '_> {
+    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        self.app_context.read_model(handle)
     }
 }
 
@@ -230,11 +239,99 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         Some(result)
     }
 
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        let window_id = self.window_id;
+        let mut contexts = Vec::new();
+        let mut handler_depth = None;
+        for (i, view_id) in self.ancestors(view_id).enumerate() {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
+                    if actions.contains_key(&action.as_any().type_id()) {
+                        handler_depth = Some(i);
+                    }
+                }
+                contexts.push(view.keymap_context(self));
+            }
+        }
+
+        if self.global_actions.contains_key(&action.as_any().type_id()) {
+            handler_depth = Some(contexts.len())
+        }
+
+        self.keystroke_matcher
+            .bindings_for_action_type(action.as_any().type_id())
+            .find_map(|b| {
+                handler_depth
+                    .map(|highest_handler| {
+                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
+                            Some(b.keystrokes().into())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+            })
+    }
+
+    pub fn available_actions(
+        &self,
+        view_id: usize,
+    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
+        let window_id = self.window_id;
+        let mut contexts = Vec::new();
+        let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
+        for (depth, view_id) in self.ancestors(view_id).enumerate() {
+            if let Some(view) = self.views.get(&(window_id, view_id)) {
+                contexts.push(view.keymap_context(self));
+                let view_type = view.as_any().type_id();
+                if let Some(actions) = self.actions.get(&view_type) {
+                    handler_depths_by_action_type.extend(
+                        actions
+                            .keys()
+                            .copied()
+                            .map(|action_type| (action_type, depth)),
+                    );
+                }
+            }
+        }
+
+        handler_depths_by_action_type.extend(
+            self.global_actions
+                .keys()
+                .copied()
+                .map(|action_type| (action_type, contexts.len())),
+        );
+
+        self.action_deserializers
+            .iter()
+            .filter_map(move |(name, (type_id, deserialize))| {
+                if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
+                    Some((
+                        *name,
+                        deserialize("{}").ok()?,
+                        self.keystroke_matcher
+                            .bindings_for_action_type(*type_id)
+                            .filter(|b| {
+                                (0..=action_depth).any(|depth| b.match_context(&contexts[depth..]))
+                            })
+                            .collect(),
+                    ))
+                } else {
+                    None
+                }
+            })
+    }
+
     pub fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.focused_view_id() {
             let dispatch_path = self
-                .ancestors(window_id, focused_view_id)
+                .ancestors(focused_view_id)
                 .filter_map(|view_id| {
                     self.views
                         .get(&(window_id, view_id))
@@ -252,11 +349,8 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
                 MatchResult::Pending => true,
                 MatchResult::Matches(matches) => {
                     for (view_id, action) in matches {
-                        if self.handle_dispatch_action_from_effect(
-                            window_id,
-                            Some(*view_id),
-                            action.as_ref(),
-                        ) {
+                        if self.handle_dispatch_action_from_effect(Some(*view_id), action.as_ref())
+                        {
                             self.keystroke_matcher.clear_pending();
                             handled_by = Some(action.boxed_clone());
                             break;
@@ -289,11 +383,11 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         //  -> These are usually small: [Mouse Down] or [Mouse up, Click] or [Mouse Moved, Mouse Dragged?]
         //  -> Also updates mouse-related state
         match &event {
-            Event::KeyDown(e) => return self.dispatch_key_down(window_id, e),
+            Event::KeyDown(e) => return self.dispatch_key_down(e),
 
-            Event::KeyUp(e) => return self.dispatch_key_up(window_id, e),
+            Event::KeyUp(e) => return self.dispatch_key_up(e),
 
-            Event::ModifiersChanged(e) => return self.dispatch_modifiers_changed(window_id, e),
+            Event::ModifiersChanged(e) => return self.dispatch_modifiers_changed(e),
 
             Event::MouseDown(e) => {
                 // Click events are weird because they can be fired after a drag event.
@@ -615,12 +709,10 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         any_event_handled
     }
 
-    pub fn dispatch_key_down(&mut self, window_id: usize, event: &KeyDownEvent) -> bool {
+    pub fn dispatch_key_down(&mut self, event: &KeyDownEvent) -> bool {
+        let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
-            for view_id in self
-                .ancestors(window_id, focused_view_id)
-                .collect::<Vec<_>>()
-            {
+            for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
                 if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
                     let handled = view.key_down(event, self, view_id);
                     self.views.insert((window_id, view_id), view);
@@ -636,12 +728,10 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         false
     }
 
-    pub fn dispatch_key_up(&mut self, window_id: usize, event: &KeyUpEvent) -> bool {
+    pub fn dispatch_key_up(&mut self, event: &KeyUpEvent) -> bool {
+        let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
-            for view_id in self
-                .ancestors(window_id, focused_view_id)
-                .collect::<Vec<_>>()
-            {
+            for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
                 if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
                     let handled = view.key_up(event, self, view_id);
                     self.views.insert((window_id, view_id), view);
@@ -657,16 +747,10 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         false
     }
 
-    pub fn dispatch_modifiers_changed(
-        &mut self,
-        window_id: usize,
-        event: &ModifiersChangedEvent,
-    ) -> bool {
+    pub fn dispatch_modifiers_changed(&mut self, event: &ModifiersChangedEvent) -> bool {
+        let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
-            for view_id in self
-                .ancestors(window_id, focused_view_id)
-                .collect::<Vec<_>>()
-            {
+            for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
                 if let Some(mut view) = self.views.remove(&(window_id, view_id)) {
                     let handled = view.modifiers_changed(event, self, view_id);
                     self.views.insert((window_id, view_id), view);
@@ -803,8 +887,115 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         self.window.is_fullscreen
     }
 
+    pub(crate) fn handle_dispatch_action_from_effect(
+        &mut self,
+        view_id: Option<usize>,
+        action: &dyn Action,
+    ) -> bool {
+        if let Some(view_id) = view_id {
+            self.halt_action_dispatch = false;
+            self.visit_dispatch_path(view_id, |view_id, capture_phase, cx| {
+                cx.update_any_view(view_id, |view, cx| {
+                    let type_id = view.as_any().type_id();
+                    if let Some((name, mut handlers)) = cx
+                        .actions_mut(capture_phase)
+                        .get_mut(&type_id)
+                        .and_then(|h| h.remove_entry(&action.id()))
+                    {
+                        for handler in handlers.iter_mut().rev() {
+                            cx.halt_action_dispatch = true;
+                            handler(view, action, cx, view_id);
+                            if cx.halt_action_dispatch {
+                                break;
+                            }
+                        }
+                        cx.actions_mut(capture_phase)
+                            .get_mut(&type_id)
+                            .unwrap()
+                            .insert(name, handlers);
+                    }
+                });
+
+                !cx.halt_action_dispatch
+            });
+        }
+
+        if !self.halt_action_dispatch {
+            self.halt_action_dispatch = self.dispatch_global_action_any(action);
+        }
+
+        self.pending_effects
+            .push_back(Effect::ActionDispatchNotification {
+                action_id: action.id(),
+            });
+        self.halt_action_dispatch
+    }
+
+    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
+    /// Includes the passed view itself
+    pub(crate) fn ancestors(&self, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::once(view_id)
+            .into_iter()
+            .chain(std::iter::from_fn(move || {
+                if let Some(ParentId::View(parent_id)) =
+                    self.parents.get(&(self.window_id, view_id))
+                {
+                    view_id = *parent_id;
+                    Some(view_id)
+                } else {
+                    None
+                }
+            }))
+    }
+
+    /// Returns the id of the parent of the given view, or none if the given
+    /// view is the root.
+    pub(crate) fn parent(&self, view_id: usize) -> Option<usize> {
+        if let Some(ParentId::View(view_id)) = self.parents.get(&(self.window_id, view_id)) {
+            Some(*view_id)
+        } else {
+            None
+        }
+    }
+
+    // Traverses the parent tree. Walks down the tree toward the passed
+    // view calling visit with true. Then walks back up the tree calling visit with false.
+    // If `visit` returns false this function will immediately return.
+    fn visit_dispatch_path(
+        &mut self,
+        view_id: usize,
+        mut visit: impl FnMut(usize, bool, &mut WindowContext) -> bool,
+    ) {
+        // List of view ids from the leaf to the root of the window
+        let path = self.ancestors(view_id).collect::<Vec<_>>();
+
+        // Walk down from the root to the leaf calling visit with capture_phase = true
+        for view_id in path.iter().rev() {
+            if !visit(*view_id, true, self) {
+                return;
+            }
+        }
+
+        // Walk up from the leaf to the root calling visit with capture_phase = false
+        for view_id in path.iter() {
+            if !visit(*view_id, false, self) {
+                return;
+            }
+        }
+    }
+
     pub fn focused_view_id(&self) -> Option<usize> {
         self.window.focused_view_id
+    }
+
+    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
+        if let Some(focused_view_id) = self.focused_view_id() {
+            self.ancestors(focused_view_id)
+                .skip(1) // Skip self id
+                .any(|parent| parent == view.view_id)
+        } else {
+            false
+        }
     }
 
     pub fn window_bounds(&self) -> WindowBounds {

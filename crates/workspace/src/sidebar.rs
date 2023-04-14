@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
-    AppContext, Entity, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WindowContext,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -21,8 +21,8 @@ pub trait SidebarItem: View {
 
 pub trait SidebarItemHandle {
     fn id(&self) -> usize;
-    fn should_show_badge(&self, cx: &AppContext) -> bool;
-    fn is_focused(&self, cx: &AppContext) -> bool;
+    fn should_show_badge(&self, cx: &WindowContext) -> bool;
+    fn is_focused(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
 
@@ -34,11 +34,11 @@ where
         self.id()
     }
 
-    fn should_show_badge(&self, cx: &AppContext) -> bool {
+    fn should_show_badge(&self, cx: &WindowContext) -> bool {
         self.read(cx).should_show_badge(cx)
     }
 
-    fn is_focused(&self, cx: &AppContext) -> bool {
+    fn is_focused(&self, cx: &WindowContext) -> bool {
         ViewHandle::is_focused(self, cx) || self.read(cx).contains_focused_view(cx)
     }
 

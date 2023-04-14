@@ -747,12 +747,9 @@ mod tests {
         })
         .await;
         assert_eq!(cx.window_ids().len(), 2);
-        let workspace_1 = cx
-            .read_window(window_id, |cx| cx.root_view().clone())
-            .unwrap()
-            .downcast::<Workspace>()
-            .unwrap();
-        workspace_1.read_with(cx, |workspace, cx| {
+        cx.read_window(window_id, |cx| {
+            let workspace = cx.root_view().clone().downcast::<Workspace>().unwrap();
+            let workspace = workspace.read(cx);
             assert_eq!(
                 workspace
                     .worktrees(cx)

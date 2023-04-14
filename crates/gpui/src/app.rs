@@ -25,7 +25,6 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postage::oneshot;
-use smallvec::SmallVec;
 use smol::prelude::*;
 use uuid::Uuid;
 
@@ -825,47 +824,6 @@ impl AppContext {
             .map(|view| view.as_any().type_id())
     }
 
-    /// Returns an iterator over all of the view ids from the passed view up to the root of the window
-    /// Includes the passed view itself
-    fn ancestors(&self, window_id: usize, mut view_id: usize) -> impl Iterator<Item = usize> + '_ {
-        std::iter::once(view_id)
-            .into_iter()
-            .chain(std::iter::from_fn(move || {
-                if let Some(ParentId::View(parent_id)) = self.parents.get(&(window_id, view_id)) {
-                    view_id = *parent_id;
-                    Some(view_id)
-                } else {
-                    None
-                }
-            }))
-    }
-
-    /// Returns the id of the parent of the given view, or none if the given
-    /// view is the root.
-    pub fn parent(&self, window_id: usize, view_id: usize) -> Option<usize> {
-        if let Some(ParentId::View(view_id)) = self.parents.get(&(window_id, view_id)) {
-            Some(*view_id)
-        } else {
-            None
-        }
-    }
-
-    fn focused_view_id(&self, window_id: usize) -> Option<usize> {
-        self.windows
-            .get(&window_id)
-            .and_then(|window| window.focused_view_id)
-    }
-
-    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
-        if let Some(focused_view_id) = self.focused_view_id(view.window_id) {
-            self.ancestors(view.window_id, focused_view_id)
-                .skip(1) // Skip self id
-                .any(|parent| parent == view.view_id)
-        } else {
-            false
-        }
-    }
-
     pub fn active_labeled_tasks<'a>(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = &'static str> + 'a {
@@ -1231,141 +1189,29 @@ impl AppContext {
         self.action_deserializers.keys().copied()
     }
 
-    /// Return keystrokes that would dispatch the given action on the given view.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        let mut contexts = Vec::new();
-        let mut handler_depth = None;
-        for (i, view_id) in self.ancestors(window_id, view_id).enumerate() {
-            if let Some(view) = self.views.get(&(window_id, view_id)) {
-                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
-                    if actions.contains_key(&action.as_any().type_id()) {
-                        handler_depth = Some(i);
-                    }
-                }
-                contexts.push(view.keymap_context(self));
-            }
-        }
-
-        if self.global_actions.contains_key(&action.as_any().type_id()) {
-            handler_depth = Some(contexts.len())
-        }
-
-        self.keystroke_matcher
-            .bindings_for_action_type(action.as_any().type_id())
-            .find_map(|b| {
-                handler_depth
-                    .map(|highest_handler| {
-                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
-                            Some(b.keystrokes().into())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-            })
-    }
-
-    pub fn available_actions(
-        &self,
-        window_id: usize,
-        view_id: usize,
-    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
-        let mut contexts = Vec::new();
-        let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
-        for (depth, view_id) in self.ancestors(window_id, view_id).enumerate() {
-            if let Some(view) = self.views.get(&(window_id, view_id)) {
-                contexts.push(view.keymap_context(self));
-                let view_type = view.as_any().type_id();
-                if let Some(actions) = self.actions.get(&view_type) {
-                    handler_depths_by_action_type.extend(
-                        actions
-                            .keys()
-                            .copied()
-                            .map(|action_type| (action_type, depth)),
-                    );
-                }
-            }
-        }
-
-        handler_depths_by_action_type.extend(
-            self.global_actions
-                .keys()
-                .copied()
-                .map(|action_type| (action_type, contexts.len())),
-        );
-
-        self.action_deserializers
-            .iter()
-            .filter_map(move |(name, (type_id, deserialize))| {
-                if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
-                    Some((
-                        *name,
-                        deserialize("{}").ok()?,
-                        self.keystroke_matcher
-                            .bindings_for_action_type(*type_id)
-                            .filter(|b| {
-                                (0..=action_depth).any(|depth| b.match_context(&contexts[depth..]))
-                            })
-                            .collect(),
-                    ))
-                } else {
-                    None
-                }
-            })
-    }
-
     pub fn is_action_available(&self, action: &dyn Action) -> bool {
+        let mut available_in_window = false;
         let action_type = action.as_any().type_id();
         if let Some(window_id) = self.platform.main_window_id() {
-            if let Some(focused_view_id) = self.focused_view_id(window_id) {
-                for view_id in self.ancestors(window_id, focused_view_id) {
-                    if let Some(view) = self.views.get(&(window_id, view_id)) {
-                        let view_type = view.as_any().type_id();
-                        if let Some(actions) = self.actions.get(&view_type) {
-                            if actions.contains_key(&action_type) {
-                                return true;
+            available_in_window = self
+                .read_window(window_id, |cx| {
+                    if let Some(focused_view_id) = cx.focused_view_id() {
+                        for view_id in cx.ancestors(focused_view_id) {
+                            if let Some(view) = cx.views.get(&(window_id, view_id)) {
+                                let view_type = view.as_any().type_id();
+                                if let Some(actions) = cx.actions.get(&view_type) {
+                                    if actions.contains_key(&action_type) {
+                                        return true;
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
+                    false
+                })
+                .unwrap_or(false);
         }
-        self.global_actions.contains_key(&action_type)
-    }
-
-    // Traverses the parent tree. Walks down the tree toward the passed
-    // view calling visit with true. Then walks back up the tree calling visit with false.
-    // If `visit` returns false this function will immediately return.
-    // Returns a bool indicating if the traversal was completed early.
-    fn visit_dispatch_path(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        mut visit: impl FnMut(usize, bool, &mut AppContext) -> bool,
-    ) -> bool {
-        // List of view ids from the leaf to the root of the window
-        let path = self.ancestors(window_id, view_id).collect::<Vec<_>>();
-
-        // Walk down from the root to the leaf calling visit with capture_phase = true
-        for view_id in path.iter().rev() {
-            if !visit(*view_id, true, self) {
-                return false;
-            }
-        }
-
-        // Walk up from the leaf to the root calling visit with capture_phase = false
-        for view_id in path.iter() {
-            if !visit(*view_id, false, self) {
-                return false;
-            }
-        }
-
-        true
+        available_in_window || self.global_actions.contains_key(&action_type)
     }
 
     fn actions_mut(
@@ -2077,7 +1923,7 @@ impl AppContext {
             cx.window.is_active = active;
 
             if let Some(focused_id) = cx.window.focused_view_id {
-                for view_id in cx.ancestors(window_id, focused_id).collect::<Vec<_>>() {
+                for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
                     cx.update_any_view(focused_id, |view, cx| {
                         if active {
                             view.focus_in(focused_id, cx, view_id);
@@ -2104,10 +1950,10 @@ impl AppContext {
             cx.window.focused_view_id = focused_id;
 
             let blurred_parents = blurred_id
-                .map(|blurred_id| cx.ancestors(window_id, blurred_id).collect::<Vec<_>>())
+                .map(|blurred_id| cx.ancestors(blurred_id).collect::<Vec<_>>())
                 .unwrap_or_default();
             let focused_parents = focused_id
-                .map(|focused_id| cx.ancestors(window_id, focused_id).collect::<Vec<_>>())
+                .map(|focused_id| cx.ancestors(focused_id).collect::<Vec<_>>())
                 .unwrap_or_default();
 
             if let Some(blurred_id) = blurred_id {
@@ -2141,48 +1987,10 @@ impl AppContext {
         window_id: usize,
         view_id: Option<usize>,
         action: &dyn Action,
-    ) -> bool {
-        self.update(|this| {
-            if let Some(view_id) = view_id {
-                this.halt_action_dispatch = false;
-                this.visit_dispatch_path(window_id, view_id, |view_id, capture_phase, this| {
-                    this.update_window(window_id, |cx| {
-                        cx.update_any_view(view_id, |view, cx| {
-                            let type_id = view.as_any().type_id();
-                            if let Some((name, mut handlers)) = cx
-                                .actions_mut(capture_phase)
-                                .get_mut(&type_id)
-                                .and_then(|h| h.remove_entry(&action.id()))
-                            {
-                                for handler in handlers.iter_mut().rev() {
-                                    cx.halt_action_dispatch = true;
-                                    handler(view, action, cx, view_id);
-                                    if cx.halt_action_dispatch {
-                                        break;
-                                    }
-                                }
-                                cx.actions_mut(capture_phase)
-                                    .get_mut(&type_id)
-                                    .unwrap()
-                                    .insert(name, handlers);
-                            }
-                        })
-                    });
-
-                    !this.halt_action_dispatch
-                });
-            }
-
-            if !this.halt_action_dispatch {
-                this.halt_action_dispatch = this.dispatch_global_action_any(action);
-            }
-
-            this.pending_effects
-                .push_back(Effect::ActionDispatchNotification {
-                    action_id: action.id(),
-                });
-            this.halt_action_dispatch
-        })
+    ) {
+        self.update_window(window_id, |cx| {
+            cx.handle_dispatch_action_from_effect(view_id, action)
+        });
     }
 
     fn handle_action_dispatch_notification_effect(&mut self, action_id: TypeId) {
@@ -3215,7 +3023,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     }
 
     pub fn parent(&self) -> Option<usize> {
-        self.window_context.parent(self.window_id, self.view_id)
+        self.window_context.parent(self.view_id)
     }
 
     pub fn window_id(&self) -> usize {
@@ -3269,7 +3077,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     }
 
     pub fn is_parent_view_focused(&self) -> bool {
-        if let Some(parent_view_id) = self.ancestors(self.window_id, self.view_id).next().clone() {
+        if let Some(parent_view_id) = self.ancestors(self.view_id).next().clone() {
             self.focused_view_id() == Some(parent_view_id)
         } else {
             false
@@ -3277,7 +3085,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     }
 
     pub fn focus_parent_view(&mut self) {
-        let next = self.ancestors(self.window_id, self.view_id).next().clone();
+        let next = self.ancestors(self.view_id).next().clone();
         if let Some(parent_view_id) = next {
             let window_id = self.window_id;
             self.window_context.focus(window_id, Some(parent_view_id));
@@ -3289,7 +3097,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         if self.window_id != view.window_id {
             return false;
         }
-        self.ancestors(view.window_id, view.view_id)
+        self.ancestors(view.view_id)
             .skip(1) // Skip self id
             .any(|parent| parent == self.view_id)
     }
@@ -4193,9 +4001,12 @@ impl<T: View> ViewHandle<T> {
         });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn is_focused(&self, cx: &AppContext) -> bool {
-        cx.focused_view_id(self.window_id)
-            .map_or(false, |focused_id| focused_id == self.view_id)
+        cx.read_window(self.window_id, |cx| {
+            cx.focused_view_id() == Some(self.view_id)
+        })
+        .unwrap_or(false)
     }
 }
 
@@ -4310,11 +4121,6 @@ impl AnyViewHandle {
 
     pub fn is<T: 'static>(&self) -> bool {
         TypeId::of::<T>() == self.view_type
-    }
-
-    pub fn is_focused(&self, cx: &AppContext) -> bool {
-        cx.focused_view_id(self.window_id)
-            .map_or(false, |focused_id| focused_id == self.view_id)
     }
 
     pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {
@@ -5713,7 +5519,7 @@ mod tests {
         }
 
         let view_events: Arc<Mutex<Vec<String>>> = Default::default();
-        let (_, view_1) = cx.add_window(Default::default(), |_| View {
+        let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
             events: view_events.clone(),
             name: "view 1".to_string(),
         });
@@ -5763,8 +5569,10 @@ mod tests {
             cx.focus(&view_2);
         });
 
-        assert!(cx.is_child_focused(&view_1));
-        assert!(!cx.is_child_focused(&view_2));
+        cx.read_window(window_id, |cx| {
+            assert!(cx.is_child_focused(&view_1));
+            assert!(!cx.is_child_focused(&view_2));
+        });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             [
@@ -5789,8 +5597,10 @@ mod tests {
         );
 
         view_1.update(cx, |_, cx| cx.focus(&view_1));
-        assert!(!cx.is_child_focused(&view_1));
-        assert!(!cx.is_child_focused(&view_2));
+        cx.read_window(window_id, |cx| {
+            assert!(!cx.is_child_focused(&view_1));
+            assert!(!cx.is_child_focused(&view_2));
+        });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 2 blurred", "view 1 focused"],
@@ -5967,11 +5777,9 @@ mod tests {
         let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
         let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
 
-        cx.handle_dispatch_action_from_effect(
-            window_id,
-            Some(view_4.id()),
-            &Action("bar".to_string()),
-        );
+        cx.update_window(window_id, |cx| {
+            cx.handle_dispatch_action_from_effect(Some(view_4.id()), &Action("bar".to_string()))
+        });
 
         assert_eq!(
             *actions.borrow(),
@@ -5996,11 +5804,9 @@ mod tests {
         let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
 
         actions.borrow_mut().clear();
-        cx.handle_dispatch_action_from_effect(
-            window_id,
-            Some(view_4.id()),
-            &Action("bar".to_string()),
-        );
+        cx.update_window(window_id, |cx| {
+            cx.handle_dispatch_action_from_effect(Some(view_4.id()), &Action("bar".to_string()))
+        });
 
         assert_eq!(
             *actions.borrow(),
@@ -6197,48 +6003,62 @@ mod tests {
             Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
         ]);
 
-        // Sanity check
-        assert_eq!(
-            cx.keystrokes_for_action(window_id, view_1.id(), &Action1)
-                .unwrap()
-                .as_slice(),
-            &[Keystroke::parse("a").unwrap()]
-        );
-        assert_eq!(
-            cx.keystrokes_for_action(window_id, view_2.id(), &Action2)
-                .unwrap()
-                .as_slice(),
-            &[Keystroke::parse("b").unwrap()]
-        );
+        cx.update_window(window_id, |cx| {
+            // Sanity check
+            assert_eq!(
+                cx.keystrokes_for_action(view_1.id(), &Action1)
+                    .unwrap()
+                    .as_slice(),
+                &[Keystroke::parse("a").unwrap()]
+            );
+            assert_eq!(
+                cx.keystrokes_for_action(view_2.id(), &Action2)
+                    .unwrap()
+                    .as_slice(),
+                &[Keystroke::parse("b").unwrap()]
+            );
 
-        // The 'a' keystroke propagates up the view tree from view_2
-        // to view_1. The action, Action1, is handled by view_1.
-        assert_eq!(
-            cx.keystrokes_for_action(window_id, view_2.id(), &Action1)
-                .unwrap()
-                .as_slice(),
-            &[Keystroke::parse("a").unwrap()]
-        );
+            // The 'a' keystroke propagates up the view tree from view_2
+            // to view_1. The action, Action1, is handled by view_1.
+            assert_eq!(
+                cx.keystrokes_for_action(view_2.id(), &Action1)
+                    .unwrap()
+                    .as_slice(),
+                &[Keystroke::parse("a").unwrap()]
+            );
 
-        // Actions that are handled below the current view don't have bindings
-        assert_eq!(
-            cx.keystrokes_for_action(window_id, view_1.id(), &Action2),
-            None
-        );
+            // Actions that are handled below the current view don't have bindings
+            assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action2), None);
 
-        // Actions that are handled in other branches of the tree should not have a binding
-        assert_eq!(
-            cx.keystrokes_for_action(window_id, view_2.id(), &GlobalAction),
-            None
-        );
+            // Actions that are handled in other branches of the tree should not have a binding
+            assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
+
+            // Check that global actions do not have a binding, even if a binding does exist in another view
+            assert_eq!(
+                &available_actions(view_1.id(), cx),
+                &[
+                    ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                    ("test::GlobalAction", vec![])
+                ],
+            );
+
+            // Check that view 1 actions and bindings are available even when called from view 2
+            assert_eq!(
+                &available_actions(view_2.id(), cx),
+                &[
+                    ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                    ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
+                    ("test::GlobalAction", vec![]),
+                ],
+            );
+        });
 
         // Produces a list of actions and key bindings
         fn available_actions(
-            window_id: usize,
             view_id: usize,
-            cx: &mut AppContext,
+            cx: &WindowContext,
         ) -> Vec<(&'static str, Vec<Keystroke>)> {
-            cx.available_actions(window_id, view_id)
+            cx.available_actions(view_id)
                 .map(|(action_name, _, bindings)| {
                     (
                         action_name,
@@ -6251,25 +6071,6 @@ mod tests {
                 .sorted_by(|(name1, _), (name2, _)| name1.cmp(name2))
                 .collect()
         }
-
-        // Check that global actions do not have a binding, even if a binding does exist in another view
-        assert_eq!(
-            &available_actions(window_id, view_1.id(), cx),
-            &[
-                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                ("test::GlobalAction", vec![])
-            ],
-        );
-
-        // Check that view 1 actions and bindings are available even when called from view 2
-        assert_eq!(
-            &available_actions(window_id, view_2.id(), cx),
-            &[
-                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
-                ("test::GlobalAction", vec![]),
-            ],
-        );
     }
 
     #[crate::test(self)]
