@@ -499,7 +499,7 @@ type GlobalObservationCallback = Box<dyn FnMut(&mut AppContext)>;
 type FocusObservationCallback = Box<dyn FnMut(bool, &mut WindowContext) -> bool>;
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut AppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut AppContext)>;
-type WindowActivationCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
+type WindowActivationCallback = Box<dyn FnMut(bool, &mut WindowContext) -> bool>;
 type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
 type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut AppContext) -> bool>;
 type KeystrokeCallback =
@@ -1110,7 +1110,7 @@ impl AppContext {
 
     fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> Subscription
     where
-        F: 'static + FnMut(bool, &mut AppContext) -> bool,
+        F: 'static + FnMut(bool, &mut WindowContext) -> bool,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         self.pending_effects
@@ -2070,22 +2070,13 @@ impl AppContext {
     }
 
     fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
-        //Short circuit evaluation if we're already g2g
-        if self
-            .windows
-            .get(&window_id)
-            .map(|w| w.is_active == active)
-            .unwrap_or(false)
-        {
-            return;
-        }
+        self.update_window(window_id, |cx| {
+            if cx.window.is_active == active {
+                return;
+            }
+            cx.window.is_active = active;
 
-        self.update(|cx| {
-            cx.update_window(window_id, |cx| {
-                let Some(focused_id) = cx.window.focused_view_id else {
-                    return;
-                };
-
+            if let Some(focused_id) = cx.window.focused_view_id {
                 for view_id in cx.ancestors(window_id, focused_id).collect::<Vec<_>>() {
                     cx.update_any_view(focused_id, |view, cx| {
                         if active {
@@ -2095,12 +2086,10 @@ impl AppContext {
                         }
                     });
                 }
-            });
+            }
 
             let mut observations = cx.window_activation_observations.clone();
             observations.emit(window_id, |callback| callback(active, cx));
-
-            Some(())
         });
     }
 
