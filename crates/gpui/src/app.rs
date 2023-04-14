@@ -3928,12 +3928,8 @@ impl<T: View> ViewHandle<T> {
         });
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn is_focused(&self, cx: &AppContext) -> bool {
-        cx.read_window(self.window_id, |cx| {
-            cx.focused_view_id() == Some(self.view_id)
-        })
-        .unwrap_or(false)
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        cx.focused_view_id() == Some(self.view_id)
     }
 }
 

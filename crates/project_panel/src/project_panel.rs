@@ -1549,7 +1549,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);
@@ -1571,7 +1571,10 @@ mod tests {
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        assert!(panel.read_with(cx, |panel, cx| panel.filename_editor.is_focused(cx)));
+        cx.read_window(window_id, |cx| {
+            let panel = panel.read(cx);
+            assert!(panel.filename_editor.is_focused(cx));
+        });
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[

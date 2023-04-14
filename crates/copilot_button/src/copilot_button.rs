@@ -161,7 +161,7 @@ impl View for CopilotButton {
                             ));
                             let window_id = cx.window_id();
                             let task = task.to_owned();
-                            cx.spawn(|this, mut cx| async move {
+                            cx.spawn_weak(|_this, mut cx| async move {
                                 task.await;
                                 cx.update(|cx| {
                                     if let Some(copilot) = Copilot::global(cx) {
