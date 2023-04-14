@@ -8,12 +8,14 @@ on:
       - main
       - randomized-tests-runner
   schedule:
-     - cron: '*/15 * * * *'
+     - cron: '0 * * * *'
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  ZED_SERVER_URL: https://zed.dev
+  ZED_CLIENT_SECRET_TOKEN: ${{ secrets.ZED_CLIENT_SECRET_TOKEN }}
 
 jobs:
   tests:

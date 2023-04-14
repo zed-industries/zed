@@ -1,27 +1,48 @@
 #!/bin/bash
 
+set -u
+
+: $ZED_SERVER_URL
+: $ZED_CLIENT_SECRET_TOKEN
+
 # Compile the tests first
 mkdir -p target
-cargo test --release --package collab --no-run
+cargo test --release --lib --package collab --no-run
 if [[ $? != 0 ]]; then
   echo "Build failed"
   exit 1
 fi
 
-set -eu
-
 LOG_FILE=target/randomized-tests.log
 export SAVE_PLAN=target/test-plan.json
 export OPERATIONS=200
-export ITERATIONS=10000
+export ITERATIONS=100000
 export SEED=$(od -A n -N 8 -t u8 /dev/urandom | xargs)
 
-cargo test --release --package collab random -- --nocapture 2> >(tee $LOG_FILE)
+echo "Starting seed: ${SEED}"
+
+cargo test --release --lib --package collab random 2>&1 > $LOG_FILE
 if [[ $? == 0 ]]; then
   echo "Tests passed"
   exit 0
 fi
 
 # If the tests failed, find the failing seed in the logs
-failing_seed=$(grep "failing seed" $LOG_FILE | cut -d: -f2 | xargs)
-echo "Tests failed. seed: $failing_seed"
+commit=$(git rev-parse HEAD)
+failing_seed=$(grep "failing seed" $LOG_FILE | tail -n1 | cut -d: -f2 | xargs)
+failing_plan=$(cat $SAVE_PLAN)
+request="{
+  \"seed\": \"${failing_seed}\",
+  \"commit\": \"${commit}\",
+  \"token\": \"${ZED_CLIENT_SECRET_TOKEN}\",
+  \"plan\": ${failing_plan}
+}"
+
+echo "Reporting test failure."
+echo $request
+
+curl \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "${request}" \
+    "${ZED_SERVER_URL}/api/randomized_test_failure"
