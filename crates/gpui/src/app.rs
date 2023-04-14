@@ -1858,7 +1858,7 @@ impl AppContext {
 
             if let Some(focused_id) = cx.window.focused_view_id {
                 for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
-                    cx.update_any_view(focused_id, |view, cx| {
+                    cx.update_any_view(view_id, |view, cx| {
                         if active {
                             view.focus_in(focused_id, cx, view_id);
                         } else {
