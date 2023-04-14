@@ -1477,7 +1477,9 @@ async fn test_host_disconnect(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    assert!(cx_b.read_window(window_id_b, |cx| editor_b.is_focused(cx)).unwrap());
+    assert!(cx_b
+        .read_window(window_id_b, |cx| editor_b.is_focused(cx))
+        .unwrap());
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 

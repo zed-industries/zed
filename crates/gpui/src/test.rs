@@ -19,8 +19,8 @@ use crate::{
     platform,
     platform::Platform,
     util::CwdBacktrace,
-    AppContext, Drawable, Element, Entity, FontCache, Handle, Subscription, TestAppContext,
-    View, ViewContext,
+    AppContext, Drawable, Element, Entity, FontCache, Handle, Subscription, TestAppContext, View,
+    ViewContext,
 };
 
 #[cfg(test)]

@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyViewHandle, AppContext, Element, Entity, SceneBuilder, SizeConstraint, Subscription,
-    View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, Element, Entity, SceneBuilder, SizeConstraint, Subscription, View,
+    ViewContext, ViewHandle,
 };
 use settings::Settings;
 

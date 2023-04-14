@@ -248,12 +248,7 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
-    fn tab_content(
-        &self,
-        _: Option<usize>,
-        style: &theme::Tab,
-        _: &AppContext,
-    ) -> Element<Pane> {
+    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> Element<Pane> {
         Flex::row()
             .with_child(
                 Svg::new("icons/feedback_16.svg")

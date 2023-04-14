@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, AnyViewHandle, AppContext, Drawable, Element, Entity, MouseState,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, AnyViewHandle, AppContext, Drawable, Element, Entity, MouseState, View,
+    ViewContext, ViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, Settings};
