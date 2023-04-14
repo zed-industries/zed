@@ -280,18 +280,19 @@ mod tests {
 
     #[crate::test(self)]
     fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
-        let (_, root_view) = cx.add_window(Default::default(), |_| TestView);
-        fonts::with_font_cache(cx.font_cache().clone(), || {
-            root_view.update(cx, |view, cx| {
+        cx.add_window(Default::default(), |cx| {
+            let mut view = TestView;
+            fonts::with_font_cache(cx.font_cache().clone(), || {
                 let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
                 let (_, state) = text.layout(
                     SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
-                    view,
+                    &mut view,
                     cx,
                 );
                 assert_eq!(state.shaped_lines.len(), 2);
                 assert_eq!(state.wrap_boundaries.len(), 2);
             });
+            view
         });
     }
 

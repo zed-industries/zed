@@ -391,7 +391,10 @@ impl UpdateView for TestAppContext {
     where
         T: View,
     {
-        self.cx.borrow_mut().update_view(handle, update)
+        self.cx
+            .borrow_mut()
+            .update_window(handle.window_id, |cx| cx.update_view(handle, update))
+            .unwrap()
     }
 }
 
@@ -556,22 +559,20 @@ impl<T: View> ViewHandle<T> {
         let timeout_duration = cx.condition_duration();
 
         let mut cx = cx.cx.borrow_mut();
-        let subscriptions = self.update(&mut *cx, |_, cx| {
-            (
-                cx.observe(self, {
-                    let mut tx = tx.clone();
-                    move |_, _, _| {
-                        tx.blocking_send(()).ok();
-                    }
-                }),
-                cx.subscribe(self, {
-                    let mut tx = tx.clone();
-                    move |_, _, _, _| {
-                        tx.blocking_send(()).ok();
-                    }
-                }),
-            )
-        });
+        let subscriptions = (
+            cx.observe(self, {
+                let mut tx = tx.clone();
+                move |_, _| {
+                    tx.blocking_send(()).ok();
+                }
+            }),
+            cx.subscribe(self, {
+                let mut tx = tx.clone();
+                move |_, _, _| {
+                    tx.blocking_send(()).ok();
+                }
+            }),
+        );
 
         let cx = cx.weak_self.as_ref().unwrap().upgrade().unwrap();
         let handle = self.downgrade();

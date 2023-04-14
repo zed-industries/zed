@@ -470,7 +470,10 @@ impl UpdateView for AsyncAppContext {
     where
         T: View,
     {
-        self.0.borrow_mut().update_view(handle, update)
+        self.0
+            .borrow_mut()
+            .update_window(handle.window_id, |cx| cx.update_view(handle, update))
+            .unwrap() // TODO: is this unwrap safe?
     }
 }
 
@@ -1271,7 +1274,9 @@ impl AppContext {
             let root_view = window.root_view().clone().downcast::<V>().unwrap();
 
             this.windows.insert(window_id, window);
-            root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
+            this.update_window(window_id, |cx| {
+                root_view.update(cx, |view, cx| view.focus_in(cx.handle().into_any(), cx))
+            });
 
             (window_id, root_view)
         })
@@ -1289,7 +1294,9 @@ impl AppContext {
             let root_view = window.root_view().clone().downcast::<V>().unwrap();
 
             this.windows.insert(window_id, window);
-            root_view.update(this, |view, cx| view.focus_in(cx.handle().into_any(), cx));
+            this.update_window(window_id, |cx| {
+                root_view.update(cx, |view, cx| view.focus_in(cx.handle().into_any(), cx))
+            });
 
             (window_id, root_view)
         })
@@ -2144,20 +2151,6 @@ impl ReadView for AppContext {
         } else {
             panic!("circular view reference for type {}", type_name::<T>());
         }
-    }
-}
-
-impl UpdateView for AppContext {
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
-        self.update_window(handle.window_id, |cx| cx.update_view(handle, update))
-            .unwrap() // TODO: Is this unwrap safe?
     }
 }
 
@@ -3045,17 +3038,20 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     where
         F: 'static + FnMut(&mut V, &mut ViewContext<V>) -> bool,
     {
-        let window_id = self.window_id();
+        let window_id = self.window_id;
         let view = self.weak_handle();
         self.pending_effects
             .push_back(Effect::WindowShouldCloseSubscription {
                 window_id,
                 callback: Box::new(move |cx| {
-                    if let Some(view) = view.upgrade(cx) {
-                        view.update(cx, |view, cx| callback(view, cx))
-                    } else {
-                        true
-                    }
+                    cx.update_window(window_id, |cx| {
+                        if let Some(view) = view.upgrade(cx) {
+                            view.update(cx, |view, cx| callback(view, cx))
+                        } else {
+                            true
+                        }
+                    })
+                    .unwrap_or(true)
                 }),
             });
     }
@@ -3099,17 +3095,21 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         H: Handle<E>,
         F: 'static + FnMut(&mut V, H, &E::Event, &mut ViewContext<V>),
     {
+        let window_id = self.window_id;
         let subscriber = self.weak_handle();
         self.window_context
             .subscribe_internal(handle, move |emitter, event, cx| {
-                if let Some(subscriber) = subscriber.upgrade(cx) {
-                    subscriber.update(cx, |subscriber, cx| {
-                        callback(subscriber, emitter, event, cx);
-                    });
-                    true
-                } else {
-                    false
-                }
+                cx.update_window(window_id, |cx| {
+                    if let Some(subscriber) = subscriber.upgrade(cx) {
+                        subscriber.update(cx, |subscriber, cx| {
+                            callback(subscriber, emitter, event, cx);
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false)
             })
     }
 
@@ -3119,17 +3119,21 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         H: Handle<E>,
         F: 'static + FnMut(&mut V, H, &mut ViewContext<V>),
     {
+        let window_id = self.window_id;
         let observer = self.weak_handle();
         self.window_context
             .observe_internal(handle, move |observed, cx| {
-                if let Some(observer) = observer.upgrade(cx) {
-                    observer.update(cx, |observer, cx| {
-                        callback(observer, observed, cx);
-                    });
-                    true
-                } else {
-                    false
-                }
+                cx.update_window(window_id, |cx| {
+                    if let Some(observer) = observer.upgrade(cx) {
+                        observer.update(cx, |observer, cx| {
+                            callback(observer, observed, cx);
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false)
             })
     }
 
@@ -3138,11 +3142,14 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         G: Any,
         F: 'static + FnMut(&mut V, &mut ViewContext<V>),
     {
+        let window_id = self.window_id;
         let observer = self.weak_handle();
         self.window_context.observe_global::<G, _>(move |cx| {
-            if let Some(observer) = observer.upgrade(cx) {
-                observer.update(cx, |observer, cx| callback(observer, cx));
-            }
+            cx.update_window(window_id, |cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| callback(observer, cx));
+                }
+            });
         })
     }
 
@@ -3171,14 +3178,17 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         H: Handle<E>,
         F: 'static + FnMut(&mut V, &E, &mut ViewContext<V>),
     {
+        let window_id = self.window_id;
         let observer = self.weak_handle();
         self.window_context
             .observe_release(handle, move |released, cx| {
-                if let Some(observer) = observer.upgrade(cx) {
-                    observer.update(cx, |observer, cx| {
-                        callback(observer, released, cx);
-                    });
-                }
+                cx.update_window(window_id, |cx| {
+                    if let Some(observer) = observer.upgrade(cx) {
+                        observer.update(cx, |observer, cx| {
+                            callback(observer, released, cx);
+                        });
+                    }
+                });
             })
     }
 
@@ -3186,13 +3196,16 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     where
         F: 'static + FnMut(&mut V, TypeId, &mut ViewContext<V>),
     {
+        let window_id = self.window_id;
         let observer = self.weak_handle();
         self.window_context.observe_actions(move |action_id, cx| {
-            if let Some(observer) = observer.upgrade(cx) {
-                observer.update(cx, |observer, cx| {
-                    callback(observer, action_id, cx);
-                });
-            }
+            cx.update_window(window_id, |cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, action_id, cx);
+                    });
+                }
+            });
         })
     }
 
@@ -3278,16 +3291,20 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     where
         F: 'static + FnMut(&mut V, &mut ViewContext<V>),
     {
+        let window_id = self.window_id;
         let observer = self.weak_handle();
         self.window_context.observe_active_labeled_tasks(move |cx| {
-            if let Some(observer) = observer.upgrade(cx) {
-                observer.update(cx, |observer, cx| {
-                    callback(observer, cx);
-                });
-                true
-            } else {
-                false
-            }
+            cx.update_window(window_id, |cx| {
+                if let Some(observer) = observer.upgrade(cx) {
+                    observer.update(cx, |observer, cx| {
+                        callback(observer, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
         })
     }
 
@@ -3321,11 +3338,14 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
+        let window_id = self.window_id;
         let handle = self.handle();
         self.window_context.defer(move |cx| {
-            handle.update(cx, |view, cx| {
-                callback(view, cx);
-            })
+            cx.update_window(window_id, |cx| {
+                handle.update(cx, |view, cx| {
+                    callback(view, cx);
+                })
+            });
         })
     }
 
@@ -3333,11 +3353,14 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         &mut self,
         callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>),
     ) {
+        let window_id = self.window_id;
         let handle = self.handle();
         self.window_context.after_window_update(move |cx| {
-            handle.update(cx, |view, cx| {
-                callback(view, cx);
-            })
+            cx.update_window(window_id, |cx| {
+                handle.update(cx, |view, cx| {
+                    callback(view, cx);
+                })
+            });
         })
     }
 
@@ -3915,17 +3938,6 @@ impl<T: View> ViewHandle<T> {
             let update = update.take().unwrap();
             update(view, cx)
         })
-    }
-
-    pub fn defer<C, F>(&self, cx: &mut C, update: F)
-    where
-        C: AsMut<AppContext>,
-        F: 'static + FnOnce(&mut T, &mut ViewContext<T>),
-    {
-        let this = self.clone();
-        cx.as_mut().defer(move |cx| {
-            this.update(cx, |view, cx| update(view, cx));
-        });
     }
 
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
