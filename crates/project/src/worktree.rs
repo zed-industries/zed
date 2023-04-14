@@ -1491,7 +1491,12 @@ impl LocalSnapshot {
         }
 
         let scan_id = self.scan_id;
-        self.entries_by_path.insert_or_replace(entry.clone(), &());
+        let removed = self.entries_by_path.insert_or_replace(entry.clone(), &());
+        if let Some(removed) = removed {
+            if removed.id != entry.id {
+                self.entries_by_id.remove(&removed.id, &());
+            }
+        }
         self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
