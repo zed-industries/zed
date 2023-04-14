@@ -16,6 +16,7 @@ use collections::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
     actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -95,8 +96,8 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-pub fn observe_keystrokes(window_id: usize, cx: &mut AppContext) {
-    cx.observe_keystrokes(window_id, |_keystroke, _result, handled_by, cx| {
+pub fn observe_keystrokes(cx: &mut WindowContext) {
+    cx.observe_keystrokes(|_keystroke, _result, handled_by, cx| {
         if let Some(handled_by) = handled_by {
             // Keystroke is handled by the vim system, so continue forward
             // Also short circuit if it is the special cancel action

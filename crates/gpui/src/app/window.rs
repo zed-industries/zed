@@ -15,8 +15,8 @@ use crate::{
     util::post_inc,
     Action, AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Drawable, Effect, Entity,
     ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView,
-    SceneBuilder, UpdateModel, UpdateView, UpgradeViewHandle, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowInvalidation,
+    SceneBuilder, Subscription, UpdateModel, UpdateView, UpgradeViewHandle, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -237,6 +237,75 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         let result = f(view.as_mut(), self);
         self.views.insert((window_id, view_id), view);
         Some(result)
+    }
+
+    pub(crate) fn observe_window_activation<F>(&mut self, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(bool, &mut WindowContext) -> bool,
+    {
+        let window_id = self.window_id;
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowActivationObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowActivationObservation(
+            self.window_activation_observations
+                .subscribe(window_id, subscription_id),
+        )
+    }
+
+    pub(crate) fn observe_fullscreen<F>(&mut self, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(bool, &mut WindowContext) -> bool,
+    {
+        let window_id = self.window_id;
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowFullscreenObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowActivationObservation(
+            self.window_activation_observations
+                .subscribe(window_id, subscription_id),
+        )
+    }
+
+    pub(crate) fn observe_window_bounds<F>(&mut self, callback: F) -> Subscription
+    where
+        F: 'static + FnMut(WindowBounds, Uuid, &mut WindowContext) -> bool,
+    {
+        let window_id = self.window_id;
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.pending_effects
+            .push_back(Effect::WindowBoundsObservation {
+                window_id,
+                subscription_id,
+                callback: Box::new(callback),
+            });
+        Subscription::WindowBoundsObservation(
+            self.window_bounds_observations
+                .subscribe(window_id, subscription_id),
+        )
+    }
+
+    pub fn observe_keystrokes<F>(&mut self, callback: F) -> Subscription
+    where
+        F: 'static
+            + FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut WindowContext) -> bool,
+    {
+        let window_id = self.window_id;
+        let subscription_id = post_inc(&mut self.next_subscription_id);
+        self.keystroke_observations
+            .add_callback(window_id, subscription_id, Box::new(callback));
+        Subscription::KeystrokeObservation(
+            self.keystroke_observations
+                .subscribe(window_id, subscription_id),
+        )
     }
 
     /// Return keystrokes that would dispatch the given action on the given view.

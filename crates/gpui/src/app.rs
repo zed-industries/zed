@@ -500,10 +500,10 @@ type FocusObservationCallback = Box<dyn FnMut(bool, &mut WindowContext) -> bool>
 type ReleaseObservationCallback = Box<dyn FnMut(&dyn Any, &mut AppContext)>;
 type ActionObservationCallback = Box<dyn FnMut(TypeId, &mut AppContext)>;
 type WindowActivationCallback = Box<dyn FnMut(bool, &mut WindowContext) -> bool>;
-type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut AppContext) -> bool>;
-type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut AppContext) -> bool>;
+type WindowFullscreenCallback = Box<dyn FnMut(bool, &mut WindowContext) -> bool>;
+type WindowBoundsCallback = Box<dyn FnMut(WindowBounds, Uuid, &mut WindowContext) -> bool>;
 type KeystrokeCallback =
-    Box<dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut AppContext) -> bool>;
+    Box<dyn FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut WindowContext) -> bool>;
 type ActiveLabeledTasksCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
 type DeserializeActionCallback = fn(json: &str) -> anyhow::Result<Box<dyn Action>>;
 type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> bool>;
@@ -1067,72 +1067,7 @@ impl AppContext {
         )
     }
 
-    fn observe_window_activation<F>(&mut self, window_id: usize, callback: F) -> Subscription
-    where
-        F: 'static + FnMut(bool, &mut WindowContext) -> bool,
-    {
-        let subscription_id = post_inc(&mut self.next_subscription_id);
-        self.pending_effects
-            .push_back(Effect::WindowActivationObservation {
-                window_id,
-                subscription_id,
-                callback: Box::new(callback),
-            });
-        Subscription::WindowActivationObservation(
-            self.window_activation_observations
-                .subscribe(window_id, subscription_id),
-        )
-    }
-
-    fn observe_fullscreen<F>(&mut self, window_id: usize, callback: F) -> Subscription
-    where
-        F: 'static + FnMut(bool, &mut AppContext) -> bool,
-    {
-        let subscription_id = post_inc(&mut self.next_subscription_id);
-        self.pending_effects
-            .push_back(Effect::WindowFullscreenObservation {
-                window_id,
-                subscription_id,
-                callback: Box::new(callback),
-            });
-        Subscription::WindowActivationObservation(
-            self.window_activation_observations
-                .subscribe(window_id, subscription_id),
-        )
-    }
-
-    fn observe_window_bounds<F>(&mut self, window_id: usize, callback: F) -> Subscription
-    where
-        F: 'static + FnMut(WindowBounds, Uuid, &mut AppContext) -> bool,
-    {
-        let subscription_id = post_inc(&mut self.next_subscription_id);
-        self.pending_effects
-            .push_back(Effect::WindowBoundsObservation {
-                window_id,
-                subscription_id,
-                callback: Box::new(callback),
-            });
-        Subscription::WindowBoundsObservation(
-            self.window_bounds_observations
-                .subscribe(window_id, subscription_id),
-        )
-    }
-
-    pub fn observe_keystrokes<F>(&mut self, window_id: usize, callback: F) -> Subscription
-    where
-        F: 'static
-            + FnMut(&Keystroke, &MatchResult, Option<&Box<dyn Action>>, &mut AppContext) -> bool,
-    {
-        let subscription_id = post_inc(&mut self.next_subscription_id);
-        self.keystroke_observations
-            .add_callback(window_id, subscription_id, Box::new(callback));
-        Subscription::KeystrokeObservation(
-            self.keystroke_observations
-                .subscribe(window_id, subscription_id),
-        )
-    }
-
-    pub fn observe_active_labeled_tasks<F>(&mut self, callback: F) -> Subscription
+    fn observe_active_labeled_tasks<F>(&mut self, callback: F) -> Subscription
     where
         F: 'static + FnMut(&mut AppContext) -> bool,
     {
@@ -1906,10 +1841,10 @@ impl AppContext {
         handled_by: Option<Box<dyn Action>>,
         result: MatchResult,
     ) {
-        self.update(|this| {
-            let mut observations = this.keystroke_observations.clone();
+        self.update_window(window_id, |cx| {
+            let mut observations = cx.keystroke_observations.clone();
             observations.emit(window_id, move |callback| {
-                callback(&keystroke, &result, handled_by.as_ref(), this)
+                callback(&keystroke, &result, handled_by.as_ref(), cx)
             });
         });
     }
@@ -3266,9 +3201,8 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         F: 'static + FnMut(&mut V, bool, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
-        let window_id = self.window_id;
         self.window_context
-            .observe_window_activation(window_id, move |active, cx| {
+            .observe_window_activation(move |active, cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, active, cx);
@@ -3285,18 +3219,16 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         F: 'static + FnMut(&mut V, bool, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
-        let window_id = self.window_id;
-        self.window_context
-            .observe_fullscreen(window_id, move |active, cx| {
-                if let Some(observer) = observer.upgrade(cx) {
-                    observer.update(cx, |observer, cx| {
-                        callback(observer, active, cx);
-                    });
-                    true
-                } else {
-                    false
-                }
-            })
+        self.window_context.observe_fullscreen(move |active, cx| {
+            if let Some(observer) = observer.upgrade(cx) {
+                observer.update(cx, |observer, cx| {
+                    callback(observer, active, cx);
+                });
+                true
+            } else {
+                false
+            }
+        })
     }
 
     pub fn observe_keystrokes<F>(&mut self, mut callback: F) -> Subscription
@@ -3311,10 +3243,8 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
             ) -> bool,
     {
         let observer = self.weak_handle();
-        let window_id = self.window_id;
-        self.window_context.observe_keystrokes(
-            window_id,
-            move |keystroke, result, handled_by, cx| {
+        self.window_context
+            .observe_keystrokes(move |keystroke, result, handled_by, cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, keystroke, handled_by, result, cx);
@@ -3323,8 +3253,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
                 } else {
                     false
                 }
-            },
-        )
+            })
     }
 
     pub fn observe_window_bounds<F>(&mut self, mut callback: F) -> Subscription
@@ -3332,9 +3261,8 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         F: 'static + FnMut(&mut V, WindowBounds, Uuid, &mut ViewContext<V>),
     {
         let observer = self.weak_handle();
-        let window_id = self.window_id;
         self.window_context
-            .observe_window_bounds(window_id, move |bounds, display, cx| {
+            .observe_window_bounds(move |bounds, display, cx| {
                 if let Some(observer) = observer.upgrade(cx) {
                     observer.update(cx, |observer, cx| {
                         callback(observer, bounds, display, cx);
