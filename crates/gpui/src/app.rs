@@ -352,7 +352,7 @@ impl AsyncAppContext {
         self.0.borrow_mut().update(callback)
     }
 
-    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
+    pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
         window_id: usize,
         callback: F,

@@ -23,7 +23,7 @@ use util::{
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
 };
 use workspace::{
-    item::{FollowableItem, ItemHandle},
+    item::{FollowableItem, Item, ItemHandle},
     NavigationEntry, Pane, ViewId,
 };
 
@@ -3973,7 +3973,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
-    let save = cx.update(|cx| editor.save(project.clone(), cx));
+    let save = editor.update(cx, |editor, cx| editor.save(project.clone(), cx));
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -4008,7 +4008,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         futures::future::pending::<()>().await;
         unreachable!()
     });
-    let save = cx.update(|cx| editor.save(project.clone(), cx));
+    let save = editor.update(cx, |editor, cx| editor.save(project.clone(), cx));
     cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
     cx.foreground().start_waiting();
     save.await.unwrap();
@@ -4031,7 +4031,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
         })
     });
 
-    let save = cx.update(|cx| editor.save(project.clone(), cx));
+    let save = editor.update(cx, |editor, cx| editor.save(project.clone(), cx));
     fake_server
         .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -4087,7 +4087,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
-    let save = cx.update(|cx| editor.save(project.clone(), cx));
+    let save = editor.update(cx, |editor, cx| editor.save(project.clone(), cx));
     fake_server
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -4124,7 +4124,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
             unreachable!()
         },
     );
-    let save = cx.update(|cx| editor.save(project.clone(), cx));
+    let save = editor.update(cx, |editor, cx| editor.save(project.clone(), cx));
     cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
     cx.foreground().start_waiting();
     save.await.unwrap();
@@ -4147,7 +4147,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         })
     });
 
-    let save = cx.update(|cx| editor.save(project.clone(), cx));
+    let save = editor.update(cx, |editor, cx| editor.save(project.clone(), cx));
     fake_server
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(

@@ -17,7 +17,7 @@ use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
     fonts::HighlightStyle, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use settings::{Autosave, Settings};
@@ -170,7 +170,7 @@ pub trait Item: View {
 pub trait ItemHandle: 'static + fmt::Debug {
     fn subscribe_to_item_events(
         &self,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
         handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
@@ -189,7 +189,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn clone_on_split(
         &self,
         workspace_id: WorkspaceId,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
         &self,
@@ -197,27 +197,27 @@ pub trait ItemHandle: 'static + fmt::Debug {
         pane: ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
     );
-    fn deactivated(&self, cx: &mut AppContext);
-    fn workspace_deactivated(&self, cx: &mut AppContext);
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut AppContext) -> bool;
+    fn deactivated(&self, cx: &mut WindowContext);
+    fn workspace_deactivated(&self, cx: &mut WindowContext);
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn id(&self) -> usize;
     fn window_id(&self) -> usize;
     fn as_any(&self) -> &AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>>;
+    fn save(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
     fn save_as(
         &self,
         project: ModelHandle<Project>,
         abs_path: PathBuf,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>>;
-    fn reload(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>>;
+    fn reload(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
     fn git_diff_recalc(
         &self,
         project: ModelHandle<Project>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
@@ -253,7 +253,7 @@ impl dyn ItemHandle {
 impl<T: Item> ItemHandle for ViewHandle<T> {
     fn subscribe_to_item_events(
         &self,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
         handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription {
         cx.subscribe(self, move |_, event, cx| {
@@ -320,7 +320,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     fn clone_on_split(
         &self,
         workspace_id: WorkspaceId,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| {
             cx.add_option_view(|cx| item.clone_on_split(workspace_id, cx))
@@ -435,16 +435,9 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                 {
                                     let delay = Duration::from_millis(milliseconds);
                                     let item = item.clone();
-                                    pending_autosave.fire_new(
-                                        delay,
-                                        workspace,
-                                        cx,
-                                        |project, mut cx| async move {
-                                            cx.update(|cx| Pane::autosave_item(&item, project, cx))
-                                                .await
-                                                .log_err();
-                                        },
-                                    );
+                                    pending_autosave.fire_new(delay, cx, move |workspace, cx| {
+                                        Pane::autosave_item(&item, workspace.project().clone(), cx)
+                                    });
                                 }
 
                                 let settings = cx.global::<Settings>();
@@ -460,22 +453,24 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
                                     pending_git_update.fire_new(
                                         duration,
-                                        workspace,
                                         cx,
-                                        |project, mut cx| async move {
-                                            cx.update(|cx| item.git_diff_recalc(project, cx))
-                                                .await
-                                                .log_err();
+                                        move |workspace, cx| {
+                                            item.git_diff_recalc(workspace.project().clone(), cx)
                                         },
                                     );
                                 } else {
-                                    let project = workspace.project().downgrade();
-                                    cx.spawn_weak(|_, mut cx| async move {
-                                        if let Some(project) = project.upgrade(&cx) {
-                                            cx.update(|cx| item.git_diff_recalc(project, cx))
-                                                .await
-                                                .log_err();
-                                        }
+                                    cx.spawn_weak(|workspace, mut cx| async move {
+                                        workspace
+                                            .upgrade(&cx)?
+                                            .update(&mut cx, |workspace, cx| {
+                                                item.git_diff_recalc(
+                                                    workspace.project().clone(),
+                                                    cx,
+                                                )
+                                            })
+                                            .await
+                                            .log_err()?;
+                                        Some(())
                                     })
                                     .detach();
                                 }
@@ -507,15 +502,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         });
     }
 
-    fn deactivated(&self, cx: &mut AppContext) {
+    fn deactivated(&self, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.deactivated(cx));
     }
 
-    fn workspace_deactivated(&self, cx: &mut AppContext) {
+    fn workspace_deactivated(&self, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.workspace_deactivated(cx));
     }
 
-    fn navigate(&self, data: Box<dyn Any>, cx: &mut AppContext) -> bool {
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool {
         self.update(cx, |this, cx| this.navigate(data, cx))
     }
 
@@ -543,7 +538,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         self.read(cx).can_save(cx)
     }
 
-    fn save(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>> {
+    fn save(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(project, cx))
     }
 
@@ -551,19 +546,19 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         &self,
         project: ModelHandle<Project>,
         abs_path: PathBuf,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
     }
 
-    fn reload(&self, project: ModelHandle<Project>, cx: &mut AppContext) -> Task<Result<()>> {
+    fn reload(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, cx))
     }
 
     fn git_diff_recalc(
         &self,
         project: ModelHandle<Project>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.git_diff_recalc(project, cx))
     }

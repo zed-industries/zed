@@ -561,27 +561,19 @@ impl DelayedDebouncedEditAction {
         }
     }
 
-    fn fire_new<F, Fut>(
-        &mut self,
-        delay: Duration,
-        workspace: &Workspace,
-        cx: &mut ViewContext<Workspace>,
-        f: F,
-    ) where
-        F: FnOnce(ModelHandle<Project>, AsyncAppContext) -> Fut + 'static,
-        Fut: 'static + Future<Output = ()>,
+    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ViewContext<Workspace>, f: F)
+    where
+        F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> Task<Result<()>>,
     {
         if let Some(channel) = self.cancel_channel.take() {
             _ = channel.send(());
         }
 
-        let project = workspace.project().downgrade();
-
         let (sender, mut receiver) = oneshot::channel::<()>();
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn_weak(|_, cx| async move {
+        self.task = Some(cx.spawn_weak(|workspace, mut cx| async move {
             let mut timer = cx.background().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -592,8 +584,11 @@ impl DelayedDebouncedEditAction {
                     _ = timer => {}
             }
 
-            if let Some(project) = project.upgrade(&cx) {
-                (f)(project, cx).await;
+            if let Some(workspace) = workspace.upgrade(&cx) {
+                workspace
+                    .update(&mut cx, |workspace, cx| (f)(workspace, cx))
+                    .await
+                    .log_err();
             }
         }));
     }
@@ -1412,15 +1407,16 @@ impl Workspace {
                         CONFLICT_MESSAGE,
                         &["Overwrite", "Cancel"],
                     );
-                    cx.spawn(|_, mut cx| async move {
+                    cx.spawn(|this, mut cx| async move {
                         let answer = answer.recv().await;
                         if answer == Some(0) {
-                            cx.update(|cx| item.save(project, cx)).await?;
+                            this.update(&mut cx, |this, cx| item.save(this.project.clone(), cx))
+                                .await?;
                         }
                         Ok(())
                     })
                 } else {
-                    item.save(project, cx)
+                    item.save(self.project.clone(), cx)
                 }
             } else if item.is_singleton(cx) {
                 let worktree = self.worktrees(cx).next();
@@ -1429,9 +1425,10 @@ impl Workspace {
                     .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
                 let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
-                cx.spawn(|_, mut cx| async move {
+                cx.spawn(|this, mut cx| async move {
                     if let Some(abs_path) = abs_path.recv().await.flatten() {
-                        cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
+                        this.update(&mut cx, |_, cx| item.save_as(project, abs_path, cx))
+                            .await?;
                     }
                     Ok(())
                 })

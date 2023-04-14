@@ -24,7 +24,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle,
-    MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -1106,8 +1106,8 @@ impl Pane {
                 )
             });
             match answer.next().await {
-                Some(0) => cx.update(|cx| item.save(project, cx)).await?,
-                Some(1) => cx.update(|cx| item.reload(project, cx)).await?,
+                Some(0) => pane.update(cx, |_, cx| item.save(project, cx)).await?,
+                Some(1) => pane.update(cx, |_, cx| item.reload(project, cx)).await?,
                 _ => return Ok(false),
             }
         } else if is_dirty && (can_save || is_singleton) {
@@ -1137,7 +1137,7 @@ impl Pane {
 
             if should_save {
                 if can_save {
-                    cx.update(|cx| item.save(project, cx)).await?;
+                    pane.update(cx, |_, cx| item.save(project, cx)).await?;
                 } else if is_singleton {
                     let start_abs_path = project
                         .read_with(cx, |project, cx| {
@@ -1148,7 +1148,8 @@ impl Pane {
 
                     let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
                     if let Some(abs_path) = abs_path.next().await.flatten() {
-                        cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
+                        pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))
+                            .await?;
                     } else {
                         return Ok(false);
                     }
@@ -1166,7 +1167,7 @@ impl Pane {
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: ModelHandle<Project>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         if Self::can_autosave_item(item, cx) {
             item.save(project, cx)
