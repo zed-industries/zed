@@ -807,13 +807,13 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         Ok(element)
     }
 
-    pub fn build_scene(&mut self) -> Scene {
+    pub fn build_scene(&mut self) -> Result<Scene> {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
-        rendered_root.layout(SizeConstraint::strict(window_size), self);
+        rendered_root.layout(SizeConstraint::strict(window_size), self)?;
 
         let mut scene_builder = SceneBuilder::new(scale_factor);
         rendered_root.paint(
@@ -821,7 +821,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             Vector2F::zero(),
             RectF::from_points(Vector2F::zero(), window_size),
             self,
-        );
+        )?;
         self.window
             .rendered_views
             .insert(root_view_id, rendered_root);
@@ -837,7 +837,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             }
         }
 
-        scene
+        Ok(scene)
     }
 
     pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {

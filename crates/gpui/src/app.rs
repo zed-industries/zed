@@ -26,6 +26,7 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postage::oneshot;
 use smol::prelude::*;
+use util::ResultExt;
 use uuid::Uuid;
 
 pub use action::*;
@@ -1179,12 +1180,6 @@ impl AppContext {
         }
     }
 
-    pub(crate) fn name_for_view(&self, window_id: usize, view_id: usize) -> Option<&str> {
-        self.views
-            .get(&(window_id, view_id))
-            .map(|view| view.ui_name())
-    }
-
     pub fn all_action_names<'a>(&'a self) -> impl Iterator<Item = &'static str> + 'a {
         self.action_deserializers.keys().copied()
     }
@@ -1448,7 +1443,9 @@ impl AppContext {
         }));
 
         let mut window = Window::new(window_id, platform_window, self, build_root_view);
-        let scene = WindowContext::mutable(self, &mut window, window_id).build_scene();
+        let scene = WindowContext::mutable(self, &mut window, window_id)
+            .build_scene()
+            .expect("initial scene should not error");
         window.platform_window.present_scene(scene);
         window
     }
@@ -1758,8 +1755,9 @@ impl AppContext {
                 if let Some(mut invalidation) = cx.window.invalidation.take() {
                     let appearance = cx.window.platform_window.appearance();
                     cx.invalidate(&mut invalidation, appearance);
-                    let scene = cx.build_scene();
-                    cx.window.platform_window.present_scene(scene);
+                    if let Some(scene) = cx.build_scene().log_err() {
+                        cx.window.platform_window.present_scene(scene);
+                    }
                 }
             });
         }
@@ -1835,8 +1833,9 @@ impl AppContext {
                     .extend(cx.window.rendered_views.keys().copied());
                 cx.invalidate(&mut invalidation, cx.window.platform_window.appearance());
                 cx.refreshing = true;
-                let scene = cx.build_scene();
-                cx.window.platform_window.present_scene(scene);
+                if let Some(scene) = cx.build_scene().log_err() {
+                    cx.window.platform_window.present_scene(scene);
+                }
             });
         }
     }
