@@ -417,7 +417,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     for item_event in T::to_item_events(event).into_iter() {
                         match item_event {
                             ItemEvent::CloseItem => {
-                                Pane::close_item(workspace, pane, item.id(), cx)
+                                Pane::close_item_by_id(workspace, pane, item.id(), cx)
                                     .detach_and_log_err(cx);
                                 return;
                             }

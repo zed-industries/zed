@@ -1629,9 +1629,7 @@ async fn test_project_reconnect(
         })
         .await
         .unwrap();
-    worktree_a2
-        .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
-        .await;
+    deterministic.run_until_parked();
     let worktree2_id = worktree_a2.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared());
         tree.id()
@@ -1692,11 +1690,9 @@ async fn test_project_reconnect(
         .unwrap();
 
     // While client A is disconnected, add and remove worktrees from client A's project.
-    project_a1
-        .update(cx_a, |project, cx| {
-            project.remove_worktree(worktree2_id, cx)
-        })
-        .await;
+    project_a1.update(cx_a, |project, cx| {
+        project.remove_worktree(worktree2_id, cx)
+    });
     let (worktree_a3, _) = project_a1
         .update(cx_a, |p, cx| {
             p.find_or_create_local_worktree("/root-1/dir3", true, cx)
@@ -1820,18 +1816,14 @@ async fn test_project_reconnect(
         })
         .await
         .unwrap();
-    worktree_a4
-        .read_with(cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
-        .await;
+    deterministic.run_until_parked();
     let worktree4_id = worktree_a4.read_with(cx_a, |tree, _| {
         assert!(tree.as_local().unwrap().is_shared());
         tree.id()
     });
-    project_a1
-        .update(cx_a, |project, cx| {
-            project.remove_worktree(worktree3_id, cx)
-        })
-        .await;
+    project_a1.update(cx_a, |project, cx| {
+        project.remove_worktree(worktree3_id, cx)
+    });
     deterministic.run_until_parked();
 
     // While client B is disconnected, mutate a buffer on both the host and the guest.

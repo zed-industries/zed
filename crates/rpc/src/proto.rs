@@ -233,7 +233,7 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
     (UpdateWorktree, Foreground),
-    (UpdateDiffBase, Background),
+    (UpdateDiffBase, Foreground),
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
 );

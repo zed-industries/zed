@@ -2086,7 +2086,7 @@ impl UpgradeModelHandle for AppContext {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        if self.models.contains_key(&handle.model_id) {
+        if self.ref_counts.lock().is_entity_alive(handle.model_id) {
             Some(ModelHandle::new(handle.model_id, &self.ref_counts))
         } else {
             None
@@ -2094,11 +2094,11 @@ impl UpgradeModelHandle for AppContext {
     }
 
     fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.models.contains_key(&handle.model_id)
+        self.ref_counts.lock().is_entity_alive(handle.model_id)
     }
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        if self.models.contains_key(&handle.model_id) {
+        if self.ref_counts.lock().is_entity_alive(handle.model_id) {
             Some(AnyModelHandle::new(
                 handle.model_id,
                 handle.model_type,

@@ -31,6 +31,7 @@ use super::{
     ref_counts::LeakDetector, window_input_handler::WindowInputHandler, AsyncAppContext, RefCounts,
 };
 
+#[derive(Clone)]
 pub struct TestAppContext {
     cx: Rc<RefCell<AppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,

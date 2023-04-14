@@ -23,8 +23,8 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
-    Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle,
+    MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -35,6 +35,24 @@ use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivateItem(pub usize);
+
+#[derive(Clone, PartialEq)]
+pub struct CloseItemById {
+    pub item_id: usize,
+    pub pane: WeakViewHandle<Pane>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct CloseItemsToTheLeftById {
+    pub item_id: usize,
+    pub pane: WeakViewHandle<Pane>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct CloseItemsToTheRightById {
+    pub item_id: usize,
+    pub pane: WeakViewHandle<Pane>,
+}
 
 actions!(
     pane,
@@ -55,12 +73,6 @@ actions!(
         SplitDown,
     ]
 );
-
-#[derive(Clone, PartialEq)]
-pub struct CloseItem {
-    pub item_id: usize,
-    pub pane: WeakViewHandle<Pane>,
-}
 
 #[derive(Clone, PartialEq)]
 pub struct MoveItem {
@@ -91,11 +103,21 @@ pub struct DeployDockMenu;
 #[derive(Clone, PartialEq)]
 pub struct DeployNewMenu;
 
+#[derive(Clone, PartialEq)]
+pub struct DeployTabContextMenu {
+    pub position: Vector2F,
+    pub item_id: usize,
+    pub pane: WeakViewHandle<Pane>,
+}
+
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
 impl_internal_actions!(
     pane,
     [
-        CloseItem,
+        CloseItemById,
+        CloseItemsToTheLeftById,
+        CloseItemsToTheRightById,
+        DeployTabContextMenu,
         DeploySplitMenu,
         DeployNewMenu,
         DeployDockMenu,
@@ -126,14 +148,34 @@ pub fn init(cx: &mut AppContext) {
     cx.add_async_action(Pane::close_items_to_the_left);
     cx.add_async_action(Pane::close_items_to_the_right);
     cx.add_async_action(Pane::close_all_items);
-    cx.add_async_action(|workspace: &mut Workspace, action: &CloseItem, cx| {
+    cx.add_async_action(|workspace: &mut Workspace, action: &CloseItemById, cx| {
         let pane = action.pane.upgrade(cx)?;
-        let task = Pane::close_item(workspace, pane, action.item_id, cx);
+        let task = Pane::close_item_by_id(workspace, pane, action.item_id, cx);
         Some(cx.foreground().spawn(async move {
             task.await?;
             Ok(())
         }))
     });
+    cx.add_async_action(
+        |workspace: &mut Workspace, action: &CloseItemsToTheLeftById, cx| {
+            let pane = action.pane.upgrade(cx)?;
+            let task = Pane::close_items_to_the_left_by_id(workspace, pane, action.item_id, cx);
+            Some(cx.foreground().spawn(async move {
+                task.await?;
+                Ok(())
+            }))
+        },
+    );
+    cx.add_async_action(
+        |workspace: &mut Workspace, action: &CloseItemsToTheRightById, cx| {
+            let pane = action.pane.upgrade(cx)?;
+            let task = Pane::close_items_to_the_right_by_id(workspace, pane, action.item_id, cx);
+            Some(cx.foreground().spawn(async move {
+                task.await?;
+                Ok(())
+            }))
+        },
+    );
     cx.add_action(
         |workspace,
          MoveItem {
@@ -167,6 +209,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Pane::deploy_split_menu);
     cx.add_action(Pane::deploy_dock_menu);
     cx.add_action(Pane::deploy_new_menu);
+    cx.add_action(Pane::deploy_tab_context_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
@@ -213,6 +256,7 @@ pub struct Pane {
     nav_history: Rc<RefCell<NavHistory>>,
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: TabBarContextMenu,
+    tab_context_menu: ViewHandle<ContextMenu>,
     docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
     _workspace_id: usize,
@@ -318,6 +362,7 @@ impl Pane {
                 kind: TabBarContextMenuKind::New,
                 handle: context_menu,
             },
+            tab_context_menu: cx.add_view(ContextMenu::new),
             docked,
             _background_actions: background_actions,
             _workspace_id: workspace_id,
@@ -741,14 +786,23 @@ impl Pane {
         let pane = pane_handle.read(cx);
         let active_item_id = pane.items[pane.active_item_index].id();
 
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_id == active_item_id
-        });
+        let task = Self::close_item_by_id(workspace, pane_handle, active_item_id, cx);
 
         Some(cx.foreground().spawn(async move {
             task.await?;
             Ok(())
         }))
+    }
+
+    pub fn close_item_by_id(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        item_id_to_close: usize,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        Self::close_items(workspace, pane, cx, move |view_id| {
+            view_id == item_id_to_close
+        })
     }
 
     pub fn close_inactive_items(
@@ -803,20 +857,35 @@ impl Pane {
         let pane = pane_handle.read(cx);
         let active_item_id = pane.items[pane.active_item_index].id();
 
-        let item_ids: Vec<_> = pane
-            .items()
-            .take_while(|item| item.id() != active_item_id)
-            .map(|item| item.id())
-            .collect();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
+        let task = Self::close_items_to_the_left_by_id(workspace, pane_handle, active_item_id, cx);
 
         Some(cx.foreground().spawn(async move {
             task.await?;
             Ok(())
         }))
+    }
+
+    pub fn close_items_to_the_left_by_id(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        item_id: usize,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let item_ids: Vec<_> = pane
+            .read(cx)
+            .items()
+            .take_while(|item| item.id() != item_id)
+            .map(|item| item.id())
+            .collect();
+
+        let task = Self::close_items(workspace, pane, cx, move |item_id| {
+            item_ids.contains(&item_id)
+        });
+
+        cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        })
     }
 
     pub fn close_items_to_the_right(
@@ -828,21 +897,36 @@ impl Pane {
         let pane = pane_handle.read(cx);
         let active_item_id = pane.items[pane.active_item_index].id();
 
-        let item_ids: Vec<_> = pane
-            .items()
-            .rev()
-            .take_while(|item| item.id() != active_item_id)
-            .map(|item| item.id())
-            .collect();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
+        let task = Self::close_items_to_the_right_by_id(workspace, pane_handle, active_item_id, cx);
 
         Some(cx.foreground().spawn(async move {
             task.await?;
             Ok(())
         }))
+    }
+
+    pub fn close_items_to_the_right_by_id(
+        workspace: &mut Workspace,
+        pane: ViewHandle<Pane>,
+        item_id: usize,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let item_ids: Vec<_> = pane
+            .read(cx)
+            .items()
+            .rev()
+            .take_while(|item| item.id() != item_id)
+            .map(|item| item.id())
+            .collect();
+
+        let task = Self::close_items(workspace, pane, cx, move |item_id| {
+            item_ids.contains(&item_id)
+        });
+
+        cx.foreground().spawn(async move {
+            task.await?;
+            Ok(())
+        })
     }
 
     pub fn close_all_items(
@@ -858,17 +942,6 @@ impl Pane {
             task.await?;
             Ok(())
         }))
-    }
-
-    pub fn close_item(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        item_id_to_close: usize,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Task<Result<()>> {
-        Self::close_items(workspace, pane, cx, move |view_id| {
-            view_id == item_id_to_close
-        })
     }
 
     pub fn close_items(
@@ -1206,6 +1279,65 @@ impl Pane {
         self.tab_bar_context_menu.kind = TabBarContextMenuKind::New;
     }
 
+    fn deploy_tab_context_menu(
+        &mut self,
+        action: &DeployTabContextMenu,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let target_item_id = action.item_id;
+        let target_pane = action.pane.clone();
+        let active_item_id = self.items[self.active_item_index].id();
+        let is_active_item = target_item_id == active_item_id;
+
+        // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currenlty, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
+
+        self.tab_context_menu.update(cx, |menu, cx| {
+            menu.show(
+                action.position,
+                AnchorCorner::TopLeft,
+                if is_active_item {
+                    vec![
+                        ContextMenuItem::item("Close Active Item", CloseActiveItem),
+                        ContextMenuItem::item("Close Inactive Items", CloseInactiveItems),
+                        ContextMenuItem::item("Close Clean Items", CloseCleanItems),
+                        ContextMenuItem::item("Close Items To The Left", CloseItemsToTheLeft),
+                        ContextMenuItem::item("Close Items To The Right", CloseItemsToTheRight),
+                        ContextMenuItem::item("Close All Items", CloseAllItems),
+                    ]
+                } else {
+                    // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
+                    vec![
+                        ContextMenuItem::item(
+                            "Close Inactive Item",
+                            CloseItemById {
+                                item_id: target_item_id,
+                                pane: target_pane.clone(),
+                            },
+                        ),
+                        ContextMenuItem::item("Close Inactive Items", CloseInactiveItems),
+                        ContextMenuItem::item("Close Clean Items", CloseCleanItems),
+                        ContextMenuItem::item(
+                            "Close Items To The Left",
+                            CloseItemsToTheLeftById {
+                                item_id: target_item_id,
+                                pane: target_pane.clone(),
+                            },
+                        ),
+                        ContextMenuItem::item(
+                            "Close Items To The Right",
+                            CloseItemsToTheRightById {
+                                item_id: target_item_id,
+                                pane: target_pane.clone(),
+                            },
+                        ),
+                        ContextMenuItem::item("Close All Items", CloseAllItems),
+                    ]
+                },
+                cx,
+            );
+        });
+    }
+
     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
         &self.toolbar
     }
@@ -1276,12 +1408,21 @@ impl Pane {
                             })
                             .on_click(MouseButton::Middle, {
                                 let item = item.clone();
-                                move |_, _, cx: &mut EventContext<Self>| {
-                                    cx.dispatch_action(CloseItem {
+                                let pane = pane.clone();
+                                move |_, _, cx| {
+                                    cx.dispatch_action(CloseItemById {
                                         item_id: item.id(),
                                         pane: pane.clone(),
                                     })
                                 }
+                            })
+                            .on_down(MouseButton::Right, move |e, _, cx| {
+                                let item = item.clone();
+                                cx.dispatch_action(DeployTabContextMenu {
+                                    position: e.position,
+                                    item_id: item.id(),
+                                    pane: pane.clone(),
+                                });
                             })
                             .boxed()
                         }
@@ -1457,7 +1598,7 @@ impl Pane {
                         .on_click(MouseButton::Left, {
                             let pane = pane.clone();
                             move |_, _, cx| {
-                                cx.dispatch_action(CloseItem {
+                                cx.dispatch_action(CloseItemById {
                                     item_id,
                                     pane: pane.clone(),
                                 })
@@ -1532,11 +1673,7 @@ impl Pane {
             .boxed()
     }
 
-    fn render_blank_pane(
-        &mut self,
-        theme: &Theme,
-        _cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut ViewContext<Self>) -> Element<Self> {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
@@ -1635,6 +1772,7 @@ impl View for Pane {
                                 .flex(1., true)
                                 .boxed()
                             })
+                            .with_child(ChildView::new(&self.tab_context_menu, cx).boxed())
                             .boxed()
                     } else {
                         enum EmptyPane {}
@@ -2237,14 +2375,14 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        add_labled_item(&workspace, &pane, "A", cx);
-        add_labled_item(&workspace, &pane, "B", cx);
-        add_labled_item(&workspace, &pane, "C", cx);
-        add_labled_item(&workspace, &pane, "D", cx);
+        add_labeled_item(&workspace, &pane, "A", false, cx);
+        add_labeled_item(&workspace, &pane, "B", false, cx);
+        add_labeled_item(&workspace, &pane, "C", false, cx);
+        add_labeled_item(&workspace, &pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
-        add_labled_item(&workspace, &pane, "1", cx);
+        add_labeled_item(&workspace, &pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         workspace.update(cx, |workspace, cx| {
@@ -2275,14 +2413,125 @@ mod tests {
         assert_item_labels(&pane, ["A*"], cx);
     }
 
-    fn add_labled_item(
+    #[gpui::test]
+    async fn test_close_inactive_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_inactive_items(workspace, &CloseInactiveItems, cx);
+        });
+
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_clean_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&workspace, &pane, "A", true, cx);
+        add_labeled_item(&workspace, &pane, "B", false, cx);
+        add_labeled_item(&workspace, &pane, "C", true, cx);
+        add_labeled_item(&workspace, &pane, "D", false, cx);
+        add_labeled_item(&workspace, &pane, "E", false, cx);
+        assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_clean_items(workspace, &CloseCleanItems, cx);
+        });
+
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A^", "C*^"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_to_the_left(
+        deterministic: Arc<Deterministic>,
+        cx: &mut TestAppContext,
+    ) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_items_to_the_left(workspace, &CloseItemsToTheLeft, cx);
+        });
+
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["C*", "D", "E"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_to_the_right(
+        deterministic: Arc<Deterministic>,
+        cx: &mut TestAppContext,
+    ) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_items_to_the_right(workspace, &CloseItemsToTheRight, cx);
+        });
+
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_all_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&workspace, &pane, "A", false, cx);
+        add_labeled_item(&workspace, &pane, "B", false, cx);
+        add_labeled_item(&workspace, &pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_all_items(workspace, &CloseAllItems, cx);
+        });
+
+        deterministic.run_until_parked();
+        assert_item_labels(&pane, [], cx);
+    }
+
+    fn add_labeled_item(
         workspace: &ViewHandle<Workspace>,
         pane: &ViewHandle<Pane>,
         label: &str,
+        is_dirty: bool,
         cx: &mut TestAppContext,
     ) -> Box<ViewHandle<TestItem>> {
         workspace.update(cx, |workspace, cx| {
-            let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
+            let labeled_item =
+                Box::new(cx.add_view(|_| TestItem::new().with_label(label).with_dirty(is_dirty)));
 
             Pane::add_item(
                 workspace,
@@ -2361,6 +2610,9 @@ mod tests {
                         .clone();
                     if ix == pane.active_item_index {
                         state.push('*');
+                    }
+                    if item.is_dirty(cx) {
+                        state.push('^');
                     }
                     state
                 })

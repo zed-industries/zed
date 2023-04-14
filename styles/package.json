@@ -12,6 +12,7 @@
     "dependencies": {
         "@types/chroma-js": "^2.4.0",
         "@types/node": "^18.14.1",
+        "ayu": "^8.0.1",
         "bezier-easing": "^2.1.0",
         "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",

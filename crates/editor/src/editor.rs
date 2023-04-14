@@ -1040,7 +1040,8 @@ impl CopilotState {
         let completion = self.completions.get(self.active_completion_index)?;
         let excerpt_id = self.excerpt_id?;
         let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
-        if !completion.range.start.is_valid(completion_buffer)
+        if excerpt_id != cursor.excerpt_id
+            || !completion.range.start.is_valid(completion_buffer)
             || !completion.range.end.is_valid(completion_buffer)
         {
             return None;
@@ -6619,13 +6620,15 @@ impl Editor {
                 .as_singleton()
                 .and_then(|b| b.read(cx).file()),
         ) {
+            let settings = cx.global::<Settings>();
+
             let extension = Path::new(file.file_name(cx))
                 .extension()
                 .and_then(|e| e.to_str());
             project.read(cx).client().report_event(
                 name,
-                json!({ "File Extension": extension }),
-                cx.global::<Settings>().telemetry(),
+                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode  }),
+                settings.telemetry(),
             );
         }
     }
