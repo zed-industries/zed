@@ -12,7 +12,7 @@ use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
 use gpui::{
     actions,
-    elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack, Text},
+    elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack},
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},

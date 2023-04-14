@@ -65,7 +65,6 @@ impl<V: View> Tooltip<V> {
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
-                cx.window_id,
                 focused_view_id,
                 text.clone(),
                 style.clone(),
@@ -75,7 +74,7 @@ impl<V: View> Tooltip<V> {
             .boxed();
             Some(
                 Overlay::new(
-                    Self::render_tooltip(cx.window_id, focused_view_id, text, style, action, false)
+                    Self::render_tooltip(focused_view_id, text, style, action, false)
                         .constrained()
                         .dynamically(move |constraint, view, cx| {
                             SizeConstraint::strict_along(
@@ -128,7 +127,6 @@ impl<V: View> Tooltip<V> {
     }
 
     pub fn render_tooltip(
-        window_id: usize,
         focused_view_id: Option<usize>,
         text: String,
         style: TooltipStyle,
@@ -148,7 +146,6 @@ impl<V: View> Tooltip<V> {
             })
             .with_children(action.and_then(|action| {
                 let keystroke_label = KeystrokeLabel::new(
-                    window_id,
                     focused_view_id?,
                     action,
                     style.keystroke.container,

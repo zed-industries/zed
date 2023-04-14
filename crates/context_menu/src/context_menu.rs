@@ -332,7 +332,6 @@ impl ContextMenu {
         &self,
         cx: &mut ViewContext<Self>,
     ) -> impl Drawable<ContextMenu> {
-        let window_id = cx.window_id();
         let style = cx.global::<Settings>().theme.context_menu.clone();
         Flex::row()
             .with_child(
@@ -390,7 +389,6 @@ impl ContextMenu {
                                 };
 
                                 KeystrokeLabel::new(
-                                    window_id,
                                     view_id,
                                     action.boxed_clone(),
                                     style.keystroke.container,
@@ -424,7 +422,6 @@ impl ContextMenu {
 
         let style = cx.global::<Settings>().theme.context_menu.clone();
 
-        let window_id = cx.window_id();
         MouseEventHandler::<Menu, ContextMenu>::new(0, cx, |_, cx| {
             Flex::column()
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
@@ -456,7 +453,6 @@ impl ContextMenu {
                                     })
                                     .with_child({
                                         KeystrokeLabel::new(
-                                            window_id,
                                             view_id,
                                             action.boxed_clone(),
                                             style.keystroke.container,

@@ -280,7 +280,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
-        let (window_id, root_view) = cx.add_window(Default::default(), |_| TestView);
+        let (_, root_view) = cx.add_window(Default::default(), |_| TestView);
         fonts::with_font_cache(cx.font_cache().clone(), || {
             root_view.update(cx, |view, cx| {
                 let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);

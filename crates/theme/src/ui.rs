@@ -135,7 +135,6 @@ pub fn keystroke_label<V: View>(
     // FIXME: Put the theme in it's own global so we can
     // query the keystroke style on our own
     keystroke_label_for(
-        cx.window_id(),
         cx.handle().id(),
         label_text,
         label_style,
@@ -145,7 +144,6 @@ pub fn keystroke_label<V: View>(
 }
 
 pub fn keystroke_label_for<V: View>(
-    window_id: usize,
     view_id: usize,
     label_text: &'static str,
     label_style: &ContainedText,
@@ -160,7 +158,6 @@ pub fn keystroke_label_for<V: View>(
         )
         .with_child({
             KeystrokeLabel::new(
-                window_id,
                 view_id,
                 action,
                 keystroke_style.container,

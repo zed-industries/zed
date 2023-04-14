@@ -586,9 +586,9 @@ impl<V: View, R: View> Drawable<V> for RootElement<R> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        view: &mut V,
+        _view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> (Vector2F, Self::LayoutState) {
+    ) -> (Vector2F, ()) {
         let size = AnyRootElement::layout(self, constraint, cx)
             .log_err()
             .unwrap_or_else(|| Vector2F::zero());
@@ -600,35 +600,39 @@ impl<V: View, R: View> Drawable<V> for RootElement<R> {
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &mut Self::LayoutState,
-        view: &mut V,
+        _layout: &mut Self::LayoutState,
+        _view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> Self::PaintState {
-        todo!()
+    ) {
+        AnyRootElement::paint(self, scene, bounds.origin(), visible_bounds, cx).log_err();
     }
 
     fn rect_for_text_range(
         &self,
         range_utf16: Range<usize>,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        view: &V,
+        _bounds: RectF,
+        _visible_bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        _view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        todo!()
+        AnyRootElement::rect_for_text_range(self, range_utf16, cx)
+            .log_err()
+            .flatten()
     }
 
     fn debug(
         &self,
-        bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        view: &V,
+        _bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        _view: &V,
         cx: &ViewContext<V>,
     ) -> serde_json::Value {
-        todo!()
+        AnyRootElement::debug(self, cx)
+            .log_err()
+            .unwrap_or_default()
     }
 }
 

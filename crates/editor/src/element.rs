@@ -1901,8 +1901,8 @@ impl Drawable<Editor> for EditorElement {
 
         let mut context_menu = None;
         let mut code_actions_indicator = None;
-        let mut hover = None;
-        let mut mode = EditorMode::Full;
+        let mut hover;
+        let mode;
         let mut fold_indicators = {
             let newest_selection_head = editor
                 .selections
@@ -2560,7 +2560,7 @@ mod tests {
     fn test_layout_line_numbers(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-        let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
         let element = EditorElement::new(editor.downgrade(), editor.read(cx).style(cx));
@@ -2578,7 +2578,7 @@ mod tests {
     fn test_layout_with_placeholder_text_and_blocks(cx: &mut gpui::AppContext) {
         cx.set_global(Settings::test(cx));
         let buffer = MultiBuffer::build_simple("", cx);
-        let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
             Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
 

@@ -286,7 +286,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |action: &OpenPaths, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_paths(&action.paths, &app_state, None, cx).detach();
+                open_paths(&action.paths, &app_state, cx).detach();
             }
         }
     });
@@ -299,14 +299,13 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             }
 
             let app_state = app_state.upgrade()?;
-            let window_id = cx.window_id();
             let action = action.clone();
             let close = workspace.prepare_to_close(false, cx);
 
             Some(cx.spawn_weak(|_, mut cx| async move {
                 let can_close = close.await?;
                 if can_close {
-                    cx.update(|cx| open_paths(&action.paths, &app_state, Some(window_id), cx))
+                    cx.update(|cx| open_paths(&action.paths, &app_state, cx))
                         .await;
                 }
                 Ok(())
@@ -857,7 +856,6 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
-        requesting_window_id: Option<usize>,
         cx: &mut AppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
@@ -1059,7 +1057,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(callback(self, cx)))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), None, cx);
+            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -3027,7 +3025,6 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
-    requesting_window_id: Option<usize>,
     cx: &mut AppContext,
 ) -> Task<(
     ViewHandle<Workspace>,
@@ -3058,8 +3055,7 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.update(|cx| {
-                let task =
-                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx);
+                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
 
                 cx.spawn(|mut cx| async move {
                     let (workspace, items) = task.await;
@@ -3083,7 +3079,7 @@ pub fn open_new(
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
 ) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 

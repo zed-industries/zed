@@ -12,20 +12,17 @@ pub struct KeystrokeLabel {
     action: Box<dyn Action>,
     container_style: ContainerStyle,
     text_style: TextStyle,
-    window_id: usize,
     view_id: usize,
 }
 
 impl KeystrokeLabel {
     pub fn new(
-        window_id: usize,
         view_id: usize,
         action: Box<dyn Action>,
         container_style: ContainerStyle,
         text_style: TextStyle,
     ) -> Self {
         Self {
-            window_id,
             view_id,
             action,
             container_style,

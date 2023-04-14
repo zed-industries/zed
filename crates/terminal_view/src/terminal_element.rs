@@ -88,7 +88,7 @@ impl LayoutCell {
         origin: Vector2F,
         layout: &LayoutState,
         visible_bounds: RectF,
-        view: &mut TerminalView,
+        _view: &mut TerminalView,
         cx: &mut ViewContext<TerminalView>,
     ) {
         let pos = {
@@ -133,8 +133,8 @@ impl LayoutRect {
         scene: &mut SceneBuilder,
         origin: Vector2F,
         layout: &LayoutState,
-        view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
+        _view: &mut TerminalView,
+        _cx: &mut ViewContext<TerminalView>,
     ) {
         let position = {
             let point = self.point;
@@ -390,7 +390,7 @@ impl TerminalElement {
         view_id: usize,
         visible_bounds: RectF,
         mode: TermMode,
-        cx: &mut ViewContext<TerminalView>,
+        _cx: &mut ViewContext<TerminalView>,
     ) {
         let connection = self.terminal;
 
@@ -597,7 +597,6 @@ impl Drawable<TerminalView> for TerminalElement {
             terminal.last_content.last_hovered_hyperlink.clone()
         });
 
-        let view_handle = self.view.clone();
         let hyperlink_tooltip = last_hovered_hyperlink.map(|(uri, _, id)| {
             let mut tooltip = Overlay::new(
                 Empty::new()
