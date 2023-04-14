@@ -6806,19 +6806,14 @@ impl View for Editor {
         });
 
         if font_changed {
-            let handle = self.handle.clone();
-            cx.defer(move |_, cx: &mut ViewContext<Editor>| {
-                if let Some(editor) = handle.upgrade(cx) {
-                    editor.update(cx, |editor, cx| {
-                        hide_hover(editor, &HideHover, cx);
-                        hide_link_definition(editor, cx);
-                    })
-                }
+            cx.defer(move |editor, cx: &mut ViewContext<Editor>| {
+                hide_hover(editor, &HideHover, cx);
+                hide_link_definition(editor, cx);
             });
         }
 
         Stack::new()
-            .with_child(EditorElement::new(self.handle.clone(), style.clone()).boxed())
+            .with_child(EditorElement::new(style.clone()).boxed())
             .with_child(ChildView::new(&self.mouse_context_menu, cx).boxed())
             .boxed()
     }
