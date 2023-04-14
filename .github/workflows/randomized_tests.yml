@@ -1,0 +1,51 @@
+name: Randomized Tests
+
+concurrency: randomized-tests
+
+on:
+  push:
+    branches:
+      - main
+      - randomized-tests-runner
+  schedule:
+     - cron: '*/15 * * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  OPERATIONS: 200
+  ITERATIONS: 10000
+
+jobs:
+  tests:
+    name: Run randomized tests
+    runs-on:
+      - self-hosted
+      - randomized-tests
+    steps:
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup update stable
+
+      - name: Install Node
+        uses: actions/setup-node@v2
+        with:
+          node-version: '16'
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+          submodules: 'recursive'
+
+      - name: Select seed
+        run: |
+          set -eu
+          seed=$(od -A n -N 8 -t u8 /dev/urandom | xargs)
+          echo "seed: ${seed}"
+          echo "SEED=${seed}" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: cargo test --release --package collab random
