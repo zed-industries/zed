@@ -14,6 +14,7 @@ if [[ $? != 0 ]]; then
 fi
 
 LOG_FILE=target/randomized-tests.log
+MIN_PLAN=target/test-plan.min.json
 export SAVE_PLAN=target/test-plan.json
 export OPERATIONS=200
 export ITERATIONS=100000
@@ -27,10 +28,11 @@ if [[ $? == 0 ]]; then
   exit 0
 fi
 
+failing_seed=$(script/randomized-test-minimize $SAVE_PLAN $MIN_PLAN)
+
 # If the tests failed, find the failing seed in the logs
 commit=$(git rev-parse HEAD)
-failing_seed=$(grep "failing seed" $LOG_FILE | tail -n1 | cut -d: -f2 | xargs)
-failing_plan=$(cat $SAVE_PLAN)
+failing_plan=$(cat $MIN_PLAN)
 request="{
   \"seed\": \"${failing_seed}\",
   \"commit\": \"${commit}\",
