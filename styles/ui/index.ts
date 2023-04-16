@@ -2,7 +2,9 @@ import { find } from "./editor/find"
 import { Theme } from "@/theme"
 
 export const buildUI = (theme: Theme) => {
-    return {
+    const ui = {
         find: find(theme),
     }
+
+    return ui
 }

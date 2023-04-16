@@ -1,5 +1,6 @@
 import { Border, Intensity, Theme, useColors } from "@/theme"
 import { numberToIntensity } from "@/theme/intensity"
+import { TokenFamily, tokens } from "@/theme/tokens"
 
 type Margin = [number, number, number, number]
 type Padding = [number, number, number, number]
@@ -150,6 +151,27 @@ export function buttonWithIconStyle(
     )
 
     const button = (state: keyof StateIntensities): ContainedIcon => {
+        // Create tokens for design system
+        // TODO: This should become a generic function for adding elements to the tokens
+        const buttonTokens: TokenFamily = {
+            [state]: {
+                background: tokens.colorToken(
+                    color.neutral(bgIntensity[state])
+                ),
+                border: tokens.colorToken(
+                    color.neutral(borderIntensity[state])
+                ),
+                foreground: tokens.colorToken(
+                    color.neutral(fgIntensity[state])
+                ),
+            },
+        }
+
+        // Push tokens into the global token object
+        tokens.addToToken("button", {
+            ...buttonTokens,
+        })
+
         return {
             container: {
                 background: color.neutral(bgIntensity[state]),
