@@ -1,6 +1,6 @@
-import { Intensity } from "./color"
 import { useIntensityColor } from "./color"
 import { Theme } from "./config"
+import { Intensity } from "./intensity"
 
 function getColor(
     theme: Theme,

@@ -31,6 +31,7 @@ export interface CalculatedThemeProperties {
     intensity: {
         min: number
         max: number
+        scaleFactor: number
     }
     color: Record<keyof ThemeConfig["colors"], string[]>
 }

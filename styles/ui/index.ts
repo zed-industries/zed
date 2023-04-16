@@ -3,6 +3,7 @@ import { Theme } from "@/theme"
 
 export const buildUI = (theme: Theme) => {
     return {
+        theme: theme,
         find: find(theme)
     }
 }
