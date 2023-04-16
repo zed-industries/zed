@@ -6,7 +6,7 @@ export type ColorToken = {
 
 export type TokenFamily =
     | {
-          [key: string]: Object
+          [key: string]: object
       }
     | {
           [key: string]: Token
