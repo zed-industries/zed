@@ -262,6 +262,8 @@ pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
     pub brackets: BracketPairConfig,
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    pub first_line_pattern: Option<Regex>,
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -334,6 +336,7 @@ impl Default for LanguageConfig {
             path_suffixes: Default::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
+            first_line_pattern: Default::default(),
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
@@ -660,19 +663,30 @@ impl LanguageRegistry {
         })
     }
 
-    pub fn language_for_path(
+    pub fn language_for_file(
         self: &Arc<Self>,
         path: impl AsRef<Path>,
+        content: Option<&Rope>,
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension().and_then(|name| name.to_str());
         let path_suffixes = [extension, filename];
         self.get_or_load_language(|config| {
-            config
+            let path_matches = config
                 .path_suffixes
                 .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
+                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
+                false,
+                |(content, pattern)| {
+                    let end = content.clip_point(Point::new(0, 256), Bias::Left);
+                    let end = content.point_to_offset(end);
+                    let text = content.chunks_in_range(0..end).collect::<String>();
+                    pattern.is_match(&text)
+                },
+            );
+            path_matches || content_matches
         })
     }
 
@@ -1528,9 +1542,45 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use gpui::TestAppContext;
 
-    use super::*;
+    #[gpui::test(iterations = 10)]
+    async fn test_first_line_pattern(cx: &mut TestAppContext) {
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.background());
+        let languages = Arc::new(languages);
+        languages.register(
+            "/javascript",
+            LanguageConfig {
+                name: "JavaScript".into(),
+                path_suffixes: vec!["js".into()],
+                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+                ..Default::default()
+            },
+            tree_sitter_javascript::language(),
+            None,
+            |_| Default::default(),
+        );
+
+        languages
+            .language_for_file("the/script", None)
+            .await
+            .unwrap_err();
+        languages
+            .language_for_file("the/script", Some(&"nothing".into()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            languages
+                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
+                .await
+                .unwrap()
+                .name()
+                .as_ref(),
+            "JavaScript"
+        );
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {

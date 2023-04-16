@@ -1997,17 +1997,19 @@ impl Project {
 
     fn detect_language_for_buffer(
         &mut self,
-        buffer: &ModelHandle<Buffer>,
+        buffer_handle: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         // If the buffer has a language, set it and start the language server if we haven't already.
-        let full_path = buffer.read(cx).file()?.full_path(cx);
+        let buffer = buffer_handle.read(cx);
+        let full_path = buffer.file()?.full_path(cx);
+        let content = buffer.as_rope();
         let new_language = self
             .languages
-            .language_for_path(&full_path)
+            .language_for_file(&full_path, Some(content))
             .now_or_never()?
             .ok()?;
-        self.set_language_for_buffer(buffer, new_language, cx);
+        self.set_language_for_buffer(buffer_handle, new_language, cx);
         None
     }
 
@@ -2418,26 +2420,23 @@ impl Project {
         buffers: impl IntoIterator<Item = ModelHandle<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let language_server_lookup_info: HashSet<(WorktreeId, Arc<Path>, PathBuf)> = buffers
+        let language_server_lookup_info: HashSet<(WorktreeId, Arc<Path>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
-                let file = File::from_dyn(buffer.read(cx).file())?;
+                let buffer = buffer.read(cx);
+                let file = File::from_dyn(buffer.file())?;
                 let worktree = file.worktree.read(cx).as_local()?;
-                let worktree_id = worktree.id();
-                let worktree_abs_path = worktree.abs_path().clone();
                 let full_path = file.full_path(cx);
-                Some((worktree_id, worktree_abs_path, full_path))
+                let language = self
+                    .languages
+                    .language_for_file(&full_path, Some(buffer.as_rope()))
+                    .now_or_never()?
+                    .ok()?;
+                Some((worktree.id(), worktree.abs_path().clone(), language))
             })
             .collect();
-        for (worktree_id, worktree_abs_path, full_path) in language_server_lookup_info {
-            if let Some(language) = self
-                .languages
-                .language_for_path(&full_path)
-                .now_or_never()
-                .and_then(|language| language.ok())
-            {
-                self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
-            }
+        for (worktree_id, worktree_abs_path, language) in language_server_lookup_info {
+            self.restart_language_server(worktree_id, worktree_abs_path, language, cx);
         }
 
         None
@@ -3471,7 +3470,7 @@ impl Project {
                             let adapter_language = adapter_language.clone();
                             let language = this
                                 .languages
-                                .language_for_path(&project_path.path)
+                                .language_for_file(&project_path.path, None)
                                 .unwrap_or_else(move |_| adapter_language);
                             let language_server_name = adapter.name.clone();
                             Some(async move {
@@ -5900,7 +5899,10 @@ impl Project {
                 worktree_id,
                 path: PathBuf::from(serialized_symbol.path).into(),
             };
-            let language = languages.language_for_path(&path.path).await.log_err();
+            let language = languages
+                .language_for_file(&path.path, None)
+                .await
+                .log_err();
             Ok(Symbol {
                 language_server_name: LanguageServerName(
                     serialized_symbol.language_server_name.into(),

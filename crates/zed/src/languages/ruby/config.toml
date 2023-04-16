@@ -1,5 +1,6 @@
 name = "Ruby"
 path_suffixes = ["rb", "Gemfile"]
+first_line_pattern = '^#!.*\bruby\b'
 line_comment = "# "
 autoclose_before = ";:.,=}])>"
 brackets = [
