@@ -1,5 +1,5 @@
 import chroma from "chroma-js"
-import { Theme, ThemeConfig } from "./config"
+import { ThemeConfig } from "./config"
 
 export function hexToIntensity(hex: string): Intensity {
     const hsl = chroma(hex).hsl()
@@ -42,8 +42,8 @@ export function buildThemeIntensity(themeConfig: ThemeConfig): IntensityRange {
         neutral.reverse()
     }
 
-    let firstColor = neutral[0]
-    let lastColor = neutral[neutral.length - 1]
+    const firstColor = neutral[0]
+    const lastColor = neutral[neutral.length - 1]
 
     let minIntensity = hexToIntensity(chroma(firstColor).hex())
     let maxIntensity = hexToIntensity(chroma(lastColor).hex())

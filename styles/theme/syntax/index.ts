@@ -68,22 +68,21 @@ export type InputSyntax = Record<keyof SyntaxStyleTypes, InputSyntaxStyle>
 export type Syntax = Record<keyof SyntaxStyleTypes, SyntaxStyle>
 
 export function buildInputSyntax(inputSyntax: InputSyntax): Syntax {
+
     const syntax: Syntax = {} as Syntax
-    for (const key in inputSyntax) {
+    for (const [key, inputStyle] of Object.entries(inputSyntax)) {
         const syntaxStyleType = key as keyof SyntaxStyleTypes
 
-        if (inputSyntax.hasOwnProperty(syntaxStyleType)) {
-            const inputStyle = inputSyntax[syntaxStyleType]
-            const outputStyle: any = {
-                ...defaultSyntax[syntaxStyleType],
-                ...inputStyle,
-            }
+        const outputStyle: any = {
+            ...defaultSyntax[syntaxStyleType],
+            ...inputStyle,
+        };
 
-            outputStyle.color = chroma(inputStyle.color) as Color
+        outputStyle.color = chroma(inputStyle.color) as Color;
 
-            syntax[syntaxStyleType] = outputStyle as SyntaxStyle
-        }
+        syntax[syntaxStyleType] = outputStyle as SyntaxStyle;
     }
+
     return syntax
 }
 

@@ -16,16 +16,15 @@
         "case-anything": "^2.1.10",
         "chroma-js": "^2.4.2",
         "deepmerge": "^4.3.0",
+        "prettier": "^2.8.7",
         "toml": "^3.0.0",
         "ts-node": "^10.9.1"
     },
-    "prettier": {
-        "semi": false,
-        "printWidth": 80,
-        "htmlWhitespaceSensitivity": "strict",
-        "tabWidth": 4
-    },
     "devDependencies": {
+        "@typescript-eslint/eslint-plugin": "^5.58.0",
+        "eslint": "^8.38.0",
+        "eslint-config-prettier": "^8.8.0",
+        "eslint-plugin-typescript": "^0.14.0",
         "tsconfig-paths": "^4.2.0"
     }
 }

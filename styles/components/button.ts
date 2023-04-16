@@ -57,11 +57,6 @@ interface InteractiveContainer<T = InteractiveState> {
     pressed: T
 }
 
-interface ToggleableInteractiveContainer {
-    inactive: InteractiveContainer
-    active: InteractiveContainer
-}
-
 interface StateIntensities {
     default: Intensity
     hovered: Intensity

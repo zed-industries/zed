@@ -69,7 +69,7 @@ function buildDefaultSyntaxColors(): Syntax {
     return defaultSyntax
 }
 
-let defaultSyntaxColors = buildDefaultSyntaxColors()
+const defaultSyntaxColors = buildDefaultSyntaxColors()
 
 // Deal with specific non-color style defaults
 defaultSyntaxColors["emphasis.strong"].weight = font.weight.bold
