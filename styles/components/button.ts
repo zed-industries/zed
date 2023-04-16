@@ -74,42 +74,77 @@ export function buildStateIntensities(
     baseIntensity: number,
     scaleFactor: number
 ): StateIntensities {
-    const isLightTheme = theme.appearance === "light";
-    const intensitySteps = isLightTheme ? [0, 3, 6, 9] : [0, 15, 20, 25];
-    const defaultIntensity = numberToIntensity(baseIntensity);
+    const isLightTheme = theme.appearance === "light"
+    const intensitySteps = isLightTheme ? [0, 5, 10, 15] : [0, 12, 18, 24]
+    const defaultIntensity = numberToIntensity(baseIntensity)
 
     const scaledIntensitySteps = intensitySteps.map(
         (intensity) => intensity * scaleFactor
-    );
+    )
 
-    const calculateIntensity = (intensity: number, change: number): Intensity => {
-        let newIntensity = intensity + change;
+    const calculateIntensity = (
+        intensity: number,
+        change: number
+    ): Intensity => {
+        let newIntensity = intensity + change
         if (newIntensity > 100) {
             // If the new intensity is too high, change the direction and use the same change value
-            newIntensity = intensity - change;
+            newIntensity = intensity - change
         }
-        return numberToIntensity(Math.min(Math.max(newIntensity, 1), 100));
-    };
+
+        // Round the ouput to ensure it is a valid intensity
+        const finalIntensity = Math.ceil(Math.min(Math.max(newIntensity, 1), 100))
+
+        return numberToIntensity(finalIntensity)
+    }
 
     const stateIntensities: StateIntensities = {
         default: defaultIntensity,
         hovered: calculateIntensity(defaultIntensity, scaledIntensitySteps[1]),
         pressed: calculateIntensity(defaultIntensity, scaledIntensitySteps[2]),
         active: calculateIntensity(defaultIntensity, scaledIntensitySteps[3]),
-    };
+    }
 
-    return stateIntensities;
+    console.log(JSON.stringify(stateIntensities, null, 4))
+
+    return stateIntensities
 }
 
-export function buttonWithIconStyle(theme: Theme): InteractiveContainer<ContainedIcon> {
-    const color = useColors(theme)
-    const bgIntensity = buildStateIntensities(theme, 26, theme.intensity.scaleFactor);
-    const borderIntensity = buildStateIntensities(theme, 32, theme.intensity.scaleFactor);
-    const fgIntensity = buildStateIntensities(theme, 100, theme.intensity.scaleFactor);
+const checkContrast = (name: string, background: Intensity, foreground: Intensity) => {
+    const contrast = foreground / background
 
-    const button = (
-        state: keyof StateIntensities,
-    ) => {
+    if (contrast < 4.5) {
+        console.log(`Constrast on ${name} may be too low: ${contrast}`)
+    }
+
+    if (contrast < 3) {
+        throw new Error(`Constrast on ${name} is too low: ${contrast}`)
+    }
+}
+
+export function buttonWithIconStyle(
+    theme: Theme
+): InteractiveContainer<ContainedIcon> {
+    const color = useColors(theme)
+    const bgIntensity = buildStateIntensities(
+        theme,
+        12,
+        theme.intensity.scaleFactor
+    )
+    const borderIntensity = buildStateIntensities(
+        theme,
+        theme.appearance === 'light' ? 36 : 24,
+        theme.intensity.scaleFactor
+    )
+    const fgIntensity = buildStateIntensities(
+        theme,
+        100,
+        theme.intensity.scaleFactor
+    )
+
+    checkContrast('buttonWithIconStyle', bgIntensity.default, fgIntensity.default)
+
+    const button = (state: keyof StateIntensities): ContainedIcon => {
         return {
             container: {
                 background: color.neutral(bgIntensity[state]),
@@ -126,7 +161,7 @@ export function buttonWithIconStyle(theme: Theme): InteractiveContainer<Containe
             icon: {
                 color: color.neutral(fgIntensity[state]),
                 size: IconSize.Medium,
-            }
+            },
         }
     }
 
