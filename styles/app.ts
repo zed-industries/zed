@@ -1,3 +1,3 @@
-import { buildThemes } from "./theme/buildThemes";
+import { buildThemes } from "./theme/buildThemes"
 
-buildThemes();
+buildThemes()

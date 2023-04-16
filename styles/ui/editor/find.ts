@@ -1,5 +1,5 @@
-import { buttonWithIconStyle } from "@/components";
-import { Theme } from "@/theme";
+import { buttonWithIconStyle } from "@/components"
+import { Theme } from "@/theme"
 
 export const find = (theme: Theme) => {
     return {

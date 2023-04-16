@@ -93,7 +93,9 @@ export function buildStateIntensities(
         }
 
         // Round the ouput to ensure it is a valid intensity
-        const finalIntensity = Math.ceil(Math.min(Math.max(newIntensity, 1), 100))
+        const finalIntensity = Math.ceil(
+            Math.min(Math.max(newIntensity, 1), 100)
+        )
 
         return numberToIntensity(finalIntensity)
     }
@@ -110,7 +112,11 @@ export function buildStateIntensities(
     return stateIntensities
 }
 
-const checkContrast = (name: string, background: Intensity, foreground: Intensity) => {
+const checkContrast = (
+    name: string,
+    background: Intensity,
+    foreground: Intensity
+) => {
     const contrast = foreground / background
 
     if (contrast < 4.5) {
@@ -133,7 +139,7 @@ export function buttonWithIconStyle(
     )
     const borderIntensity = buildStateIntensities(
         theme,
-        theme.appearance === 'light' ? 36 : 24,
+        theme.appearance === "light" ? 36 : 24,
         theme.intensity.scaleFactor
     )
     const fgIntensity = buildStateIntensities(
@@ -142,7 +148,11 @@ export function buttonWithIconStyle(
         theme.intensity.scaleFactor
     )
 
-    checkContrast('buttonWithIconStyle', bgIntensity.default, fgIntensity.default)
+    checkContrast(
+        "buttonWithIconStyle",
+        bgIntensity.default,
+        fgIntensity.default
+    )
 
     const button = (state: keyof StateIntensities): ContainedIcon => {
         return {

@@ -9,7 +9,7 @@ export function buildTheme(themeConfig: ThemeConfig): Theme {
     const theme: Theme = {
         ...themeConfig,
         intensity,
-        color
+        color,
     }
 
     return theme
