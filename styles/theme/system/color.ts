@@ -1,5 +1,5 @@
-import { generateColorFamily } from "../lib/generate"
-import { curve } from "./curves"
+import { generateColorFamily } from "@system/generate"
+import { curve } from "@system/curves"
 
 // These are the source colors for the color scales in the system.
 // These should never directly be used directly in components or themes as they generate thousands of lines of code.

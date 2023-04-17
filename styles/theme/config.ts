@@ -2,8 +2,8 @@ import { InputSyntax } from "@/theme/syntax"
 
 interface Author {
     name: string
-    email: string
-    handle: string
+    email?: string
+    handle?: string
 }
 
 type License = "MIT" | "Apache-2.0" | "GPL-3.0" | "Unlicense"

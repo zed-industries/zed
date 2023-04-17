@@ -1,5 +1,5 @@
 import chroma from "chroma-js"
-import * as colorFamily from "./ref/color"
+import * as colorFamily from "@system/color"
 
 const color = {
     lightgray: chroma

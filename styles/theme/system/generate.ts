@@ -1,11 +1,13 @@
 import bezier from "bezier-easing"
 import chroma from "chroma-js"
-import { Color, ColorFamily, ColorFamilyConfig, ColorScale } from "../types"
-import { percentageToNormalized } from "./convert"
-import { curve } from "./curve"
-
-// Re-export interface in a more standard format
-export type EasingFunction = bezier.EasingFunction
+import {
+    Color,
+    ColorFamily,
+    ColorFamilyConfig,
+    ColorScale,
+} from "@system/types"
+import { percentageToNormalized } from "@system/convert"
+import { useCurve } from "./curves"
 
 /**
  * Generates a color, outputs it in multiple formats, and returns a variety of useful metadata.
@@ -20,13 +22,13 @@ export type EasingFunction = bezier.EasingFunction
  * @returns {Color} The generated color, with its calculated contrast against black and white, as well as its LCH values, RGBA array, hexadecimal representation, and a flag indicating if it is light or dark.
  */
 function generateColor(
-    hueEasing: EasingFunction,
-    saturationEasing: EasingFunction,
-    lightnessEasing: EasingFunction,
+    hueEasing: bezier.EasingFunction,
+    saturationEasing: bezier.EasingFunction,
+    lightnessEasing: bezier.EasingFunction,
     family: ColorFamilyConfig,
     step: number,
     steps: number
-) {
+): Color {
     const { hue, saturation, lightness } = family.color
 
     const stepHue = hueEasing(step / steps) * (hue.end - hue.start) + hue.start
@@ -84,7 +86,7 @@ function generateColor(
  *
  * @returns {ColorScale} The generated color scale.
  *
- * @example
+ * Example:
  * ```ts
  * const colorScale = generateColorScale({
  *   name: "blue",
@@ -108,19 +110,18 @@ function generateColor(
  * });
  * ```
  */
-
 export function generateColorScale(
     config: ColorFamilyConfig,
     inverted: Boolean = false
-) {
+): ColorScale {
     const { hue, saturation, lightness } = config.color
 
     // 101 steps means we get values from 0-100
     const NUM_STEPS = 101
 
-    const hueEasing = curve(hue.curve, inverted)
-    const saturationEasing = curve(saturation.curve, inverted)
-    const lightnessEasing = curve(lightness.curve, inverted)
+    const hueEasing = useCurve(hue.curve, inverted)
+    const saturationEasing = useCurve(saturation.curve, inverted)
+    const lightnessEasing = useCurve(lightness.curve, inverted)
 
     let scale: ColorScale = {
         colors: [],

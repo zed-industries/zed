@@ -12,6 +12,7 @@
             "@lib/*": ["./lib/*"],
             "@theme/*": ["./theme/*"],
             "@themes/*": ["./themes/*"],
+            "@system/*": ["./theme/system/*"],
             "@ui/*": ["./ui/*"],
             "@/*": ["./*"]
         }

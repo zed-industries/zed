@@ -1,4 +1,4 @@
-import { Intensity, Theme, useColors } from "@/theme"
+import { Theme, useColors } from "@/theme"
 import {
     BorderRadius,
     ContainedIcon,
@@ -7,50 +7,13 @@ import {
     StateIntensities,
     buildStateIntensities,
     checkContrast,
-} from "@/theme/container"
-import { TokenFamily, tokens } from "@/theme/tokens"
-
-/**
- * Single intensity = same for light and dark
- *
- * Array = [dark intensity, light intensity]
- */
-type ElementIntensity = Intensity | [Intensity, Intensity]
-
-interface ElementIntensities<T = ElementIntensity> {
-    bg: T
-    border: T
-    fg: T
-}
+} from "@theme/container"
+import { TokenFamily, tokens } from "@theme/tokens"
+import { ElementIntensities, useElementIntensities } from "@theme/intensity"
 
 interface BuildButtonProperties {
     theme: Theme
     inputIntensity: ElementIntensities
-}
-
-/** Resolves ElementIntensity down to a single Intensity based on the theme's appearance
- *
- * If two intensities are provided, the first is used for dark appearance and the second for light appearance
- *
- * If one intensity is provided, it is used for both dark and light appearance
- */
-function useElementIntensities(
-    theme: Theme,
-    intensity: ElementIntensities<ElementIntensity>
-): ElementIntensities<Intensity> {
-    if (Array.isArray(intensity)) {
-        return {
-            bg: theme.appearance === "light" ? intensity[1] : intensity[0],
-            border: theme.appearance === "light" ? intensity[1] : intensity[0],
-            fg: theme.appearance === "light" ? intensity[1] : intensity[0],
-        }
-    } else {
-        return {
-            bg: intensity.bg as Intensity,
-            border: intensity.border as Intensity,
-            fg: intensity.fg as Intensity,
-        }
-    }
 }
 
 function buttonWithIconStyle({
@@ -67,7 +30,7 @@ function buttonWithIconStyle({
     )
     const borderIntensities = buildStateIntensities(
         theme,
-        theme.appearance === "light" ? 36 : 24,
+        intensity.border,
         theme.intensity.scaleFactor
     )
     const fgIntensities = buildStateIntensities(

@@ -4,7 +4,9 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "build": "ts-node ./app.ts"
+        "build": "ts-node ./app.ts",
+        "format": "prettier --write .",
+        "lint": "eslint ."
     },
     "author": "",
     "license": "ISC",

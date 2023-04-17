@@ -1,4 +1,13 @@
-import { Curve } from "./ref/curves"
+export interface Curve {
+    name: string
+    value: number[]
+}
+
+export interface Curves {
+    lightness: Curve
+    saturation: Curve
+    linear: Curve
+}
 
 export interface ColorAccessiblityValue {
     value: number

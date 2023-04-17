@@ -1,5 +1,5 @@
 import chroma from "chroma-js"
-import { ThemeConfig } from "./config"
+import { Theme, ThemeConfig } from "./config"
 
 export function hexToIntensity(hex: string): Intensity {
     const hsl = chroma(hex).hsl()
@@ -87,4 +87,42 @@ function calculateScaleFactor(min: number, max: number): number {
     const maxDistance = 99
     const scaleFactor = maxDistance / smallerScaleDifference
     return +scaleFactor.toFixed(3)
+}
+
+/**
+ * Single intensity = same for light and dark
+ *
+ * Array = [dark intensity, light intensity]
+ */
+export type ElementIntensity = Intensity | [Intensity, Intensity]
+
+export interface ElementIntensities<T = ElementIntensity> {
+    bg: T
+    border: T
+    fg: T
+}
+
+/** Resolves ElementIntensity down to a single Intensity based on the theme's appearance
+ *
+ * If two intensities are provided, the first is used for dark appearance and the second for light appearance
+ *
+ * If one intensity is provided, it is used for both dark and light appearance
+ */
+export function useElementIntensities(
+    theme: Theme,
+    intensity: ElementIntensities<ElementIntensity>
+): ElementIntensities<Intensity> {
+    if (Array.isArray(intensity)) {
+        return {
+            bg: theme.appearance === "light" ? intensity[1] : intensity[0],
+            border: theme.appearance === "light" ? intensity[1] : intensity[0],
+            fg: theme.appearance === "light" ? intensity[1] : intensity[0],
+        }
+    } else {
+        return {
+            bg: intensity.bg as Intensity,
+            border: intensity.border as Intensity,
+            fg: intensity.fg as Intensity,
+        }
+    }
 }
