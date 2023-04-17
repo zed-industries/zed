@@ -1,8 +1,12 @@
-import { buttonWithIconStyle } from "@/components"
+import { iconButton, toggleButton } from "@/components/button"
 import { Theme } from "@/theme"
 
 export const find = (theme: Theme) => {
     return {
-        button: buttonWithIconStyle(theme),
+        next_button: iconButton(theme),
+        previous_button: iconButton(theme),
+        case_button: toggleButton(theme),
+        word_button: toggleButton(theme),
+        regex_button: toggleButton(theme),
     }
 }

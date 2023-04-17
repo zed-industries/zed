@@ -1,153 +1,85 @@
-import { Border, Intensity, Theme, useColors } from "@/theme"
-import { numberToIntensity } from "@/theme/intensity"
+import { Intensity, Theme, useColors } from "@/theme"
+import {
+    BorderRadius,
+    ContainedIcon,
+    IconSize,
+    InteractiveContainer,
+    StateIntensities,
+    buildStateIntensities,
+    checkContrast,
+} from "@/theme/container"
 import { TokenFamily, tokens } from "@/theme/tokens"
 
-type Margin = [number, number, number, number]
-type Padding = [number, number, number, number]
+/**
+ * Single intensity = same for light and dark
+ *
+ * Array = [dark intensity, light intensity]
+ */
+type ElementIntensity = Intensity | [Intensity, Intensity]
 
-interface ContainerStyle {
-    background: string
-    margin: Margin
-    padding: Padding
-    borderRadius: number
-    border: Border
+interface ElementIntensities<T = ElementIntensity> {
+    bg: T
+    border: T
+    fg: T
 }
 
-enum IconSize {
-    "Small" = 7,
-    "Medium" = 11,
-    "Large" = 15,
-}
-
-enum BorderRadius {
-    "Medium" = 4,
-}
-
-interface TextStyle {
-    family: string
-    size: number
-    weight: number
-    color: string
-    lineHeight: number
-}
-
-interface IconStyle {
-    color: string
-    size: IconSize
-}
-
-interface ContainedText {
-    container: ContainerStyle
-    text: TextStyle
-}
-
-interface ContainedIcon {
-    container: ContainerStyle
-    icon: IconStyle
-}
-
-interface ContainedTextWithIcon extends ContainedText {
-    icon: IconStyle
-}
-
-type InteractiveState = ContainedIcon | ContainedText | ContainedTextWithIcon
-
-interface InteractiveContainer<T = InteractiveState> {
-    default: T
-    hovered: T
-    pressed: T
-}
-
-interface StateIntensities {
-    default: Intensity
-    hovered: Intensity
-    pressed: Intensity
-    active: Intensity
-}
-
-export function buildStateIntensities(
-    theme: Theme,
-    baseIntensity: number,
-    scaleFactor: number
-): StateIntensities {
-    const isLightTheme = theme.appearance === "light"
-    const intensitySteps = isLightTheme ? [0, 5, 10, 15] : [0, 12, 18, 24]
-    const defaultIntensity = numberToIntensity(baseIntensity)
-
-    const scaledIntensitySteps = intensitySteps.map(
-        (intensity) => intensity * scaleFactor
-    )
-
-    const calculateIntensity = (
-        intensity: number,
-        change: number
-    ): Intensity => {
-        let newIntensity = intensity + change
-        if (newIntensity > 100) {
-            // If the new intensity is too high, change the direction and use the same change value
-            newIntensity = intensity - change
-        }
-
-        // Round the ouput to ensure it is a valid intensity
-        const finalIntensity = Math.ceil(
-            Math.min(Math.max(newIntensity, 1), 100)
-        )
-
-        return numberToIntensity(finalIntensity)
-    }
-
-    const stateIntensities: StateIntensities = {
-        default: defaultIntensity,
-        hovered: calculateIntensity(defaultIntensity, scaledIntensitySteps[1]),
-        pressed: calculateIntensity(defaultIntensity, scaledIntensitySteps[2]),
-        active: calculateIntensity(defaultIntensity, scaledIntensitySteps[3]),
-    }
-
-    console.log(JSON.stringify(stateIntensities, null, 4))
-
-    return stateIntensities
-}
-
-const checkContrast = (
-    name: string,
-    background: Intensity,
-    foreground: Intensity
-) => {
-    const contrast = foreground / background
-
-    if (contrast < 4.5) {
-        console.log(`Constrast on ${name} may be too low: ${contrast}`)
-    }
-
-    if (contrast < 3) {
-        throw new Error(`Constrast on ${name} is too low: ${contrast}`)
-    }
-}
-
-export function buttonWithIconStyle(
+interface BuildButtonProperties {
     theme: Theme
-): InteractiveContainer<ContainedIcon> {
+    inputIntensity: ElementIntensities
+}
+
+/** Resolves ElementIntensity down to a single Intensity based on the theme's appearance
+ *
+ * If two intensities are provided, the first is used for dark appearance and the second for light appearance
+ *
+ * If one intensity is provided, it is used for both dark and light appearance
+ */
+function useElementIntensities(
+    theme: Theme,
+    intensity: ElementIntensities<ElementIntensity>
+): ElementIntensities<Intensity> {
+    if (Array.isArray(intensity)) {
+        return {
+            bg: theme.appearance === "light" ? intensity[1] : intensity[0],
+            border: theme.appearance === "light" ? intensity[1] : intensity[0],
+            fg: theme.appearance === "light" ? intensity[1] : intensity[0],
+        }
+    } else {
+        return {
+            bg: intensity.bg as Intensity,
+            border: intensity.border as Intensity,
+            fg: intensity.fg as Intensity,
+        }
+    }
+}
+
+function buttonWithIconStyle({
+    theme,
+    inputIntensity,
+}: BuildButtonProperties): InteractiveContainer<ContainedIcon> {
     const color = useColors(theme)
-    const bgIntensity = buildStateIntensities(
+    const intensity = useElementIntensities(theme, inputIntensity)
+
+    const bgIntensities = buildStateIntensities(
         theme,
-        12,
+        intensity.bg,
         theme.intensity.scaleFactor
     )
-    const borderIntensity = buildStateIntensities(
+    const borderIntensities = buildStateIntensities(
         theme,
         theme.appearance === "light" ? 36 : 24,
         theme.intensity.scaleFactor
     )
-    const fgIntensity = buildStateIntensities(
+    const fgIntensities = buildStateIntensities(
         theme,
-        100,
+        intensity.fg,
         theme.intensity.scaleFactor
     )
 
     checkContrast(
         "buttonWithIconStyle",
-        bgIntensity.default,
-        fgIntensity.default
+        bgIntensities.default,
+        fgIntensities.default
     )
 
     const button = (state: keyof StateIntensities): ContainedIcon => {
@@ -156,13 +88,13 @@ export function buttonWithIconStyle(
         const buttonTokens: TokenFamily = {
             [state]: {
                 background: tokens.colorToken(
-                    color.neutral(bgIntensity[state])
+                    color.neutral(bgIntensities[state])
                 ),
                 border: tokens.colorToken(
-                    color.neutral(borderIntensity[state])
+                    color.neutral(borderIntensities[state])
                 ),
                 foreground: tokens.colorToken(
-                    color.neutral(fgIntensity[state])
+                    color.neutral(fgIntensities[state])
                 ),
             },
         }
@@ -174,27 +106,66 @@ export function buttonWithIconStyle(
 
         return {
             container: {
-                background: color.neutral(bgIntensity[state]),
+                background: color.neutral(bgIntensities[state]),
                 margin: [0, 0, 0, 0],
                 padding: [4, 4, 4, 4],
                 borderRadius: BorderRadius.Medium,
                 border: {
                     width: 1,
-                    color: color.neutral(borderIntensity[state]),
+                    color: color.neutral(borderIntensities[state]),
                     style: "solid",
                     inset: false,
                 },
+                width: 15,
+                height: 15,
             },
             icon: {
-                color: color.neutral(fgIntensity[state]),
+                color: color.neutral(fgIntensities[state]),
                 size: IconSize.Medium,
             },
         }
     }
 
+    // TODO: There should be a function for creating a disabled state
     return {
         default: button("default"),
         hovered: button("hovered"),
         pressed: button("pressed"),
+    }
+}
+
+export function iconButton(theme: Theme): InteractiveContainer<ContainedIcon> {
+    return buttonWithIconStyle({
+        theme: theme,
+        inputIntensity: {
+            bg: 12,
+            border: [36, 24],
+            fg: 100,
+        },
+    })
+}
+
+interface InteractiveToggleableContainer<T = InteractiveContainer> {
+    inactive: T
+    active: T
+}
+
+// Use ContainedIcon just as an example
+export function toggleButton(
+    theme: Theme
+): InteractiveToggleableContainer<InteractiveContainer<ContainedIcon>> {
+    const inactive = iconButton(theme)
+    const active = buttonWithIconStyle({
+        theme,
+        inputIntensity: {
+            bg: 32,
+            border: [48, 36],
+            fg: 100,
+        },
+    })
+
+    return {
+        inactive,
+        active,
     }
 }

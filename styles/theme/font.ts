@@ -1,4 +1,13 @@
-export const family = {
+type Font = "Zed Mono" | "Zed Sans"
+
+export interface Families {
+    mono: Font
+    sans: Font
+    ui: Font
+    terminal: Font
+}
+
+export const family: Families = {
     mono: "Zed Mono",
     sans: "Zed Sans",
     ui: "Zed Sans",
@@ -31,4 +40,12 @@ export interface Weights {
 export const weight: Weights = {
     regular: 400,
     bold: 700,
+}
+
+export interface TextStyle {
+    family: Font
+    size: number
+    weight: Weight
+    color: string
+    lineHeight: number
 }
