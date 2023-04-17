@@ -1272,12 +1272,7 @@ impl AppContext {
                     .open_window(window_id, window_options, this.foreground.clone());
             let window = this.build_window(window_id, platform_window, build_root_view);
             let root_view = window.root_view().clone().downcast::<V>().unwrap();
-
             this.windows.insert(window_id, window);
-            this.update_window(window_id, |cx| {
-                root_view.update(cx, |view, cx| view.focus_in(cx.handle().into_any(), cx))
-            });
-
             (window_id, root_view)
         })
     }
