@@ -173,11 +173,13 @@ pub trait ReadViewWith {
 }
 
 pub trait UpdateView {
+    type Output<S>;
+
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
         update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
+    ) -> Self::Output<S>
     where
         T: View;
 }
@@ -462,18 +464,19 @@ impl ReadModelWith for AsyncAppContext {
 }
 
 impl UpdateView for AsyncAppContext {
+    type Output<S> = Option<S>;
+
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
         update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
+    ) -> Option<S>
     where
         T: View,
     {
         self.0
             .borrow_mut()
             .update_window(handle.window_id, |cx| cx.update_view(handle, update))
-            .unwrap() // TODO: is this unwrap safe?
     }
 }
 
@@ -3472,6 +3475,8 @@ impl<V: View> ReadView for ViewContext<'_, '_, '_, V> {
 }
 
 impl<V: View> UpdateView for ViewContext<'_, '_, '_, V> {
+    type Output<S> = S;
+
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
@@ -3533,6 +3538,8 @@ impl<V: View> ReadView for EventContext<'_, '_, '_, '_, V> {
 }
 
 impl<V: View> UpdateView for EventContext<'_, '_, '_, '_, V> {
+    type Output<S> = S;
+
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
@@ -3913,7 +3920,7 @@ impl<T: View> ViewHandle<T> {
         })
     }
 
-    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
+    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::Output<S>
     where
         C: UpdateView,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,

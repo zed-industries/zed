@@ -823,6 +823,8 @@ mod tests {
     }
 
     impl<'a> UpdateView for DockTestContext<'a> {
+        type Output<S> = S;
+
         fn update_view<T, S>(
             &mut self,
             handle: &ViewHandle<T>,

@@ -155,6 +155,8 @@ impl ReadView for WindowContext<'_, '_> {
 }
 
 impl UpdateView for WindowContext<'_, '_> {
+    type Output<S> = S;
+
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
@@ -172,7 +174,7 @@ impl UpdateView for WindowContext<'_, '_> {
                 &mut cx,
             )
         })
-        .unwrap() // TODO: Is this unwrap safe?
+        .unwrap()
     }
 }
 

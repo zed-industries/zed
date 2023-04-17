@@ -404,6 +404,8 @@ impl ReadModelWith for TestAppContext {
 }
 
 impl UpdateView for TestAppContext {
+    type Output<S> = S;
+
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,

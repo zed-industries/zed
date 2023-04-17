@@ -467,7 +467,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                                     workspace.project().clone(),
                                                     cx,
                                                 )
-                                            })
+                                            })?
                                             .await
                                             .log_err()?;
                                         Some(())
