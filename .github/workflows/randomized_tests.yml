@@ -5,7 +5,6 @@ concurrency: randomized-tests
 on:
   push:
     branches:
-      - main
       - randomized-tests-runner
   schedule:
      - cron: '0 * * * *'
