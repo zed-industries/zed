@@ -89,23 +89,26 @@ pub fn init(
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
-                node_runtime.clone(),
-            ))],
+            vec![
+                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            ],
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
-                node_runtime.clone(),
-            ))],
+            vec![
+                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            ],
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
-                node_runtime.clone(),
-            ))],
+            vec![
+                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            ],
         ),
         (
             "html",
@@ -149,7 +152,7 @@ pub async fn language(
 ) -> Arc<Language> {
     Arc::new(
         Language::new(load_config(name), Some(grammar))
-            .with_lsp_adapters(lsp_adapter)
+            .with_lsp_adapters(lsp_adapter.into_iter().collect())
             .await
             .with_queries(load_queries(name))
             .unwrap(),

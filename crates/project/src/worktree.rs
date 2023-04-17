@@ -67,7 +67,7 @@ pub struct LocalWorktree {
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     _background_scanner_task: Task<()>,
     share: Option<ShareState>,
-    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>>,
+    diagnostics: HashMap<Arc<Path>, Vec<(usize, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>)>>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
@@ -514,13 +514,13 @@ impl LocalWorktree {
     pub fn diagnostics_for_path(
         &self,
         path: &Path,
-    ) -> Option<Vec<DiagnosticEntry<Unclipped<PointUtf16>>>> {
-        self.diagnostics.get(path).cloned()
+    ) -> Vec<(usize, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>)> {
+        self.diagnostics.get(path).cloned().unwrap_or_default()
     }
 
     pub fn update_diagnostics(
         &mut self,
-        language_server_id: usize,
+        server_id: usize,
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut ModelContext<Worktree>,
@@ -530,11 +530,16 @@ impl LocalWorktree {
             .diagnostic_summaries
             .remove(&PathKey(worktree_path.clone()))
             .unwrap_or_default();
-        let new_summary = DiagnosticSummary::new(language_server_id, &diagnostics);
+        let new_summary = DiagnosticSummary::new(server_id, &diagnostics);
         if !new_summary.is_empty() {
             self.diagnostic_summaries
                 .insert(PathKey(worktree_path.clone()), new_summary);
-            self.diagnostics.insert(worktree_path.clone(), diagnostics);
+            let diagnostics_by_server_id =
+                self.diagnostics.entry(worktree_path.clone()).or_default();
+            let ix = match diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                Ok(ix) | Err(ix) => ix,
+            };
+            diagnostics_by_server_id[ix] = (server_id, diagnostics);
         }
 
         let updated = !old_summary.is_empty() || !new_summary.is_empty();
@@ -546,7 +551,7 @@ impl LocalWorktree {
                         worktree_id: self.id().to_proto(),
                         summary: Some(proto::DiagnosticSummary {
                             path: worktree_path.to_string_lossy().to_string(),
-                            language_server_id: language_server_id as u64,
+                            language_server_id: server_id as u64,
                             error_count: new_summary.error_count as u32,
                             warning_count: new_summary.warning_count as u32,
                         }),

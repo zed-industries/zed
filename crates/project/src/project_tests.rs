@@ -1420,6 +1420,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                         },
                     },
                 ],
+                0,
                 None,
                 cx,
             )

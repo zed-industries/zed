@@ -15,13 +15,17 @@ use std::{
 use util::http::HttpClient;
 use util::ResultExt;
 
-fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![
         server_path.into(),
         "--stdio".into(),
         "--tsserver-path".into(),
         "node_modules/typescript/lib".into(),
     ]
+}
+
+fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec![server_path.into(), "--stdin".into()]
 }
 
 pub struct TypeScriptLspAdapter {
@@ -89,7 +93,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            arguments: server_binary_arguments(&server_path),
+            arguments: typescript_server_binary_arguments(&server_path),
         })
     }
 
@@ -101,12 +105,12 @@ impl LspAdapter for TypeScriptLspAdapter {
             if new_server_path.exists() {
                 Ok(LanguageServerBinary {
                     path: self.node.binary_path().await?,
-                    arguments: server_binary_arguments(&new_server_path),
+                    arguments: typescript_server_binary_arguments(&new_server_path),
                 })
             } else if old_server_path.exists() {
                 Ok(LanguageServerBinary {
                     path: self.node.binary_path().await?,
-                    arguments: server_binary_arguments(&old_server_path),
+                    arguments: typescript_server_binary_arguments(&old_server_path),
                 })
             } else {
                 Err(anyhow!(
@@ -169,7 +173,7 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
+    const SERVER_PATH: &'static str = "node_modules/eslint/bin/eslint.js";
 
     pub fn new(node: Arc<NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
@@ -208,7 +212,7 @@ impl LspAdapter for EsLintLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            arguments: server_binary_arguments(&server_path),
+            arguments: eslint_server_binary_arguments(&server_path),
         })
     }
 
@@ -218,7 +222,7 @@ impl LspAdapter for EsLintLspAdapter {
             if server_path.exists() {
                 Ok(LanguageServerBinary {
                     path: self.node.binary_path().await?,
-                    arguments: server_binary_arguments(&server_path),
+                    arguments: eslint_server_binary_arguments(&server_path),
                 })
             } else {
                 Err(anyhow!(

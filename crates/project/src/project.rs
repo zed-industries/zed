@@ -1641,7 +1641,7 @@ impl Project {
                             .1
                             .notify::<lsp::notification::DidCloseTextDocument>(
                                 lsp::DidCloseTextDocumentParams {
-                                    text_document: lsp::TextDocumentIdentifier::new(uri),
+                                    text_document: lsp::TextDocumentIdentifier::new(uri.clone()),
                                 },
                             )
                             .log_err();
@@ -1670,17 +1670,17 @@ impl Project {
 
             let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
             let initial_snapshot = buffer.text_snapshot();
+            let language = buffer.language().cloned();
+            let worktree_id = file.worktree_id(cx);
 
             if let Some(local_worktree) = file.worktree.read(cx).as_local() {
-                if let Some(diagnostics) = local_worktree.diagnostics_for_path(file.path()) {
-                    self.update_buffer_diagnostics(buffer_handle, diagnostics, None, cx)
+                for (server_id, diagnostics) in local_worktree.diagnostics_for_path(file.path()) {
+                    self.update_buffer_diagnostics(buffer_handle, diagnostics, server_id, None, cx)
                         .log_err();
                 }
             }
 
-            if let Some(language) = buffer.language() {
-                let worktree_id = file.worktree_id(cx);
-
+            if let Some(language) = language {
                 for adapter in language.lsp_adapters() {
                     let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
@@ -1703,7 +1703,7 @@ impl Project {
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
-                                    uri,
+                                    uri.clone(),
                                     language_id.unwrap_or_default(),
                                     0,
                                     initial_snapshot.text(),
@@ -1726,7 +1726,7 @@ impl Project {
 
                     let snapshot = LspBufferSnapshot {
                         version: 0,
-                        snapshot: initial_snapshot,
+                        snapshot: initial_snapshot.clone(),
                     };
                     self.buffer_snapshots
                         .entry(buffer_id)
@@ -1746,13 +1746,12 @@ impl Project {
         buffer.update(cx, |buffer, cx| {
             buffer.update_diagnostics(Default::default(), cx);
             self.buffer_snapshots.remove(&buffer.remote_id());
+            let file_url = lsp::Url::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
                         lsp::DidCloseTextDocumentParams {
-                            text_document: lsp::TextDocumentIdentifier::new(
-                                lsp::Url::from_file_path(old_path).unwrap(),
-                            ),
+                            text_document: lsp::TextDocumentIdentifier::new(file_url.clone()),
                         },
                     )
                     .log_err();
@@ -1856,7 +1855,12 @@ impl Project {
                 let uri = lsp::Url::from_file_path(abs_path).unwrap();
                 let next_snapshot = buffer.text_snapshot();
 
-                for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+                let language_servers: Vec<_> = self
+                    .language_servers_iter_for_buffer(buffer, cx)
+                    .map(|i| i.1.clone())
+                    .collect();
+
+                for language_server in language_servers {
                     let language_server = language_server.clone();
 
                     let buffer_snapshots = self
@@ -1887,14 +1891,14 @@ impl Project {
 
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
-                        snapshot: next_snapshot,
+                        snapshot: next_snapshot.clone(),
                     });
 
                     language_server
                         .notify::<lsp::notification::DidChangeTextDocument>(
                             lsp::DidChangeTextDocumentParams {
                                 text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                    uri,
+                                    uri.clone(),
                                     next_version,
                                 ),
                                 content_changes,
@@ -1925,26 +1929,24 @@ impl Project {
 
                 let language_server_ids = self.language_server_ids_for_buffer(buffer.read(cx), cx);
                 for language_server_id in language_server_ids {
-                    let LanguageServerState::Running {
+                    if let Some(LanguageServerState::Running {
                         adapter,
                         simulate_disk_based_diagnostics_completion,
                         ..
-                    } = match self.language_servers.get_mut(&language_server_id) {
-                        Some(state) => state,
-                        None => continue,
-                    };
+                    }) = self.language_servers.get_mut(&language_server_id)
+                    {
+                        // After saving a buffer using a language server that doesn't provide
+                        // a disk-based progress token, kick off a timer that will reset every
+                        // time the buffer is saved. If the timer eventually fires, simulate
+                        // disk-based diagnostics being finished so that other pieces of UI
+                        // (e.g., project diagnostics view, diagnostic status bar) can update.
+                        // We don't emit an event right away because the language server might take
+                        // some time to publish diagnostics.
+                        if adapter.disk_based_diagnostics_progress_token.is_none() {
+                            const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration =
+                                Duration::from_secs(1);
 
-                    // After saving a buffer using a language server that doesn't provide
-                    // a disk-based progress token, kick off a timer that will reset every
-                    // time the buffer is saved. If the timer eventually fires, simulate
-                    // disk-based diagnostics being finished so that other pieces of UI
-                    // (e.g., project diagnostics view, diagnostic status bar) can update.
-                    // We don't emit an event right away because the language server might take
-                    // some time to publish diagnostics.
-                    if adapter.disk_based_diagnostics_progress_token.is_none() {
-                        const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_secs(1);
-
-                        let task = cx.spawn_weak(|this, mut cx| async move {
+                            let task = cx.spawn_weak(|this, mut cx| async move {
                             cx.background().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
                             if let Some(this) = this.upgrade(&cx) {
                                 this.update(&mut cx, |this, cx | {
@@ -1958,7 +1960,8 @@ impl Project {
                                 });
                             }
                         });
-                        *simulate_disk_based_diagnostics_completion = Some(task);
+                            *simulate_disk_based_diagnostics_completion = Some(task);
+                        }
                     }
                 }
             }
@@ -2123,7 +2126,7 @@ impl Project {
         let adapters = language.lsp_adapters();
         let language_servers = self.languages.start_language_servers(
             language.clone(),
-            worktree_path,
+            worktree_path.clone(),
             self.client.http_client(),
             cx,
         );
@@ -2143,19 +2146,18 @@ impl Project {
                 _ => {}
             }
 
-            self.language_server_ids
-                .entry(key.clone())
-                .or_insert_with(|| {
-                    self.setup_language_adapter(
-                        worktree_path,
-                        initialization_options,
-                        pending_server,
-                        adapter,
-                        &language,
-                        key,
-                        cx,
-                    )
-                });
+            if !self.language_server_ids.contains_key(&key) {
+                let adapter = self.setup_language_adapter(
+                    worktree_path.clone(),
+                    initialization_options,
+                    pending_server,
+                    adapter.clone(),
+                    language.clone(),
+                    key.clone(),
+                    cx,
+                );
+                self.language_server_ids.insert(key.clone(), adapter);
+            }
         }
     }
 
@@ -2164,8 +2166,8 @@ impl Project {
         worktree_path: Arc<Path>,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
-        adapter: &Arc<CachedLspAdapter>,
-        language: &Arc<Language>,
+        adapter: Arc<CachedLspAdapter>,
+        language: Arc<Language>,
         key: (WorktreeId, LanguageServerName),
         cx: &mut ModelContext<Project>,
     ) -> usize {
@@ -2409,7 +2411,7 @@ impl Project {
 
                             let snapshot = versions.last().unwrap();
                             let version = snapshot.version;
-                            let initial_snapshot = snapshot.snapshot;
+                            let initial_snapshot = &snapshot.snapshot;
                             let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                             language_server
                                 .notify::<lsp::notification::DidOpenTextDocument>(
@@ -2532,6 +2534,7 @@ impl Project {
         None
     }
 
+    // TODO This will break in the case where the adapter's root paths and worktrees are not equal
     fn restart_language_servers(
         &mut self,
         worktree_id: WorktreeId,
@@ -2568,7 +2571,7 @@ impl Project {
                     .map(|path_buf| Arc::from(path_buf.as_path()))
                     .unwrap_or(fallback_path);
 
-                this.start_language_servers(worktree_id, root_path, language, cx);
+                this.start_language_servers(worktree_id, root_path, language.clone(), cx);
 
                 // Lookup new server ids and set them for each of the orphaned worktrees
                 for adapter in language.lsp_adapters() {
@@ -2577,7 +2580,7 @@ impl Project {
                         .get(&(worktree_id, adapter.name.clone()))
                         .cloned()
                     {
-                        for orphaned_worktree in orphaned_worktrees {
+                        for &orphaned_worktree in &orphaned_worktrees {
                             this.language_server_ids
                                 .insert((orphaned_worktree, adapter.name.clone()), new_server_id);
                         }
@@ -2948,7 +2951,7 @@ impl Project {
 
     pub fn update_diagnostic_entries(
         &mut self,
-        language_server_id: usize,
+        server_id: usize,
         abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -2964,23 +2967,18 @@ impl Project {
         };
 
         if let Some(buffer) = self.get_open_buffer(&project_path, cx) {
-            self.update_buffer_diagnostics(&buffer, diagnostics.clone(), version, cx)?;
+            self.update_buffer_diagnostics(&buffer, diagnostics.clone(), server_id, version, cx)?;
         }
 
         let updated = worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
                 .ok_or_else(|| anyhow!("not a local worktree"))?
-                .update_diagnostics(
-                    language_server_id,
-                    project_path.path.clone(),
-                    diagnostics,
-                    cx,
-                )
+                .update_diagnostics(server_id, project_path.path.clone(), diagnostics, cx)
         })?;
         if updated {
             cx.emit(Event::DiagnosticsUpdated {
-                language_server_id,
+                language_server_id: server_id,
                 path: project_path,
             });
         }
@@ -2991,6 +2989,7 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        server_id: usize,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -3002,7 +3001,7 @@ impl Project {
                 .then_with(|| a.message.cmp(&b.message))
         }
 
-        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, version, cx)?;
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
 
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
@@ -6261,7 +6260,7 @@ impl Project {
         }
     }
 
-    fn running_language_servers_for_buffer(
+    pub fn language_servers_iter_for_buffer(
         &self,
         buffer: &Buffer,
         cx: &AppContext,
@@ -6286,8 +6285,7 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Vec<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.running_language_servers_for_buffer(buffer, cx)
-            .collect()
+        self.language_servers_iter_for_buffer(buffer, cx).collect()
     }
 
     fn primary_language_servers_for_buffer(
@@ -6295,7 +6293,7 @@ impl Project {
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.running_language_servers_for_buffer(buffer, cx).next()
+        self.language_servers_iter_for_buffer(buffer, cx).next()
     }
 
     fn language_server_for_buffer(
@@ -6304,7 +6302,7 @@ impl Project {
         server_id: usize,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.running_language_servers_for_buffer(buffer, cx)
+        self.language_servers_iter_for_buffer(buffer, cx)
             .find(|(_, s)| s.server_id() == server_id)
     }
 
