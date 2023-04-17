@@ -1,5 +1,6 @@
-import { iconButton, toggleButton } from "@/components/button"
+import { iconButton } from "@components/button"
 import { Theme } from "@/theme"
+import { toggleButton } from "@components/toggleButton"
 
 export const find = (theme: Theme) => {
     return {

@@ -8,6 +8,11 @@
         "preserveConstEnums": true,
         "sourceMap": true,
         "paths": {
+            "@components/*": ["./components/*"],
+            "@lib/*": ["./lib/*"],
+            "@theme/*": ["./theme/*"],
+            "@themes/*": ["./themes/*"],
+            "@ui/*": ["./ui/*"],
             "@/*": ["./*"]
         }
     },

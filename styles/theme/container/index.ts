@@ -55,6 +55,11 @@ export interface InteractiveContainer<T = InteractiveState> {
     pressed: T
 }
 
+export interface InteractiveToggleableContainer<T = InteractiveContainer> {
+    inactive: T
+    active: T
+}
+
 export interface StateIntensities {
     default: Intensity
     hovered: Intensity

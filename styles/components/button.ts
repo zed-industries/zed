@@ -144,28 +144,3 @@ export function iconButton(theme: Theme): InteractiveContainer<ContainedIcon> {
         },
     })
 }
-
-interface InteractiveToggleableContainer<T = InteractiveContainer> {
-    inactive: T
-    active: T
-}
-
-// Use ContainedIcon just as an example
-export function toggleButton(
-    theme: Theme
-): InteractiveToggleableContainer<InteractiveContainer<ContainedIcon>> {
-    const inactive = iconButton(theme)
-    const active = buttonWithIconStyle({
-        theme,
-        inputIntensity: {
-            bg: 32,
-            border: [48, 36],
-            fg: 100,
-        },
-    })
-
-    return {
-        inactive,
-        active,
-    }
-}

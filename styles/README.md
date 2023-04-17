@@ -24,6 +24,6 @@ For example, if a theme has an intensity range of 5-70, a value with an intensit
 
 Absolute intensity is the intensity of a value in a theme relative to the minimum and maximum possible intensities (1-100).
 
-For example, if we use the same theme intensities as above (5-70), a value with an intensity of 40 would have an absolute intensity of 60.92 (40 `(value)` * 1.523 `(scale factor)`), which would be rounded up to 61.
+For example, if we use the same theme intensities as above (5-70), a value with an intensity of 40 would have an absolute intensity of 60.92 (40 `(value)` \* 1.523 `(scale factor)`), which would be rounded up to 61.
 
 Absolute intensities are useful for programmatically shifting intensities, as absolute intensities are the same across all themes. If an element becomes **5% more intense**, it will always be 5% lighter or darker than its original value, even if the theme uses low contrasts.
