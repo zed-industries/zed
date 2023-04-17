@@ -4,85 +4,109 @@ const fs = require('fs')
 const path = require('path')
 const {spawnSync} = require('child_process')
 
-if (process.argv.length < 4) {
-  process.stderr.write("usage: script/randomized-test-minimize <input-plan> <output-plan> [start-index]\n")
-  process.exit(1)
-}
-
-const inputPlanPath = process.argv[2]
-const outputPlanPath = process.argv[3]
-const startIndex = parseInt(process.argv[4]) || 0
-
-const tempPlanPath = inputPlanPath + '.try'
-
 const FAILING_SEED_REGEX = /failing seed: (\d+)/ig
+const CARGO_TEST_ARGS = [
+  '--release',
+  '--lib',
+  '--package', 'collab',
+  'random_collaboration',
+]
 
-fs.copyFileSync(inputPlanPath, outputPlanPath)
-let testPlan = JSON.parse(fs.readFileSync(outputPlanPath, 'utf8'))
-
-process.stderr.write("minimizing failing test plan...\n")
-for (let ix = startIndex; ix < testPlan.length; ix++) {
-  // Skip 'MutateClients' entries, since they themselves are not single operations.
-  if (testPlan[ix].MutateClients) {
-    continue
+if (require.main === module) {
+  if (process.argv.length < 4) {
+    process.stderr.write("usage: script/randomized-test-minimize <input-plan> <output-plan> [start-index]\n")
+    process.exit(1)
   }
 
-  // Remove a row from the test plan
-  const newTestPlan = testPlan.slice()
-  newTestPlan.splice(ix, 1)
-  fs.writeFileSync(tempPlanPath, serializeTestPlan(newTestPlan), 'utf8');
+  minimizeTestPlan(
+    process.argv[2],
+    process.argv[3],
+    parseInt(process.argv[4]) || 0
+  );
+}
 
-  process.stderr.write(`${ix}/${testPlan.length}: ${JSON.stringify(testPlan[ix])}`)
+function minimizeTestPlan(
+  inputPlanPath,
+  outputPlanPath,
+  startIndex = 0
+) {
+  const tempPlanPath = inputPlanPath + '.try'
 
-  const failingSeed = runTestsForPlan(tempPlanPath, 500)
+  fs.copyFileSync(inputPlanPath, outputPlanPath)
+  let testPlan = JSON.parse(fs.readFileSync(outputPlanPath, 'utf8'))
 
-  // If the test failed, keep the test plan with the removed row. Reload the test
-  // plan from the JSON file, since the test itself will remove any operations
-  // which are no longer valid before saving the test plan.
-  if (failingSeed != null) {
-    process.stderr.write(` - remove. failing seed: ${failingSeed}.\n`)
-    fs.copyFileSync(tempPlanPath, outputPlanPath)
-    testPlan = JSON.parse(fs.readFileSync(outputPlanPath, 'utf8'))
-    ix--
-  } else {
-    process.stderr.write(` - keep.\n`)
+  process.stderr.write("minimizing failing test plan...\n")
+  for (let ix = startIndex; ix < testPlan.length; ix++) {
+    // Skip 'MutateClients' entries, since they themselves are not single operations.
+    if (testPlan[ix].MutateClients) {
+      continue
+    }
+
+    // Remove a row from the test plan
+    const newTestPlan = testPlan.slice()
+    newTestPlan.splice(ix, 1)
+    fs.writeFileSync(tempPlanPath, serializeTestPlan(newTestPlan), 'utf8');
+
+    process.stderr.write(`${ix}/${testPlan.length}: ${JSON.stringify(testPlan[ix])}`)
+    const failingSeed = runTests({
+      SEED: '0',
+      LOAD_PLAN: tempPlanPath,
+      SAVE_PLAN: tempPlanPath,
+      ITERATIONS: '500'
+    })
+
+    // If the test failed, keep the test plan with the removed row. Reload the test
+    // plan from the JSON file, since the test itself will remove any operations
+    // which are no longer valid before saving the test plan.
+    if (failingSeed != null) {
+      process.stderr.write(` - remove. failing seed: ${failingSeed}.\n`)
+      fs.copyFileSync(tempPlanPath, outputPlanPath)
+      testPlan = JSON.parse(fs.readFileSync(outputPlanPath, 'utf8'))
+      ix--
+    } else {
+      process.stderr.write(` - keep.\n`)
+    }
+  }
+
+  fs.unlinkSync(tempPlanPath)
+
+  // Re-run the final minimized plan to get the correct failing seed.
+  // This is a workaround for the fact that the execution order can
+  // slightly change when replaying a test plan after it has been
+  // saved and loaded.
+  const failingSeed = runTests({
+    SEED: '0',
+    ITERATIONS: '5000',
+    LOAD_PLAN: outputPlanPath,
+  })
+
+  process.stderr.write(`final test plan: ${outputPlanPath}\n`)
+  process.stderr.write(`final seed: ${failingSeed}\n`)
+  return failingSeed
+}
+
+function buildTests() {
+  const {status} = spawnSync('cargo', ['test', '--no-run', ...CARGO_TEST_ARGS], {
+    stdio: 'inherit',
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+    }
+  });
+  if (status !== 0) {
+    throw new Error('build failed')
   }
 }
 
-fs.unlinkSync(tempPlanPath)
-
-// Re-run the final minimized plan to get the correct failing seed.
-// This is a workaround for the fact that the execution order can
-// slightly change when replaying a test plan after it has been
-// saved and loaded.
-const failingSeed = runTestsForPlan(outputPlanPath, 5000)
-
-process.stderr.write(`final test plan: ${outputPlanPath}\n`)
-process.stderr.write(`final seed: ${failingSeed}\n`)
-console.log(failingSeed)
-
-function runTestsForPlan(path, iterations) {
-  const {status, stdout, stderr} = spawnSync(
-    'cargo',
-    [
-      'test',
-      '--release',
-      '--lib',
-      '--package', 'collab',
-      'random_collaboration'
-    ],
-    {
-      stdio: 'pipe',
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        'SEED': 0,
-        'LOAD_PLAN': path,
-        'SAVE_PLAN': path,
-        'ITERATIONS': String(iterations),
-      }
+function runTests(env) {
+  const {status, stdout} = spawnSync('cargo', ['test', ...CARGO_TEST_ARGS], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...env,
     }
-  );
+  });
 
   if (status !== 0) {
     FAILING_SEED_REGEX.lastIndex = 0
@@ -102,3 +126,7 @@ function runTestsForPlan(path, iterations) {
 function serializeTestPlan(plan) {
   return "[\n" + plan.map(row => JSON.stringify(row)).join(",\n") + "\n]\n"
 }
+
+exports.buildTests = buildTests
+exports.runTests = runTests
+exports.minimizeTestPlan = minimizeTestPlan

@@ -1,50 +1,63 @@
-#!/bin/bash
+#!/usr/bin/env node --redirect-warnings=/dev/null
 
-set -u
+const fs = require('fs')
+const {randomBytes} = require('crypto')
+const {execFileSync} = require('child_process')
+const {minimizeTestPlan, buildTests, runTests} = require('./randomized-test-minimize');
 
-: $ZED_SERVER_URL
-: $ZED_CLIENT_SECRET_TOKEN
+const {ZED_SERVER_URL, ZED_CLIENT_SECRET_TOKEN} = process.env
+if (!ZED_SERVER_URL) throw new Error('Missing env var `ZED_SERVER_URL`')
+if (!ZED_CLIENT_SECRET_TOKEN) throw new Error('Missing env var `ZED_CLIENT_SECRET_TOKEN`')
 
-# Compile the tests first
-mkdir -p target
-cargo test --release --lib --package collab --no-run
-if [[ $? != 0 ]]; then
-  echo "Build failed"
-  exit 1
-fi
+main()
 
-LOG_FILE=target/randomized-tests.log
-MIN_PLAN=target/test-plan.min.json
-export SAVE_PLAN=target/test-plan.json
-export OPERATIONS=200
-export ITERATIONS=100000
-export SEED=$(od -A n -N 8 -t u8 /dev/urandom | xargs)
+async function main() {
+  buildTests()
 
-echo "Starting seed: ${SEED}"
+  const seed = randomU64();
+  const commit = execFileSync(
+    'git',
+    ['rev-parse', 'HEAD'],
+    {encoding: 'utf8'}
+  ).trim()
 
-cargo test --release --lib --package collab random 2>&1 > $LOG_FILE
-if [[ $? == 0 ]]; then
-  echo "Tests passed"
-  exit 0
-fi
+  console.log("commit:", commit)
+  console.log("starting seed:", seed)
 
-failing_seed=$(script/randomized-test-minimize $SAVE_PLAN $MIN_PLAN)
+  const planPath = 'target/test-plan.json'
+  const minPlanPath = 'target/test-plan.min.json'
+  const failingSeed = runTests({
+    SEED: seed,
+    SAVE_PLAN: planPath,
+    ITERATIONS: 50000,
+    OPERATIONS: 200,
+  })
 
-# If the tests failed, find the failing seed in the logs
-commit=$(git rev-parse HEAD)
-failing_plan=$(cat $MIN_PLAN)
-request="{
-  \"seed\": \"${failing_seed}\",
-  \"commit\": \"${commit}\",
-  \"token\": \"${ZED_CLIENT_SECRET_TOKEN}\",
-  \"plan\": ${failing_plan}
-}"
+  if (!failingSeed) {
+    console.log("tests passed")
+    return
+  }
 
-echo "Reporting test failure."
-echo $request
+  console.log("found failure at seed", failingSeed)
+  const minimizedSeed = minimizeTestPlan(planPath, minPlanPath)
+  const minimizedPlan = JSON.parse(fs.readFileSync(minPlanPath, 'utf8'))
 
-curl \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "${request}" \
-    "${ZED_SERVER_URL}/api/randomized_test_failure"
+  const url = `${ZED_SERVER_URL}/api/randomized_test_failure`
+  const body = {
+    seed: minimizedSeed,
+    token: ZED_CLIENT_SECRET_TOKEN,
+    plan: minimizedPlan,
+    commit: commit,
+  }
+  await fetch(url, {
+    method: 'POST',
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  })
+}
+
+function randomU64() {
+  const bytes = randomBytes(8)
+  const hexString = bytes.reduce(((string, byte) => string + byte.toString(16)), '')
+  return BigInt('0x' + hexString).toString(10)
+}
