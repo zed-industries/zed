@@ -40,13 +40,15 @@ async function main() {
 
   console.log("found failure at seed", failingSeed)
   const minimizedSeed = minimizeTestPlan(planPath, minPlanPath)
-  const minimizedPlan = JSON.parse(fs.readFileSync(minPlanPath, 'utf8'))
+  const minimizedPlan = fs.readFileSync(minPlanPath, 'utf8')
+
+  console.log("minimized plan:\n", minimizedPlan)
 
   const url = `${ZED_SERVER_URL}/api/randomized_test_failure`
   const body = {
     seed: minimizedSeed,
     token: ZED_CLIENT_SECRET_TOKEN,
-    plan: minimizedPlan,
+    plan: JSON.parse(minimizedPlan),
     commit: commit,
   }
   await fetch(url, {
