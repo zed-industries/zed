@@ -11,13 +11,9 @@ pub fn init(cx: &mut AppContext) {
 
 fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
     Vim::update(cx, |vim, cx| {
-        if let Some(previously_active_editor) = vim
-            .active_editor
-            .as_ref()
-            .and_then(|editor| editor.upgrade(cx))
-        {
-            vim.unhook_vim_settings(previously_active_editor, cx);
-        }
+        vim.update_active_editor(cx, |previously_active_editor, cx| {
+            Vim::unhook_vim_settings(previously_active_editor, cx);
+        });
 
         vim.active_editor = Some(editor.downgrade());
         vim.editor_subscription = Some(cx.subscribe(editor, |editor, event, cx| match event {
@@ -55,7 +51,10 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
                 vim.active_editor = None;
             }
         }
-        vim.unhook_vim_settings(editor.clone(), cx);
+
+        cx.update_window(editor.window_id(), |cx| {
+            editor.update(cx, |editor, cx| Vim::unhook_vim_settings(editor, cx))
+        });
     })
 }
 

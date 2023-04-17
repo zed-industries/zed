@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
-    Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
+    Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -21,7 +21,7 @@ pub trait ToolbarItemView: View {
         current_location
     }
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut AppContext) {}
+    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
 }
 
 trait ToolbarItemViewHandle {
@@ -30,9 +30,9 @@ trait ToolbarItemViewHandle {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> ToolbarItemLocation;
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext);
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -263,7 +263,7 @@ impl Toolbar {
         }
     }
 
-    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
+    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut ViewContext<Self>) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.pane_focus_update(pane_focused, cx);
         }
@@ -292,14 +292,14 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         })
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.pane_focus_update(pane_focused, cx));
     }
 }

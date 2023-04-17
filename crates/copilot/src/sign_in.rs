@@ -26,27 +26,31 @@ pub fn init(cx: &mut AppContext) {
 
         match &status {
             crate::Status::SigningIn { prompt } => {
-                if let Some(code_verification_handle) = code_verification.as_mut() {
-                    if cx.has_window(code_verification_handle.window_id()) {
-                        code_verification_handle.update(cx, |code_verification_view, cx| {
-                            code_verification_view.set_status(status, cx);
-                            cx.activate_window();
+                if let Some(code_verification) = code_verification.as_mut() {
+                    if cx.has_window(code_verification.window_id()) {
+                        cx.update_window(code_verification.window_id(), |cx| {
+                            code_verification.update(cx, |code_verification_view, cx| {
+                                code_verification_view.set_status(status, cx);
+                                cx.activate_window();
+                            });
                         });
                     } else {
-                        create_copilot_auth_window(cx, &status, &mut code_verification);
+                        *code_verification = create_copilot_auth_window(cx, &status);
                     }
                 } else if let Some(_prompt) = prompt {
-                    create_copilot_auth_window(cx, &status, &mut code_verification);
+                    code_verification = Some(create_copilot_auth_window(cx, &status));
                 }
             }
             Status::Authorized | Status::Unauthorized => {
                 if let Some(code_verification) = code_verification.as_ref() {
-                    code_verification.update(cx, |code_verification, cx| {
-                        code_verification.set_status(status, cx);
-                        cx.activate_window();
-                    });
+                    cx.update_window(code_verification.window_id(), |cx| {
+                        code_verification.update(cx, |code_verification, cx| {
+                            code_verification.set_status(status, cx);
+                            cx.activate_window();
+                        });
 
-                    cx.platform().activate(true);
+                        cx.platform().activate(true);
+                    });
                 }
             }
             _ => {
@@ -62,8 +66,7 @@ pub fn init(cx: &mut AppContext) {
 fn create_copilot_auth_window(
     cx: &mut AppContext,
     status: &Status,
-    code_verification: &mut Option<ViewHandle<CopilotCodeVerification>>,
-) {
+) -> ViewHandle<CopilotCodeVerification> {
     let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
     let window_options = WindowOptions {
         bounds: WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
@@ -77,7 +80,7 @@ fn create_copilot_auth_window(
     let (_, view) = cx.add_window(window_options, |_cx| {
         CopilotCodeVerification::new(status.clone())
     });
-    *code_verification = Some(view);
+    view
 }
 
 pub struct CopilotCodeVerification {

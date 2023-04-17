@@ -765,7 +765,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint,
     };
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use serde_json::json;
     use unindent::Unindent as _;
@@ -1175,7 +1175,7 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut AppContext) -> Vec<(u32, String)> {
+    fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut WindowContext) -> Vec<(u32, String)> {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot

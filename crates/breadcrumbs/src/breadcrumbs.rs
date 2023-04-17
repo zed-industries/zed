@@ -148,7 +148,7 @@ impl ToolbarItemView for Breadcrumbs {
         }
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut gpui::AppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
         self.pane_focused = pane_focused;
     }
 }

@@ -142,12 +142,14 @@ impl Entity for GoToLine {
 
     fn release(&mut self, cx: &mut AppContext) {
         let scroll_position = self.prev_scroll_position.take();
-        self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
-            if let Some(scroll_position) = scroll_position {
-                editor.set_scroll_position(scroll_position, cx);
-            }
-        })
+        cx.update_window(self.active_editor.window_id(), |cx| {
+            self.active_editor.update(cx, |editor, cx| {
+                editor.highlight_rows(None);
+                if let Some(scroll_position) = scroll_position {
+                    editor.set_scroll_position(scroll_position, cx);
+                }
+            })
+        });
     }
 }
 

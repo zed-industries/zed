@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     cell::RefCell,
     mem,
     path::PathBuf,
@@ -22,8 +23,8 @@ use crate::{
     platform,
     platform::{Event, InputHandler, KeyDownEvent, Platform},
     Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
-    ReadModelWith, ReadViewWith, Task, UpdateModel, UpdateView, View, ViewContext, ViewHandle,
-    WeakHandle, WindowContext,
+    ReadModelWith, ReadViewWith, Subscription, Task, UpdateModel, UpdateView, View, ViewContext,
+    ViewHandle, WeakHandle, WindowContext,
 };
 use collections::BTreeMap;
 
@@ -158,6 +159,26 @@ impl TestAppContext {
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
         self.cx.borrow_mut().add_view(parent_handle, build_view)
+    }
+
+    pub fn observe_global<E, F>(&mut self, callback: F) -> Subscription
+    where
+        E: Any,
+        F: 'static + FnMut(&mut AppContext),
+    {
+        self.cx.borrow_mut().observe_global::<E, F>(callback)
+    }
+
+    pub fn set_global<T: 'static>(&mut self, state: T) {
+        self.cx.borrow_mut().set_global(state);
+    }
+
+    pub fn subscribe_global<E, F>(&mut self, callback: F) -> Subscription
+    where
+        E: Any,
+        F: 'static + FnMut(&E, &mut AppContext),
+    {
+        self.cx.borrow_mut().subscribe_global(callback)
     }
 
     pub fn window_ids(&self) -> Vec<usize> {

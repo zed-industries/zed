@@ -15,8 +15,7 @@ use std::sync::Arc;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode};
 use gpui::{
-    actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    actions, impl_actions, AppContext, Subscription, ViewContext, WeakViewHandle, WindowContext,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -148,10 +147,8 @@ impl Vim {
         cx: &mut AppContext,
         update: impl FnOnce(&mut Editor, &mut ViewContext<Editor>) -> S,
     ) -> Option<S> {
-        self.active_editor
-            .clone()
-            .and_then(|ae| ae.upgrade(cx))
-            .map(|ae| ae.update(cx, update))
+        let editor = self.active_editor.clone()?.upgrade(cx)?;
+        cx.update_window(editor.window_id(), |cx| editor.update(cx, update))
     }
 
     fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut AppContext) {
@@ -166,27 +163,19 @@ impl Vim {
         }
 
         // Adjust selections
-        if let Some(editor) = self
-            .active_editor
-            .as_ref()
-            .and_then(|editor| editor.upgrade(cx))
-        {
-            editor.update(cx, |editor, cx| {
-                editor.change_selections(None, cx, |s| {
-                    s.move_with(|map, selection| {
-                        if self.state.empty_selections_only() {
-                            let new_head = map.clip_point(selection.head(), Bias::Left);
-                            selection.collapse_to(new_head, selection.goal)
-                        } else {
-                            selection.set_head(
-                                map.clip_point(selection.head(), Bias::Left),
-                                selection.goal,
-                            );
-                        }
-                    });
-                })
+        self.update_active_editor(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.move_with(|map, selection| {
+                    if self.state.empty_selections_only() {
+                        let new_head = map.clip_point(selection.head(), Bias::Left);
+                        selection.collapse_to(new_head, selection.goal)
+                    } else {
+                        selection
+                            .set_head(map.clip_point(selection.head(), Bias::Left), selection.goal);
+                    }
+                });
             })
-        }
+        });
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut AppContext) {
@@ -272,33 +261,25 @@ impl Vim {
             }
         });
 
-        if let Some(editor) = self
-            .active_editor
-            .as_ref()
-            .and_then(|editor| editor.upgrade(cx))
-        {
-            if self.enabled && editor.read(cx).mode() == EditorMode::Full {
-                editor.update(cx, |editor, cx| {
-                    editor.set_cursor_shape(cursor_shape, cx);
-                    editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
-                    editor.set_input_enabled(!state.vim_controlled());
-                    editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
-                    let context_layer = state.keymap_context_layer();
-                    editor.set_keymap_context_layer::<Self>(context_layer);
-                });
+        self.update_active_editor(cx, |editor, cx| {
+            if self.enabled && editor.mode() == EditorMode::Full {
+                editor.set_cursor_shape(cursor_shape, cx);
+                editor.set_clip_at_line_ends(state.clip_at_line_end(), cx);
+                editor.set_input_enabled(!state.vim_controlled());
+                editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
+                let context_layer = state.keymap_context_layer();
+                editor.set_keymap_context_layer::<Self>(context_layer);
             } else {
-                self.unhook_vim_settings(editor, cx);
+                Self::unhook_vim_settings(editor, cx);
             }
-        }
+        });
     }
 
-    fn unhook_vim_settings(&self, editor: ViewHandle<Editor>, cx: &mut AppContext) {
-        editor.update(cx, |editor, cx| {
-            editor.set_cursor_shape(CursorShape::Bar, cx);
-            editor.set_clip_at_line_ends(false, cx);
-            editor.set_input_enabled(true);
-            editor.selections.line_mode = false;
-            editor.remove_keymap_context_layer::<Self>();
-        });
+    fn unhook_vim_settings(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+        editor.set_cursor_shape(CursorShape::Bar, cx);
+        editor.set_clip_at_line_ends(false, cx);
+        editor.set_input_enabled(true);
+        editor.selections.line_mode = false;
+        editor.remove_keymap_context_layer::<Self>();
     }
 }

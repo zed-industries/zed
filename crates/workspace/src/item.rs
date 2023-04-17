@@ -171,7 +171,7 @@ pub trait ItemHandle: 'static + fmt::Debug {
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
     ) -> gpui::Subscription;
     fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_content(
@@ -254,7 +254,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
     fn subscribe_to_item_events(
         &self,
         cx: &mut WindowContext,
-        handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
+        handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
     ) -> gpui::Subscription {
         cx.subscribe(self, move |_, event, cx| {
             for item_event in T::to_item_events(event) {
@@ -677,7 +677,7 @@ pub trait FollowableItem: Item {
 
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut AppContext);
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut WindowContext);
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -689,7 +689,7 @@ pub trait FollowableItemHandle: ItemHandle {
         &self,
         project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
 }
@@ -704,7 +704,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         })
     }
 
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut AppContext) {
+    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut WindowContext) {
         self.update(cx, |this, cx| {
             this.set_leader_replica_id(leader_replica_id, cx)
         })
@@ -731,7 +731,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         &self,
         project: &ModelHandle<Project>,
         message: proto::update_view::Variant,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> Task<Result<()>> {
         self.update(cx, |this, cx| this.apply_update_proto(project, message, cx))
     }

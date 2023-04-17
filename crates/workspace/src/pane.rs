@@ -1890,15 +1890,15 @@ fn render_tab_bar_button<A: Action + Clone>(
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut AppContext) {
+    pub fn push<D: 'static + Any>(&self, data: Option<D>, cx: &mut WindowContext) {
         self.history.borrow_mut().push(data, self.item.clone(), cx);
     }
 
-    pub fn pop_backward(&self, cx: &mut AppContext) -> Option<NavigationEntry> {
+    pub fn pop_backward(&self, cx: &mut WindowContext) -> Option<NavigationEntry> {
         self.history.borrow_mut().pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&self, cx: &mut AppContext) -> Option<NavigationEntry> {
+    pub fn pop_forward(&self, cx: &mut WindowContext) -> Option<NavigationEntry> {
         self.history
             .borrow_mut()
             .pop(NavigationMode::GoingForward, cx)
@@ -1918,7 +1918,7 @@ impl NavHistory {
         self.mode = NavigationMode::Normal;
     }
 
-    fn pop(&mut self, mode: NavigationMode, cx: &mut AppContext) -> Option<NavigationEntry> {
+    fn pop(&mut self, mode: NavigationMode, cx: &mut WindowContext) -> Option<NavigationEntry> {
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
                 return None
@@ -1938,7 +1938,7 @@ impl NavHistory {
         &mut self,
         data: Option<D>,
         item: Rc<dyn WeakItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) {
         match self.mode {
             NavigationMode::Disabled => {}
@@ -1983,7 +1983,7 @@ impl NavHistory {
         self.did_update(cx);
     }
 
-    fn did_update(&self, cx: &mut AppContext) {
+    fn did_update(&self, cx: &mut WindowContext) {
         if let Some(pane) = self.pane.upgrade(cx) {
             cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
         }

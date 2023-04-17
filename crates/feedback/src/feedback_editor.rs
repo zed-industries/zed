@@ -132,25 +132,18 @@ impl FeedbackEditor {
 
             if answer == Some(0) {
                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
-                    Ok(_) => {
-                        cx.update(|cx| {
-                            this.update(cx, |_, cx| {
-                                cx.dispatch_action(workspace::CloseActiveItem);
-                            })
-                        });
-                    }
+                    Ok(_) => this.update(&mut cx, |_, cx| {
+                        cx.dispatch_action(workspace::CloseActiveItem);
+                    }),
                     Err(error) => {
                         log::error!("{}", error);
-
-                        cx.update(|cx| {
-                            this.update(cx, |_, cx| {
-                                cx.prompt(
-                                    PromptLevel::Critical,
-                                    FEEDBACK_SUBMISSION_ERROR_TEXT,
-                                    &["OK"],
-                                );
-                            })
-                        });
+                        this.update(&mut cx, |_, cx| {
+                            cx.prompt(
+                                PromptLevel::Critical,
+                                FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                &["OK"],
+                            );
+                        })
                     }
                 }
             }

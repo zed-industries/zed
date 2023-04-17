@@ -937,7 +937,7 @@ impl AppContext {
         })
     }
 
-    pub fn subscribe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    fn subscribe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
         E::Event: 'static,
@@ -1224,17 +1224,26 @@ impl AppContext {
         T: 'static,
         F: FnOnce(&mut T, &mut AppContext) -> U,
     {
-        self.update(|this| {
-            let type_id = TypeId::of::<T>();
-            if let Some(mut state) = this.globals.remove(&type_id) {
-                let result = update(state.downcast_mut().unwrap(), this);
-                this.globals.insert(type_id, state);
-                this.notify_global(type_id);
-                result
-            } else {
-                panic!("No global added for {}", std::any::type_name::<T>());
-            }
+        self.update(|mut this| {
+            Self::update_global_internal(&mut this, |global, cx| update(global, cx))
         })
+    }
+
+    fn update_global_internal<C, T, F, U>(this: &mut C, update: F) -> U
+    where
+        C: DerefMut<Target = AppContext>,
+        T: 'static,
+        F: FnOnce(&mut T, &mut C) -> U,
+    {
+        let type_id = TypeId::of::<T>();
+        if let Some(mut state) = this.globals.remove(&type_id) {
+            let result = update(state.downcast_mut().unwrap(), this);
+            this.globals.insert(type_id, state);
+            this.notify_global(type_id);
+            result
+        } else {
+            panic!("No global added for {}", std::any::type_name::<T>());
+        }
     }
 
     pub fn clear_globals(&mut self) {
@@ -2714,15 +2723,6 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         self.app.add_model(build_model)
     }
 
-    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ModelContext<T>)) {
-        let handle = self.handle();
-        self.app.defer(move |cx| {
-            handle.update(cx, |model, cx| {
-                callback(model, cx);
-            })
-        })
-    }
-
     pub fn emit(&mut self, payload: T::Event) {
         self.app.pending_effects.push_back(Effect::Event {
             entity_id: self.model_id,
@@ -3090,21 +3090,17 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         H: Handle<E>,
         F: 'static + FnMut(&mut V, H, &E::Event, &mut ViewContext<V>),
     {
-        let window_id = self.window_id;
         let subscriber = self.weak_handle();
         self.window_context
             .subscribe_internal(handle, move |emitter, event, cx| {
-                cx.update_window(window_id, |cx| {
-                    if let Some(subscriber) = subscriber.upgrade(cx) {
-                        subscriber.update(cx, |subscriber, cx| {
-                            callback(subscriber, emitter, event, cx);
-                        });
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(false)
+                if let Some(subscriber) = subscriber.upgrade(cx) {
+                    subscriber.update(cx, |subscriber, cx| {
+                        callback(subscriber, emitter, event, cx);
+                    });
+                    true
+                } else {
+                    false
+                }
             })
     }
 
@@ -3333,15 +3329,9 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
-        let window_id = self.window_id;
         let handle = self.handle();
-        self.window_context.defer(move |cx| {
-            cx.update_window(window_id, |cx| {
-                handle.update(cx, |view, cx| {
-                    callback(view, cx);
-                })
-            });
-        })
+        self.window_context
+            .defer(move |cx| handle.update(cx, |view, cx| callback(view, cx)))
     }
 
     pub fn after_window_update(
@@ -4651,7 +4641,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_defer_and_after_window_update(cx: &mut AppContext) {
+    fn test_defer_and_after_window_update(cx: &mut TestAppContext) {
         struct View {
             render_count: usize,
         }
@@ -4671,7 +4661,7 @@ mod tests {
             }
         }
 
-        let (_, view) = cx.add_window(Default::default(), |_| View { render_count: 0 });
+        let (_, view) = cx.add_window(|_| View { render_count: 0 });
         let called_defer = Rc::new(AtomicBool::new(false));
         let called_after_window_update = Rc::new(AtomicBool::new(false));
 
@@ -4699,11 +4689,11 @@ mod tests {
 
         assert!(called_defer.load(SeqCst));
         assert!(called_after_window_update.load(SeqCst));
-        assert_eq!(view.read(cx).render_count, 3);
+        assert_eq!(view.read_with(cx, |view, _| view.render_count), 3);
     }
 
     #[crate::test(self)]
-    fn test_view_handles(cx: &mut AppContext) {
+    fn test_view_handles(cx: &mut TestAppContext) {
         struct View {
             other: Option<ViewHandle<View>>,
             events: Vec<String>,
@@ -4738,33 +4728,39 @@ mod tests {
             }
         }
 
-        let (_, root_view) = cx.add_window(Default::default(), |cx| View::new(None, cx));
+        let (_, root_view) = cx.add_window(|cx| View::new(None, cx));
         let handle_1 = cx.add_view(&root_view, |cx| View::new(None, cx));
         let handle_2 = cx.add_view(&root_view, |cx| View::new(Some(handle_1.clone()), cx));
-        assert_eq!(cx.views.len(), 3);
+        assert_eq!(cx.read(|cx| cx.views.len()), 3);
 
         handle_1.update(cx, |view, cx| {
             view.events.push("updated".into());
             cx.emit(1);
             cx.emit(2);
         });
-        assert_eq!(handle_1.read(cx).events, vec!["updated".to_string()]);
-        assert_eq!(
-            handle_2.read(cx).events,
-            vec![
-                "observed event 1".to_string(),
-                "observed event 2".to_string(),
-            ]
-        );
+        handle_1.read_with(cx, |view, _| {
+            assert_eq!(view.events, vec!["updated".to_string()]);
+        });
+        handle_2.read_with(cx, |view, _| {
+            assert_eq!(
+                view.events,
+                vec![
+                    "observed event 1".to_string(),
+                    "observed event 2".to_string(),
+                ]
+            );
+        });
 
         handle_2.update(cx, |view, _| {
             drop(handle_1);
             view.other.take();
         });
 
-        assert_eq!(cx.views.len(), 2);
-        assert!(cx.subscriptions.is_empty());
-        assert!(cx.observations.is_empty());
+        cx.read(|cx| {
+            assert_eq!(cx.views.len(), 2);
+            assert!(cx.subscriptions.is_empty());
+            assert!(cx.observations.is_empty());
+        });
     }
 
     #[crate::test(self)]
@@ -4887,14 +4883,14 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_view_events(cx: &mut AppContext) {
+    fn test_view_events(cx: &mut TestAppContext) {
         struct Model;
 
         impl Entity for Model {
             type Event = String;
         }
 
-        let (_, handle_1) = cx.add_window(Default::default(), |_| TestView::default());
+        let (_, handle_1) = cx.add_window(|_| TestView::default());
         let handle_2 = cx.add_view(&handle_1, |_| TestView::default());
         let handle_3 = cx.add_model(|_| Model);
 
@@ -4916,16 +4912,17 @@ mod tests {
         });
 
         handle_2.update(cx, |_, c| c.emit("7".into()));
-        assert_eq!(handle_1.read(cx).events, vec!["7"]);
+        handle_1.read_with(cx, |view, _| assert_eq!(view.events, ["7"]));
 
         handle_2.update(cx, |_, c| c.emit("5".into()));
-        assert_eq!(handle_1.read(cx).events, vec!["7", "5", "5 from inner"]);
+        handle_1.read_with(cx, |view, _| {
+            assert_eq!(view.events, ["7", "5", "5 from inner"])
+        });
 
         handle_3.update(cx, |_, c| c.emit("9".into()));
-        assert_eq!(
-            handle_1.read(cx).events,
-            vec!["7", "5", "5 from inner", "9"]
-        );
+        handle_1.read_with(cx, |view, _| {
+            assert_eq!(view.events, ["7", "5", "5 from inner", "9"])
+        });
     }
 
     #[crate::test(self)]
@@ -5113,14 +5110,14 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dropping_subscribers(cx: &mut AppContext) {
+    fn test_dropping_subscribers(cx: &mut TestAppContext) {
         struct Model;
 
         impl Entity for Model {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(Default::default(), |_| TestView::default());
+        let (_, root_view) = cx.add_window(|_| TestView::default());
         let observing_view = cx.add_view(&root_view, |_| TestView::default());
         let emitting_view = cx.add_view(&root_view, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
@@ -5165,7 +5162,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_observe_and_notify_from_view(cx: &mut AppContext) {
+    fn test_observe_and_notify_from_view(cx: &mut TestAppContext) {
         #[derive(Default)]
         struct Model {
             state: String,
@@ -5175,7 +5172,7 @@ mod tests {
             type Event = ();
         }
 
-        let (_, view) = cx.add_window(Default::default(), |_| TestView::default());
+        let (_, view) = cx.add_window(|_| TestView::default());
         let model = cx.add_model(|_| Model {
             state: "old-state".into(),
         });
@@ -5191,7 +5188,7 @@ mod tests {
             model.state = "new-state".into();
             cx.notify();
         });
-        assert_eq!(view.read(cx).events, vec!["new-state"]);
+        view.read_with(cx, |view, _| assert_eq!(view.events, ["new-state"]));
     }
 
     #[crate::test(self)]
@@ -5216,14 +5213,14 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut AppContext) {
+    fn test_notify_and_drop_observe_subscription_in_same_update_cycle(cx: &mut TestAppContext) {
         struct Model;
         impl Entity for Model {
             type Event = ();
         }
 
         let model = cx.add_model(|_| Model);
-        let (_, view) = cx.add_window(Default::default(), |_| TestView::default());
+        let (_, view) = cx.add_window(|_| TestView::default());
 
         view.update(cx, |_, cx| {
             model.update(cx, |_, cx| cx.notify());
@@ -5236,19 +5233,18 @@ mod tests {
         for _ in 0..3 {
             model.update(cx, |_, cx| cx.notify());
         }
-
-        assert_eq!(view.read(cx).events, Vec::<String>::new());
+        view.read_with(cx, |view, _| assert_eq!(view.events, Vec::<&str>::new()));
     }
 
     #[crate::test(self)]
-    fn test_dropping_observers(cx: &mut AppContext) {
+    fn test_dropping_observers(cx: &mut TestAppContext) {
         struct Model;
 
         impl Entity for Model {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(Default::default(), |_| TestView::default());
+        let (_, root_view) = cx.add_window(|_| TestView::default());
         let observing_view = cx.add_view(&root_view, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
@@ -5269,7 +5265,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_dropping_subscriptions_during_callback(cx: &mut AppContext) {
+    fn test_dropping_subscriptions_during_callback(cx: &mut TestAppContext) {
         struct Model;
 
         impl Entity for Model {
@@ -5371,7 +5367,7 @@ mod tests {
             }
         }
 
-        let (_, root_view) = cx.add_window(Default::default(), |_| View);
+        let (_, root_view) = cx.add_window(|_| View);
         let observing_view = cx.add_view(&root_view, |_| View);
         let observed_view = cx.add_view(&root_view, |_| View);
 
@@ -5410,13 +5406,15 @@ mod tests {
             }
         }));
 
-        cx.default_global::<()>();
-        cx.set_global(());
+        cx.update(|cx| {
+            cx.default_global::<()>();
+            cx.set_global(());
+        });
         assert_eq!(*observation_count.borrow(), 1);
     }
 
     #[crate::test(self)]
-    fn test_focus(cx: &mut AppContext) {
+    fn test_focus(cx: &mut TestAppContext) {
         struct View {
             name: String,
             events: Arc<Mutex<Vec<String>>>,
@@ -5449,7 +5447,7 @@ mod tests {
         }
 
         let view_events: Arc<Mutex<Vec<String>>> = Default::default();
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| View {
+        let (window_id, view_1) = cx.add_window(|_| View {
             events: view_events.clone(),
             name: "view 1".to_string(),
         });
@@ -6295,7 +6293,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_child_view(cx: &mut AppContext) {
+    fn test_child_view(cx: &mut TestAppContext) {
         struct Child {
             rendered: Rc<Cell<bool>>,
             dropped: Rc<Cell<bool>>,
@@ -6346,7 +6344,7 @@ mod tests {
 
         let child_rendered = Rc::new(Cell::new(false));
         let child_dropped = Rc::new(Cell::new(false));
-        let (_, root_view) = cx.add_window(Default::default(), |cx| Parent {
+        let (_, root_view) = cx.add_window(|cx| Parent {
             child: Some(cx.add_view(|_| Child {
                 rendered: child_rendered.clone(),
                 dropped: child_dropped.clone(),

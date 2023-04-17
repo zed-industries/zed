@@ -2493,24 +2493,24 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::{
         display_map::{BlockDisposition, BlockProperties},
         Editor, MultiBuffer,
     };
+    use gpui::TestAppContext;
     use settings::Settings;
+    use std::sync::Arc;
     use util::test::sample_text;
 
     #[gpui::test]
-    fn test_layout_line_numbers(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-        let (_, editor) = cx.add_window(Default::default(), |cx| {
+    fn test_layout_line_numbers(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        let (_, editor) = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
             Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
-        let element = EditorElement::new(editor.read(cx).style(cx));
+        let element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
 
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
@@ -2522,10 +2522,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_layout_with_placeholder_text_and_blocks(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
-        let buffer = MultiBuffer::build_simple("", cx);
-        let (_, editor) = cx.add_window(Default::default(), |cx| {
+    fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        let (_, editor) = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
             Editor::new(EditorMode::Full, buffer, None, None, cx)
         });
 
@@ -2546,7 +2546,7 @@ mod tests {
             cx.blur();
         });
 
-        let mut element = EditorElement::new(editor.read(cx).style(cx));
+        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (size, mut state) = editor.update(cx, |editor, cx| {
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),

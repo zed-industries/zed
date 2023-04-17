@@ -34,10 +34,9 @@ impl<'a> EditorTestContext<'a> {
             crate::init(cx);
 
             let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+                cx.focus_self();
                 build_editor(MultiBuffer::build_simple("", cx), cx)
             });
-
-            editor.update(cx, |_, cx| cx.focus_self());
 
             (window_id, editor)
         });
@@ -254,10 +253,10 @@ impl<'a> EditorTestContext<'a> {
             panic!(
                 indoc! {"
                     {}Editor has unexpected selections.
-                    
+
                     Expected selections:
                     {}
-                    
+
                     Actual selections:
                     {}
                 "},

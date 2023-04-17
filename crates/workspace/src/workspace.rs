@@ -397,20 +397,18 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 .await
                 .context("Failed to create CLI symlink");
 
-            cx.update(|cx| {
-                workspace.update(cx, |workspace, cx| {
-                    if matches!(err, Err(_)) {
-                        err.notify_err(workspace, cx);
-                    } else {
-                        workspace.show_notification(1, cx, |cx| {
-                            cx.add_view(|_| {
-                                MessageNotification::new_message(
-                                    "Successfully installed the `zed` binary",
-                                )
-                            })
-                        });
-                    }
-                })
+            workspace.update(&mut cx, |workspace, cx| {
+                if matches!(err, Err(_)) {
+                    err.notify_err(workspace, cx);
+                } else {
+                    workspace.show_notification(1, cx, |cx| {
+                        cx.add_view(|_| {
+                            MessageNotification::new_message(
+                                "Successfully installed the `zed` binary",
+                            )
+                        })
+                    });
+                }
             })
         })
         .detach();
@@ -724,11 +722,9 @@ impl Workspace {
                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
 
             while stream.recv().await.is_some() {
-                cx.update(|cx| {
-                    if let Some(this) = this.upgrade(cx) {
-                        this.update(cx, |_, cx| cx.notify());
-                    }
-                })
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |_, cx| cx.notify());
+                }
             }
         });
         let handle = cx.handle();

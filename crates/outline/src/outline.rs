@@ -5,7 +5,7 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Entity,
-    MouseState, Task, View, ViewContext, ViewHandle,
+    MouseState, Task, View, ViewContext, ViewHandle, WindowContext,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
@@ -39,7 +39,9 @@ impl Entity for OutlineView {
     type Event = Event;
 
     fn release(&mut self, cx: &mut AppContext) {
-        self.restore_active_editor(cx);
+        cx.update_window(self.active_editor.window_id(), |cx| {
+            self.restore_active_editor(cx);
+        });
     }
 }
 
@@ -100,7 +102,7 @@ impl OutlineView {
         }
     }
 
-    fn restore_active_editor(&mut self, cx: &mut AppContext) {
+    fn restore_active_editor(&mut self, cx: &mut WindowContext) {
         self.active_editor.update(cx, |editor, cx| {
             editor.highlight_rows(None);
             if let Some(scroll_position) = self.prev_scroll_position {

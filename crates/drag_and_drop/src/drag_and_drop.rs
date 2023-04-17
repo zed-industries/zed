@@ -6,7 +6,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
     scene::{MouseDown, MouseDrag},
-    AppContext, Drawable, Element, View, ViewContext, WeakViewHandle,
+    Drawable, Element, View, ViewContext, WeakViewHandle, WindowContext,
 };
 
 const DEAD_ZONE: f32 = 4.;
@@ -263,7 +263,7 @@ impl<V: View> DragAndDrop<V> {
             })
     }
 
-    pub fn cancel_dragging<P: Any>(&mut self, cx: &mut AppContext) {
+    pub fn cancel_dragging<P: Any>(&mut self, cx: &mut WindowContext) {
         if let Some(State::Dragging {
             payload, window_id, ..
         }) = &self.currently_dragged
@@ -276,13 +276,13 @@ impl<V: View> DragAndDrop<V> {
         }
     }
 
-    fn finish_dragging(&mut self, cx: &mut AppContext) {
+    fn finish_dragging(&mut self, cx: &mut WindowContext) {
         if let Some(State::Dragging { window_id, .. }) = self.currently_dragged.take() {
             self.notify_containers_for_window(window_id, cx);
         }
     }
 
-    fn notify_containers_for_window(&mut self, window_id: usize, cx: &mut AppContext) {
+    fn notify_containers_for_window(&mut self, window_id: usize, cx: &mut WindowContext) {
         self.containers.retain(|container| {
             if let Some(container) = container.upgrade(cx) {
                 if container.window_id() == window_id {

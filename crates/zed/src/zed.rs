@@ -1012,12 +1012,11 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Open a file within an existing worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             assert_eq!(
                 workspace
@@ -1036,12 +1035,11 @@ mod tests {
         });
 
         // Open a file outside of any existing worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
@@ -1072,12 +1070,11 @@ mod tests {
         });
 
         // Ensure opening a directory and one of its children only adds one worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
@@ -1108,12 +1105,11 @@ mod tests {
         });
 
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/d.txt".into()], false, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
@@ -1171,19 +1167,18 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Open a file within an existing worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
             })
-        })
-        .await;
+            .await;
         let editor = cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             let item = pane.active_item().unwrap();
             item.downcast::<Editor>().unwrap()
         });
 
-        cx.update(|cx| editor.update(cx, |editor, cx| editor.handle_input("x", cx)));
+        editor.update(cx, |editor, cx| editor.handle_input("x", cx));
         app_state
             .fs
             .as_fake()

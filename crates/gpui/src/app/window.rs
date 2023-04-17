@@ -13,10 +13,11 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    Action, AnyView, AnyViewHandle, AnyWeakViewHandle, AppContext, Drawable, Effect, Entity,
-    ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, ReadModel, ReadView,
-    SceneBuilder, Subscription, UpdateModel, UpdateView, UpgradeViewHandle, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowInvalidation,
+    Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle,
+    AppContext, Drawable, Effect, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
+    MouseRegionId, ParentId, ReadModel, ReadView, SceneBuilder, Subscription, UpdateModel,
+    UpdateView, UpgradeModelHandle, UpgradeViewHandle, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -175,6 +176,23 @@ impl UpdateView for WindowContext<'_, '_> {
     }
 }
 
+impl UpgradeModelHandle for WindowContext<'_, '_> {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: &WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.app_context.upgrade_model_handle(handle)
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.app_context.model_handle_is_upgradable(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.app_context.upgrade_any_model_handle(handle)
+    }
+}
+
 impl UpgradeViewHandle for WindowContext<'_, '_> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.app_context.upgrade_view_handle(handle)
@@ -237,6 +255,49 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         let result = f(view.as_mut(), self);
         self.views.insert((window_id, view_id), view);
         Some(result)
+    }
+
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut WindowContext)) {
+        let window_id = self.window_id;
+        self.app_context.defer(move |cx| {
+            cx.update_window(window_id, |cx| callback(cx));
+        })
+    }
+
+    pub fn update_global<T, F, U>(&mut self, update: F) -> U
+    where
+        T: 'static,
+        F: FnOnce(&mut T, &mut Self) -> U,
+    {
+        AppContext::update_global_internal(self, |global, cx| update(global, cx))
+    }
+
+    pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    where
+        E: Entity,
+        E::Event: 'static,
+        H: Handle<E>,
+        F: 'static + FnMut(H, &E::Event, &mut WindowContext),
+    {
+        self.subscribe_internal(handle, move |emitter, event, cx| {
+            callback(emitter, event, cx);
+            true
+        })
+    }
+
+    pub fn subscribe_internal<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    where
+        E: Entity,
+        E::Event: 'static,
+        H: Handle<E>,
+        F: 'static + FnMut(H, &E::Event, &mut WindowContext) -> bool,
+    {
+        let window_id = self.window_id;
+        self.app_context
+            .subscribe_internal(handle, move |emitter, event, cx| {
+                cx.update_window(window_id, |cx| callback(emitter, event, cx))
+                    .unwrap_or(false)
+            })
     }
 
     pub(crate) fn observe_window_activation<F>(&mut self, callback: F) -> Subscription
