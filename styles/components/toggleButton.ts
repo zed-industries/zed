@@ -4,8 +4,7 @@ import {
     InteractiveContainer,
     InteractiveToggleableContainer,
 } from "@/theme/container"
-import { iconButton } from "@components/button"
-import { buttonWithIconStyle } from "."
+import { buttonWithIconStyle, iconButton } from "@components/button"
 
 // Use ContainedIcon just as an example
 export function toggleButton(

@@ -1,3 +1,4 @@
-import { buttonWithIconStyle } from "./button"
+import { iconButton } from "./button"
+import { toggleButton } from "./toggleButton"
 
-export { buttonWithIconStyle }
+export { iconButton, toggleButton }

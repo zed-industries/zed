@@ -7,6 +7,29 @@ import { curve } from "@system/curves"
 
 // Token or user-facing colors should use short, clear names and a 100-900 scale to match the font weight scale.
 
+// Neutral ======================================== //
+
+export const neutral = generateColorFamily({
+    name: "neutral",
+    color: {
+        hue: {
+            start: 220,
+            end: 220,
+            curve: curve.linear,
+        },
+        saturation: {
+            start: 2,
+            end: 14,
+            curve: curve.linear,
+        },
+        lightness: {
+            start: 100,
+            end: 0,
+            curve: curve.linear,
+        },
+    },
+})
+
 // Light Gray ======================================== //
 
 export const lightgray = generateColorFamily({

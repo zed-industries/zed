@@ -52,11 +52,6 @@ export function buildThemeIntensity(themeConfig: ThemeConfig): IntensityRange {
         ;[minIntensity, maxIntensity] = [maxIntensity, minIntensity]
     }
 
-    console.log("firstColor:", firstColor)
-    console.log("lastColor:", lastColor)
-    console.log("minIntensity:", minIntensity)
-    console.log("maxIntensity:", maxIntensity)
-
     if (minIntensity < 1) {
         throw new Error(
             `Intensity ${minIntensity} too low. Intensity must be between 1 and 100`

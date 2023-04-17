@@ -16,7 +16,7 @@ interface BuildButtonProperties {
     inputIntensity: ElementIntensities
 }
 
-function buttonWithIconStyle({
+export function buttonWithIconStyle({
     theme,
     inputIntensity,
 }: BuildButtonProperties): InteractiveContainer<ContainedIcon> {
