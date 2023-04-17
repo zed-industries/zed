@@ -710,11 +710,9 @@ impl CollabTitlebarItem {
                                         }
                                     })?;
 
-                                let location = remote_participant.map(|p| p.location);
-
                                 Some(Self::render_face(
                                     avatar.clone(),
-                                    Self::location_style(workspace, location, follower_style, cx),
+                                    follower_style,
                                     background_color,
                                 ))
                             }))
