@@ -155,7 +155,7 @@ impl ProjectSymbolsView {
                                 s.select_ranges([position..position])
                             });
                         });
-                    });
+                    })?;
                     Ok::<_, anyhow::Error>(())
                 })
                 .detach_and_log_err(cx);
@@ -225,7 +225,8 @@ impl PickerDelegate for ProjectSymbolsView {
                         this.external_match_candidates = external_match_candidates;
                         this.symbols = symbols;
                         this.filter(&query, cx);
-                    });
+                    })
+                    .log_err();
                 }
             }
         });

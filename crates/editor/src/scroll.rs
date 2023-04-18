@@ -248,10 +248,12 @@ impl ScrollManager {
             self.hide_scrollbar_task = Some(cx.spawn_weak(|editor, mut cx| async move {
                 cx.background().timer(SCROLLBAR_SHOW_INTERVAL).await;
                 if let Some(editor) = editor.upgrade(&cx) {
-                    editor.update(&mut cx, |editor, cx| {
-                        editor.scroll_manager.show_scrollbars = false;
-                        cx.notify();
-                    });
+                    editor
+                        .update(&mut cx, |editor, cx| {
+                            editor.scroll_manager.show_scrollbars = false;
+                            cx.notify();
+                        })
+                        .log_err();
                 }
             }));
         } else {

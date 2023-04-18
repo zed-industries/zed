@@ -2,6 +2,7 @@ use crate::{
     item::{Item, ItemEvent},
     ItemNavHistory, Pane, WorkspaceId,
 };
+use anyhow::Result;
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
@@ -25,7 +26,7 @@ pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
-    _maintain_frame: Task<()>,
+    _maintain_frame: Task<Result<()>>,
 }
 
 impl SharedScreen {
@@ -47,9 +48,10 @@ impl SharedScreen {
                     this.update(&mut cx, |this, cx| {
                         this.frame = Some(frame);
                         cx.notify();
-                    })
+                    })?;
                 }
-                this.update(&mut cx, |_, cx| cx.emit(Event::Close));
+                this.update(&mut cx, |_, cx| cx.emit(Event::Close))?;
+                Ok(())
             }),
         }
     }

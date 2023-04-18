@@ -1,3 +1,17 @@
+use crate::{
+    pane, persistence::model::ItemId, searchable::SearchableItemHandle, DelayedDebouncedEditAction,
+    FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace,
+    WorkspaceId,
+};
+use anyhow::{anyhow, Result};
+use client::{proto, Client};
+use gpui::{
+    fonts::HighlightStyle, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+};
+use project::{Project, ProjectEntryId, ProjectPath};
+use settings::{Autosave, Settings};
+use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -12,24 +26,7 @@ use std::{
     },
     time::Duration,
 };
-
-use anyhow::Result;
-use client::{proto, Client};
-use gpui::{
-    fonts::HighlightStyle, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle, WindowContext,
-};
-use project::{Project, ProjectEntryId, ProjectPath};
-use settings::{Autosave, Settings};
-use smallvec::SmallVec;
 use theme::Theme;
-use util::ResultExt;
-
-use crate::{
-    pane, persistence::model::ItemId, searchable::SearchableItemHandle, DelayedDebouncedEditAction,
-    FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace,
-    WorkspaceId,
-};
 
 #[derive(Eq, PartialEq, Hash)]
 pub enum ItemEvent {
@@ -461,18 +458,18 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                 } else {
                                     cx.spawn_weak(|workspace, mut cx| async move {
                                         workspace
-                                            .upgrade(&cx)?
+                                            .upgrade(&cx)
+                                            .ok_or_else(|| anyhow!("workspace was dropped"))?
                                             .update(&mut cx, |workspace, cx| {
                                                 item.git_diff_recalc(
                                                     workspace.project().clone(),
                                                     cx,
                                                 )
                                             })?
-                                            .await
-                                            .log_err()?;
-                                        Some(())
+                                            .await?;
+                                        anyhow::Ok(())
                                     })
-                                    .detach();
+                                    .detach_and_log_err(cx);
                                 }
                             }
 

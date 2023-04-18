@@ -13,7 +13,7 @@ use std::{
         Arc,
     },
 };
-use util::post_inc;
+use util::{post_inc, ResultExt};
 use workspace::Workspace;
 
 pub struct FileFinder {
@@ -186,7 +186,8 @@ impl FileFinder {
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             this.update(&mut cx, |this, cx| {
                 this.set_matches(search_id, did_cancel, query, matches, cx)
-            });
+            })
+            .log_err();
         })
     }
 

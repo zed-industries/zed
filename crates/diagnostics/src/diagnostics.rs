@@ -213,7 +213,7 @@ impl ProjectDiagnosticsEditor {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
                         .await?;
-                    this.update(&mut cx, |this, cx| this.populate_excerpts(path, buffer, cx))
+                    this.update(&mut cx, |this, cx| this.populate_excerpts(path, buffer, cx))?;
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }

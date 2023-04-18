@@ -126,7 +126,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut AppCont
                     }
                 }
             }
-        });
+        })?;
 
         anyhow::Ok(())
     })

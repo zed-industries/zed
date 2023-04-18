@@ -6115,7 +6115,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
@@ -6125,7 +6126,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b2.id());
@@ -6135,7 +6137,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_forward(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());

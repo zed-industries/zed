@@ -20,7 +20,7 @@ mod editor_tests;
 pub mod test;
 
 use aho_corasick::AhoCorasick;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
@@ -2397,7 +2397,7 @@ impl Editor {
                         } else if this.hide_context_menu(cx).is_none() {
                             this.update_visible_copilot_suggestion(cx);
                         }
-                    });
+                    })?;
                 }
                 Ok::<_, anyhow::Error>(())
             }
@@ -2534,11 +2534,13 @@ impl Editor {
                 prev_task.await;
                 task = this
                     .upgrade(&cx)
-                    .and_then(|this| this.update(&mut cx, |this, _| this.code_actions_task.take()));
+                    .ok_or_else(|| anyhow!("editor dropped"))?
+                    .update(&mut cx, |this, _| this.code_actions_task.take())?;
             }
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
+            this.upgrade(&cx)
+                .ok_or_else(|| anyhow!("editor dropped"))?
+                .update(&mut cx, |this, cx| {
                     if this.focused {
                         if let Some((buffer, actions)) = this.available_code_actions.clone() {
                             this.show_context_menu(
@@ -2553,8 +2555,8 @@ impl Editor {
                             );
                         }
                     }
-                })
-            }
+                })?;
+
             Ok::<_, anyhow::Error>(())
         })
         .detach_and_log_err(cx);
@@ -2666,7 +2668,7 @@ impl Editor {
                     cx,
                 );
             });
-        });
+        })?;
 
         Ok(())
     }
@@ -2697,6 +2699,7 @@ impl Editor {
                     });
                     cx.notify();
                 })
+                .log_err();
             }
         }));
         None
@@ -2786,7 +2789,8 @@ impl Editor {
                         cx,
                     );
                     cx.notify();
-                });
+                })
+                .log_err();
             }
         }));
         None
@@ -2823,17 +2827,19 @@ impl Editor {
             let mut completions = Vec::new();
             completions.extend(completion.log_err().into_iter().flatten());
             completions.extend(completions_cycling.log_err().into_iter().flatten());
-            this.upgrade(&cx)?.update(&mut cx, |this, cx| {
-                if !completions.is_empty() {
-                    this.copilot_state.completions.clear();
-                    this.copilot_state.active_completion_index = 0;
-                    this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
-                    for completion in completions {
-                        this.copilot_state.push_completion(completion);
+            this.upgrade(&cx)?
+                .update(&mut cx, |this, cx| {
+                    if !completions.is_empty() {
+                        this.copilot_state.completions.clear();
+                        this.copilot_state.active_completion_index = 0;
+                        this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
+                        for completion in completions {
+                            this.copilot_state.push_completion(completion);
+                        }
+                        this.update_visible_copilot_suggestion(cx);
                     }
-                    this.update_visible_copilot_suggestion(cx);
-                }
-            });
+                })
+                .log_err()?;
 
             Some(())
         });
@@ -5416,7 +5422,7 @@ impl Editor {
             let definitions = definitions.await?;
             workspace.update(&mut cx, |workspace, cx| {
                 Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
-            });
+            })?;
 
             Ok::<(), anyhow::Error>(())
         })
@@ -5517,7 +5523,7 @@ impl Editor {
                     Self::open_locations_in_multibuffer(
                         workspace, locations, replica_id, title, cx,
                     );
-                });
+                })?;
 
                 Ok(())
             },
@@ -5705,7 +5711,7 @@ impl Editor {
                         editor: rename_editor,
                         block_id,
                     });
-                });
+                })?;
             }
 
             Ok(())
@@ -5751,7 +5757,7 @@ impl Editor {
 
             editor.update(&mut cx, |editor, cx| {
                 editor.refresh_document_highlights(cx);
-            });
+            })?;
             Ok(())
         }))
     }
@@ -6552,9 +6558,16 @@ impl Editor {
         let position = action.position;
         let anchor = action.anchor;
         cx.spawn_weak(|_, mut cx| async move {
-            let editor = editor.await.log_err()?.downcast::<Editor>()?;
+            let editor = editor
+                .await?
+                .downcast::<Editor>()
+                .ok_or_else(|| anyhow!("opened item was not an editor"))?;
             editor.update(&mut cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let buffer = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .ok_or_else(|| anyhow!("cannot jump in a multi-buffer"))?;
                 let buffer = buffer.read(cx);
                 let cursor = if buffer.can_resolve(&anchor) {
                     language::ToPoint::to_point(&anchor, buffer)
@@ -6568,11 +6581,11 @@ impl Editor {
                 });
                 editor.nav_history = nav_history;
 
-                Some(())
-            })?;
-            Some(())
+                anyhow::Ok(())
+            })??;
+            anyhow::Ok(())
         })
-        .detach()
+        .detach_and_log_err(cx);
     }
 
     fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {

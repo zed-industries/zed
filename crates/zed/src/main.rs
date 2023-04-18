@@ -606,70 +606,86 @@ async fn handle_cli_connection(
                 } else {
                     paths
                 };
-                let (workspace, items) = cx
-                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
-                    .await;
 
                 let mut errored = false;
-                let mut item_release_futures = Vec::new();
-                cx.update(|cx| {
-                    for (item, path) in items.into_iter().zip(&paths) {
-                        match item {
-                            Some(Ok(item)) => {
-                                let released = oneshot::channel();
-                                item.on_release(
-                                    cx,
-                                    Box::new(move |_| {
-                                        let _ = released.0.send(());
-                                    }),
-                                )
-                                .detach();
-                                item_release_futures.push(released.1);
+                match cx
+                    .update(|cx| workspace::open_paths(&paths, &app_state, cx))
+                    .await
+                {
+                    Ok((workspace, items)) => {
+                        let mut item_release_futures = Vec::new();
+                        cx.update(|cx| {
+                            for (item, path) in items.into_iter().zip(&paths) {
+                                match item {
+                                    Some(Ok(item)) => {
+                                        let released = oneshot::channel();
+                                        item.on_release(
+                                            cx,
+                                            Box::new(move |_| {
+                                                let _ = released.0.send(());
+                                            }),
+                                        )
+                                        .detach();
+                                        item_release_futures.push(released.1);
+                                    }
+                                    Some(Err(err)) => {
+                                        responses
+                                            .send(CliResponse::Stderr {
+                                                message: format!(
+                                                    "error opening {:?}: {}",
+                                                    path, err
+                                                ),
+                                            })
+                                            .log_err();
+                                        errored = true;
+                                    }
+                                    None => {}
+                                }
                             }
-                            Some(Err(err)) => {
-                                responses
-                                    .send(CliResponse::Stderr {
-                                        message: format!("error opening {:?}: {}", path, err),
-                                    })
-                                    .log_err();
-                                errored = true;
+                        });
+
+                        if wait {
+                            let background = cx.background();
+                            let wait = async move {
+                                if paths.is_empty() {
+                                    let (done_tx, done_rx) = oneshot::channel();
+                                    let _subscription = cx.update(|cx| {
+                                        cx.observe_release(&workspace, move |_, _| {
+                                            let _ = done_tx.send(());
+                                        })
+                                    });
+                                    drop(workspace);
+                                    let _ = done_rx.await;
+                                } else {
+                                    let _ =
+                                        futures::future::try_join_all(item_release_futures).await;
+                                };
                             }
-                            None => {}
-                        }
-                    }
-                });
+                            .fuse();
+                            futures::pin_mut!(wait);
 
-                if wait {
-                    let background = cx.background();
-                    let wait = async move {
-                        if paths.is_empty() {
-                            let (done_tx, done_rx) = oneshot::channel();
-                            let _subscription = cx.update(|cx| {
-                                cx.observe_release(&workspace, move |_, _| {
-                                    let _ = done_tx.send(());
-                                })
-                            });
-                            drop(workspace);
-                            let _ = done_rx.await;
-                        } else {
-                            let _ = futures::future::try_join_all(item_release_futures).await;
-                        };
-                    }
-                    .fuse();
-                    futures::pin_mut!(wait);
-
-                    loop {
-                        // Repeatedly check if CLI is still open to avoid wasting resources
-                        // waiting for files or workspaces to close.
-                        let mut timer = background.timer(Duration::from_secs(1)).fuse();
-                        futures::select_biased! {
-                            _ = wait => break,
-                            _ = timer => {
-                                if responses.send(CliResponse::Ping).is_err() {
-                                    break;
+                            loop {
+                                // Repeatedly check if CLI is still open to avoid wasting resources
+                                // waiting for files or workspaces to close.
+                                let mut timer = background.timer(Duration::from_secs(1)).fuse();
+                                futures::select_biased! {
+                                    _ = wait => break,
+                                    _ = timer => {
+                                        if responses.send(CliResponse::Ping).is_err() {
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
+                    }
+                    Err(error) => {
+                        errored = true;
+                        responses
+                            .send(CliResponse::Stderr {
+                                message: format!("error opening {:?}: {}", paths, error),
+                            })
+                            .log_err();
                     }
                 }
 

@@ -498,7 +498,7 @@ impl ProjectPanel {
             this.update(&mut cx, |this, cx| {
                 this.edit_state.take();
                 cx.notify();
-            });
+            })?;
 
             let new_entry = new_entry?;
             this.update(&mut cx, |this, cx| {
@@ -519,7 +519,7 @@ impl ProjectPanel {
                     );
                 }
                 cx.notify();
-            });
+            })?;
             Ok(())
         }))
     }
@@ -655,7 +655,7 @@ impl ProjectPanel {
                 this.project
                     .update(cx, |project, cx| project.delete_entry(entry_id, cx))
                     .ok_or_else(|| anyhow!("no such entry"))
-            })?
+            })??
             .await
         }))
     }

@@ -6,6 +6,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use settings::{settings_file::SettingsFile, BaseKeymap, Settings};
+use util::ResultExt;
 use workspace::Workspace;
 
 pub struct BaseKeymapSelector {
@@ -109,7 +110,7 @@ impl PickerDelegate for BaseKeymapSelector {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_weak(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -133,13 +134,16 @@ impl PickerDelegate for BaseKeymapSelector {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
-                this.matches = matches;
-                this.selected_index = this
-                    .selected_index
-                    .min(this.matches.len().saturating_sub(1));
-                cx.notify();
-            });
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, cx| {
+                    this.matches = matches;
+                    this.selected_index = this
+                        .selected_index
+                        .min(this.matches.len().saturating_sub(1));
+                    cx.notify();
+                })
+                .log_err();
+            }
         })
     }
 

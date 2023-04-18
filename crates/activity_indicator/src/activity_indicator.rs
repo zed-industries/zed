@@ -2,7 +2,7 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions,
+    actions, anyhow,
     elements::*,
     platform::{CursorStyle, MouseButton},
     Action, AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
@@ -73,11 +73,12 @@ impl ActivityIndicator {
                                 status: event,
                             });
                             cx.notify();
-                        });
+                        })?;
                     } else {
                         break;
                     }
                 }
+                anyhow::Ok(())
             })
             .detach();
             cx.observe(&project, |_, _, cx| cx.notify()).detach();

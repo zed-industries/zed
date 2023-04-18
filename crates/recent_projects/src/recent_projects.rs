@@ -10,6 +10,7 @@ use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
+use util::ResultExt;
 use workspace::{
     notifications::simple_message_notification::MessageNotification, OpenPaths, Workspace,
     WorkspaceLocation, WORKSPACE_DB,
@@ -57,21 +58,23 @@ impl RecentProjectsView {
                 })
                 .await;
 
-            workspace.update(&mut cx, |workspace, cx| {
-                if !workspace_locations.is_empty() {
-                    workspace.toggle_modal(cx, |_, cx| {
-                        let view = cx.add_view(|cx| Self::new(workspace_locations, cx));
-                        cx.subscribe(&view, Self::on_event).detach();
-                        view
-                    });
-                } else {
-                    workspace.show_notification(0, cx, |cx| {
-                        cx.add_view(|_| {
-                            MessageNotification::new_message("No recent projects to open.")
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    if !workspace_locations.is_empty() {
+                        workspace.toggle_modal(cx, |_, cx| {
+                            let view = cx.add_view(|cx| Self::new(workspace_locations, cx));
+                            cx.subscribe(&view, Self::on_event).detach();
+                            view
+                        });
+                    } else {
+                        workspace.show_notification(0, cx, |cx| {
+                            cx.add_view(|_| {
+                                MessageNotification::new_message("No recent projects to open.")
+                            })
                         })
-                    })
-                }
-            });
+                    }
+                })
+                .log_err();
         })
         .detach();
     }

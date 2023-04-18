@@ -279,7 +279,8 @@ impl TerminalView {
                 async move {
                     Timer::after(CURSOR_BLINK_INTERVAL).await;
                     if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                            .log_err();
                     }
                 }
             })
@@ -298,6 +299,7 @@ impl TerminalView {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                        .log_err();
                 }
             }
         })

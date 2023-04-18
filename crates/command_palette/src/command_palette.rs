@@ -7,6 +7,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::cmp;
+use util::ResultExt;
 use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
@@ -188,7 +189,8 @@ impl PickerDelegate for CommandPalette {
                 } else {
                     this.selected_ix = cmp::min(this.selected_ix, this.matches.len() - 1);
                 }
-            });
+            })
+            .log_err();
         })
     }
 

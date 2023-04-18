@@ -10,6 +10,7 @@ use gpui::{
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
 use parking_lot::Mutex;
 use std::{cmp, sync::Arc};
+use util::ResultExt;
 
 pub struct Picker<D: PickerDelegate> {
     delegate: WeakViewHandle<D>,
@@ -235,21 +236,23 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         if let Some(delegate) = self.delegate.upgrade(cx) {
             let update = delegate.update(cx, |d, cx| d.update_matches(query, cx));
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_weak(|this, mut cx| async move {
                 update.await;
-                this.update(&mut cx, |this, cx| {
-                    if let Some(delegate) = this.delegate.upgrade(cx) {
-                        let delegate = delegate.read(cx);
-                        let index = delegate.selected_index();
-                        let target = if delegate.center_selection_after_match_updates() {
-                            ScrollTarget::Center(index)
-                        } else {
-                            ScrollTarget::Show(index)
-                        };
-                        this.list_state.scroll_to(target);
-                        cx.notify();
-                    }
-                });
+                this.upgrade(&cx)?
+                    .update(&mut cx, |this, cx| {
+                        if let Some(delegate) = this.delegate.upgrade(cx) {
+                            let delegate = delegate.read(cx);
+                            let index = delegate.selected_index();
+                            let target = if delegate.center_selection_after_match_updates() {
+                                ScrollTarget::Center(index)
+                            } else {
+                                ScrollTarget::Show(index)
+                            };
+                            this.list_state.scroll_to(target);
+                            cx.notify();
+                        }
+                    })
+                    .log_err()
             })
             .detach()
         }

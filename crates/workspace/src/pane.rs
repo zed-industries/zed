@@ -540,7 +540,7 @@ impl Pane {
                         .update(&mut cx, |workspace, cx| {
                             Self::navigate_history(workspace, pane, mode, cx)
                         })?
-                        .await;
+                        .await?;
                 }
 
                 Ok(())
@@ -1014,10 +1014,10 @@ impl Pane {
                     if let Some(item_ix) = pane.items.iter().position(|i| i.id() == item.id()) {
                         pane.remove_item(item_ix, false, cx);
                     }
-                });
+                })?;
             }
 
-            pane.update(&mut cx, |_, cx| cx.notify());
+            pane.update(&mut cx, |_, cx| cx.notify())?;
             Ok(())
         })
     }

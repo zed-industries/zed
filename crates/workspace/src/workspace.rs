@@ -306,7 +306,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let can_close = close.await?;
                 if can_close {
                     cx.update(|cx| open_paths(&action.paths, &app_state, cx))
-                        .await;
+                        .await?;
                 }
                 Ok(())
             }))
@@ -583,10 +583,12 @@ impl DelayedDebouncedEditAction {
             }
 
             if let Some(workspace) = workspace.upgrade(&cx) {
-                workspace
+                if let Some(result) = workspace
                     .update(&mut cx, |workspace, cx| (f)(workspace, cx))
-                    .await
-                    .log_err();
+                    .log_err()
+                {
+                    result.await.log_err();
+                }
             }
         }));
     }
@@ -627,7 +629,7 @@ pub struct Workspace {
     background_actions: BackgroundActions,
     _window_subscriptions: [Subscription; 3],
     _apply_leader_updates: Task<Result<()>>,
-    _observe_current_user: Task<()>,
+    _observe_current_user: Task<Result<()>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -723,9 +725,10 @@ impl Workspace {
 
             while stream.recv().await.is_some() {
                 if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |_, cx| cx.notify());
+                    this.update(&mut cx, |_, cx| cx.notify())?;
                 }
             }
+            anyhow::Ok(())
         });
         let handle = cx.handle();
 
@@ -979,6 +982,7 @@ impl Workspace {
                                         .update(&mut cx, |workspace, cx| {
                                             workspace.open_path(project_path, None, true, cx)
                                         })
+                                        .log_err()?
                                         .await,
                                 )
                             } else {
@@ -1040,13 +1044,13 @@ impl Workspace {
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Self>,
         callback: F,
-    ) -> Task<T>
+    ) -> Task<Result<T>>
     where
         T: 'static,
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
     {
         if self.project.read(cx).is_local() {
-            Task::Ready(Some(callback(self, cx)))
+            Task::Ready(Some(Ok(callback(self, cx))))
         } else {
             let task = Self::new_local(Vec::new(), app_state.clone(), cx);
             cx.spawn(|_vh, mut cx| async move {
@@ -1097,13 +1101,11 @@ impl Workspace {
         _: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        let window_id = cx.window_id();
         let prepare = self.prepare_to_close(false, cx);
-        Some(cx.spawn(|this, mut cx| async move {
+        Some(cx.spawn_weak(|_, mut cx| async move {
             if prepare.await? {
-                this.update(&mut cx, |_, cx| {
-                    let window_id = cx.window_id();
-                    cx.remove_window(window_id);
-                });
+                cx.remove_window(window_id);
             }
             Ok(())
         }))
@@ -1155,7 +1157,7 @@ impl Workspace {
             }
 
             Ok(this
-                .update(&mut cx, |this, cx| this.save_all_internal(true, cx))
+                .update(&mut cx, |this, cx| this.save_all_internal(true, cx))?
                 .await?)
         })
     }
@@ -1233,13 +1235,16 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             let mut project_paths = Vec::new();
             for path in &abs_paths {
-                project_paths.push(
-                    this.update(&mut cx, |this, cx| {
+                if let Some(project_path) = this
+                    .update(&mut cx, |this, cx| {
                         Workspace::project_path_for_path(this.project.clone(), path, visible, cx)
                     })
-                    .await
-                    .log_err(),
-                );
+                    .log_err()
+                {
+                    project_paths.push(project_path.await.log_err());
+                } else {
+                    project_paths.push(None);
+                }
             }
 
             let tasks = abs_paths
@@ -1257,6 +1262,7 @@ impl Workspace {
                                     this.update(&mut cx, |this, cx| {
                                         this.open_path(project_path, None, true, cx)
                                     })
+                                    .log_err()?
                                     .await,
                                 )
                             } else {
@@ -1280,14 +1286,15 @@ impl Workspace {
         cx.spawn(|this, mut cx| async move {
             if let Some(paths) = paths.recv().await.flatten() {
                 let results = this
-                    .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))
+                    .update(&mut cx, |this, cx| this.open_paths(paths, true, cx))?
                     .await;
                 for result in results.into_iter().flatten() {
                     result.log_err();
                 }
             }
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn remove_folder_from_project(
@@ -1406,7 +1413,7 @@ impl Workspace {
                     cx.spawn(|this, mut cx| async move {
                         let answer = answer.recv().await;
                         if answer == Some(0) {
-                            this.update(&mut cx, |this, cx| item.save(this.project.clone(), cx))
+                            this.update(&mut cx, |this, cx| item.save(this.project.clone(), cx))?
                                 .await?;
                         }
                         Ok(())
@@ -1423,7 +1430,7 @@ impl Workspace {
                 let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
                 cx.spawn(|this, mut cx| async move {
                     if let Some(abs_path) = abs_path.recv().await.flatten() {
-                        this.update(&mut cx, |_, cx| item.save_as(project, abs_path, cx))
+                        this.update(&mut cx, |_, cx| item.save_as(project, abs_path, cx))?
                             .await?;
                     }
                     Ok(())
@@ -1588,14 +1595,7 @@ impl Workspace {
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("pane was closed"))?;
             this.update(&mut cx, |this, cx| {
-                Ok(Pane::open_item(
-                    this,
-                    pane,
-                    project_entry_id,
-                    focus_item,
-                    cx,
-                    build_item,
-                ))
+                Pane::open_item(this, pane, project_entry_id, focus_item, cx, build_item)
             })
         })
     }
@@ -1958,7 +1958,7 @@ impl Workspace {
                         None
                     };
                     Ok::<_, anyhow::Error>(())
-                })?;
+                })??;
                 Self::add_views_from_leader(
                     this.clone(),
                     leader_id,
@@ -1967,7 +1967,7 @@ impl Workspace {
                     &mut cx,
                 )
                 .await?;
-                this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx));
+                this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
             }
             Ok(())
         }))
@@ -2245,7 +2245,7 @@ impl Workspace {
                     })
                     .collect(),
             })
-        })
+        })?
     }
 
     async fn handle_unfollow(
@@ -2260,7 +2260,7 @@ impl Workspace {
                 .remove(&envelope.original_sender_id()?);
             cx.notify();
             Ok(())
-        })
+        })?
     }
 
     async fn handle_update_followers(
@@ -2297,7 +2297,7 @@ impl Workspace {
                         }
                     }
                     anyhow::Ok(())
-                })?;
+                })??;
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
                 let variant = update_view
@@ -2318,7 +2318,7 @@ impl Workspace {
                         }
                     }
                     anyhow::Ok(())
-                })?;
+                })??;
                 try_join_all(tasks).await.log_err();
             }
             proto::update_followers::Variant::CreateView(view) => {
@@ -2333,7 +2333,7 @@ impl Workspace {
                 Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
             }
         }
-        this.update(cx, |this, cx| this.leader_updated(leader_id, cx));
+        this.update(cx, |this, cx| this.leader_updated(leader_id, cx))?;
         Ok(())
     }
 
@@ -2403,7 +2403,7 @@ impl Workspace {
                 }
 
                 Some(())
-            });
+            })?;
         }
         Ok(())
     }
@@ -2685,7 +2685,7 @@ impl Workspace {
                         &workspace,
                         &mut cx,
                     )
-                    .await;
+                    .await?;
 
                 // Traverse the splits tree and add to things
                 let center_group = serialized_workspace
@@ -2737,13 +2737,14 @@ impl Workspace {
                     });
 
                     cx.notify();
-                });
+                })?;
 
                 // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                 workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))
             }
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2753,8 +2754,8 @@ impl Workspace {
 }
 
 fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAppContext) {
-    if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
-        workspace.update(cx, |workspace, cx| {
+    workspace.update(cx, |workspace, cx| {
+        if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
             workspace.show_notification_once(0, cx, |cx| {
                 cx.add_view(|_| {
                     MessageNotification::new(
@@ -2766,11 +2767,9 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                     )
                 })
             });
-        });
-    } else {
-        let backup_path = (*db::BACKUP_DB_PATH).read();
-        if let Some(backup_path) = &*backup_path {
-            workspace.update(cx, |workspace, cx| {
+        } else {
+            let backup_path = (*db::BACKUP_DB_PATH).read();
+            if let Some(backup_path) = &*backup_path {
                 workspace.show_notification_once(0, cx, |cx| {
                     cx.add_view(|_| {
                         let backup_path = backup_path.to_string_lossy();
@@ -2788,9 +2787,9 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                         )
                     })
                 });
-            });
+            }
         }
-    }
+    }).log_err();
 }
 
 impl Entity for Workspace {
@@ -3017,10 +3016,12 @@ pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
     cx: &mut AppContext,
-) -> Task<(
-    ViewHandle<Workspace>,
-    Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
-)> {
+) -> Task<
+    Result<(
+        ViewHandle<Workspace>,
+        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+    )>,
+> {
     log::info!("open paths {:?}", abs_paths);
 
     // Open paths in existing workspace if possible
@@ -3031,14 +3032,14 @@ pub fn open_paths(
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
         if let Some(existing) = existing {
-            (
+            Ok((
                 existing.clone(),
                 existing
                     .update(&mut cx, |workspace, cx| {
                         workspace.open_paths(abs_paths, true, cx)
-                    })
+                    })?
                     .await,
-            )
+            ))
         } else {
             let contains_directory =
                 futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
@@ -3055,9 +3056,9 @@ pub fn open_paths(
                         if contains_directory {
                             workspace.toggle_sidebar(SidebarSide::Left, cx);
                         }
-                    });
+                    })?;
 
-                    (workspace, items)
+                    anyhow::Ok((workspace, items))
                 })
             })
             .await
@@ -3074,11 +3075,13 @@ pub fn open_new(
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 
-        workspace.update(&mut cx, |workspace, cx| {
-            if opened_paths.is_empty() {
-                init(workspace, cx)
-            }
-        })
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                if opened_paths.is_empty() {
+                    init(workspace, cx)
+                }
+            })
+            .log_err();
     })
 }
 
@@ -3702,7 +3705,8 @@ mod tests {
             .update(cx, |workspace, cx| {
                 Pane::go_back(workspace, Some(pane.clone()), cx)
             })
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(*toolbar_notify_count.borrow(), 3);
         pane.read_with(cx, |pane, _| {

@@ -80,7 +80,9 @@ impl FollowableItem for Editor {
                 })
             });
 
-            let editor = editor.unwrap_or_else(|| {
+            let editor = if let Some(editor) = editor {
+                editor
+            } else {
                 pane.update(&mut cx, |_, cx| {
                     let multibuffer = cx.add_model(|cx| {
                         let mut multibuffer;
@@ -116,8 +118,8 @@ impl FollowableItem for Editor {
                     });
 
                     cx.add_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), cx))
-                })
-            });
+                })?
+            };
 
             editor.update(&mut cx, |editor, cx| {
                 editor.remote_id = Some(remote_id);
@@ -154,7 +156,7 @@ impl FollowableItem for Editor {
                 }
 
                 anyhow::Ok(())
-            })?;
+            })??;
 
             Ok(editor)
         }))
@@ -387,7 +389,7 @@ impl FollowableItem for Editor {
                         offset: vec2f(message.scroll_x, message.scroll_y)
                     }, cx);
                 }
-            });
+            })?;
             Ok(())
         })
     }
@@ -670,7 +672,7 @@ impl Item for Editor {
             let transaction = reload_buffers.log_err().await;
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
-            });
+            })?;
             buffer.update(&mut cx, |buffer, _| {
                 if let Some(transaction) = transaction {
                     if !buffer.is_singleton() {

@@ -132,9 +132,12 @@ impl FeedbackEditor {
 
             if answer == Some(0) {
                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
-                    Ok(_) => this.update(&mut cx, |_, cx| {
-                        cx.dispatch_action(workspace::CloseActiveItem);
-                    }),
+                    Ok(_) => {
+                        this.update(&mut cx, |_, cx| {
+                            cx.dispatch_action(workspace::CloseActiveItem);
+                        })
+                        .log_err();
+                    }
                     Err(error) => {
                         log::error!("{}", error);
                         this.update(&mut cx, |_, cx| {
@@ -144,6 +147,7 @@ impl FeedbackEditor {
                                 &["OK"],
                             );
                         })
+                        .log_err();
                     }
                 }
             }
@@ -213,10 +217,10 @@ impl FeedbackEditor {
                             .add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
                         workspace.add_item(Box::new(feedback_editor), cx);
                     })
-                })
-                .await;
+                })?
+                .await
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 }
 

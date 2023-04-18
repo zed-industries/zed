@@ -1,6 +1,7 @@
 mod active_buffer_language;
 
 pub use active_buffer_language::ActiveBufferLanguage;
+use anyhow::anyhow;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -12,6 +13,7 @@ use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
 use std::sync::Arc;
+use util::ResultExt;
 use workspace::{AppState, Workspace};
 
 actions!(language_selector, [Toggle]);
@@ -140,12 +142,18 @@ impl PickerDelegate for LanguageSelector {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let language_name = &self.candidates[mat.candidate_id].string;
             let language = self.language_registry.language_for_name(language_name);
-            cx.spawn(|this, mut cx| async move {
+            let project = self.project.downgrade();
+            let buffer = self.buffer.downgrade();
+            cx.spawn_weak(|_, mut cx| async move {
                 let language = language.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.project.update(cx, |project, cx| {
-                        project.set_language_for_buffer(&this.buffer, language, cx);
-                    });
+                let project = project
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("project was dropped"))?;
+                let buffer = buffer
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
+                project.update(&mut cx, |project, cx| {
+                    project.set_language_for_buffer(&buffer, language, cx);
                 });
                 anyhow::Ok(())
             })
@@ -170,7 +178,7 @@ impl PickerDelegate for LanguageSelector {
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> gpui::Task<()> {
         let background = cx.background().clone();
         let candidates = self.candidates.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_weak(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -194,13 +202,16 @@ impl PickerDelegate for LanguageSelector {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
-                this.matches = matches;
-                this.selected_index = this
-                    .selected_index
-                    .min(this.matches.len().saturating_sub(1));
-                cx.notify();
-            });
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, cx| {
+                    this.matches = matches;
+                    this.selected_index = this
+                        .selected_index
+                        .min(this.matches.len().saturating_sub(1));
+                    cx.notify();
+                })
+                .log_err();
+            }
         })
     }
 

@@ -15,6 +15,7 @@ use project::search::SearchQuery;
 use serde::Deserialize;
 use settings::Settings;
 use std::{any::Any, sync::Arc};
+use util::ResultExt;
 use workspace::{
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
@@ -617,7 +618,8 @@ impl BufferSearchBar {
                                 }
                                 cx.notify();
                             }
-                        });
+                        })
+                        .log_err();
                     }
                 }));
             }

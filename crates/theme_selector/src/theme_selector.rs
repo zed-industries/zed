@@ -8,6 +8,7 @@ use settings::{settings_file::SettingsFile, Settings};
 use staff_mode::StaffMode;
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
+use util::ResultExt;
 use workspace::{AppState, Workspace};
 
 pub struct ThemeSelector {
@@ -185,7 +186,7 @@ impl PickerDelegate for ThemeSelector {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_weak(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -209,14 +210,17 @@ impl PickerDelegate for ThemeSelector {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
-                this.matches = matches;
-                this.selected_index = this
-                    .selected_index
-                    .min(this.matches.len().saturating_sub(1));
-                this.show_selected_theme(cx);
-                cx.notify();
-            });
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, cx| {
+                    this.matches = matches;
+                    this.selected_index = this
+                        .selected_index
+                        .min(this.matches.len().saturating_sub(1));
+                    this.show_selected_theme(cx);
+                    cx.notify();
+                })
+                .log_err();
+            }
         })
     }
 

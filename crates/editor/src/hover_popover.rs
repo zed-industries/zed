@@ -208,7 +208,7 @@ fn show_hover(
                             local_diagnostic,
                             primary_diagnostic,
                         });
-                });
+                })?;
             }
 
             // Construct new hover popover from hover request
@@ -254,7 +254,7 @@ fn show_hover(
 
                     this.hover_state.info_popover = hover_popover;
                     cx.notify();
-                });
+                })?;
             }
             Ok::<_, anyhow::Error>(())
         }
