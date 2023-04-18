@@ -7,7 +7,7 @@ use crate::{
     toolbar::Toolbar,
     Item, NewFile, NewSearch, NewTerminal, Workspace,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
 use drag_and_drop::Draggable;
@@ -394,7 +394,7 @@ impl Pane {
         workspace: &mut Workspace,
         pane: Option<ViewHandle<Pane>>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
         Self::navigate_history(
             workspace,
             pane.unwrap_or_else(|| workspace.active_pane().clone()),
@@ -407,7 +407,7 @@ impl Pane {
         workspace: &mut Workspace,
         pane: Option<ViewHandle<Pane>>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
         Self::navigate_history(
             workspace,
             pane.unwrap_or_else(|| workspace.active_pane().clone()),
@@ -419,7 +419,7 @@ impl Pane {
     pub fn reopen_closed_item(
         workspace: &mut Workspace,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
         Self::navigate_history(
             workspace,
             workspace.active_pane().clone(),
@@ -453,7 +453,7 @@ impl Pane {
         pane: ViewHandle<Pane>,
         mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
         cx.focus(&pane);
 
         let to_load = pane.update(cx, |pane, cx| {
@@ -503,47 +503,50 @@ impl Pane {
             let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
                 let task = task.await;
-                if let Some(pane) = pane.upgrade(&cx) {
-                    let mut navigated = false;
-                    if let Some((project_entry_id, build_item)) = task.log_err() {
-                        let prev_active_item_id = pane.update(&mut cx, |pane, _| {
-                            pane.nav_history.borrow_mut().set_mode(mode);
-                            pane.active_item().map(|p| p.id())
-                        });
+                let pane = pane
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("pane was dropped"))?;
+                let mut navigated = false;
+                if let Some((project_entry_id, build_item)) = task.log_err() {
+                    let prev_active_item_id = pane.update(&mut cx, |pane, _| {
+                        pane.nav_history.borrow_mut().set_mode(mode);
+                        pane.active_item().map(|p| p.id())
+                    })?;
 
-                        let item = workspace.update(&mut cx, |workspace, cx| {
-                            Self::open_item(
-                                workspace,
-                                pane.clone(),
-                                project_entry_id,
-                                true,
-                                cx,
-                                build_item,
-                            )
-                        });
+                    let item = workspace.update(&mut cx, |workspace, cx| {
+                        Self::open_item(
+                            workspace,
+                            pane.clone(),
+                            project_entry_id,
+                            true,
+                            cx,
+                            build_item,
+                        )
+                    })?;
 
-                        pane.update(&mut cx, |pane, cx| {
-                            navigated |= Some(item.id()) != prev_active_item_id;
-                            pane.nav_history
-                                .borrow_mut()
-                                .set_mode(NavigationMode::Normal);
-                            if let Some(data) = entry.data {
-                                navigated |= item.navigate(data, cx);
-                            }
-                        });
-                    }
-
-                    if !navigated {
-                        workspace
-                            .update(&mut cx, |workspace, cx| {
-                                Self::navigate_history(workspace, pane, mode, cx)
-                            })
-                            .await;
-                    }
+                    pane.update(&mut cx, |pane, cx| {
+                        navigated |= Some(item.id()) != prev_active_item_id;
+                        pane.nav_history
+                            .borrow_mut()
+                            .set_mode(NavigationMode::Normal);
+                        if let Some(data) = entry.data {
+                            navigated |= item.navigate(data, cx);
+                        }
+                    })?;
                 }
+
+                if !navigated {
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            Self::navigate_history(workspace, pane, mode, cx)
+                        })?
+                        .await;
+                }
+
+                Ok(())
             })
         } else {
-            Task::ready(())
+            Task::ready(Ok(()))
         }
     }
 
@@ -1104,10 +1107,10 @@ impl Pane {
                     CONFLICT_MESSAGE,
                     &["Overwrite", "Discard", "Cancel"],
                 )
-            });
+            })?;
             match answer.next().await {
-                Some(0) => pane.update(cx, |_, cx| item.save(project, cx)).await?,
-                Some(1) => pane.update(cx, |_, cx| item.reload(project, cx)).await?,
+                Some(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Some(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
                 _ => return Ok(false),
             }
         } else if is_dirty && (can_save || is_singleton) {
@@ -1125,7 +1128,7 @@ impl Pane {
                         DIRTY_MESSAGE,
                         &["Save", "Don't Save", "Cancel"],
                     )
-                });
+                })?;
                 match answer.next().await {
                     Some(0) => true,
                     Some(1) => false,
@@ -1137,7 +1140,7 @@ impl Pane {
 
             if should_save {
                 if can_save {
-                    pane.update(cx, |_, cx| item.save(project, cx)).await?;
+                    pane.update(cx, |_, cx| item.save(project, cx))?.await?;
                 } else if is_singleton {
                     let start_abs_path = project
                         .read_with(cx, |project, cx| {
@@ -1148,7 +1151,7 @@ impl Pane {
 
                     let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
                     if let Some(abs_path) = abs_path.next().await.flatten() {
-                        pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))
+                        pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
                             .await?;
                     } else {
                         return Ok(false);

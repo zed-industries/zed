@@ -464,19 +464,20 @@ impl ReadModelWith for AsyncAppContext {
 }
 
 impl UpdateView for AsyncAppContext {
-    type Output<S> = Option<S>;
+    type Output<S> = Result<S>;
 
     fn update_view<T, S>(
         &mut self,
         handle: &ViewHandle<T>,
         update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> Option<S>
+    ) -> Result<S>
     where
         T: View,
     {
         self.0
             .borrow_mut()
             .update_window(handle.window_id, |cx| cx.update_view(handle, update))
+            .ok_or_else(|| anyhow!("window was closed"))
     }
 }
 

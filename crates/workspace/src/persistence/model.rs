@@ -131,7 +131,7 @@ impl SerializedPaneGroup {
                 ))
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
-                let pane = workspace.update(cx, |workspace, cx| workspace.add_pane(cx));
+                let pane = workspace.update(cx, |workspace, cx| workspace.add_pane(cx))?;
                 let active = serialized_pane.active;
                 serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
@@ -166,7 +166,7 @@ impl SerializedPane {
         workspace_id: WorkspaceId,
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
-    ) {
+    ) -> Option<()> {
         let mut active_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
@@ -186,14 +186,14 @@ impl SerializedPane {
                             item.kind
                         )))
                     }
-                })
+                })?
                 .await
                 .log_err();
 
             if let Some(item_handle) = item_handle {
                 workspace.update(cx, |workspace, cx| {
                     Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);
-                })
+                });
             }
 
             if item.active {
@@ -204,8 +204,10 @@ impl SerializedPane {
         if let Some(active_item_index) = active_item_index {
             pane_handle.update(cx, |pane, cx| {
                 pane.activate_item(active_item_index, false, false, cx);
-            })
+            })?;
         }
+
+        Some(())
     }
 }
 

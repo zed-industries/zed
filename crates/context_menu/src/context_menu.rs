@@ -210,9 +210,9 @@ impl ContextMenu {
                 cx.notify();
                 cx.spawn(|this, mut cx| async move {
                     cx.background().timer(Duration::from_millis(50)).await;
-                    this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx));
+                    this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx))
                 })
-                .detach();
+                .detach_and_log_err(cx);
             }
         }
     }
