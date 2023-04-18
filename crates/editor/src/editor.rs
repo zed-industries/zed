@@ -20,7 +20,7 @@ mod editor_tests;
 pub mod test;
 
 use aho_corasick::AhoCorasick;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
@@ -2352,53 +2352,66 @@ impl Editor {
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
-                let completions = completions.await?;
-                if completions.is_empty() {
-                    return Ok(());
-                }
-
-                let mut menu = CompletionsMenu {
-                    id,
-                    initial_position: position,
-                    match_candidates: completions
-                        .iter()
-                        .enumerate()
-                        .map(|(id, completion)| {
-                            StringMatchCandidate::new(
-                                id,
-                                completion.label.text[completion.label.filter_range.clone()].into(),
-                            )
-                        })
-                        .collect(),
-                    buffer,
-                    completions: completions.into(),
-                    matches: Vec::new().into(),
-                    selected_item: 0,
-                    list: Default::default(),
+                let menu = if let Some(completions) = completions.await.log_err() {
+                    let mut menu = CompletionsMenu {
+                        id,
+                        initial_position: position,
+                        match_candidates: completions
+                            .iter()
+                            .enumerate()
+                            .map(|(id, completion)| {
+                                StringMatchCandidate::new(
+                                    id,
+                                    completion.label.text[completion.label.filter_range.clone()]
+                                        .into(),
+                                )
+                            })
+                            .collect(),
+                        buffer,
+                        completions: completions.into(),
+                        matches: Vec::new().into(),
+                        selected_item: 0,
+                        list: Default::default(),
+                    };
+                    menu.filter(query.as_deref(), cx.background()).await;
+                    if menu.matches.is_empty() {
+                        None
+                    } else {
+                        Some(menu)
+                    }
+                } else {
+                    None
                 };
 
-                menu.filter(query.as_deref(), cx.background()).await;
+                let this = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("editor was dropped"))?;
+                this.update(&mut cx, |this, cx| {
+                    this.completion_tasks.retain(|(task_id, _)| *task_id > id);
 
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        match this.context_menu.as_ref() {
-                            None => {}
-                            Some(ContextMenu::Completions(prev_menu)) => {
-                                if prev_menu.id > menu.id {
-                                    return;
-                                }
+                    match this.context_menu.as_ref() {
+                        None => {}
+                        Some(ContextMenu::Completions(prev_menu)) => {
+                            if prev_menu.id > id {
+                                return;
                             }
-                            _ => return,
                         }
+                        _ => return,
+                    }
 
-                        this.completion_tasks.retain(|(id, _)| *id > menu.id);
-                        if this.focused && !menu.matches.is_empty() {
-                            this.show_context_menu(ContextMenu::Completions(menu), cx);
-                        } else if this.hide_context_menu(cx).is_none() {
+                    if this.focused && menu.is_some() {
+                        let menu = menu.unwrap();
+                        this.show_context_menu(ContextMenu::Completions(menu), cx);
+                    } else if this.completion_tasks.is_empty() {
+                        // If there are no more completion tasks and the last menu was
+                        // empty, we should hide it. If it was already hidden, we should
+                        // also show the copilot suggestion when available.
+                        if this.hide_context_menu(cx).is_none() {
                             this.update_visible_copilot_suggestion(cx);
                         }
-                    });
-                }
+                    }
+                });
+
                 Ok::<_, anyhow::Error>(())
             }
             .log_err()

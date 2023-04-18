@@ -5897,13 +5897,12 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
     )
     .await;
 
+    // When inserting, ensure autocompletion is favored over Copilot suggestions.
     cx.set_state(indoc! {"
         oneˇ
         two
         three
     "});
-
-    // When inserting, ensure autocompletion is favored over Copilot suggestions.
     cx.simulate_keystroke(".");
     let _ = handle_completion_request(
         &mut cx,
@@ -5917,8 +5916,8 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
     handle_copilot_completion_request(
         &copilot_lsp,
         vec![copilot::request::Completion {
-            text: "copilot1".into(),
-            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
             ..Default::default()
         }],
         vec![],
@@ -5940,13 +5939,45 @@ async fn test_copilot(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppC
         assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
     });
 
+    // Ensure Copilot suggestions are shown right away if no autocompletion is available.
     cx.set_state(indoc! {"
         oneˇ
         two
         three
     "});
+    cx.simulate_keystroke(".");
+    let _ = handle_completion_request(
+        &mut cx,
+        indoc! {"
+            one.|<>
+            two
+            three
+        "},
+        vec![],
+    );
+    handle_copilot_completion_request(
+        &copilot_lsp,
+        vec![copilot::request::Completion {
+            text: "one.copilot1".into(),
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+            ..Default::default()
+        }],
+        vec![],
+    );
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    cx.update_editor(|editor, cx| {
+        assert!(!editor.context_menu_visible());
+        assert!(editor.has_active_copilot_suggestion(cx));
+        assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
+        assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+    });
 
-    // When inserting, ensure autocompletion is favored over Copilot suggestions.
+    // Reset editor, and ensure autocompletion is still favored over Copilot suggestions.
+    cx.set_state(indoc! {"
+        oneˇ
+        two
+        three
+    "});
     cx.simulate_keystroke(".");
     let _ = handle_completion_request(
         &mut cx,
