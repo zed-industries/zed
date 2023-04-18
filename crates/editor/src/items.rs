@@ -531,7 +531,7 @@ impl Item for Editor {
         Some(file_path.into())
     }
 
-    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<str>> {
         match path_for_buffer(&self.buffer, detail, true, cx)? {
             Cow::Borrowed(path) => Some(path.to_string_lossy()),
             Cow::Owned(path) => Some(path.to_string_lossy().to_string().into()),

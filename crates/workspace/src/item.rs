@@ -47,7 +47,7 @@ pub trait Item: View {
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
         None
     }
-    fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<str>> {
         None
     }
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
@@ -165,8 +165,8 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut AppContext)>,
     ) -> gpui::Subscription;
-    fn tab_tooltip_text<'a>(&'a self, cx: &'a AppContext) -> Option<Cow<str>>;
-    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
+    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>>;
+    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>>;
     fn tab_content(&self, detail: Option<usize>, style: &theme::Tab, cx: &AppContext)
         -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -252,11 +252,11 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         })
     }
 
-    fn tab_tooltip_text<'a>(&'a self, cx: &'a AppContext) -> Option<Cow<str>> {
+    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
-    fn tab_description<'a>(&self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_description<'a>(&'a self, detail: usize, cx: &'a AppContext) -> Option<Cow<'a, str>> {
         self.read(cx).tab_description(detail, cx)
     }
 
@@ -913,7 +913,7 @@ pub(crate) mod test {
     }
 
     impl Item for TestItem {
-        fn tab_description<'a>(&'a self, detail: usize, _: &'a AppContext) -> Option<Cow<'a, str>> {
+        fn tab_description(&self, detail: usize, _: &AppContext) -> Option<Cow<str>> {
             self.tab_descriptions.as_ref().and_then(|descriptions| {
                 let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
                 Some(description.into())
