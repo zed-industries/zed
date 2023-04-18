@@ -1065,13 +1065,11 @@ impl<'a> Iterator for FoldChunks<'a> {
             self.output_offset += output_text.len();
             return Some(Chunk {
                 text: output_text,
-                syntax_highlight_id: None,
                 highlight_style: self.ellipses_color.map(|color| HighlightStyle {
                     color: Some(color),
                     ..Default::default()
                 }),
-                diagnostic_severity: None,
-                is_unnecessary: false,
+                ..Default::default()
             });
         }
 

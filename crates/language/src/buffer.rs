@@ -311,6 +311,7 @@ pub struct Chunk<'a> {
     pub highlight_style: Option<HighlightStyle>,
     pub diagnostic_severity: Option<DiagnosticSeverity>,
     pub is_unnecessary: bool,
+    pub is_tab: bool,
 }
 
 pub struct Diff {
@@ -2840,9 +2841,9 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
-                highlight_style: None,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
+                ..Default::default()
             })
         } else {
             None

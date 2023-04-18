@@ -531,10 +531,8 @@ impl<'a> Iterator for SuggestionChunks<'a> {
             if let Some(chunk) = chunks.next() {
                 return Some(Chunk {
                     text: chunk,
-                    syntax_highlight_id: None,
                     highlight_style: self.highlight_style,
-                    diagnostic_severity: None,
-                    is_unnecessary: false,
+                    ..Default::default()
                 });
             } else {
                 self.suggestion_chunks = None;
