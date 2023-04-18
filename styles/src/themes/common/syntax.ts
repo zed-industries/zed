@@ -139,7 +139,7 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         primary: colorScheme.ramps.neutral(1).hex(),
         comment: colorScheme.ramps.neutral(0.71).hex(),
         punctuation: colorScheme.ramps.neutral(0.86).hex(),
-        predictive: colorScheme.ramps.neutral(0.57).hex(),
+        predictive: colorScheme.ramps.violet(0.38).hex(),
         emphasis: colorScheme.ramps.blue(0.5).hex(),
         string: colorScheme.ramps.orange(0.5).hex(),
         function: colorScheme.ramps.yellow(0.5).hex(),
