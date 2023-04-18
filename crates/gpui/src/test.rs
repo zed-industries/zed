@@ -76,7 +76,7 @@ pub fn run_test(
                 let seed = atomic_seed.load(SeqCst);
 
                 if is_randomized {
-                    dbg!(seed);
+                    eprintln!("seed = {seed}");
                 }
 
                 let deterministic = executor::Deterministic::new(seed);

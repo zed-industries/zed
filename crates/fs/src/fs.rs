@@ -523,31 +523,7 @@ impl FakeFs {
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) {
-        let mut state = self.state.lock();
-        let path = path.as_ref();
-        let inode = state.next_inode;
-        let mtime = state.next_mtime;
-        state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
-        let file = Arc::new(Mutex::new(FakeFsEntry::File {
-            inode,
-            mtime,
-            content,
-        }));
-        state
-            .write_path(path, move |entry| {
-                match entry {
-                    btree_map::Entry::Vacant(e) => {
-                        e.insert(file);
-                    }
-                    btree_map::Entry::Occupied(mut e) => {
-                        *e.get_mut() = file;
-                    }
-                }
-                Ok(())
-            })
-            .unwrap();
-        state.emit_event(&[path]);
+        self.write_file_internal(path, content).unwrap()
     }
 
     pub async fn insert_symlink(&self, path: impl AsRef<Path>, target: PathBuf) {
@@ -567,6 +543,33 @@ impl FakeFs {
             })
             .unwrap();
         state.emit_event(&[path]);
+    }
+
+    fn write_file_internal(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
+        let mut state = self.state.lock();
+        let path = path.as_ref();
+        let inode = state.next_inode;
+        let mtime = state.next_mtime;
+        state.next_inode += 1;
+        state.next_mtime += Duration::from_nanos(1);
+        let file = Arc::new(Mutex::new(FakeFsEntry::File {
+            inode,
+            mtime,
+            content,
+        }));
+        state.write_path(path, move |entry| {
+            match entry {
+                btree_map::Entry::Vacant(e) => {
+                    e.insert(file);
+                }
+                btree_map::Entry::Occupied(mut e) => {
+                    *e.get_mut() = file;
+                }
+            }
+            Ok(())
+        })?;
+        state.emit_event(&[path]);
+        Ok(())
     }
 
     pub async fn pause_events(&self) {
@@ -952,7 +955,7 @@ impl Fs for FakeFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
-        self.insert_file(path, data.to_string()).await;
+        self.write_file_internal(path, data.to_string())?;
 
         Ok(())
     }
@@ -961,7 +964,7 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let content = chunks(text, line_ending).collect();
-        self.insert_file(path, content).await;
+        self.write_file_internal(path, content)?;
         Ok(())
     }
 

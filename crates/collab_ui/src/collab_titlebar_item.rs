@@ -459,9 +459,7 @@ impl CollabTitlebarItem {
                 .with_child(
                     MouseEventHandler::<ShareUnshare, Self>::new(0, cx, |state, _| {
                         //TODO: Ensure this button has consistant width for both text variations
-                        let style = titlebar
-                            .share_button
-                            .style_for(state, self.contacts_popover.is_some());
+                        let style = titlebar.share_button.style_for(state, false);
                         Label::new(label, style.text.clone())
                             .contained()
                             .with_style(style.container)
@@ -710,11 +708,9 @@ impl CollabTitlebarItem {
                                         }
                                     })?;
 
-                                let location = remote_participant.map(|p| p.location);
-
                                 Some(Self::render_face(
                                     avatar.clone(),
-                                    Self::location_style(workspace, location, follower_style, cx),
+                                    follower_style,
                                     background_color,
                                 ))
                             }))
