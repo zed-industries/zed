@@ -268,6 +268,7 @@ impl TabSnapshot {
             tab_size: self.tab_size,
             chunk: Chunk {
                 text: &SPACES[0..(to_next_stop as usize)],
+                is_tab: true,
                 ..Default::default()
             },
             inside_leading_tab: to_next_stop > 0,
@@ -545,6 +546,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         self.output_position = next_output_position;
                         return Some(Chunk {
                             text: &SPACES[..len as usize],
+                            is_tab: true,
                             ..self.chunk
                         });
                     }
@@ -652,6 +654,56 @@ mod tests {
 
         tab_snapshot.max_expansion_column = max_expansion_column;
         assert_eq!(tab_snapshot.text(), input);
+    }
+
+    #[gpui::test]
+    fn test_marking_tabs(cx: &mut gpui::AppContext) {
+        let input = "\t \thello";
+
+        let buffer = MultiBuffer::build_simple(&input, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
+        let (_, tab_snapshot) = TabMap::new(suggestion_snapshot, 4.try_into().unwrap());
+
+        assert_eq!(
+            chunks(&tab_snapshot, TabPoint::zero()),
+            vec![
+                ("    ".to_string(), true),
+                (" ".to_string(), false),
+                ("   ".to_string(), true),
+                ("hello".to_string(), false),
+            ]
+        );
+        assert_eq!(
+            chunks(&tab_snapshot, TabPoint::new(0, 2)),
+            vec![
+                ("  ".to_string(), true),
+                (" ".to_string(), false),
+                ("   ".to_string(), true),
+                ("hello".to_string(), false),
+            ]
+        );
+
+        fn chunks(snapshot: &TabSnapshot, start: TabPoint) -> Vec<(String, bool)> {
+            let mut chunks = Vec::new();
+            let mut was_tab = false;
+            let mut text = String::new();
+            for chunk in snapshot.chunks(start..snapshot.max_point(), false, None, None) {
+                if chunk.is_tab != was_tab {
+                    if !text.is_empty() {
+                        chunks.push((mem::take(&mut text), was_tab));
+                    }
+                    was_tab = chunk.is_tab;
+                }
+                text.push_str(chunk.text);
+            }
+
+            if !text.is_empty() {
+                chunks.push((text, was_tab));
+            }
+            chunks
+        }
     }
 
     #[gpui::test(iterations = 100)]
