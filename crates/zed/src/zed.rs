@@ -735,8 +735,6 @@ mod tests {
         .unwrap();
         assert_eq!(cx.window_ids().len(), 2);
 
-        // Replace existing windows
-        let window_id = cx.window_ids()[0];
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
@@ -746,20 +744,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 2);
-        cx.read_window(window_id, |cx| {
-            let workspace = cx.root_view().clone().downcast::<Workspace>().unwrap();
-            let workspace = workspace.read(cx);
-            assert_eq!(
-                workspace
-                    .worktrees(cx)
-                    .map(|w| w.read(cx).abs_path())
-                    .collect::<Vec<_>>(),
-                &[Path::new("/root/c").into(), Path::new("/root/d").into()]
-            );
-            assert!(workspace.left_sidebar().read(cx).is_open());
-            assert!(workspace.active_pane().is_focused(cx));
-        });
+        assert_eq!(cx.window_ids().len(), 3);
     }
 
     #[gpui::test]
