@@ -362,13 +362,8 @@ impl Dock {
                         );
 
                     let size = resizable.current_size();
-                    let workspace = cx.handle().downgrade();
-                    cx.defer(move |_, cx| {
-                        if let Some(workspace) = workspace.upgrade(cx) {
-                            workspace.update(cx, |workspace, _| {
-                                workspace.dock.panel_sizes.insert(anchor, size);
-                            })
-                        }
+                    cx.defer(move |workspace, _| {
+                        workspace.dock.panel_sizes.insert(anchor, size);
                     });
 
                     if anchor == DockAnchor::Right {
