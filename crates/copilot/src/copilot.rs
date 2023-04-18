@@ -29,7 +29,10 @@ const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
+actions!(
+    copilot,
+    [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
+);
 
 pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
     // Disable Copilot for stable releases.
