@@ -1,6 +1,7 @@
 mod anchor;
 
 pub use anchor::{Anchor, AnchorRangeExt};
+use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
@@ -16,7 +17,9 @@ use language::{
 use std::{
     borrow::Cow,
     cell::{Ref, RefCell},
-    cmp, fmt, io,
+    cmp, fmt,
+    future::Future,
+    io,
     iter::{self, FromIterator},
     mem,
     ops::{Range, RangeBounds, Sub},
@@ -1236,6 +1239,39 @@ impl MultiBuffer {
         cx.emit(Event::Edited);
         cx.emit(Event::ExcerptsRemoved { ids });
         cx.notify();
+    }
+
+    pub fn wait_for_anchors<'a>(
+        &self,
+        anchors: impl 'a + Iterator<Item = Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> impl 'static + Future<Output = Result<()>> {
+        let borrow = self.buffers.borrow();
+        let mut error = None;
+        let mut futures = Vec::new();
+        for anchor in anchors {
+            if let Some(buffer_id) = anchor.buffer_id {
+                if let Some(buffer) = borrow.get(&buffer_id) {
+                    buffer.buffer.update(cx, |buffer, _| {
+                        futures.push(buffer.wait_for_anchors([anchor.text_anchor]))
+                    });
+                } else {
+                    error = Some(anyhow!(
+                        "buffer {buffer_id} is not part of this multi-buffer"
+                    ));
+                    break;
+                }
+            }
+        }
+        async move {
+            if let Some(error) = error {
+                Err(error)?;
+            }
+            for future in futures {
+                future.await?;
+            }
+            Ok(())
+        }
     }
 
     pub fn text_anchor_for_position<T: ToOffset>(

@@ -5862,10 +5862,17 @@ async fn test_basic_following(
 
     // Client A updates their selections in those editors
     editor_a1.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([0..1]))
+        editor.handle_input("a", cx);
+        editor.handle_input("b", cx);
+        editor.handle_input("c", cx);
+        editor.select_left(&Default::default(), cx);
+        assert_eq!(editor.selections.ranges(cx), vec![3..2]);
     });
     editor_a2.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([2..3]))
+        editor.handle_input("d", cx);
+        editor.handle_input("e", cx);
+        editor.select_left(&Default::default(), cx);
+        assert_eq!(editor.selections.ranges(cx), vec![2..1]);
     });
 
     // When client B starts following client A, all visible view states are replicated to client B.
@@ -5877,6 +5884,27 @@ async fn test_basic_following(
         })
         .await
         .unwrap();
+
+    cx_c.foreground().run_until_parked();
+    let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+    assert_eq!(
+        cx_b.read(|cx| editor_b2.project_path(cx)),
+        Some((worktree_id, "2.txt").into())
+    );
+    assert_eq!(
+        editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        vec![2..1]
+    );
+    assert_eq!(
+        editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        vec![3..2]
+    );
 
     cx_c.foreground().run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
@@ -6032,26 +6060,6 @@ async fn test_basic_following(
             );
         });
     }
-
-    let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
-        workspace
-            .active_item(cx)
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap()
-    });
-    assert_eq!(
-        cx_b.read(|cx| editor_b2.project_path(cx)),
-        Some((worktree_id, "2.txt").into())
-    );
-    assert_eq!(
-        editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![2..3]
-    );
-    assert_eq!(
-        editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![0..1]
-    );
 
     // When client A activates a different editor, client B does so as well.
     workspace_a.update(cx_a, |workspace, cx| {
