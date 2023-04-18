@@ -39,7 +39,7 @@ pub struct TooltipStyle {
     pub container: ContainerStyle,
     pub text: TextStyle,
     keystroke: KeystrokeStyle,
-    pub max_text_width: f32,
+    pub max_text_width: Option<f32>,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -140,9 +140,14 @@ impl Tooltip {
     ) -> impl Element {
         Flex::row()
             .with_child({
-                let text = Text::new(text, style.text)
-                    .constrained()
-                    .with_max_width(style.max_text_width);
+                let text = if let Some(max_text_width) = style.max_text_width {
+                    Text::new(text, style.text)
+                        .constrained()
+                        .with_max_width(max_text_width)
+                } else {
+                    Text::new(text, style.text).constrained()
+                };
+
                 if measure {
                     text.flex(1., false).boxed()
                 } else {
