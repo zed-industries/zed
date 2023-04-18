@@ -24,6 +24,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
+    borrow::Cow,
     cmp::Ordering,
     ops::Range,
     path::PathBuf,
@@ -529,6 +530,10 @@ impl Item for ProjectDiagnosticsEditor {
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, cx))
+    }
+
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
+        Some("Project Diagnostics".into())
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {

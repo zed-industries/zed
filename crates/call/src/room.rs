@@ -419,7 +419,7 @@ impl Room {
             false
         });
 
-        let response = self.client.request(proto::RejoinRoom {
+        let response = self.client.request_envelope(proto::RejoinRoom {
             id: self.id,
             reshared_projects,
             rejoined_projects,
@@ -427,6 +427,8 @@ impl Room {
 
         cx.spawn(|this, mut cx| async move {
             let response = response.await?;
+            let message_id = response.message_id;
+            let response = response.payload;
             let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
             this.update(&mut cx, |this, cx| {
                 this.status = RoomStatus::Online;
@@ -443,7 +445,7 @@ impl Room {
                 for rejoined_project in response.rejoined_projects {
                     if let Some(project) = projects.get(&rejoined_project.id) {
                         project.update(cx, |project, cx| {
-                            project.rejoined(rejoined_project, cx).log_err();
+                            project.rejoined(rejoined_project, message_id, cx).log_err();
                         });
                     }
                 }

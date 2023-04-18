@@ -220,7 +220,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                             replica_id: undo.replica_id as ReplicaId,
                             value: undo.local_timestamp,
                         },
-                        version: deserialize_version(undo.version),
+                        version: deserialize_version(&undo.version),
                         counts: undo
                             .counts
                             .into_iter()
@@ -294,7 +294,7 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
             local: edit.local_timestamp,
             lamport: edit.lamport_timestamp,
         },
-        version: deserialize_version(edit.version),
+        version: deserialize_version(&edit.version),
         ranges: edit.ranges.into_iter().map(deserialize_range).collect(),
         new_text: edit.new_text.into_iter().map(Arc::from).collect(),
     }
@@ -509,7 +509,7 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
             .into_iter()
             .map(deserialize_local_timestamp)
             .collect(),
-        start: deserialize_version(transaction.start),
+        start: deserialize_version(&transaction.start),
     })
 }
 
@@ -538,7 +538,7 @@ pub fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
     FullOffset(range.start as usize)..FullOffset(range.end as usize)
 }
 
-pub fn deserialize_version(message: Vec<proto::VectorClockEntry>) -> clock::Global {
+pub fn deserialize_version(message: &[proto::VectorClockEntry]) -> clock::Global {
     let mut version = clock::Global::new();
     for entry in message {
         version.observe(clock::Local {

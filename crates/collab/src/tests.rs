@@ -18,9 +18,10 @@ use parking_lot::Mutex;
 use project::{Project, WorktreeId};
 use settings::Settings;
 use std::{
+    cell::{Ref, RefCell, RefMut},
     env,
-    ops::Deref,
-    path::{Path, PathBuf},
+    ops::{Deref, DerefMut},
+    path::Path,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -209,13 +210,10 @@ impl TestServer {
         let client = TestClient {
             client,
             username: name.to_string(),
-            local_projects: Default::default(),
-            remote_projects: Default::default(),
-            next_root_dir_id: 0,
+            state: Default::default(),
             user_store,
             fs,
             language_registry: Arc::new(LanguageRegistry::test()),
-            buffers: Default::default(),
         };
         client.wait_for_current_user(cx).await;
         client
@@ -314,12 +312,16 @@ impl Drop for TestServer {
 struct TestClient {
     client: Arc<Client>,
     username: String,
-    local_projects: Vec<ModelHandle<Project>>,
-    remote_projects: Vec<ModelHandle<Project>>,
-    next_root_dir_id: usize,
+    state: RefCell<TestClientState>,
     pub user_store: ModelHandle<UserStore>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<FakeFs>,
+}
+
+#[derive(Default)]
+struct TestClientState {
+    local_projects: Vec<ModelHandle<Project>>,
+    remote_projects: Vec<ModelHandle<Project>>,
     buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
 }
 
@@ -356,6 +358,38 @@ impl TestClient {
         self.user_store
             .update(cx, |store, _| store.clear_contacts())
             .await;
+    }
+
+    fn local_projects<'a>(&'a self) -> impl Deref<Target = Vec<ModelHandle<Project>>> + 'a {
+        Ref::map(self.state.borrow(), |state| &state.local_projects)
+    }
+
+    fn remote_projects<'a>(&'a self) -> impl Deref<Target = Vec<ModelHandle<Project>>> + 'a {
+        Ref::map(self.state.borrow(), |state| &state.remote_projects)
+    }
+
+    fn local_projects_mut<'a>(&'a self) -> impl DerefMut<Target = Vec<ModelHandle<Project>>> + 'a {
+        RefMut::map(self.state.borrow_mut(), |state| &mut state.local_projects)
+    }
+
+    fn remote_projects_mut<'a>(&'a self) -> impl DerefMut<Target = Vec<ModelHandle<Project>>> + 'a {
+        RefMut::map(self.state.borrow_mut(), |state| &mut state.remote_projects)
+    }
+
+    fn buffers_for_project<'a>(
+        &'a self,
+        project: &ModelHandle<Project>,
+    ) -> impl DerefMut<Target = HashSet<ModelHandle<language::Buffer>>> + 'a {
+        RefMut::map(self.state.borrow_mut(), |state| {
+            state.buffers.entry(project.clone()).or_default()
+        })
+    }
+
+    fn buffers<'a>(
+        &'a self,
+    ) -> impl DerefMut<Target = HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>> + 'a
+    {
+        RefMut::map(self.state.borrow_mut(), |state| &mut state.buffers)
     }
 
     fn summarize_contacts(&self, cx: &TestAppContext) -> ContactsSummary {
@@ -430,15 +464,6 @@ impl TestClient {
     ) -> ViewHandle<Workspace> {
         let (_, root_view) = cx.add_window(|_| EmptyView);
         cx.add_view(&root_view, |cx| Workspace::test_new(project.clone(), cx))
-    }
-
-    fn create_new_root_dir(&mut self) -> PathBuf {
-        format!(
-            "/{}-root-{}",
-            self.username,
-            util::post_inc(&mut self.next_root_dir_id)
-        )
-        .into()
     }
 }
 

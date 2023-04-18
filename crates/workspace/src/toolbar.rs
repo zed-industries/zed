@@ -70,6 +70,7 @@ impl View for Toolbar {
         for (item, position) in &self.items {
             match *position {
                 ToolbarItemLocation::Hidden => {}
+
                 ToolbarItemLocation::PrimaryLeft { flex } => {
                     let left_item = ChildView::new(item.as_any(), cx)
                         .aligned()
@@ -81,6 +82,7 @@ impl View for Toolbar {
                         primary_left_items.push(left_item.boxed());
                     }
                 }
+
                 ToolbarItemLocation::PrimaryRight { flex } => {
                     let right_item = ChildView::new(item.as_any(), cx)
                         .aligned()
@@ -93,6 +95,7 @@ impl View for Toolbar {
                         primary_right_items.push(right_item.boxed());
                     }
                 }
+
                 ToolbarItemLocation::Secondary => {
                     secondary_item = Some(
                         ChildView::new(item.as_any(), cx)
@@ -300,7 +303,10 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     }
 
     fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
-        self.update(cx, |this, cx| this.pane_focus_update(pane_focused, cx));
+        self.update(cx, |this, cx| {
+            this.pane_focus_update(pane_focused, cx);
+            cx.notify();
+        });
     }
 }
 

@@ -830,6 +830,16 @@ impl Background {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn rng<'a>(&'a self) -> impl 'a + std::ops::DerefMut<Target = rand::prelude::StdRng> {
+        match self {
+            Self::Deterministic { executor, .. } => {
+                parking_lot::lock_api::MutexGuard::map(executor.state.lock(), |s| &mut s.rng)
+            }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn simulate_random_delay(&self) {
         match self {
             Self::Deterministic { executor, .. } => {

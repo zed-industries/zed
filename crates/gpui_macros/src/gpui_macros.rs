@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
@@ -15,6 +16,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     let mut num_iterations = 1;
     let mut starting_seed = 0;
     let mut detect_nondeterminism = false;
+    let mut on_failure_fn_name = quote!(None);
 
     for arg in args {
         match arg {
@@ -33,6 +35,20 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         Some("retries") => max_retries = parse_int(&meta.lit)?,
                         Some("iterations") => num_iterations = parse_int(&meta.lit)?,
                         Some("seed") => starting_seed = parse_int(&meta.lit)?,
+                        Some("on_failure") => {
+                            if let Lit::Str(name) = meta.lit {
+                                let ident = Ident::new(&name.value(), name.span());
+                                on_failure_fn_name = quote!(Some(#ident));
+                            } else {
+                                return Err(TokenStream::from(
+                                    syn::Error::new(
+                                        meta.lit.span(),
+                                        "on_failure argument must be a string",
+                                    )
+                                    .into_compile_error(),
+                                ));
+                            }
+                        }
                         _ => {
                             return Err(TokenStream::from(
                                 syn::Error::new(meta.path.span(), "invalid argument")
@@ -152,6 +168,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         cx.foreground().run(#inner_fn_name(#inner_fn_args));
                         #cx_teardowns
                     },
+                    #on_failure_fn_name,
                     stringify!(#outer_fn_name).to_string(),
                 );
             }
@@ -187,6 +204,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #max_retries,
                     #detect_nondeterminism,
                     &mut |cx, _, _, seed| #inner_fn_name(#inner_fn_args),
+                    #on_failure_fn_name,
                     stringify!(#outer_fn_name).to_string(),
                 );
             }

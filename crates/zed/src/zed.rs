@@ -1548,7 +1548,7 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor3_id = editor3.id();
                 drop(editor3);
-                Pane::close_item(workspace, workspace.active_pane().clone(), editor3_id, cx)
+                Pane::close_item_by_id(workspace, workspace.active_pane().clone(), editor3_id, cx)
             })
             .await
             .unwrap();
@@ -1581,7 +1581,7 @@ mod tests {
             .update(cx, |workspace, cx| {
                 let editor2_id = editor2.id();
                 drop(editor2);
-                Pane::close_item(workspace, workspace.active_pane().clone(), editor2_id, cx)
+                Pane::close_item_by_id(workspace, workspace.active_pane().clone(), editor2_id, cx)
             })
             .await
             .unwrap();
@@ -1731,7 +1731,7 @@ mod tests {
         // Close all the pane items in some arbitrary order.
         workspace
             .update(cx, |workspace, cx| {
-                Pane::close_item(workspace, pane.clone(), file1_item_id, cx)
+                Pane::close_item_by_id(workspace, pane.clone(), file1_item_id, cx)
             })
             .await
             .unwrap();
@@ -1739,7 +1739,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                Pane::close_item(workspace, pane.clone(), file4_item_id, cx)
+                Pane::close_item_by_id(workspace, pane.clone(), file4_item_id, cx)
             })
             .await
             .unwrap();
@@ -1747,7 +1747,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                Pane::close_item(workspace, pane.clone(), file2_item_id, cx)
+                Pane::close_item_by_id(workspace, pane.clone(), file2_item_id, cx)
             })
             .await
             .unwrap();
@@ -1755,7 +1755,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                Pane::close_item(workspace, pane.clone(), file3_item_id, cx)
+                Pane::close_item_by_id(workspace, pane.clone(), file3_item_id, cx)
             })
             .await
             .unwrap();

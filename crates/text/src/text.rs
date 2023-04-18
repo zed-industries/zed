@@ -11,14 +11,14 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::LineEnding;
 use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
-use postage::{barrier, oneshot, prelude::*};
+use postage::{oneshot, prelude::*};
 
 pub use rope::*;
 pub use selection::*;
@@ -52,7 +52,7 @@ pub struct Buffer {
     pub lamport_clock: clock::Lamport,
     subscriptions: Topic,
     edit_id_resolvers: HashMap<clock::Local, Vec<oneshot::Sender<()>>>,
-    version_barriers: Vec<(clock::Global, barrier::Sender)>,
+    wait_for_version_txs: Vec<(clock::Global, oneshot::Sender<()>)>,
 }
 
 #[derive(Clone)]
@@ -522,7 +522,7 @@ impl Buffer {
             lamport_clock,
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
-            version_barriers: Default::default(),
+            wait_for_version_txs: Default::default(),
         }
     }
 
@@ -793,8 +793,14 @@ impl Buffer {
                 }
             }
         }
-        self.version_barriers
-            .retain(|(version, _)| !self.snapshot.version().observed_all(version));
+        self.wait_for_version_txs.retain_mut(|(version, tx)| {
+            if self.snapshot.version().observed_all(version) {
+                tx.try_send(()).ok();
+                false
+            } else {
+                true
+            }
+        });
         Ok(())
     }
 
@@ -1305,7 +1311,7 @@ impl Buffer {
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Local>,
-    ) -> impl 'static + Future<Output = ()> {
+    ) -> impl 'static + Future<Output = Result<()>> {
         let mut futures = Vec::new();
         for edit_id in edit_ids {
             if !self.version.observed(edit_id) {
@@ -1317,15 +1323,18 @@ impl Buffer {
 
         async move {
             for mut future in futures {
-                future.recv().await;
+                if future.recv().await.is_none() {
+                    Err(anyhow!("gave up waiting for edits"))?;
+                }
             }
+            Ok(())
         }
     }
 
     pub fn wait_for_anchors<'a>(
         &mut self,
         anchors: impl IntoIterator<Item = &'a Anchor>,
-    ) -> impl 'static + Future<Output = ()> {
+    ) -> impl 'static + Future<Output = Result<()>> {
         let mut futures = Vec::new();
         for anchor in anchors {
             if !self.version.observed(anchor.timestamp)
@@ -1343,19 +1352,34 @@ impl Buffer {
 
         async move {
             for mut future in futures {
-                future.recv().await;
+                if future.recv().await.is_none() {
+                    Err(anyhow!("gave up waiting for anchors"))?;
+                }
             }
+            Ok(())
         }
     }
 
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = ()> {
-        let (tx, mut rx) = barrier::channel();
+    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+        let mut rx = None;
         if !self.snapshot.version.observed_all(&version) {
-            self.version_barriers.push((version, tx));
+            let channel = oneshot::channel();
+            self.wait_for_version_txs.push((version, channel.0));
+            rx = Some(channel.1);
         }
         async move {
-            rx.recv().await;
+            if let Some(mut rx) = rx {
+                if rx.recv().await.is_none() {
+                    Err(anyhow!("gave up waiting for version"))?;
+                }
+            }
+            Ok(())
         }
+    }
+
+    pub fn give_up_waiting(&mut self) {
+        self.edit_id_resolvers.clear();
+        self.wait_for_version_txs.clear();
     }
 
     fn resolve_edit(&mut self, edit_id: clock::Local) {
@@ -1365,7 +1389,7 @@ impl Buffer {
             .into_iter()
             .flatten()
         {
-            let _ = tx.try_send(());
+            tx.try_send(()).ok();
         }
     }
 }
@@ -1480,12 +1504,11 @@ impl Buffer {
         start..end
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn randomly_edit<T>(
-        &mut self,
+    pub fn get_random_edits<T>(
+        &self,
         rng: &mut T,
         edit_count: usize,
-    ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
+    ) -> Vec<(Range<usize>, Arc<str>)>
     where
         T: rand::Rng,
     {
@@ -1504,8 +1527,21 @@ impl Buffer {
 
             edits.push((range, new_text.into()));
         }
+        edits
+    }
 
+    #[allow(clippy::type_complexity)]
+    pub fn randomly_edit<T>(
+        &mut self,
+        rng: &mut T,
+        edit_count: usize,
+    ) -> (Vec<(Range<usize>, Arc<str>)>, Operation)
+    where
+        T: rand::Rng,
+    {
+        let mut edits = self.get_random_edits(rng, edit_count);
         log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
+
         let op = self.edit(edits.iter().cloned());
         if let Operation::Edit(edit) = &op {
             assert_eq!(edits.len(), edit.new_text.len());

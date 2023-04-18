@@ -1,0 +1,43 @@
+name: Randomized Tests
+
+concurrency: randomized-tests
+
+on:
+  push:
+    branches:
+      - randomized-tests-runner
+  schedule:
+     - cron: '0 * * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  ZED_SERVER_URL: https://zed.dev
+  ZED_CLIENT_SECRET_TOKEN: ${{ secrets.ZED_CLIENT_SECRET_TOKEN }}
+
+jobs:
+  tests:
+    name: Run randomized tests
+    runs-on:
+      - self-hosted
+      - randomized-tests
+    steps:
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup update stable
+
+      - name: Install Node
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+          submodules: 'recursive'
+
+      - name: Run randomized tests
+        run: script/randomized-test-ci

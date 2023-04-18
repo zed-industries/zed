@@ -1305,10 +1305,8 @@ impl Workspace {
         RemoveWorktreeFromProject(worktree_id): &RemoveWorktreeFromProject,
         cx: &mut ViewContext<Self>,
     ) {
-        let future = self
-            .project
+        self.project
             .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
-        cx.foreground().spawn(future).detach();
     }
 
     fn project_path_for_path(
@@ -3266,9 +3264,7 @@ mod tests {
         );
 
         // Remove a project folder
-        project
-            .update(cx, |project, cx| project.remove_worktree(worktree_id, cx))
-            .await;
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(
             cx.current_window_title(window_id).as_deref(),
             Some("one.txt — root2")
