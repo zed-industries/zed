@@ -250,6 +250,10 @@ impl LanguageServer {
             log::trace!("incoming message:{}", String::from_utf8_lossy(&buffer));
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
+                dbg!(
+                    msg.method,
+                    notification_handlers.lock().keys().collect::<Vec<_>>()
+                );
                 if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
                     handler(msg.id, msg.params.get(), cx.clone());
                 } else {

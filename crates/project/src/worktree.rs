@@ -536,10 +536,15 @@ impl LocalWorktree {
                 .insert(PathKey(worktree_path.clone()), new_summary);
             let diagnostics_by_server_id =
                 self.diagnostics.entry(worktree_path.clone()).or_default();
-            let ix = match diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
-                Ok(ix) | Err(ix) => ix,
-            };
-            diagnostics_by_server_id[ix] = (server_id, diagnostics);
+            match diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                Ok(ix) => {
+                    diagnostics_by_server_id[ix] = (server_id, diagnostics);
+                }
+
+                Err(ix) => {
+                    diagnostics_by_server_id.insert(ix, (server_id, diagnostics));
+                }
+            }
         }
 
         let updated = !old_summary.is_empty() || !new_summary.is_empty();

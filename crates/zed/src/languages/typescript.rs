@@ -1,14 +1,16 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{future::BoxFuture, FutureExt, StreamExt};
+use gpui::{AppContext, Task};
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use lsp::CodeActionKind;
 use node_runtime::NodeRuntime;
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
+    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -25,7 +27,7 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
-    vec![server_path.into(), "--stdin".into()]
+    vec![server_path.into(), "--stdio".into()]
 }
 
 pub struct TypeScriptLspAdapter {
@@ -56,7 +58,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        dbg!();
         Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
@@ -173,15 +174,67 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const SERVER_PATH: &'static str = "node_modules/eslint/bin/eslint.js";
+    const SERVER_PATH: &'static str =
+        "node_modules/vscode-langservers-extracted/lib/eslint-language-server/eslintServer.js";
 
     pub fn new(node: Arc<NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
     }
 }
 
+// "workspaceFolder": {
+//     "name": "testing_ts",
+//     "uri": "file:///Users/julia/Stuff/testing_ts"
+// },
+// "workingDirectory": "file:///Users/julia/Stuff/testing_ts",
+// "nodePath": "/opt/homebrew/opt/node@18/bin/node",
+// "experimental": {},
+
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
+    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
+        Some(
+            future::ready(json!({
+                "": {
+                      "validate": "on",
+                      "packageManager": "npm",
+                      "useESLintClass": false,
+                      "experimental": {
+                        "useFlatConfig": false
+                      },
+                      "codeActionOnSave": {
+                        "mode": "all"
+                      },
+                      "format": false,
+                      "quiet": false,
+                      "onIgnoredFiles": "off",
+                      "options": {},
+                      "rulesCustomizations": [],
+                      "run": "onType",
+                      "problems": {
+                        "shortenToSingleLine": false
+                      },
+                      "nodePath": null,
+                      "workspaceFolder": {
+                        "name": "testing_ts",
+                        "uri": "file:///Users/julia/Stuff/testing_ts"
+                      },
+                      "codeAction": {
+                        "disableRuleComment": {
+                          "enable": true,
+                          "location": "separateLine",
+                          "commentStyle": "line"
+                        },
+                        "showDocumentation": {
+                          "enable": true
+                        }
+                      }
+                }
+            }))
+            .boxed(),
+        )
+    }
+
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("eslint".into())
     }
@@ -191,7 +244,9 @@ impl LspAdapter for EsLintLspAdapter {
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
-            self.node.npm_package_latest_version("eslint").await?,
+            self.node
+                .npm_package_latest_version("vscode-langservers-extracted")
+                .await?,
         ))
     }
 
@@ -206,7 +261,10 @@ impl LspAdapter for EsLintLspAdapter {
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
-                .npm_install_packages([("eslint", version.as_str())], &container_dir)
+                .npm_install_packages(
+                    [("vscode-langservers-extracted", version.as_str())],
+                    &container_dir,
+                )
                 .await?;
         }
 

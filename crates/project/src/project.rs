@@ -2217,6 +2217,7 @@ impl Project {
                         move |params, mut cx| {
                             let languages = languages.clone();
                             async move {
+                                dbg!(&params.items);
                                 let workspace_config =
                                     cx.update(|cx| languages.workspace_configuration(cx)).await;
                                 Ok(params
