@@ -249,7 +249,7 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
-    fn tab_tooltip_text<'a>(&'a self, _: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
         Some("Send Feedback".into())
     }
 

@@ -95,7 +95,7 @@ impl View for SharedScreen {
 }
 
 impl Item for SharedScreen {
-    fn tab_tooltip_text<'a>(&'a self, _: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {

@@ -226,7 +226,7 @@ impl View for ProjectSearchView {
 }
 
 impl Item for ProjectSearchView {
-    fn tab_tooltip_text<'a>(&'a self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
         Some(self.query_editor.read(cx).text(cx).into())
     }
 

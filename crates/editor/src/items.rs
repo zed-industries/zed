@@ -514,7 +514,7 @@ impl Item for Editor {
         }
     }
 
-    fn tab_tooltip_text<'a>(&self, cx: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
         let file_path = self
             .buffer()
             .read(cx)

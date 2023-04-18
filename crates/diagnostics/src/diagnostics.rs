@@ -532,7 +532,7 @@ impl Item for ProjectDiagnosticsEditor {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn tab_tooltip_text<'a>(&'a self, _: &'a AppContext) -> Option<Cow<'a, str>> {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
         Some("Project Diagnostics".into())
     }
 
