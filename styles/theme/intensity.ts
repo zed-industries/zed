@@ -34,6 +34,54 @@ interface IntensityRange {
     scaleFactor: number
 }
 
+function checkIntensity(number: number | Intensity): Intensity {
+    let intensity: Intensity
+
+    if (typeof number === "number") {
+        intensity = numberToIntensity(number)
+    } else {
+        intensity = number
+    }
+
+    if (intensity < 1 || intensity > 100) {
+        throw new Error(
+            `Intensity ${intensity} out of range. Intensity must be between 1 and 100`
+        )
+    }
+
+    return intensity
+}
+
+export function addToIntensity(
+    startingIntensity: Intensity,
+    intensityToAdd: Intensity
+): Intensity {
+    checkIntensity(startingIntensity)
+    checkIntensity(intensityToAdd)
+
+    let newIntensity = startingIntensity + intensityToAdd
+
+    // Bounce back if we're out of range
+    if (newIntensity > 100) {
+        newIntensity = startingIntensity - intensityToAdd
+    } else if (newIntensity < 1) {
+        newIntensity = startingIntensity + Math.abs(intensityToAdd)
+    }
+
+    return checkIntensity(newIntensity)
+}
+
+export function addToElementIntensities(
+    startingIntensity: ElementIntensities<Intensity>,
+    intensityToAdd: Intensity
+): ElementIntensities<Intensity> {
+    return {
+        bg: addToIntensity(startingIntensity.bg, intensityToAdd),
+        border: addToIntensity(startingIntensity.border, intensityToAdd),
+        fg: addToIntensity(startingIntensity.fg, intensityToAdd),
+    }
+}
+
 export function buildThemeIntensity(themeConfig: ThemeConfig): IntensityRange {
     const neutral = themeConfig.colors.neutral
     const appearance = themeConfig.appearance // "light" or "dark"
@@ -65,7 +113,7 @@ export function buildThemeIntensity(themeConfig: ThemeConfig): IntensityRange {
     }
 
     if (minIntensity > maxIntensity) {
-        throw new Error("Min intensity must be less than max intensity")
+        throw new Error(`${themeConfig.name}: Min intensity must be less than max intensity`)
     }
 
     const intensity: IntensityRange = {
@@ -107,17 +155,11 @@ export function useElementIntensities(
     theme: Theme,
     intensity: ElementIntensities<ElementIntensity>
 ): ElementIntensities<Intensity> {
-    if (Array.isArray(intensity)) {
-        return {
-            bg: theme.appearance === "light" ? intensity[1] : intensity[0],
-            border: theme.appearance === "light" ? intensity[1] : intensity[0],
-            fg: theme.appearance === "light" ? intensity[1] : intensity[0],
-        }
-    } else {
-        return {
-            bg: intensity.bg as Intensity,
-            border: intensity.border as Intensity,
-            fg: intensity.fg as Intensity,
-        }
+    const elementIntensities: ElementIntensities<Intensity> = {
+        bg: Array.isArray(intensity.bg) ? (theme.appearance === "light" ? intensity.bg[1] : intensity.bg[0]) : intensity.bg,
+        border: Array.isArray(intensity.border) ? (theme.appearance === "light" ? intensity.border[1] : intensity.border[0]) : intensity.border,
+        fg: Array.isArray(intensity.fg) ? (theme.appearance === "light" ? intensity.fg[1] : intensity.fg[0]) : intensity.fg,
     }
+
+    return { ...intensity, ...elementIntensities }
 }

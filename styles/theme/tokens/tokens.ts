@@ -6,11 +6,11 @@ export type ColorToken = {
 
 export type TokenFamily =
     | {
-          [key: string]: object
-      }
+        [key: string]: object
+    }
     | {
-          [key: string]: Token
-      }
+        [key: string]: Token
+    }
 
 export type Token = ColorToken | TokenFamily
 
@@ -26,11 +26,11 @@ function createTokens(): Tokens {
 
     const tokens: Tokens = {
         /** Creates a new token for ${name} */
-        addToken: function (name: string, token: Token) {
+        addToken: function(name: string, token: Token) {
             values[name] = token
         },
         /** Adds a token to an existing token family ${name} */
-        addToToken: function (name: string, token: Token) {
+        addToToken: function(name: string, token: Token) {
             if (values[name]) {
                 values[name] = {
                     ...values[name],
@@ -40,12 +40,14 @@ function createTokens(): Tokens {
                 tokens.addToken(name, token)
             }
         },
-        colorToken: function (value: string, description?: string) {
+        colorToken: function(value: string, description?: string) {
             const token: ColorToken = {
                 type: "color",
                 value: value,
                 description: description,
             }
+
+            if (!token.value) throw new Error("Color token must have a value")
 
             return token
         },

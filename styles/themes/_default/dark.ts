@@ -13,7 +13,7 @@ const systemDark: ThemeConfig = {
     license: "MIT",
     url: "https://zed.dev",
     colors: {
-        neutral: [neutral[0], neutral[100]],
+        neutral: [neutral[100], neutral[0]],
         accent: ["#ff6a00", "#ff8f00", "#c43e00"],
         error: ["#420904", "#60201A", "#9A2C1B", "#BA4734", "BD6755"],
         info: "#2196f3",
