@@ -293,8 +293,8 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn label_for_completion(
         &self,
-        item: &lsp::CompletionItem,
-        language: &Arc<language::Language>,
+        _item: &lsp::CompletionItem,
+        _language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
         None
     }

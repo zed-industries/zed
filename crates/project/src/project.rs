@@ -2161,8 +2161,7 @@ impl Project {
             }
 
             if !self.language_server_ids.contains_key(&key) {
-                let adapter = self.setup_language_adapter(
-                    worktree_path.clone(),
+                let adapter = self.setup_pending_language_server(
                     initialization_options,
                     pending_server,
                     adapter.clone(),
@@ -2175,9 +2174,8 @@ impl Project {
         }
     }
 
-    fn setup_language_adapter(
+    fn setup_pending_language_server(
         &mut self,
-        worktree_path: Arc<Path>,
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
