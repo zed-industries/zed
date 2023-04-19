@@ -187,8 +187,9 @@ impl<'a> EditorTestContext<'a> {
             "Initial Editor State: \"{}\"",
             marked_text.escape_debug().to_string()
         ));
-        let (_, selection_ranges) = marked_text_ranges(marked_text, true);
+        let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update(self.cx, |editor, cx| {
+            assert_eq!(editor.text(cx), unmarked_text);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select_ranges(selection_ranges)
             })
