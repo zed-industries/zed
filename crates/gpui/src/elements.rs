@@ -38,39 +38,14 @@ use crate::{
 use anyhow::{anyhow, Result};
 use core::panic;
 use json::ToJson;
-use std::{any::Any, borrow::Cow, marker::PhantomData, mem, ops::Range};
+use std::{
+    any::Any,
+    borrow::Cow,
+    marker::PhantomData,
+    mem,
+    ops::{Deref, DerefMut, Range},
+};
 use util::ResultExt;
-
-trait AnyDrawable<V: View> {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> Vector2F;
-
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        origin: Vector2F,
-        visible_bounds: RectF,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    );
-
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        view: &V,
-        cx: &ViewContext<V>,
-    ) -> Option<RectF>;
-
-    fn debug(&self, view: &V, cx: &ViewContext<V>) -> serde_json::Value;
-
-    fn size(&self) -> Vector2F;
-
-    fn metadata(&self) -> Option<&dyn Any>;
-}
 
 pub trait Drawable<V: View> {
     type LayoutState;
@@ -122,7 +97,7 @@ pub trait Drawable<V: View> {
         Self: 'static + Sized,
     {
         Element {
-            element: Box::new(Lifecycle::Init { element: self }),
+            drawable: Box::new(Lifecycle::Init { element: self }),
             view_type: PhantomData,
             name: None,
         }
@@ -143,7 +118,7 @@ pub trait Drawable<V: View> {
         Self: 'static + Sized,
     {
         Element {
-            element: Box::new(Lifecycle::Init { element: self }),
+            drawable: Box::new(Lifecycle::Init { element: self }),
             view_type: PhantomData,
             name: Some(name.into()),
         }
@@ -234,7 +209,38 @@ pub trait Drawable<V: View> {
     }
 }
 
-pub enum Lifecycle<V: View, E: Drawable<V>> {
+trait AnyDrawable<V: View> {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Vector2F;
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    );
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF>;
+
+    fn debug(&self, view: &V, cx: &ViewContext<V>) -> serde_json::Value;
+
+    fn size(&self) -> Vector2F;
+
+    fn metadata(&self) -> Option<&dyn Any>;
+}
+
+enum Lifecycle<V: View, E: Drawable<V>> {
     Empty,
     Init {
         element: E,
@@ -420,7 +426,7 @@ impl<V: View, E: Drawable<V>> Default for Lifecycle<V, E> {
 }
 
 pub struct Element<V: View> {
-    element: Box<dyn AnyDrawable<V>>,
+    drawable: Box<dyn AnyDrawable<V>>,
     view_type: PhantomData<V>,
     name: Option<Cow<'static, str>>,
 }
@@ -431,7 +437,7 @@ impl<V: View> Element<V> {
     }
 
     pub fn metadata<T: 'static>(&self) -> Option<&T> {
-        self.element
+        self.drawable
             .metadata()
             .and_then(|data| data.downcast_ref::<T>())
     }
@@ -442,7 +448,7 @@ impl<V: View> Element<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Vector2F {
-        self.element.layout(constraint, view, cx)
+        self.drawable.layout(constraint, view, cx)
     }
 
     pub fn paint(
@@ -453,7 +459,7 @@ impl<V: View> Element<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
-        self.element.paint(scene, origin, visible_bounds, view, cx);
+        self.drawable.paint(scene, origin, visible_bounds, view, cx);
     }
 
     pub fn rect_for_text_range(
@@ -462,15 +468,15 @@ impl<V: View> Element<V> {
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.element.rect_for_text_range(range_utf16, view, cx)
+        self.drawable.rect_for_text_range(range_utf16, view, cx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.element.size()
+        self.drawable.size()
     }
 
     pub fn debug(&self, view: &V, cx: &ViewContext<V>) -> json::Value {
-        let mut value = self.element.debug(view, cx);
+        let mut value = self.drawable.debug(view, cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {
@@ -489,7 +495,7 @@ impl<V: View> Element<V> {
         T: 'static,
         F: FnOnce(Option<&T>) -> R,
     {
-        f(self.element.metadata().and_then(|m| m.downcast_ref()))
+        f(self.drawable.metadata().and_then(|m| m.downcast_ref()))
     }
 }
 
@@ -501,6 +507,81 @@ pub struct RootElement<V: View> {
 impl<V: View> RootElement<V> {
     pub fn new(element: Element<V>, view: WeakViewHandle<V>) -> Self {
         Self { element, view }
+    }
+}
+
+pub trait Component<V: View> {
+    fn render(&self, view: &mut V, cx: &mut ViewContext<V>) -> Element<V>;
+}
+
+pub struct ComponentHost<V: View, C: Component<V>> {
+    component: C,
+    view_type: PhantomData<V>,
+}
+
+impl<V: View, C: Component<V>> Deref for ComponentHost<V, C> {
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        &self.component
+    }
+}
+
+impl<V: View, C: Component<V>> DerefMut for ComponentHost<V, C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.component
+    }
+}
+
+impl<V: View, C: Component<V>> Drawable<V> for ComponentHost<V, C> {
+    type LayoutState = Element<V>;
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, Element<V>) {
+        let mut element = self.component.render(view, cx);
+        let size = element.layout(constraint, view, cx);
+        (size, element)
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        element: &mut Element<V>,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        element.paint(scene, bounds.origin(), visible_bounds, view, cx);
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        element: &Element<V>,
+        _: &(),
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        element.rect_for_text_range(range_utf16, view, cx)
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        element: &Element<V>,
+        _: &(),
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        element.debug(view, cx)
     }
 }
 
