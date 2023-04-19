@@ -366,7 +366,7 @@ fn init_panic_hook(app_version: String) {
             }),
             backtrace: format!("{:?}", backtrace)
                 .split("\n")
-                .map(|a| a.to_string())
+                .map(|line| line.to_string())
                 .collect(),
             // modified_backtrace: None,
         };
