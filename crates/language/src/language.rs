@@ -817,7 +817,9 @@ impl LanguageRegistry {
                     .detach();
                 Ok(server)
             });
-            return vec![PendingLanguageServer { server_id: 0, task }];
+
+            let server_id = post_inc(&mut self.state.write().next_language_server_id);
+            return vec![PendingLanguageServer { server_id, task }];
         }
 
         let download_dir = self

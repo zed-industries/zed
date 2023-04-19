@@ -400,7 +400,7 @@ async fn test_managing_language_servers(
             .text_document,
         lsp::TextDocumentItem {
             uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
-            version: 1,
+            version: 0,
             text: rust_buffer.read_with(cx, |buffer, _| buffer.text()),
             language_id: Default::default()
         }
@@ -427,7 +427,7 @@ async fn test_managing_language_servers(
             },
             lsp::TextDocumentItem {
                 uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
-                version: 1,
+                version: 0,
                 text: rust_buffer2.read_with(cx, |buffer, _| buffer.text()),
                 language_id: Default::default()
             }

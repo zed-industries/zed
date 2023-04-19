@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::{AppContext, Task};
+use futures::{future::BoxFuture, FutureExt};
+use gpui::AppContext;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use lsp::CodeActionKind;
 use node_runtime::NodeRuntime;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use smol::fs;
 use std::{
     any::Any,
