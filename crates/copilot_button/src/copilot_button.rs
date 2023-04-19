@@ -254,12 +254,8 @@ impl CopilotButton {
 
             menu_options.push(ContextMenuItem::item(
                 format!(
-                    "{} Copilot for {}",
-                    if language_enabled {
-                        "Disable"
-                    } else {
-                        "Enable"
-                    },
+                    "{} Suggestions for {}",
+                    if language_enabled { "Hide" } else { "Show" },
                     language
                 ),
                 ToggleCopilotForLanguage {
@@ -271,9 +267,9 @@ impl CopilotButton {
         let globally_enabled = cx.global::<Settings>().show_copilot_suggestions(None);
         menu_options.push(ContextMenuItem::item(
             if globally_enabled {
-                "Disable Copilot Globally"
+                "Hide Suggestions for All Files"
             } else {
-                "Enable Copilot Globally"
+                "Show Suggestions for All Files"
             },
             ToggleCopilotGlobally,
         ));
