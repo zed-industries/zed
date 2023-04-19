@@ -302,14 +302,26 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             let app_state = app_state.upgrade()?;
             let window_id = cx.window_id();
             let action = action.clone();
-            let close = workspace.prepare_to_close(false, cx);
+            let is_remote = workspace.project.read(cx).is_remote();
+            let has_worktree = workspace.project.read(cx).worktrees(cx).next().is_some();
+            let has_dirty_items = workspace.items(cx).any(|item| item.is_dirty(cx));
+            let close_task = if is_remote || has_worktree || has_dirty_items {
+                None
+            } else {
+                Some(workspace.prepare_to_close(false, cx))
+            };
 
             Some(cx.spawn_weak(|_, mut cx| async move {
-                let can_close = close.await?;
-                if can_close {
-                    cx.update(|cx| open_paths(&action.paths, &app_state, Some(window_id), cx))
-                        .await;
-                }
+                let window_id_to_replace = if let Some(close_task) = close_task {
+                    if !close_task.await? {
+                        return Ok(());
+                    }
+                    Some(window_id)
+                } else {
+                    None
+                };
+                cx.update(|cx| open_paths(&action.paths, &app_state, window_id_to_replace, cx))
+                    .await;
                 Ok(())
             }))
         }
