@@ -6,8 +6,9 @@ use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::HashSet;
 use editor::{
-    ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo,
-    Rename, ToOffset, ToggleCodeActions, Undo,
+    test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
+    ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions,
+    Undo,
 };
 use fs::{FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
@@ -15,6 +16,7 @@ use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, ModelHandle, TestAppContext,
     ViewHandle,
 };
+use indoc::indoc;
 use language::{
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, OffsetRangeExt, Point, Rope,
@@ -3040,6 +3042,104 @@ async fn test_editing_while_guest_opens_buffer(
     let buffer_b = buffer_b.await.unwrap();
     cx_a.foreground().run_until_parked();
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), text));
+}
+
+#[gpui::test]
+async fn test_newline_above_or_below_does_not_move_guest_cursor(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree("/dir", json!({ "a.txt": "Some text\n" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+    // Open a buffer as client A
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+    let (_, window_a) = cx_a.add_window(|_| EmptyView);
+    let editor_a = cx_a.add_view(&window_a, |cx| {
+        Editor::for_buffer(buffer_a, Some(project_a), cx)
+    });
+    let mut editor_cx_a = EditorTestContext {
+        cx: cx_a,
+        window_id: window_a.id(),
+        editor: editor_a,
+    };
+
+    // Open a buffer as client B
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+    let (_, window_b) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(&window_b, |cx| {
+        Editor::for_buffer(buffer_b, Some(project_b), cx)
+    });
+    let mut editor_cx_b = EditorTestContext {
+        cx: cx_b,
+        window_id: window_b.id(),
+        editor: editor_b,
+    };
+
+    // Test newline above
+    editor_cx_a.set_selections_state(indoc! {"
+        Some textˇ
+    "});
+    editor_cx_b.set_selections_state(indoc! {"
+        Some textˇ
+    "});
+    editor_cx_a.update_editor(|editor, cx| editor.newline_above(&editor::NewlineAbove, cx));
+    deterministic.run_until_parked();
+    editor_cx_a.assert_editor_state(indoc! {"
+        ˇ
+        Some text
+    "});
+    editor_cx_b.assert_editor_state(indoc! {"
+
+        Some textˇ
+    "});
+
+    // Test newline below
+    editor_cx_a.set_selections_state(indoc! {"
+
+        Some textˇ
+    "});
+    editor_cx_b.set_selections_state(indoc! {"
+
+        Some textˇ
+    "});
+    editor_cx_a.update_editor(|editor, cx| editor.newline_below(&editor::NewlineBelow, cx));
+    deterministic.run_until_parked();
+    editor_cx_a.assert_editor_state(indoc! {"
+
+        Some text
+        ˇ
+    "});
+    editor_cx_b.assert_editor_state(indoc! {"
+
+        Some textˇ
+
+    "});
 }
 
 #[gpui::test(iterations = 10)]

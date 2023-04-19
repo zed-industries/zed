@@ -184,6 +184,7 @@ actions!(
         Backspace,
         Delete,
         Newline,
+        NewlineAbove,
         NewlineBelow,
         GoToDiagnostic,
         GoToPrevDiagnostic,
@@ -301,6 +302,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
+    cx.add_action(Editor::newline_above);
     cx.add_action(Editor::newline_below);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
@@ -2118,7 +2120,7 @@ impl Editor {
         });
     }
 
-    pub fn newline_below(&mut self, _: &NewlineBelow, cx: &mut ViewContext<Self>) {
+    pub fn newline_above(&mut self, _: &NewlineAbove, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
 
@@ -2130,19 +2132,17 @@ impl Editor {
             let cursor = selection.head();
             let row = cursor.row;
 
-            let end_of_line = snapshot
-                .clip_point(Point::new(row, snapshot.line_len(row)), Bias::Left)
-                .to_point(&snapshot);
+            let start_of_line = snapshot.clip_point(Point::new(row, 0), Bias::Left);
 
             let newline = "\n".to_string();
-            edits.push((end_of_line..end_of_line, newline));
+            edits.push((start_of_line..start_of_line, newline));
 
-            rows_inserted += 1;
             rows.push(row + rows_inserted);
+            rows_inserted += 1;
         }
 
         self.transact(cx, |editor, cx| {
-            editor.edit_with_autoindent(edits, cx);
+            editor.edit(edits, cx);
 
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut index = 0;
@@ -2157,6 +2157,85 @@ impl Editor {
                     (clipped, SelectionGoal::None)
                 });
             });
+
+            let mut indent_edits = Vec::new();
+            let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+            for row in rows {
+                let indents = multibuffer_snapshot.suggested_indents(row..row + 1, cx);
+                for (row, indent) in indents {
+                    if indent.len == 0 {
+                        continue;
+                    }
+
+                    let text = match indent.kind {
+                        IndentKind::Space => " ".repeat(indent.len as usize),
+                        IndentKind::Tab => "\t".repeat(indent.len as usize),
+                    };
+                    let point = Point::new(row, 0);
+                    indent_edits.push((point..point, text));
+                }
+            }
+            editor.edit(indent_edits, cx);
+        });
+    }
+
+    pub fn newline_below(&mut self, _: &NewlineBelow, cx: &mut ViewContext<Self>) {
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+
+        let mut edits = Vec::new();
+        let mut rows = Vec::new();
+        let mut rows_inserted = 0;
+
+        for selection in self.selections.all_adjusted(cx) {
+            let cursor = selection.head();
+            let row = cursor.row;
+
+            let point = Point::new(row + 1, 0);
+            let start_of_line = snapshot.clip_point(point, Bias::Left);
+
+            let newline = "\n".to_string();
+            edits.push((start_of_line..start_of_line, newline));
+
+            rows_inserted += 1;
+            rows.push(row + rows_inserted);
+        }
+
+        self.transact(cx, |editor, cx| {
+            editor.edit(edits, cx);
+
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let mut index = 0;
+                s.move_cursors_with(|map, _, _| {
+                    let row = rows[index];
+                    index += 1;
+
+                    let point = Point::new(row, 0);
+                    let boundary = map.next_line_boundary(point).1;
+                    let clipped = map.clip_point(boundary, Bias::Left);
+
+                    (clipped, SelectionGoal::None)
+                });
+            });
+
+            let mut indent_edits = Vec::new();
+            let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+            for row in rows {
+                let indents = multibuffer_snapshot.suggested_indents(row..row + 1, cx);
+                for (row, indent) in indents {
+                    if indent.len == 0 {
+                        continue;
+                    }
+
+                    let text = match indent.kind {
+                        IndentKind::Space => " ".repeat(indent.len as usize),
+                        IndentKind::Tab => "\t".repeat(indent.len as usize),
+                    };
+                    let point = Point::new(row, 0);
+                    indent_edits.push((point..point, text));
+                }
+            }
+            editor.edit(indent_edits, cx);
         });
     }
 

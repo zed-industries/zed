@@ -55,6 +55,7 @@ toml = "0.5.8"
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
+indoc = "1.0.4"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
