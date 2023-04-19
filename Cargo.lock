@@ -1213,6 +1213,7 @@ dependencies = [
  "git",
  "gpui",
  "hyper",
+ "indoc",
  "language",
  "lazy_static",
  "lipsum",

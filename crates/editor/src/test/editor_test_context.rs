@@ -167,7 +167,7 @@ impl<'a> EditorTestContext<'a> {
     ///
     /// See the `util::test::marked_text_ranges` function for more information.
     pub fn set_state(&mut self, marked_text: &str) -> ContextHandle {
-        let _state_context = self.add_assertion_context(format!(
+        let state_context = self.add_assertion_context(format!(
             "Initial Editor State: \"{}\"",
             marked_text.escape_debug().to_string()
         ));
@@ -178,7 +178,23 @@ impl<'a> EditorTestContext<'a> {
                 s.select_ranges(selection_ranges)
             })
         });
-        _state_context
+        state_context
+    }
+
+    /// Only change the editor's selections
+    pub fn set_selections_state(&mut self, marked_text: &str) -> ContextHandle {
+        let state_context = self.add_assertion_context(format!(
+            "Initial Editor State: \"{}\"",
+            marked_text.escape_debug().to_string()
+        ));
+        let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
+        self.editor.update(self.cx, |editor, cx| {
+            assert_eq!(editor.text(cx), unmarked_text);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges(selection_ranges)
+            })
+        });
+        state_context
     }
 
     /// Make an assertion about the editor's text and the ranges and directions
@@ -189,10 +205,11 @@ impl<'a> EditorTestContext<'a> {
     pub fn assert_editor_state(&mut self, marked_text: &str) {
         let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
         let buffer_text = self.buffer_text();
-        assert_eq!(
-            buffer_text, unmarked_text,
-            "Unmarked text doesn't match buffer text"
-        );
+
+        if buffer_text != unmarked_text {
+            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}Raw unmarked text\n{unmarked_text}");
+        }
+
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
@@ -254,10 +271,10 @@ impl<'a> EditorTestContext<'a> {
             panic!(
                 indoc! {"
                     {}Editor has unexpected selections.
-                    
+
                     Expected selections:
                     {}
-                    
+
                     Actual selections:
                     {}
                 "},
