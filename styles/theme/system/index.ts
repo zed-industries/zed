@@ -1,3 +1,3 @@
-import * as color from '@system/color';
+import * as color from "@system/color"
 
 export { color }

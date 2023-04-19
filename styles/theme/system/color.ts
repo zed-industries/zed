@@ -48,7 +48,6 @@ export interface ColorFamilyConfig {
     }
 }
 
-
 // These are the source colors for the color scales in the system.
 // These should never directly be used directly in components or themes as they generate thousands of lines of code.
 // Instead, use the outputs from the reference palette which exports a smaller subset of colors.

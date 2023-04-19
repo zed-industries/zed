@@ -77,30 +77,6 @@ function generateColor(
  * @param {Boolean} inverted - Specifies whether the color scale should be inverted or not.
  *
  * @returns {ColorScale} The generated color scale.
- *
- * Example:
- * ```ts
- * const colorScale = generateColorScale({
- *   name: "blue",
- *   color: {
- *     hue: {
- *       start: 210,
- *       end: 240,
- *       curve: "easeInOut"
- *     },
- *     saturation: {
- *       start: 100,
- *       end: 100,
- *       curve: "easeInOut"
- *     },
- *     lightness: {
- *       start: 50,
- *       end: 50,
- *       curve: "easeInOut"
- *     }
- *   }
- * });
- * ```
  */
 export function generateColorScale(
     config: ColorFamilyConfig,

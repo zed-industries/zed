@@ -2,12 +2,12 @@
 
 ## Goals
 
-- Intensity: Describe visual relationship between elements
-- Use Components: Encourage reusability
-- Make everything you need to build a theme contained in `/theme`
-- Make Rust the source of truth for element types
-- Reduce UI layers
-- Ship a base ui theme
+-   Intensity: Describe visual relationship between elements
+-   Use Components: Encourage reusability
+-   Make everything you need to build a theme contained in `/theme`
+-   Make Rust the source of truth for element types
+-   Reduce UI layers
+-   Ship a base ui theme
 
 ## Terminology
 

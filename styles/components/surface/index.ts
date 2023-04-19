@@ -1,4 +1,9 @@
-import { ElementIntensities, Intensity, addToElementIntensities, useElementIntensities } from "@theme/intensity"
+import {
+    ElementIntensities,
+    Intensity,
+    addToElementIntensities,
+    useElementIntensities,
+} from "@theme/intensity"
 import { ContainerStyle } from "@theme/container"
 import { Theme } from "@theme/config"
 import { useColors } from "@theme/colors"
@@ -7,7 +12,11 @@ import { buildSurfaceTokens } from "./tokens"
 
 export type SurfaceLevel = 0 | 1
 
-export function surfaceStyle(theme: Theme, level: SurfaceLevel, intensity: ElementIntensities): Partial<ContainerStyle> {
+export function surfaceStyle(
+    theme: Theme,
+    level: SurfaceLevel,
+    intensity: ElementIntensities
+): Partial<ContainerStyle> {
     const color = useColors(theme)
 
     const resolvedIntensity = useElementIntensities(theme, intensity)
@@ -37,7 +46,7 @@ export function buildSurfaceLevels(theme: Theme) {
     const surface = {
         background: surfaceStyle(theme, 0, surfaceIntensities),
         panel: surfaceStyle(theme, 1, surfaceIntensities),
-        pane: surfaceStyle(theme, 1, surfaceIntensities)
+        pane: surfaceStyle(theme, 1, surfaceIntensities),
     }
 
     return surface

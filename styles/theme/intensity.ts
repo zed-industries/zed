@@ -113,7 +113,9 @@ export function buildThemeIntensity(themeConfig: ThemeConfig): IntensityRange {
     }
 
     if (minIntensity > maxIntensity) {
-        throw new Error(`${themeConfig.name}: Min intensity must be less than max intensity`)
+        throw new Error(
+            `${themeConfig.name}: Min intensity must be less than max intensity`
+        )
     }
 
     const intensity: IntensityRange = {
@@ -156,9 +158,21 @@ export function useElementIntensities(
     intensity: ElementIntensities<ElementIntensity>
 ): ElementIntensities<Intensity> {
     const elementIntensities: ElementIntensities<Intensity> = {
-        bg: Array.isArray(intensity.bg) ? (theme.appearance === "light" ? intensity.bg[1] : intensity.bg[0]) : intensity.bg,
-        border: Array.isArray(intensity.border) ? (theme.appearance === "light" ? intensity.border[1] : intensity.border[0]) : intensity.border,
-        fg: Array.isArray(intensity.fg) ? (theme.appearance === "light" ? intensity.fg[1] : intensity.fg[0]) : intensity.fg,
+        bg: Array.isArray(intensity.bg)
+            ? theme.appearance === "light"
+                ? intensity.bg[1]
+                : intensity.bg[0]
+            : intensity.bg,
+        border: Array.isArray(intensity.border)
+            ? theme.appearance === "light"
+                ? intensity.border[1]
+                : intensity.border[0]
+            : intensity.border,
+        fg: Array.isArray(intensity.fg)
+            ? theme.appearance === "light"
+                ? intensity.fg[1]
+                : intensity.fg[0]
+            : intensity.fg,
     }
 
     return { ...intensity, ...elementIntensities }

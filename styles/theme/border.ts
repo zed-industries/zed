@@ -13,7 +13,11 @@ export interface Border {
 
 export type BorderOptions = Partial<Border>
 
-export function border(theme: Theme, intensity: ElementIntensities, options?: BorderOptions): Border {
+export function border(
+    theme: Theme,
+    intensity: ElementIntensities,
+    options?: BorderOptions
+): Border {
     const color = useColors(theme)
 
     const resolvedIntensity = useElementIntensities(theme, intensity)

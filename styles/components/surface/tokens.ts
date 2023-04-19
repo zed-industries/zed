@@ -17,7 +17,7 @@ export function buildSurfaceTokens(theme: Theme): void {
         panel: {
             bg: tokens.colorToken(surface.panel.background),
             border: tokens.colorToken(surface.panel.border.color),
-        }
+        },
     }
 
     // Push tokens into the global token object
