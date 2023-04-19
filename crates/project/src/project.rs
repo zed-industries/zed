@@ -243,7 +243,6 @@ pub struct ProjectPath {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DiagnosticSummary {
-    pub language_server_id: usize,
     pub error_count: usize,
     pub warning_count: usize,
 }
@@ -314,12 +313,8 @@ pub struct Hover {
 pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
 
 impl DiagnosticSummary {
-    fn new<'a, T: 'a>(
-        language_server_id: usize,
-        diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>,
-    ) -> Self {
+    fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
         let mut this = Self {
-            language_server_id,
             error_count: 0,
             warning_count: 0,
         };
@@ -341,10 +336,10 @@ impl DiagnosticSummary {
         self.error_count == 0 && self.warning_count == 0
     }
 
-    pub fn to_proto(&self, path: &Path) -> proto::DiagnosticSummary {
+    pub fn to_proto(&self, language_server_id: usize, path: &Path) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_string_lossy().to_string(),
-            language_server_id: self.language_server_id as u64,
+            language_server_id: language_server_id as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
         }
@@ -4731,7 +4726,7 @@ impl Project {
 
     pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
-        for (_, path_summary) in self.diagnostic_summaries(cx) {
+        for (_, _, path_summary) in self.diagnostic_summaries(cx) {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
         }
@@ -4741,13 +4736,15 @@ impl Project {
     pub fn diagnostic_summaries<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = (ProjectPath, DiagnosticSummary)> + 'a {
+    ) -> impl Iterator<Item = (ProjectPath, usize, DiagnosticSummary)> + 'a {
         self.visible_worktrees(cx).flat_map(move |worktree| {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             worktree
                 .diagnostic_summaries()
-                .map(move |(path, summary)| (ProjectPath { worktree_id, path }, summary))
+                .map(move |(path, server_id, summary)| {
+                    (ProjectPath { worktree_id, path }, server_id, summary)
+                })
         })
     }
 

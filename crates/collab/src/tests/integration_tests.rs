@@ -3477,6 +3477,7 @@ async fn test_collaborating_with_diagnostics(
                     worktree_id,
                     path: Arc::from(Path::new("a.rs")),
                 },
+                0,
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 0,
@@ -3512,6 +3513,7 @@ async fn test_collaborating_with_diagnostics(
                 worktree_id,
                 path: Arc::from(Path::new("a.rs")),
             },
+            0,
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
@@ -3552,10 +3554,10 @@ async fn test_collaborating_with_diagnostics(
                     worktree_id,
                     path: Arc::from(Path::new("a.rs")),
                 },
+                0,
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 1,
-                    ..Default::default()
                 },
             )]
         );
@@ -3568,10 +3570,10 @@ async fn test_collaborating_with_diagnostics(
                     worktree_id,
                     path: Arc::from(Path::new("a.rs")),
                 },
+                0,
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 1,
-                    ..Default::default()
                 },
             )]
         );

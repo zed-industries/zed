@@ -168,7 +168,7 @@ impl ProjectDiagnosticsEditor {
         let project = project_handle.read(cx);
         let paths_to_update = project
             .diagnostic_summaries(cx)
-            .map(|e| (e.0, e.1.language_server_id))
+            .map(|(path, server_id, _)| (path, server_id))
             .collect();
         let summary = project.diagnostic_summary(cx);
         let mut this = Self {

@@ -50,7 +50,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeSet};
 use util::{paths::HOME, ResultExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -68,7 +68,7 @@ pub struct LocalWorktree {
     _background_scanner_task: Task<()>,
     share: Option<ShareState>,
     diagnostics: HashMap<Arc<Path>, Vec<(usize, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>)>>,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    diagnostic_summaries: HashMap<Arc<Path>, HashMap<usize, DiagnosticSummary>>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
     visible: bool,
@@ -82,7 +82,7 @@ pub struct RemoteWorktree {
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    diagnostic_summaries: HashMap<Arc<Path>, HashMap<usize, DiagnosticSummary>>,
     visible: bool,
     disconnected: bool,
 }
@@ -463,13 +463,17 @@ impl Worktree {
 
     pub fn diagnostic_summaries(
         &self,
-    ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + '_ {
+    ) -> impl Iterator<Item = (Arc<Path>, usize, DiagnosticSummary)> + '_ {
         match self {
             Worktree::Local(worktree) => &worktree.diagnostic_summaries,
             Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
         }
         .iter()
-        .map(|(path, summary)| (path.0.clone(), *summary))
+        .flat_map(|(path, summaries)| {
+            summaries
+                .iter()
+                .map(move |(&server_id, &summary)| (path.clone(), server_id, summary))
+        })
     }
 
     pub fn abs_path(&self) -> Arc<Path> {
@@ -525,30 +529,40 @@ impl LocalWorktree {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut ModelContext<Worktree>,
     ) -> Result<bool> {
-        self.diagnostics.remove(&worktree_path);
-        let old_summary = self
+        let summaries_by_server_id = self
             .diagnostic_summaries
-            .remove(&PathKey(worktree_path.clone()))
+            .entry(worktree_path.clone())
+            .or_default();
+
+        let old_summary = summaries_by_server_id
+            .remove(&server_id)
             .unwrap_or_default();
-        let new_summary = DiagnosticSummary::new(server_id, &diagnostics);
-        if !new_summary.is_empty() {
-            self.diagnostic_summaries
-                .insert(PathKey(worktree_path.clone()), new_summary);
+
+        let new_summary = DiagnosticSummary::new(&diagnostics);
+        if new_summary.is_empty() {
+            if let Some(diagnostics_by_server_id) = self.diagnostics.get_mut(&worktree_path) {
+                if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                    diagnostics_by_server_id.remove(ix);
+                }
+                if diagnostics_by_server_id.is_empty() {
+                    self.diagnostics.remove(&worktree_path);
+                }
+            }
+        } else {
+            summaries_by_server_id.insert(server_id, new_summary);
             let diagnostics_by_server_id =
                 self.diagnostics.entry(worktree_path.clone()).or_default();
             match diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
                 Ok(ix) => {
                     diagnostics_by_server_id[ix] = (server_id, diagnostics);
                 }
-
                 Err(ix) => {
                     diagnostics_by_server_id.insert(ix, (server_id, diagnostics));
                 }
             }
         }
 
-        let updated = !old_summary.is_empty() || !new_summary.is_empty();
-        if updated {
+        if !old_summary.is_empty() || !new_summary.is_empty() {
             if let Some(share) = self.share.as_ref() {
                 self.client
                     .send(proto::UpdateDiagnosticSummary {
@@ -565,7 +579,7 @@ impl LocalWorktree {
             }
         }
 
-        Ok(updated)
+        Ok(!old_summary.is_empty() || !new_summary.is_empty())
     }
 
     fn set_snapshot(&mut self, new_snapshot: LocalSnapshot, cx: &mut ModelContext<Worktree>) {
@@ -955,13 +969,15 @@ impl LocalWorktree {
             let (resume_updates_tx, mut resume_updates_rx) = watch::channel();
             let worktree_id = cx.model_id() as u64;
 
-            for (path, summary) in self.diagnostic_summaries.iter() {
-                if let Err(e) = self.client.send(proto::UpdateDiagnosticSummary {
-                    project_id,
-                    worktree_id,
-                    summary: Some(summary.to_proto(&path.0)),
-                }) {
-                    return Task::ready(Err(e));
+            for (path, summaries) in &self.diagnostic_summaries {
+                for (&server_id, summary) in summaries {
+                    if let Err(e) = self.client.send(proto::UpdateDiagnosticSummary {
+                        project_id,
+                        worktree_id,
+                        summary: Some(summary.to_proto(server_id, &path)),
+                    }) {
+                        return Task::ready(Err(e));
+                    }
                 }
             }
 
@@ -1119,15 +1135,24 @@ impl RemoteWorktree {
         path: Arc<Path>,
         summary: &proto::DiagnosticSummary,
     ) {
+        let server_id = summary.language_server_id as usize;
         let summary = DiagnosticSummary {
-            language_server_id: summary.language_server_id as usize,
             error_count: summary.error_count as usize,
             warning_count: summary.warning_count as usize,
         };
+
         if summary.is_empty() {
-            self.diagnostic_summaries.remove(&PathKey(path));
+            if let Some(summaries) = self.diagnostic_summaries.get_mut(&path) {
+                summaries.remove(&server_id);
+                if summaries.is_empty() {
+                    self.diagnostic_summaries.remove(&path);
+                }
+            }
         } else {
-            self.diagnostic_summaries.insert(PathKey(path), summary);
+            self.diagnostic_summaries
+                .entry(path)
+                .or_default()
+                .insert(server_id, summary);
         }
     }
 

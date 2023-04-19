@@ -107,7 +107,7 @@ pub fn init(
             tree_sitter_typescript::language_tsx(),
             vec![
                 adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+                // adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
             ],
         ),
         (

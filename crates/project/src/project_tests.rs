@@ -1450,6 +1450,64 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppContext) {
+    println!("hello from stdout");
+    eprintln!("hello from stderr");
+    cx.foreground().forbid_parking();
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        project
+            .update_diagnostic_entries(
+                0,
+                Path::new("/dir/a.rs").to_owned(),
+                None,
+                vec![DiagnosticEntry {
+                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        is_primary: true,
+                        message: "syntax error a1".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                cx,
+            )
+            .unwrap();
+        project
+            .update_diagnostic_entries(
+                1,
+                Path::new("/dir/a.rs").to_owned(),
+                None,
+                vec![DiagnosticEntry {
+                    range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        is_primary: true,
+                        message: "syntax error b1".to_string(),
+                        ..Default::default()
+                    },
+                }],
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 2,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
     cx.foreground().forbid_parking();
 
