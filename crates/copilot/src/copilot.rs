@@ -350,6 +350,19 @@ impl Copilot {
                     )
                     .detach();
 
+                server
+                    .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
+                        editor_info: request::EditorInfo {
+                            name: "zed".into(),
+                            version: env!("CARGO_PKG_VERSION").into(),
+                        },
+                        editor_plugin_info: request::EditorPluginInfo {
+                            name: "zed-copilot".into(),
+                            version: "0.0.1".into(),
+                        },
+                    })
+                    .await?;
+
                 anyhow::Ok((server, status))
             };
 

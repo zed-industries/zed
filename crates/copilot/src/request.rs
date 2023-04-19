@@ -166,3 +166,32 @@ impl lsp::notification::Notification for StatusNotification {
     type Params = StatusNotificationParams;
     const METHOD: &'static str = "statusNotification";
 }
+
+pub enum SetEditorInfo {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetEditorInfoParams {
+    pub editor_info: EditorInfo,
+    pub editor_plugin_info: EditorPluginInfo,
+}
+
+impl lsp::request::Request for SetEditorInfo {
+    type Params = SetEditorInfoParams;
+    type Result = String;
+    const METHOD: &'static str = "setEditorInfo";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorPluginInfo {
+    pub name: String,
+    pub version: String,
+}
