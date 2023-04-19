@@ -5,7 +5,7 @@ use gpui::{
     platform::{WindowBounds, WindowKind, WindowOptions},
     AppContext, ClipboardItem, Element, Entity, View, ViewContext, ViewHandle,
 };
-use settings::{settings_file::SettingsFile, Settings};
+use settings::Settings;
 use theme::ui::modal;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
