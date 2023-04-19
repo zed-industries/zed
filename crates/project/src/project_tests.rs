@@ -303,6 +303,7 @@ async fn test_managing_language_servers(
 
     rust_buffer2.update(cx, |buffer, cx| {
         buffer.update_diagnostics(
+            0,
             DiagnosticSet::from_sorted_entries(
                 vec![DiagnosticEntry {
                     diagnostic: Default::default(),
@@ -1402,6 +1403,8 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         project
             .update_buffer_diagnostics(
                 &buffer,
+                0,
+                None,
                 vec![
                     DiagnosticEntry {
                         range: Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
@@ -1420,8 +1423,6 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                         },
                     },
                 ],
-                0,
-                None,
                 cx,
             )
             .unwrap();

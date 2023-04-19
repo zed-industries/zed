@@ -1588,7 +1588,7 @@ mod tests {
                 ..Default::default()
             },
             tree_sitter_javascript::language(),
-            None,
+            vec![],
             |_| Default::default(),
         );
 

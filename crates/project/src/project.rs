@@ -1547,12 +1547,13 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
-        let old_path =
-            File::from_dyn(buffer.read(cx).file()).and_then(|f| Some(f.as_local()?.abs_path(cx)));
+        let old_file = File::from_dyn(buffer.read(cx).file())
+            .filter(|f| f.is_local())
+            .cloned();
         cx.spawn(|this, mut cx| async move {
-            if let Some(old_path) = old_path {
+            if let Some(old_file) = &old_file {
                 this.update(&mut cx, |this, cx| {
-                    this.unregister_buffer_from_language_servers(&buffer, old_path, cx);
+                    this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
                 });
             }
             let (worktree, path) = worktree_task.await?;
@@ -1740,11 +1741,24 @@ impl Project {
     fn unregister_buffer_from_language_servers(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        old_path: PathBuf,
+        old_file: &File,
         cx: &mut ModelContext<Self>,
     ) {
+        let old_path = match old_file.as_local() {
+            Some(local) => local.abs_path(cx),
+            None => return,
+        };
+
         buffer.update(cx, |buffer, cx| {
-            buffer.update_diagnostics(Default::default(), cx);
+            let worktree_id = old_file.worktree_id(cx);
+            let ids = &self.language_server_ids;
+
+            let language = buffer.language().cloned();
+            let adapters = language.iter().flat_map(|language| language.lsp_adapters());
+            for &server_id in adapters.flat_map(|a| ids.get(&(worktree_id, a.name.clone()))) {
+                buffer.update_diagnostics(server_id, Default::default(), cx);
+            }
+
             self.buffer_snapshots.remove(&buffer.remote_id());
             let file_url = lsp::Url::from_file_path(old_path).unwrap();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
@@ -4501,8 +4515,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
+
         let mut buffers_to_delete = Vec::new();
         let mut renamed_buffers = Vec::new();
+
         for (buffer_id, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
@@ -4545,7 +4561,7 @@ impl Project {
 
                         let old_path = old_file.abs_path(cx);
                         if new_file.abs_path(cx) != old_path {
-                            renamed_buffers.push((cx.handle(), old_path));
+                            renamed_buffers.push((cx.handle(), old_file.clone()));
                         }
 
                         if new_file != *old_file {
@@ -4572,8 +4588,8 @@ impl Project {
             self.opened_buffers.remove(&buffer_id);
         }
 
-        for (buffer, old_path) in renamed_buffers {
-            self.unregister_buffer_from_language_servers(&buffer, old_path, cx);
+        for (buffer, old_file) in renamed_buffers {
+            self.unregister_buffer_from_language_servers(&buffer, &old_file, cx);
             self.detect_language_for_buffer(&buffer, cx);
             self.register_buffer_with_language_servers(&buffer, cx);
         }

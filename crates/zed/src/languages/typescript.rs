@@ -73,7 +73,6 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<LanguageServerBinary> {
-        dbg!();
         let versions = versions.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
@@ -99,7 +98,6 @@ impl LspAdapter for TypeScriptLspAdapter {
     }
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
-        dbg!();
         (|| async move {
             let old_server_path = container_dir.join(Self::OLD_SERVER_PATH);
             let new_server_path = container_dir.join(Self::NEW_SERVER_PATH);

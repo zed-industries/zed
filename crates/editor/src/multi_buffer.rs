@@ -2800,7 +2800,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         T: 'a + ToOffset,
-        O: 'a + text::FromAnchor,
+        O: 'a + text::FromAnchor + Ord,
     {
         self.as_singleton()
             .into_iter()

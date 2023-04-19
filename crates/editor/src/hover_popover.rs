@@ -620,7 +620,7 @@ mod tests {
                 }],
                 &snapshot,
             );
-            buffer.update_diagnostics(set, cx);
+            buffer.update_diagnostics(0, set, cx);
         });
 
         // Hover pops diagnostic immediately
