@@ -14,8 +14,8 @@ export function toggleButton(
     const active = buttonWithIconStyle({
         theme,
         inputIntensity: {
-            bg: 32,
-            border: [48, 36],
+            bg: [15, 10],
+            border: [24, 16],
             fg: 100,
         },
     })

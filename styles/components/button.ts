@@ -51,13 +51,16 @@ export function buttonWithIconStyle({
         const buttonTokens: TokenFamily = {
             [state]: {
                 background: tokens.colorToken(
-                    color.neutral(bgIntensities[state])
+                    color.neutral(bgIntensities[state]),
+                    `button.${state}.background: ${bgIntensities[state]} Intensity`
                 ),
                 border: tokens.colorToken(
-                    color.neutral(borderIntensities[state])
+                    color.neutral(borderIntensities[state]),
+                    `button.${state}.border: ${borderIntensities[state]} Intensity`
                 ),
                 foreground: tokens.colorToken(
-                    color.neutral(fgIntensities[state])
+                    color.neutral(fgIntensities[state]),
+                    `button.${state}.foreground: ${fgIntensities[state]} Intensity`
                 ),
             },
         }
@@ -101,8 +104,8 @@ export function iconButton(theme: Theme): InteractiveContainer<ContainedIcon> {
     return buttonWithIconStyle({
         theme: theme,
         inputIntensity: {
-            bg: 12,
-            border: [36, 24],
+            bg: 1,
+            border: 8,
             fg: 100,
         },
     })
