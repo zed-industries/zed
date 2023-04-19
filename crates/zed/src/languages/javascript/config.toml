@@ -1,5 +1,6 @@
 name = "JavaScript"
 path_suffixes = ["js", "jsx", "mjs"]
+first_line_pattern = '^#!.*\bnode\b'
 line_comment = "// "
 autoclose_before = ";:.,=}])>"
 brackets = [
