@@ -2995,11 +2995,11 @@ impl Editor {
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
         {
-            self.display_map.update(cx, |map, cx| {
+            self.display_map.update(cx, move |map, cx| {
                 map.replace_suggestion(
                     Some(Suggestion {
                         position: cursor,
-                        text: text.into(),
+                        text: text.trim_end().into(),
                     }),
                     cx,
                 )

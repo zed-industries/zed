@@ -199,20 +199,6 @@ impl CopilotCodeVerification {
                     },
                 )
                 .boxed(),
-                theme::ui::cta_button_with_click(
-                    "Disable Copilot Integration",
-                    style.auth.content_width,
-                    &style.auth.cta_button,
-                    cx,
-                    {
-                        move |_, cx| {
-                            SettingsFile::update(cx, move |settings| {
-                                settings.features.copilot = Some(false);
-                            });
-                        }
-                    },
-                )
-                .boxed(),
             ])
             .align_children_center()
             .boxed()
