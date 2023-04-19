@@ -44,9 +44,7 @@ export default function editor(colorScheme: ColorScheme) {
         activeLineBackground: withOpacity(background(layer, "on"), 0.75),
         highlightedLineBackground: background(layer, "on"),
         // Inline autocomplete suggestions, Co-pilot suggestions, etc.
-        suggestion: {
-            color: syntax.predictive.color,
-        },
+        suggestion: syntax.predictive,
         codeActions: {
             indicator: {
                 color: foreground(layer, "variant"),
