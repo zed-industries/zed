@@ -21,7 +21,7 @@ use log::LevelFilter;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::Fs;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use settings::{
     self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
     WorkingDirectory,
@@ -317,6 +317,30 @@ fn init_logger() {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct LocationData {
+    file: String,
+    line: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Panic {
+    thread: String,
+    payload: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    location_data: Option<LocationData>,
+    backtrace: Vec<String>,
+    // TODO
+    // stripped_backtrace: String,
+}
+
+#[derive(Serialize)]
+struct PanicRequest {
+    panic: Panic,
+    version: String,
+    token: String,
+}
+
 fn init_panic_hook(app_version: String) {
     let is_pty = stdout_is_a_pty();
     panic::set_hook(Box::new(move |info| {
@@ -333,39 +357,38 @@ fn init_panic_hook(app_version: String) {
             },
         };
 
-        let message = match info.location() {
-            Some(location) => {
-                format!(
-                    "thread '{}' panicked at '{}'\n{}:{}\n{:?}",
-                    thread,
-                    payload,
-                    location.file(),
-                    location.line(),
-                    backtrace
-                )
-            }
-            None => format!(
-                "thread '{}' panicked at '{}'\n{:?}",
-                thread, payload, backtrace
-            ),
+        let panic_data = Panic {
+            thread: thread.into(),
+            payload: payload.into(),
+            location_data: info.location().map(|location| LocationData {
+                file: location.file().into(),
+                line: location.line(),
+            }),
+            backtrace: format!("{:?}", backtrace)
+                .split("\n")
+                .map(|a| a.to_string())
+                .collect(),
+            // modified_backtrace: None,
         };
 
-        if is_pty {
-            eprintln!("{}", message);
-            return;
-        }
+        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
+            if is_pty {
+                eprintln!("{}", panic_data_json);
+                return;
+            }
 
-        let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-        let panic_file_path =
-            paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, timestamp));
-        let panic_file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&panic_file_path)
-            .log_err();
-        if let Some(mut panic_file) = panic_file {
-            write!(&mut panic_file, "{}", message).log_err();
-            panic_file.flush().log_err();
+            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+            let panic_file_path =
+                paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, timestamp));
+            let panic_file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&panic_file_path)
+                .log_err();
+            if let Some(mut panic_file) = panic_file {
+                write!(&mut panic_file, "{}", panic_data_json).log_err();
+                panic_file.flush().log_err();
+            }
         }
     }));
 }
@@ -402,15 +425,17 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                     };
 
                     if diagnostics_telemetry {
-                        let text = smol::fs::read_to_string(&child_path)
+                        let panic_data_text = smol::fs::read_to_string(&child_path)
                             .await
                             .context("error reading panic file")?;
-                        let body = serde_json::to_string(&json!({
-                            "text": text,
-                            "version": version,
-                            "token": ZED_SECRET_CLIENT_TOKEN,
-                        }))
+
+                        let body = serde_json::to_string(&PanicRequest {
+                            panic: serde_json::from_str(&panic_data_text)?,
+                            version: version.to_string(),
+                            token: ZED_SECRET_CLIENT_TOKEN.into(),
+                        })
                         .unwrap();
+
                         let request = Request::post(&panic_report_url)
                             .redirect_policy(isahc::config::RedirectPolicy::Follow)
                             .header("Content-Type", "application/json")
