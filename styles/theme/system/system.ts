@@ -2,14 +2,7 @@ import chroma from "chroma-js"
 import * as colorFamily from "@system/color"
 
 const color = {
-    lightgray: chroma
-        .scale(colorFamily.lightgray.scale.values)
-        .mode("lch")
-        .colors(9),
-    darkgray: chroma
-        .scale(colorFamily.darkgray.scale.values)
-        .mode("lch")
-        .colors(9),
+    neutral: chroma.scale(colorFamily.neutral.scale.values).mode("lch").colors(9),
     red: chroma.scale(colorFamily.red.scale.values).mode("lch").colors(9),
     sunset: chroma.scale(colorFamily.sunset.scale.values).mode("lch").colors(9),
     orange: chroma.scale(colorFamily.orange.scale.values).mode("lch").colors(9),

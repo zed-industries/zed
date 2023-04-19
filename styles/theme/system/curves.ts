@@ -1,5 +1,15 @@
 import bezier from "bezier-easing"
-import { Curve, Curves } from "@system/types"
+
+export interface Curve {
+    name: string
+    value: number[]
+}
+
+export interface Curves {
+    lightness: Curve
+    saturation: Curve
+    linear: Curve
+}
 
 export const curve: Curves = {
     lightness: {

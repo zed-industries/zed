@@ -1,13 +1,19 @@
 import bezier from "bezier-easing"
 import chroma from "chroma-js"
-import {
-    Color,
-    ColorFamily,
-    ColorFamilyConfig,
-    ColorScale,
-} from "@system/types"
-import { percentageToNormalized } from "@system/convert"
 import { useCurve } from "./curves"
+import { Color, ColorFamily, ColorFamilyConfig, ColorScale } from "./color"
+
+/** Converts a percentage scale value (0-100) to normalized scale (0-1) value. */
+export function percentageToNormalized(value: number) {
+    const normalized = value / 100
+    return normalized
+}
+
+/** Converts a normalized scale (0-1) value to a percentage scale (0-100) value. */
+export function normalizedToPercetage(value: number) {
+    const percentage = value * 100
+    return percentage
+}
 
 /**
  * Generates a color, outputs it in multiple formats, and returns a variety of useful metadata.
@@ -45,19 +51,6 @@ function generateColor(
         percentageToNormalized(stepLightness)
     )
 
-    const contrast = {
-        black: {
-            value: chroma.contrast(color, "black"),
-            aaPass: chroma.contrast(color, "black") >= 4.5,
-            aaaPass: chroma.contrast(color, "black") >= 7,
-        },
-        white: {
-            value: chroma.contrast(color, "white"),
-            aaPass: chroma.contrast(color, "white") >= 4.5,
-            aaaPass: chroma.contrast(color, "white") >= 7,
-        },
-    }
-
     const lch = color.lch()
     const rgba = color.rgba()
     const hex = color.hex()
@@ -71,7 +64,6 @@ function generateColor(
         lch,
         hex,
         rgba,
-        contrast,
         isLight,
     }
 

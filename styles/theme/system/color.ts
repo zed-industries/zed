@@ -1,5 +1,53 @@
 import { generateColorFamily } from "@system/generate"
-import { curve } from "@system/curves"
+import { Curve, curve } from "@system/curves"
+
+export type Color = {
+    step: number
+    hex: string
+    lch: number[]
+    rgba: number[]
+    isLight: boolean
+}
+
+export interface ColorScale {
+    colors: Color[]
+    // An array of hex values for each color in the scale
+    values: string[]
+}
+
+export type ColorFamily = {
+    name: string
+    scale: ColorScale
+    invertedScale: ColorScale
+}
+
+export interface ColorFamilyHue {
+    start: number
+    end: number
+    curve: Curve
+}
+
+export interface ColorFamilySaturation {
+    start: number
+    end: number
+    curve: Curve
+}
+
+export interface ColorFamilyLightness {
+    start: number
+    end: number
+    curve: Curve
+}
+
+export interface ColorFamilyConfig {
+    name: string
+    color: {
+        hue: ColorFamilyHue
+        saturation: ColorFamilySaturation
+        lightness: ColorFamilyLightness
+    }
+}
+
 
 // These are the source colors for the color scales in the system.
 // These should never directly be used directly in components or themes as they generate thousands of lines of code.
@@ -25,52 +73,6 @@ export const neutral = generateColorFamily({
         lightness: {
             start: 100,
             end: 0,
-            curve: curve.linear,
-        },
-    },
-})
-
-// Light Gray ======================================== //
-
-export const lightgray = generateColorFamily({
-    name: "lightgray",
-    color: {
-        hue: {
-            start: 210,
-            end: 210,
-            curve: curve.linear,
-        },
-        saturation: {
-            start: 10,
-            end: 15,
-            curve: curve.saturation,
-        },
-        lightness: {
-            start: 97,
-            end: 50,
-            curve: curve.linear,
-        },
-    },
-})
-
-// Light Dark ======================================== //
-
-export const darkgray = generateColorFamily({
-    name: "darkgray",
-    color: {
-        hue: {
-            start: 210,
-            end: 210,
-            curve: curve.linear,
-        },
-        saturation: {
-            start: 15,
-            end: 20,
-            curve: curve.saturation,
-        },
-        lightness: {
-            start: 55,
-            end: 8,
             curve: curve.linear,
         },
     },
