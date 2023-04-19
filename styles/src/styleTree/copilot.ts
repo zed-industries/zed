@@ -113,7 +113,7 @@ export default function copilot(colorScheme: ColorScheme) {
             },
             dimensions: {
                 width: 280,
-                height: 280,
+                height: 320,
             },
         },
 

@@ -5,7 +5,7 @@ use gpui::{
     platform::{WindowBounds, WindowKind, WindowOptions},
     AppContext, ClipboardItem, Element, Entity, View, ViewContext, ViewHandle,
 };
-use settings::Settings;
+use settings::{settings_file::SettingsFile, Settings};
 use theme::ui::modal;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -196,6 +196,20 @@ impl CopilotCodeVerification {
                     {
                         let verification_uri = data.verification_uri.clone();
                         move |_, cx| cx.platform().open_url(&verification_uri)
+                    },
+                )
+                .boxed(),
+                theme::ui::cta_button_with_click(
+                    "Disable Copilot Integration",
+                    style.auth.content_width,
+                    &style.auth.cta_button,
+                    cx,
+                    {
+                        move |_, cx| {
+                            SettingsFile::update(cx, move |settings| {
+                                settings.features.copilot = Some(false);
+                            });
+                        }
                     },
                 )
                 .boxed(),
