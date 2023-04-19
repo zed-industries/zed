@@ -1265,7 +1265,7 @@ impl Editor {
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-                cx.observe_global::<Settings, _>(Self::on_settings_changed),
+                cx.observe_global::<Settings, _>(Self::settings_changed),
             ],
         };
         this.end_selection(cx);
@@ -2808,7 +2808,7 @@ impl Editor {
     fn refresh_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let copilot = Copilot::global(cx)?;
         if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
-            self.hide_copilot_suggestion(cx);
+            self.clear_copilot_suggestions(cx);
             return None;
         }
         self.update_visible_copilot_suggestion(cx);
@@ -2820,7 +2820,7 @@ impl Editor {
             .global::<Settings>()
             .show_copilot_suggestions(language_name.as_deref())
         {
-            self.hide_copilot_suggestion(cx);
+            self.clear_copilot_suggestions(cx);
             return None;
         }
 
@@ -2939,6 +2939,11 @@ impl Editor {
         } else {
             self.hide_copilot_suggestion(cx);
         }
+    }
+
+    fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
+        self.copilot_state = Default::default();
+        self.hide_copilot_suggestion(cx);
     }
 
     pub fn render_code_actions_indicator(
@@ -6494,7 +6499,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn on_settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.refresh_copilot_suggestions(cx);
     }
 
