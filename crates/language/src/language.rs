@@ -782,13 +782,14 @@ impl LanguageRegistry {
         self.state.read().languages.iter().cloned().collect()
     }
 
-    pub fn start_language_servers(
+    pub fn start_language_server(
         self: &Arc<Self>,
         language: Arc<Language>,
+        adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
         cx: &mut AppContext,
-    ) -> Vec<PendingLanguageServer> {
+    ) -> Option<PendingLanguageServer> {
         #[cfg(any(test, feature = "test-support"))]
         if language.fake_adapter.is_some() {
             let task = cx.spawn(|cx| async move {
@@ -819,70 +820,60 @@ impl LanguageRegistry {
             });
 
             let server_id = post_inc(&mut self.state.write().next_language_server_id);
-            return vec![PendingLanguageServer { server_id, task }];
+            return Some(PendingLanguageServer { server_id, task });
         }
 
         let download_dir = self
             .language_server_download_dir
             .clone()
             .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
-            .log_err();
-        let download_dir = match download_dir {
-            Some(download_dir) => download_dir,
-            None => return Vec::new(),
-        };
+            .log_err()?;
 
-        let mut results = Vec::new();
+        let this = self.clone();
+        let language = language.clone();
+        let http_client = http_client.clone();
+        let download_dir = download_dir.clone();
+        let root_path = root_path.clone();
+        let adapter = adapter.clone();
+        let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
+        let login_shell_env_loaded = self.login_shell_env_loaded.clone();
+        let server_id = post_inc(&mut self.state.write().next_language_server_id);
 
-        for adapter in &language.adapters {
-            let this = self.clone();
-            let language = language.clone();
-            let http_client = http_client.clone();
-            let download_dir = download_dir.clone();
-            let root_path = root_path.clone();
-            let adapter = adapter.clone();
-            let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
-            let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-            let server_id = post_inc(&mut self.state.write().next_language_server_id);
+        let task = cx.spawn(|cx| async move {
+            login_shell_env_loaded.await;
 
-            let task = cx.spawn(|cx| async move {
-                login_shell_env_loaded.await;
+            let mut lock = this.lsp_binary_paths.lock();
+            let entry = lock
+                .entry(adapter.name.clone())
+                .or_insert_with(|| {
+                    get_binary(
+                        adapter.clone(),
+                        language.clone(),
+                        http_client,
+                        download_dir,
+                        lsp_binary_statuses,
+                    )
+                    .map_err(Arc::new)
+                    .boxed()
+                    .shared()
+                })
+                .clone();
+            drop(lock);
+            let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
 
-                let mut lock = this.lsp_binary_paths.lock();
-                let entry = lock
-                    .entry(adapter.name.clone())
-                    .or_insert_with(|| {
-                        get_binary(
-                            adapter.clone(),
-                            language.clone(),
-                            http_client,
-                            download_dir,
-                            lsp_binary_statuses,
-                        )
-                        .map_err(Arc::new)
-                        .boxed()
-                        .shared()
-                    })
-                    .clone();
-                drop(lock);
-                let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
+            let server = lsp::LanguageServer::new(
+                server_id,
+                &binary.path,
+                &binary.arguments,
+                &root_path,
+                adapter.code_action_kinds(),
+                cx,
+            )?;
 
-                let server = lsp::LanguageServer::new(
-                    server_id,
-                    &binary.path,
-                    &binary.arguments,
-                    &root_path,
-                    adapter.code_action_kinds(),
-                    cx,
-                )?;
+            Ok(server)
+        });
 
-                Ok(server)
-            });
-
-            results.push(PendingLanguageServer { server_id, task });
-        }
-
-        results
+        Some(PendingLanguageServer { server_id, task })
     }
 
     pub fn language_server_binary_statuses(
