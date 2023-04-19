@@ -861,7 +861,8 @@ message IncomingContactRequest {
 message UpdateDiagnostics {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
-    repeated Diagnostic diagnostics = 3;
+    uint64 server_id = 3;
+    repeated Diagnostic diagnostics = 4;
 }
 
 message Follow {

@@ -1866,7 +1866,7 @@ fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
                         buffer,
                     );
                     log::info!("peer {} setting diagnostics: {:?}", replica_id, diagnostics);
-                    buffer.update_diagnostics(diagnostics, cx);
+                    buffer.update_diagnostics(0, diagnostics, cx);
                 });
                 mutation_count -= 1;
             }

@@ -40,6 +40,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
             crate::Operation::Buffer(text::Operation::Edit(edit)) => {
                 proto::operation::Variant::Edit(serialize_edit_operation(edit))
             }
+
             crate::Operation::Buffer(text::Operation::Undo {
                 undo,
                 lamport_timestamp,
@@ -58,6 +59,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                     })
                     .collect(),
             }),
+
             crate::Operation::UpdateSelections {
                 selections,
                 line_mode,
@@ -70,14 +72,18 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 line_mode: *line_mode,
                 cursor_shape: serialize_cursor_shape(cursor_shape) as i32,
             }),
+
             crate::Operation::UpdateDiagnostics {
-                diagnostics,
                 lamport_timestamp,
+                server_id,
+                diagnostics,
             } => proto::operation::Variant::UpdateDiagnostics(proto::UpdateDiagnostics {
                 replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
+                server_id: *server_id as u64,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
+
             crate::Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
@@ -267,11 +273,12 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
             }
             proto::operation::Variant::UpdateDiagnostics(message) => {
                 crate::Operation::UpdateDiagnostics {
-                    diagnostics: deserialize_diagnostics(message.diagnostics),
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
                     },
+                    server_id: message.server_id as usize,
+                    diagnostics: deserialize_diagnostics(message.diagnostics),
                 }
             }
             proto::operation::Variant::UpdateCompletionTriggers(message) => {

@@ -1675,7 +1675,7 @@ impl Project {
 
             if let Some(local_worktree) = file.worktree.read(cx).as_local() {
                 for (server_id, diagnostics) in local_worktree.diagnostics_for_path(file.path()) {
-                    self.update_buffer_diagnostics(buffer_handle, diagnostics, server_id, None, cx)
+                    self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
                         .log_err();
                 }
             }
@@ -2968,7 +2968,7 @@ impl Project {
         };
 
         if let Some(buffer) = self.get_open_buffer(&project_path, cx) {
-            self.update_buffer_diagnostics(&buffer, diagnostics.clone(), server_id, version, cx)?;
+            self.update_buffer_diagnostics(&buffer, server_id, version, diagnostics.clone(), cx)?;
         }
 
         let updated = worktree.update(cx, |worktree, cx| {
@@ -2989,9 +2989,9 @@ impl Project {
     fn update_buffer_diagnostics(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         server_id: usize,
         version: Option<i32>,
+        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
@@ -3053,7 +3053,9 @@ impl Project {
         drop(edits_since_save);
 
         let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
-        buffer.update(cx, |buffer, cx| buffer.update_diagnostics(set, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(server_id, set, cx)
+        });
         Ok(())
     }
 
