@@ -12,6 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use copilot::Copilot;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
@@ -129,6 +130,7 @@ pub struct Project {
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
+    copilot_enabled: bool,
 }
 
 enum BufferMessage {
@@ -472,6 +474,7 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
+                copilot_enabled: Copilot::global(cx).is_some(),
             }
         })
     }
@@ -559,6 +562,7 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
+                copilot_enabled: Copilot::global(cx).is_some(),
             };
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
@@ -662,6 +666,15 @@ impl Project {
         // Start all the newly-enabled language servers.
         for (worktree_id, worktree_path, language) in language_servers_to_start {
             self.start_language_server(worktree_id, worktree_path, language, cx);
+        }
+
+        if !self.copilot_enabled && Copilot::global(cx).is_some() {
+            self.copilot_enabled = true;
+            for buffer in self.opened_buffers.values() {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    self.register_buffer_with_copilot(&buffer, cx);
+                }
+            }
         }
 
         cx.notify();
@@ -1616,6 +1629,7 @@ impl Project {
 
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_server(buffer, cx);
+        self.register_buffer_with_copilot(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -1729,6 +1743,16 @@ impl Project {
                     .log_err();
             }
         });
+    }
+
+    fn register_buffer_with_copilot(
+        &self,
+        buffer_handle: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
+        }
     }
 
     async fn send_buffer_messages(

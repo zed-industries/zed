@@ -99,14 +99,11 @@ pub struct GetCompletionsParams {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetCompletionsDocument {
-    pub source: String,
     pub tab_size: u32,
     pub indent_size: u32,
     pub insert_spaces: bool,
     pub uri: lsp::Url,
-    pub path: String,
     pub relative_path: String,
-    pub language_id: String,
     pub position: lsp::Position,
     pub version: usize,
 }
