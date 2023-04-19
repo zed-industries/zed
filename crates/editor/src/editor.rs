@@ -6643,6 +6643,7 @@ impl Editor {
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
+            multi_buffer::Event::LanguageChanged => {}
         }
     }
 
