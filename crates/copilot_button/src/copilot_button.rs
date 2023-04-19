@@ -50,15 +50,16 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CopilotButton::deploy_copilot_menu);
     cx.add_action(
         |_: &mut CopilotButton, action: &ToggleCopilotForLanguage, cx| {
-            let language = action.language.to_owned();
-
-            let current_langauge = cx.global::<Settings>().copilot_on(Some(&language));
+            let language = action.language.clone();
+            let show_copilot_suggestions = cx
+                .global::<Settings>()
+                .show_copilot_suggestions(Some(&language));
 
             SettingsFile::update(cx, move |file_contents| {
                 file_contents.languages.insert(
-                    language.to_owned(),
+                    language,
                     settings::EditorSettings {
-                        copilot: Some((!current_langauge).into()),
+                        show_copilot_suggestions: Some((!show_copilot_suggestions).into()),
                         ..Default::default()
                     },
                 );
@@ -67,10 +68,9 @@ pub fn init(cx: &mut AppContext) {
     );
 
     cx.add_action(|_: &mut CopilotButton, _: &ToggleCopilotGlobally, cx| {
-        let copilot_on = cx.global::<Settings>().copilot_on(None);
-
+        let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None);
         SettingsFile::update(cx, move |file_contents| {
-            file_contents.editor.copilot = Some((!copilot_on).into())
+            file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
         })
     });
 }
@@ -94,7 +94,7 @@ impl View for CopilotButton {
     fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
         let settings = cx.global::<Settings>();
 
-        if !settings.enable_copilot_integration {
+        if !settings.features.copilot {
             return Empty::new().boxed();
         }
 
@@ -105,7 +105,9 @@ impl View for CopilotButton {
         };
         let status = copilot.read(cx).status();
 
-        let enabled = self.editor_enabled.unwrap_or(settings.copilot_on(None));
+        let enabled = self
+            .editor_enabled
+            .unwrap_or(settings.show_copilot_suggestions(None));
 
         let view_id = cx.view_id();
 
@@ -248,7 +250,7 @@ impl CopilotButton {
         let mut menu_options = Vec::with_capacity(6);
 
         if let Some(language) = &self.language {
-            let language_enabled = settings.copilot_on(Some(language.as_ref()));
+            let language_enabled = settings.show_copilot_suggestions(Some(language.as_ref()));
 
             menu_options.push(ContextMenuItem::item(
                 format!(
@@ -266,7 +268,7 @@ impl CopilotButton {
             ));
         }
 
-        let globally_enabled = cx.global::<Settings>().copilot_on(None);
+        let globally_enabled = cx.global::<Settings>().show_copilot_suggestions(None);
         menu_options.push(ContextMenuItem::item(
             if globally_enabled {
                 "Disable Copilot Globally"
@@ -319,7 +321,7 @@ impl CopilotButton {
 
         self.language = language_name.clone();
 
-        self.editor_enabled = Some(settings.copilot_on(language_name.as_deref()));
+        self.editor_enabled = Some(settings.show_copilot_suggestions(language_name.as_deref()));
 
         cx.notify()
     }

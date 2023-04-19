@@ -172,7 +172,7 @@ impl Copilot {
             let http = http.clone();
             let node_runtime = node_runtime.clone();
             move |this, cx| {
-                if cx.global::<Settings>().enable_copilot_integration {
+                if cx.global::<Settings>().features.copilot {
                     if matches!(this.server, CopilotServer::Disabled) {
                         let start_task = cx
                             .spawn({
@@ -194,7 +194,7 @@ impl Copilot {
         })
         .detach();
 
-        if cx.global::<Settings>().enable_copilot_integration {
+        if cx.global::<Settings>().features.copilot {
             let start_task = cx
                 .spawn({
                     let http = http.clone();

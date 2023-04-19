@@ -2816,7 +2816,10 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
         let language_name = snapshot.language_at(cursor).map(|language| language.name());
-        if !cx.global::<Settings>().copilot_on(language_name.as_deref()) {
+        if !cx
+            .global::<Settings>()
+            .show_copilot_suggestions(language_name.as_deref())
+        {
             self.hide_copilot_suggestion(cx);
             return None;
         }
