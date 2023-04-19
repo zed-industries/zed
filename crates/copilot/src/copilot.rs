@@ -663,6 +663,7 @@ impl Copilot {
             >,
         T: ToPointUtf16,
     {
+        self.register_buffer(buffer, cx);
         let (server, registered_buffer) = match &mut self.server {
             CopilotServer::Starting { .. } => {
                 return Task::ready(Err(anyhow!("copilot is still starting")))
@@ -681,17 +682,11 @@ impl Copilot {
                 ..
             } => {
                 if matches!(status, SignInStatus::Authorized { .. }) {
-                    if let Some(registered_buffer) = registered_buffers.get_mut(&buffer.id()) {
-                        if let Err(error) = registered_buffer.report_changes(buffer, &server, cx) {
-                            return Task::ready(Err(error));
-                        }
-
-                        (server.clone(), registered_buffer)
-                    } else {
-                        return Task::ready(Err(anyhow!(
-                            "requested completions for an unregistered buffer"
-                        )));
+                    let registered_buffer = registered_buffers.get_mut(&buffer.id()).unwrap();
+                    if let Err(error) = registered_buffer.report_changes(buffer, &server, cx) {
+                        return Task::ready(Err(error));
                     }
+                    (server.clone(), registered_buffer)
                 } else {
                     return Task::ready(Err(anyhow!("must sign in before using copilot")));
                 }
