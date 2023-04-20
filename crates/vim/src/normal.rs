@@ -1020,14 +1020,13 @@ mod test {
             ˇ•••
             ˇb
             "
-        }
-        .replace("•", " ");
+        };
 
         for count in 1..=3 {
-            cx.assert_binding_matches_all([&count.to_string(), "shift-f", "b"], &test_case)
+            cx.assert_binding_matches_all([&count.to_string(), "shift-f", "b"], test_case)
                 .await;
 
-            cx.assert_binding_matches_all([&count.to_string(), "shift-t", "b"], &test_case)
+            cx.assert_binding_matches_all([&count.to_string(), "shift-t", "b"], test_case)
                 .await;
         }
     }
