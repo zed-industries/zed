@@ -52,7 +52,7 @@ pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
     Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
-    Point, Rope, Selection, SelectionGoal, TransactionId,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
@@ -1037,6 +1037,10 @@ impl Default for CopilotState {
 }
 
 impl CopilotState {
+    fn active_completion(&self) -> Option<&copilot::Completion> {
+        self.completions.get(self.active_completion_index)
+    }
+
     fn text_for_active_completion(
         &self,
         cursor: Anchor,
@@ -1044,7 +1048,7 @@ impl CopilotState {
     ) -> Option<&str> {
         use language::ToOffset as _;
 
-        let completion = self.completions.get(self.active_completion_index)?;
+        let completion = self.active_completion()?;
         let excerpt_id = self.excerpt_id?;
         let completion_buffer = buffer.buffer_for_excerpt(excerpt_id)?;
         if excerpt_id != cursor.excerpt_id
@@ -1097,7 +1101,7 @@ impl CopilotState {
 
     fn push_completion(&mut self, new_completion: copilot::Completion) {
         for completion in &self.completions {
-            if *completion == new_completion {
+            if completion.text == new_completion.text && completion.range == new_completion.range {
                 return;
             }
         }
@@ -1496,7 +1500,7 @@ impl Editor {
             self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
-            self.hide_copilot_suggestion(cx);
+            self.discard_copilot_suggestion(cx);
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -1870,7 +1874,7 @@ impl Editor {
             return;
         }
 
-        if self.hide_copilot_suggestion(cx).is_some() {
+        if self.discard_copilot_suggestion(cx) {
             return;
         }
 
@@ -2969,7 +2973,7 @@ impl Editor {
         Some(())
     }
 
-    fn cycle_suggestions(
+    fn cycle_copilot_suggestions(
         &mut self,
         direction: Direction,
         cx: &mut ViewContext<Self>,
@@ -3020,7 +3024,7 @@ impl Editor {
 
     fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
         if self.has_active_copilot_suggestion(cx) {
-            self.cycle_suggestions(Direction::Next, cx);
+            self.cycle_copilot_suggestions(Direction::Next, cx);
         } else {
             self.refresh_copilot_suggestions(false, cx);
         }
@@ -3032,15 +3036,45 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if self.has_active_copilot_suggestion(cx) {
-            self.cycle_suggestions(Direction::Prev, cx);
+            self.cycle_copilot_suggestions(Direction::Prev, cx);
         } else {
             self.refresh_copilot_suggestions(false, cx);
         }
     }
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(text) = self.hide_copilot_suggestion(cx) {
-            self.insert_with_autoindent_mode(&text.to_string(), None, cx);
+        if let Some(suggestion) = self
+            .display_map
+            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx))
+        {
+            if let Some((copilot, completion)) =
+                Copilot::global(cx).zip(self.copilot_state.active_completion())
+            {
+                copilot
+                    .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
+                    .detach_and_log_err(cx);
+            }
+            self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if self.has_active_copilot_suggestion(cx) {
+            if let Some(copilot) = Copilot::global(cx) {
+                copilot
+                    .update(cx, |copilot, cx| {
+                        copilot.discard_completions(&self.copilot_state.completions, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+
+            self.display_map
+                .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+            cx.notify();
             true
         } else {
             false
@@ -3049,18 +3083,6 @@ impl Editor {
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
         self.display_map.read(cx).has_suggestion()
-    }
-
-    fn hide_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Rope> {
-        if self.has_active_copilot_suggestion(cx) {
-            let old_suggestion = self
-                .display_map
-                .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
-            cx.notify();
-            old_suggestion.map(|suggestion| suggestion.text)
-        } else {
-            None
-        }
     }
 
     fn update_visible_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
@@ -3072,7 +3094,7 @@ impl Editor {
             || !self.completion_tasks.is_empty()
             || selection.start != selection.end
         {
-            self.hide_copilot_suggestion(cx);
+            self.discard_copilot_suggestion(cx);
         } else if let Some(text) = self
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
@@ -3088,13 +3110,13 @@ impl Editor {
             });
             cx.notify();
         } else {
-            self.hide_copilot_suggestion(cx);
+            self.discard_copilot_suggestion(cx);
         }
     }
 
     fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
         self.copilot_state = Default::default();
-        self.hide_copilot_suggestion(cx);
+        self.discard_copilot_suggestion(cx);
     }
 
     pub fn render_code_actions_indicator(
@@ -3212,7 +3234,7 @@ impl Editor {
             self.completion_tasks.clear();
         }
         self.context_menu = Some(menu);
-        self.hide_copilot_suggestion(cx);
+        self.discard_copilot_suggestion(cx);
         cx.notify();
     }
 

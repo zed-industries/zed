@@ -195,3 +195,31 @@ pub struct EditorPluginInfo {
     pub name: String,
     pub version: String,
 }
+
+pub enum NotifyAccepted {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyAcceptedParams {
+    pub uuid: String,
+}
+
+impl lsp::request::Request for NotifyAccepted {
+    type Params = NotifyAcceptedParams;
+    type Result = String;
+    const METHOD: &'static str = "notifyAccepted";
+}
+
+pub enum NotifyRejected {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyRejectedParams {
+    pub uuids: Vec<String>,
+}
+
+impl lsp::request::Request for NotifyRejected {
+    type Params = NotifyRejectedParams;
+    type Result = String;
+    const METHOD: &'static str = "notifyRejected";
+}

@@ -224,8 +224,9 @@ impl RegisteredBuffer {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Completion {
+    uuid: String,
     pub range: Range<Anchor>,
     pub text: String,
 }
@@ -682,6 +683,51 @@ impl Copilot {
         T: ToPointUtf16,
     {
         self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, cx)
+    }
+
+    pub fn accept_completion(
+        &mut self,
+        completion: &Completion,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let server = match self.server.as_authenticated() {
+            Ok(server) => server,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        let request =
+            server
+                .lsp
+                .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
+                    uuid: completion.uuid.clone(),
+                });
+        cx.background().spawn(async move {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub fn discard_completions(
+        &mut self,
+        completions: &[Completion],
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let server = match self.server.as_authenticated() {
+            Ok(server) => server,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        let request =
+            server
+                .lsp
+                .request::<request::NotifyRejected>(request::NotifyRejectedParams {
+                    uuids: completions
+                        .iter()
+                        .map(|completion| completion.uuid.clone())
+                        .collect(),
+                });
+        cx.background().spawn(async move {
+            request.await?;
+            Ok(())
+        })
     }
 
     fn request_completions<R, T>(
