@@ -231,6 +231,9 @@
         },
         "YAML": {
             "tab_size": 2
+        },
+        "JSON": {
+            "tab_size": 2
         }
     },
     // LSP Specific settings.
