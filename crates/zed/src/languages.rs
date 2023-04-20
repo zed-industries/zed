@@ -89,26 +89,23 @@ pub fn init(
         (
             "tsx",
             tree_sitter_typescript::language_tsx(),
-            vec![
-                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            ],
+            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
+                node_runtime.clone(),
+            ))],
         ),
         (
             "typescript",
             tree_sitter_typescript::language_typescript(),
-            vec![
-                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            ],
+            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
+                node_runtime.clone(),
+            ))],
         ),
         (
             "javascript",
             tree_sitter_typescript::language_tsx(),
-            vec![
-                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                // adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            ],
+            vec![adapter_arc(typescript::TypeScriptLspAdapter::new(
+                node_runtime.clone(),
+            ))],
         ),
         (
             "html",

@@ -175,18 +175,11 @@ impl EsLintLspAdapter {
     const SERVER_PATH: &'static str =
         "node_modules/vscode-langservers-extracted/lib/eslint-language-server/eslintServer.js";
 
+    #[allow(unused)]
     pub fn new(node: Arc<NodeRuntime>) -> Self {
         EsLintLspAdapter { node }
     }
 }
-
-// "workspaceFolder": {
-//     "name": "testing_ts",
-//     "uri": "file:///Users/julia/Stuff/testing_ts"
-// },
-// "workingDirectory": "file:///Users/julia/Stuff/testing_ts",
-// "nodePath": "/opt/homebrew/opt/node@18/bin/node",
-// "experimental": {},
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
