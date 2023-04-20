@@ -16,9 +16,11 @@ use clock::ReplicaId;
 use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
+use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
@@ -71,7 +73,7 @@ pub struct Buffer {
     syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
     parse_count: usize,
-    diagnostics: DiagnosticSet,
+    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     diagnostics_update_count: usize,
@@ -88,7 +90,7 @@ pub struct BufferSnapshot {
     pub git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
-    diagnostics: DiagnosticSet,
+    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     diagnostics_update_count: usize,
     file_update_count: usize,
     git_diff_update_count: usize,
@@ -156,6 +158,7 @@ pub struct Completion {
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
+    pub server_id: LanguageServerId,
     pub range: Range<Anchor>,
     pub lsp_action: lsp::CodeAction,
 }
@@ -163,16 +166,20 @@ pub struct CodeAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operation {
     Buffer(text::Operation),
+
     UpdateDiagnostics {
+        server_id: LanguageServerId,
         diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
         lamport_timestamp: clock::Lamport,
     },
+
     UpdateSelections {
         selections: Arc<[Selection<Anchor>]>,
         lamport_timestamp: clock::Lamport,
         line_mode: bool,
         cursor_shape: CursorShape,
     },
+
     UpdateCompletionTriggers {
         triggers: Vec<String>,
         lamport_timestamp: clock::Lamport,
@@ -408,6 +415,7 @@ impl Buffer {
     ) -> Task<Vec<proto::Operation>> {
         let mut operations = Vec::new();
         operations.extend(self.deferred_ops.iter().map(proto::serialize_operation));
+
         operations.extend(self.remote_selections.iter().map(|(_, set)| {
             proto::serialize_operation(&Operation::UpdateSelections {
                 selections: set.selections.clone(),
@@ -416,10 +424,15 @@ impl Buffer {
                 cursor_shape: set.cursor_shape,
             })
         }));
-        operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
-            diagnostics: self.diagnostics.iter().cloned().collect(),
-            lamport_timestamp: self.diagnostics_timestamp,
-        }));
+
+        for (server_id, diagnostics) in &self.diagnostics {
+            operations.push(proto::serialize_operation(&Operation::UpdateDiagnostics {
+                lamport_timestamp: self.diagnostics_timestamp,
+                server_id: *server_id,
+                diagnostics: diagnostics.iter().cloned().collect(),
+            }));
+        }
+
         operations.push(proto::serialize_operation(
             &Operation::UpdateCompletionTriggers {
                 triggers: self.completion_triggers.clone(),
@@ -865,13 +878,19 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn update_diagnostics(&mut self, diagnostics: DiagnosticSet, cx: &mut ModelContext<Self>) {
+    pub fn update_diagnostics(
+        &mut self,
+        server_id: LanguageServerId,
+        diagnostics: DiagnosticSet,
+        cx: &mut ModelContext<Self>,
+    ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
         let op = Operation::UpdateDiagnostics {
+            server_id,
             diagnostics: diagnostics.iter().cloned().collect(),
             lamport_timestamp,
         };
-        self.apply_diagnostic_update(diagnostics, lamport_timestamp, cx);
+        self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
         self.send_operation(op, cx);
     }
 
@@ -1579,11 +1598,13 @@ impl Buffer {
                 unreachable!("buffer operations should never be applied at this layer")
             }
             Operation::UpdateDiagnostics {
+                server_id,
                 diagnostics: diagnostic_set,
                 lamport_timestamp,
             } => {
                 let snapshot = self.snapshot();
                 self.apply_diagnostic_update(
+                    server_id,
                     DiagnosticSet::from_sorted_entries(diagnostic_set.iter().cloned(), &snapshot),
                     lamport_timestamp,
                     cx,
@@ -1625,12 +1646,16 @@ impl Buffer {
 
     fn apply_diagnostic_update(
         &mut self,
+        server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
         lamport_timestamp: clock::Lamport,
         cx: &mut ModelContext<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
-            self.diagnostics = diagnostics;
+            match self.diagnostics.binary_search_by_key(&server_id, |e| e.0) {
+                Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
+                Ok(ix) => self.diagnostics[ix].1 = diagnostics,
+            };
             self.diagnostics_timestamp = lamport_timestamp;
             self.diagnostics_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
@@ -2504,14 +2529,55 @@ impl BufferSnapshot {
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + Clone + ToOffset,
-        O: 'a + FromAnchor,
+        O: 'a + FromAnchor + Ord,
     {
-        self.diagnostics.range(search_range, self, true, reversed)
+        let mut iterators: Vec<_> = self
+            .diagnostics
+            .iter()
+            .map(|(_, collection)| {
+                collection
+                    .range::<T, O>(search_range.clone(), self, true, reversed)
+                    .peekable()
+            })
+            .collect();
+
+        std::iter::from_fn(move || {
+            let (next_ix, _) = iterators
+                .iter_mut()
+                .enumerate()
+                .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
+                .min_by(|(_, a), (_, b)| a.range.start.cmp(&b.range.start))?;
+            iterators[next_ix].next()
+        })
     }
 
-    pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {
+    pub fn diagnostic_groups(
+        &self,
+        language_server_id: Option<LanguageServerId>,
+    ) -> Vec<(LanguageServerId, DiagnosticGroup<Anchor>)> {
         let mut groups = Vec::new();
-        self.diagnostics.groups(&mut groups, self);
+
+        if let Some(language_server_id) = language_server_id {
+            if let Ok(ix) = self
+                .diagnostics
+                .binary_search_by_key(&language_server_id, |e| e.0)
+            {
+                self.diagnostics[ix]
+                    .1
+                    .groups(language_server_id, &mut groups, self);
+            }
+        } else {
+            for (language_server_id, diagnostics) in self.diagnostics.iter() {
+                diagnostics.groups(*language_server_id, &mut groups, self);
+            }
+        }
+
+        groups.sort_by(|(id_a, group_a), (id_b, group_b)| {
+            let a_start = &group_a.entries[group_a.primary_ix].range.start;
+            let b_start = &group_b.entries[group_b.primary_ix].range.start;
+            a_start.cmp(b_start, self).then_with(|| id_a.cmp(&id_b))
+        });
+
         groups
     }
 
@@ -2522,7 +2588,9 @@ impl BufferSnapshot {
     where
         O: 'a + FromAnchor,
     {
-        self.diagnostics.group(group_id, self)
+        self.diagnostics
+            .iter()
+            .flat_map(move |(_, set)| set.group(group_id, self))
     }
 
     pub fn diagnostics_update_count(&self) -> usize {

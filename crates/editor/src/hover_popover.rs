@@ -436,6 +436,7 @@ mod tests {
     use indoc::indoc;
 
     use language::{Diagnostic, DiagnosticSet};
+    use lsp::LanguageServerId;
     use project::HoverBlock;
     use smol::stream::StreamExt;
 
@@ -620,7 +621,7 @@ mod tests {
                 }],
                 &snapshot,
             );
-            buffer.update_diagnostics(set, cx);
+            buffer.update_diagnostics(LanguageServerId(0), set, cx);
         });
 
         // Hover pops diagnostic immediately

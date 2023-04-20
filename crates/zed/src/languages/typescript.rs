@@ -1,27 +1,33 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{future::BoxFuture, FutureExt};
+use gpui::AppContext;
 use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
 use lsp::CodeActionKind;
 use node_runtime::NodeRuntime;
-use serde_json::json;
+use serde_json::{json, Value};
 use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
+    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use util::http::HttpClient;
 use util::ResultExt;
 
-fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![
         server_path.into(),
         "--stdio".into(),
         "--tsserver-path".into(),
         "node_modules/typescript/lib".into(),
     ]
+}
+
+fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec![server_path.into(), "--stdio".into()]
 }
 
 pub struct TypeScriptLspAdapter {
@@ -37,7 +43,7 @@ impl TypeScriptLspAdapter {
     }
 }
 
-struct Versions {
+struct TypeScriptVersions {
     typescript_version: String,
     server_version: String,
 }
@@ -52,7 +58,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         &self,
         _: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(Versions {
+        Ok(Box::new(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
                 .node
@@ -67,7 +73,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: Arc<dyn HttpClient>,
         container_dir: PathBuf,
     ) -> Result<LanguageServerBinary> {
-        let versions = versions.downcast::<Versions>().unwrap();
+        let versions = versions.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
@@ -87,37 +93,28 @@ impl LspAdapter for TypeScriptLspAdapter {
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            arguments: server_binary_arguments(&server_path),
+            arguments: typescript_server_binary_arguments(&server_path),
         })
     }
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
         (|| async move {
-            let mut last_version_dir = None;
-            let mut entries = fs::read_dir(&container_dir).await?;
-            while let Some(entry) = entries.next().await {
-                let entry = entry?;
-                if entry.file_type().await?.is_dir() {
-                    last_version_dir = Some(entry.path());
-                }
-            }
-            let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-            let old_server_path = last_version_dir.join(Self::OLD_SERVER_PATH);
-            let new_server_path = last_version_dir.join(Self::NEW_SERVER_PATH);
+            let old_server_path = container_dir.join(Self::OLD_SERVER_PATH);
+            let new_server_path = container_dir.join(Self::NEW_SERVER_PATH);
             if new_server_path.exists() {
                 Ok(LanguageServerBinary {
                     path: self.node.binary_path().await?,
-                    arguments: server_binary_arguments(&new_server_path),
+                    arguments: typescript_server_binary_arguments(&new_server_path),
                 })
             } else if old_server_path.exists() {
                 Ok(LanguageServerBinary {
                     path: self.node.binary_path().await?,
-                    arguments: server_binary_arguments(&old_server_path),
+                    arguments: typescript_server_binary_arguments(&old_server_path),
                 })
             } else {
                 Err(anyhow!(
                     "missing executable in directory {:?}",
-                    last_version_dir
+                    container_dir
                 ))
             }
         })()
@@ -167,6 +164,136 @@ impl LspAdapter for TypeScriptLspAdapter {
         Some(json!({
             "provideFormatter": true
         }))
+    }
+}
+
+pub struct EsLintLspAdapter {
+    node: Arc<NodeRuntime>,
+}
+
+impl EsLintLspAdapter {
+    const SERVER_PATH: &'static str =
+        "node_modules/vscode-langservers-extracted/lib/eslint-language-server/eslintServer.js";
+
+    #[allow(unused)]
+    pub fn new(node: Arc<NodeRuntime>) -> Self {
+        EsLintLspAdapter { node }
+    }
+}
+
+#[async_trait]
+impl LspAdapter for EsLintLspAdapter {
+    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
+        Some(
+            future::ready(json!({
+                "": {
+                      "validate": "on",
+                      "packageManager": "npm",
+                      "useESLintClass": false,
+                      "experimental": {
+                        "useFlatConfig": false
+                      },
+                      "codeActionOnSave": {
+                        "mode": "all"
+                      },
+                      "format": false,
+                      "quiet": false,
+                      "onIgnoredFiles": "off",
+                      "options": {},
+                      "rulesCustomizations": [],
+                      "run": "onType",
+                      "problems": {
+                        "shortenToSingleLine": false
+                      },
+                      "nodePath": null,
+                      "workspaceFolder": {
+                        "name": "testing_ts",
+                        "uri": "file:///Users/julia/Stuff/testing_ts"
+                      },
+                      "codeAction": {
+                        "disableRuleComment": {
+                          "enable": true,
+                          "location": "separateLine",
+                          "commentStyle": "line"
+                        },
+                        "showDocumentation": {
+                          "enable": true
+                        }
+                      }
+                }
+            }))
+            .boxed(),
+        )
+    }
+
+    async fn name(&self) -> LanguageServerName {
+        LanguageServerName("eslint".into())
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: Arc<dyn HttpClient>,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        Ok(Box::new(
+            self.node
+                .npm_package_latest_version("vscode-langservers-extracted")
+                .await?,
+        ))
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        versions: Box<dyn 'static + Send + Any>,
+        _: Arc<dyn HttpClient>,
+        container_dir: PathBuf,
+    ) -> Result<LanguageServerBinary> {
+        let version = versions.downcast::<String>().unwrap();
+        let server_path = container_dir.join(Self::SERVER_PATH);
+
+        if fs::metadata(&server_path).await.is_err() {
+            self.node
+                .npm_install_packages(
+                    [("vscode-langservers-extracted", version.as_str())],
+                    &container_dir,
+                )
+                .await?;
+        }
+
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
+    }
+
+    async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary> {
+        (|| async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
+            if server_path.exists() {
+                Ok(LanguageServerBinary {
+                    path: self.node.binary_path().await?,
+                    arguments: eslint_server_binary_arguments(&server_path),
+                })
+            } else {
+                Err(anyhow!(
+                    "missing executable in directory {:?}",
+                    container_dir
+                ))
+            }
+        })()
+        .await
+        .log_err()
+    }
+
+    async fn label_for_completion(
+        &self,
+        _item: &lsp::CompletionItem,
+        _language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        None
+    }
+
+    async fn initialization_options(&self) -> Option<serde_json::Value> {
+        None
     }
 }
 

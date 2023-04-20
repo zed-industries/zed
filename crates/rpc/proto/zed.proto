@@ -684,9 +684,10 @@ message SearchProjectResponse {
 }
 
 message CodeAction {
-    Anchor start = 1;
-    Anchor end = 2;
-    bytes lsp_action = 3;
+    uint64 server_id = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+    bytes lsp_action = 4;
 }
 
 message ProjectTransaction {
@@ -860,7 +861,8 @@ message IncomingContactRequest {
 message UpdateDiagnostics {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
-    repeated Diagnostic diagnostics = 3;
+    uint64 server_id = 3;
+    repeated Diagnostic diagnostics = 4;
 }
 
 message Follow {

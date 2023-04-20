@@ -14,7 +14,7 @@ use language::{
     ToPointUtf16,
 };
 use log::{debug, error};
-use lsp::LanguageServer;
+use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
 use settings::Settings;
@@ -370,7 +370,7 @@ impl Copilot {
                 let node_path = node_runtime.binary_path().await?;
                 let arguments: &[OsString] = &[server_path.into(), "--stdio".into()];
                 let server = LanguageServer::new(
-                    0,
+                    LanguageServerId(0),
                     &node_path,
                     arguments,
                     Path::new("/"),

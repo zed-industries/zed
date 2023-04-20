@@ -96,7 +96,7 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde_path_to_error = "0.1.4"
 simplelog = "0.9"
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }
 smol = "1.2.5"
 tempdir = { version = "0.3.7" }
 thiserror = "1.0.29"

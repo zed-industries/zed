@@ -10,4 +10,4 @@ doctest = false
 
 [dependencies]
 anyhow = "1.0"
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }
