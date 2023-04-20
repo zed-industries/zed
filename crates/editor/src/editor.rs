@@ -1077,7 +1077,7 @@ impl CopilotState {
         match direction {
             Direction::Prev => {
                 self.active_completion_index = if self.active_completion_index == 0 {
-                    self.completions.len() - 1
+                    self.completions.len().saturating_sub(1)
                 } else {
                     self.active_completion_index - 1
                 };
