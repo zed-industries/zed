@@ -5,7 +5,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement, Bias, CharKind, DisplayPoint, ToOffset,
 };
-use gpui::{actions, impl_actions, AppContext};
+use gpui::{actions, impl_actions, AppContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
 use serde::Deserialize;
 use workspace::Workspace;
@@ -116,7 +116,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx))
 }
 
-pub(crate) fn motion(motion: Motion, cx: &mut AppContext) {
+pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     if let Some(Operator::Namespace(_))
     | Some(Operator::FindForward { .. })
     | Some(Operator::FindBackward { .. }) = Vim::read(cx).active_operator()

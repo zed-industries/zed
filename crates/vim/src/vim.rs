@@ -65,7 +65,7 @@ pub fn init(cx: &mut AppContext) {
         // Otherwise forward cancel on to the editor
         let vim = Vim::read(cx);
         if vim.state.mode != Mode::Normal || vim.active_operator().is_some() {
-            AppContext::defer(cx, |cx| {
+            WindowContext::defer(cx, |cx| {
                 Vim::update(cx, |state, cx| {
                     state.switch_mode(Mode::Normal, false, cx);
                 });
@@ -83,14 +83,14 @@ pub fn init(cx: &mut AppContext) {
         Vim::active_editor_input_ignored("\n".into(), cx)
     });
 
-    // Sync initial settings with the rest of the app
-    Vim::update(cx, |vim, cx| vim.sync_vim_settings(cx));
-
-    // Any time settings change, update vim mode to match
+    // Any time settings change, update vim mode to match.
+    cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
+        vim.set_enabled(cx.global::<Settings>().vim_mode, cx)
+    });
     cx.observe_global::<Settings, _>(|cx| {
-        Vim::update(cx, |state, cx| {
-            state.set_enabled(cx.global::<Settings>().vim_mode, cx)
-        })
+        cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
+            vim.set_enabled(cx.global::<Settings>().vim_mode, cx)
+        });
     })
     .detach();
 }
@@ -135,23 +135,23 @@ impl Vim {
         cx.default_global()
     }
 
-    fn update<F, S>(cx: &mut AppContext, update: F) -> S
+    fn update<F, S>(cx: &mut WindowContext, update: F) -> S
     where
-        F: FnOnce(&mut Self, &mut AppContext) -> S,
+        F: FnOnce(&mut Self, &mut WindowContext) -> S,
     {
         cx.update_default_global(update)
     }
 
     fn update_active_editor<S>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
         update: impl FnOnce(&mut Editor, &mut ViewContext<Editor>) -> S,
     ) -> Option<S> {
         let editor = self.active_editor.clone()?.upgrade(cx)?;
-        cx.update_window(editor.window_id(), |cx| editor.update(cx, update))
+        Some(editor.update(cx, update))
     }
 
-    fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut AppContext) {
+    fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut WindowContext) {
         self.state.mode = mode;
         self.state.operator_stack.clear();
 
@@ -178,12 +178,12 @@ impl Vim {
         });
     }
 
-    fn push_operator(&mut self, operator: Operator, cx: &mut AppContext) {
+    fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         self.state.operator_stack.push(operator);
         self.sync_vim_settings(cx);
     }
 
-    fn push_number(&mut self, Number(number): &Number, cx: &mut AppContext) {
+    fn push_number(&mut self, Number(number): &Number, cx: &mut WindowContext) {
         if let Some(Operator::Number(current_number)) = self.active_operator() {
             self.pop_operator(cx);
             self.push_operator(Operator::Number(current_number * 10 + *number as usize), cx);
@@ -192,14 +192,14 @@ impl Vim {
         }
     }
 
-    fn pop_operator(&mut self, cx: &mut AppContext) -> Operator {
+    fn pop_operator(&mut self, cx: &mut WindowContext) -> Operator {
         let popped_operator = self.state.operator_stack.pop()
             .expect("Operator popped when no operator was on the stack. This likely means there is an invalid keymap config");
         self.sync_vim_settings(cx);
         popped_operator
     }
 
-    fn pop_number_operator(&mut self, cx: &mut AppContext) -> usize {
+    fn pop_number_operator(&mut self, cx: &mut WindowContext) -> usize {
         let mut times = 1;
         if let Some(Operator::Number(number)) = self.active_operator() {
             times = number;
@@ -208,7 +208,7 @@ impl Vim {
         times
     }
 
-    fn clear_operator(&mut self, cx: &mut AppContext) {
+    fn clear_operator(&mut self, cx: &mut WindowContext) {
         self.state.operator_stack.clear();
         self.sync_vim_settings(cx);
     }
@@ -217,7 +217,7 @@ impl Vim {
         self.state.operator_stack.last().copied()
     }
 
-    fn active_editor_input_ignored(text: Arc<str>, cx: &mut AppContext) {
+    fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
         if text.is_empty() {
             return;
         }
@@ -242,24 +242,32 @@ impl Vim {
         if self.enabled != enabled {
             self.enabled = enabled;
             self.state = Default::default();
-            if enabled {
-                self.switch_mode(Mode::Normal, false, cx);
-            }
-            self.sync_vim_settings(cx);
+
+            cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
+                if self.enabled {
+                    filter.filtered_namespaces.remove("vim");
+                } else {
+                    filter.filtered_namespaces.insert("vim");
+                }
+            });
+
+            cx.update_active_window(|cx| {
+                if self.enabled {
+                    self.active_editor = cx
+                        .root_view()
+                        .downcast_ref::<Workspace>()
+                        .and_then(|workspace| workspace.read(cx).active_item(cx))
+                        .and_then(|item| item.downcast::<Editor>().map(|h| h.downgrade()));
+                    self.switch_mode(Mode::Normal, false, cx);
+                }
+                self.sync_vim_settings(cx);
+            });
         }
     }
 
-    fn sync_vim_settings(&self, cx: &mut AppContext) {
+    fn sync_vim_settings(&self, cx: &mut WindowContext) {
         let state = &self.state;
         let cursor_shape = state.cursor_shape();
-
-        cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
-            if self.enabled {
-                filter.filtered_namespaces.remove("vim");
-            } else {
-                filter.filtered_namespaces.insert("vim");
-            }
-        });
 
         self.update_active_editor(cx, |editor, cx| {
             if self.enabled && editor.mode() == EditorMode::Full {

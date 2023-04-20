@@ -4,7 +4,7 @@ use collections::HashMap;
 use editor::{
     display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, Bias, ClipboardSelection,
 };
-use gpui::{actions, AppContext, ViewContext};
+use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, SelectionGoal};
 use workspace::Workspace;
 
@@ -25,7 +25,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(paste);
 }
 
-pub fn visual_motion(motion: Motion, times: usize, cx: &mut AppContext) {
+pub fn visual_motion(motion: Motion, times: usize, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -56,7 +56,7 @@ pub fn visual_motion(motion: Motion, times: usize, cx: &mut AppContext) {
     });
 }
 
-pub fn visual_object(object: Object, cx: &mut AppContext) {
+pub fn visual_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         if let Operator::Object { around } = vim.pop_operator(cx) {
             vim.update_active_editor(cx, |editor, cx| {
@@ -313,7 +313,7 @@ pub fn paste(_: &mut Workspace, _: &VisualPaste, cx: &mut ViewContext<Workspace>
     });
 }
 
-pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut AppContext) {
+pub(crate) fn visual_replace(text: Arc<str>, line: bool, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {

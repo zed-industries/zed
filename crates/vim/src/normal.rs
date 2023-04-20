@@ -16,7 +16,7 @@ use editor::{
     scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
     Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
 };
-use gpui::{actions, impl_actions, AppContext, ViewContext};
+use gpui::{actions, impl_actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use log::error;
 use serde::Deserialize;
@@ -94,7 +94,7 @@ pub fn normal_motion(
     motion: Motion,
     operator: Option<Operator>,
     times: usize,
-    cx: &mut AppContext,
+    cx: &mut WindowContext,
 ) {
     Vim::update(cx, |vim, cx| {
         match operator {
@@ -110,7 +110,7 @@ pub fn normal_motion(
     });
 }
 
-pub fn normal_object(object: Object, cx: &mut AppContext) {
+pub fn normal_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         match vim.state.operator_stack.pop() {
             Some(Operator::Object { around }) => match vim.state.operator_stack.pop() {
@@ -129,7 +129,7 @@ pub fn normal_object(object: Object, cx: &mut AppContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut AppContext) {
+fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -424,7 +424,7 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
     }
 }
 
-pub(crate) fn normal_replace(text: Arc<str>, cx: &mut AppContext) {
+pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {

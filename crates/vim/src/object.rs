@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use editor::{char_kind, display_map::DisplaySnapshot, movement, Bias, CharKind, DisplayPoint};
-use gpui::{actions, impl_actions, AppContext};
+use gpui::{actions, impl_actions, AppContext, WindowContext};
 use language::Selection;
 use serde::Deserialize;
 use workspace::Workspace;
@@ -61,7 +61,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &AngleBrackets, cx: _| object(Object::AngleBrackets, cx));
 }
 
-fn object(object: Object, cx: &mut AppContext) {
+fn object(object: Object, cx: &mut WindowContext) {
     match Vim::read(cx).state.mode {
         Mode::Normal => normal_object(object, cx),
         Mode::Visual { .. } => visual_object(object, cx),
@@ -434,17 +434,17 @@ mod test {
     use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
 
     const WORD_LOCATIONS: &'static str = indoc! {"
-        The quick ˇbrowˇnˇ   
+        The quick ˇbrowˇnˇ
         fox ˇjuˇmpsˇ over
-        the lazy dogˇ  
+        the lazy dogˇ
         ˇ
         ˇ
         ˇ
-        Thˇeˇ-ˇquˇickˇ ˇbrownˇ 
-        ˇ  
-        ˇ  
+        Thˇeˇ-ˇquˇickˇ ˇbrownˇ
+        ˇ
+        ˇ
         ˇ  fox-jumpˇs over
-        the lazy dogˇ 
+        the lazy dogˇ
         ˇ
         "};
 
@@ -527,7 +527,7 @@ mod test {
     const SENTENCE_EXAMPLES: &[&'static str] = &[
         "ˇThe quick ˇbrownˇ?ˇ ˇFox Jˇumpsˇ!ˇ Ovˇer theˇ lazyˇ.",
         indoc! {"
-            ˇThe quick ˇbrownˇ   
+            ˇThe quick ˇbrownˇ
             fox jumps over
             the lazy doˇgˇ.ˇ ˇThe quick ˇ
             brown fox jumps over
