@@ -17,6 +17,7 @@ use collections::HashMap;
 use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
@@ -72,7 +73,7 @@ pub struct Buffer {
     syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
     parse_count: usize,
-    diagnostics: HashMap<usize, DiagnosticSet>, // server_id -> diagnostic set
+    diagnostics: HashMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     diagnostics_update_count: usize,
@@ -89,7 +90,7 @@ pub struct BufferSnapshot {
     pub git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
-    diagnostics: HashMap<usize, DiagnosticSet>, // server_id -> diagnostic set
+    diagnostics: HashMap<LanguageServerId, DiagnosticSet>,
     diagnostics_update_count: usize,
     file_update_count: usize,
     git_diff_update_count: usize,
@@ -157,7 +158,7 @@ pub struct Completion {
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
-    pub server_id: usize,
+    pub server_id: LanguageServerId,
     pub range: Range<Anchor>,
     pub lsp_action: lsp::CodeAction,
 }
@@ -167,7 +168,7 @@ pub enum Operation {
     Buffer(text::Operation),
 
     UpdateDiagnostics {
-        server_id: usize,
+        server_id: LanguageServerId,
         diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
         lamport_timestamp: clock::Lamport,
     },
@@ -879,7 +880,7 @@ impl Buffer {
 
     pub fn update_diagnostics(
         &mut self,
-        server_id: usize,
+        server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1645,7 +1646,7 @@ impl Buffer {
 
     fn apply_diagnostic_update(
         &mut self,
-        server_id: usize,
+        server_id: LanguageServerId,
         diagnostics: DiagnosticSet,
         lamport_timestamp: clock::Lamport,
         cx: &mut ModelContext<Self>,

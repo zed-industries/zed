@@ -54,6 +54,7 @@ use futures::channel::mpsc;
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
+pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use tree_sitter::{Parser, Tree};
 
@@ -524,7 +525,7 @@ struct LanguageRegistryState {
 }
 
 pub struct PendingLanguageServer {
-    pub server_id: usize,
+    pub server_id: LanguageServerId,
     pub task: Task<Result<lsp::LanguageServer>>,
 }
 
@@ -819,7 +820,7 @@ impl LanguageRegistry {
                 Ok(server)
             });
 
-            let server_id = post_inc(&mut self.state.write().next_language_server_id);
+            let server_id = self.state.write().next_language_server_id();
             return Some(PendingLanguageServer { server_id, task });
         }
 
@@ -837,7 +838,7 @@ impl LanguageRegistry {
         let adapter = adapter.clone();
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-        let server_id = post_inc(&mut self.state.write().next_language_server_id);
+        let server_id = self.state.write().next_language_server_id();
 
         let task = cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
@@ -884,6 +885,10 @@ impl LanguageRegistry {
 }
 
 impl LanguageRegistryState {
+    fn next_language_server_id(&mut self) -> LanguageServerId {
+        LanguageServerId(post_inc(&mut self.next_language_server_id))
+    }
+
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
             language.set_theme(&theme.editor.syntax);

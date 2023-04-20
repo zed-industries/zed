@@ -1834,6 +1834,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "lsp",
  "postage",
  "project",
  "serde_json",

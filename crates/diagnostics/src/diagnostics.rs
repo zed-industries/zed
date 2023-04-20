@@ -18,6 +18,7 @@ use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
     SelectionGoal,
 };
+use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
 use settings::Settings;
@@ -56,7 +57,7 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeMap<ProjectPath, usize>,
+    paths_to_update: BTreeMap<ProjectPath, LanguageServerId>,
 }
 
 struct PathState {
@@ -116,7 +117,7 @@ impl View for ProjectDiagnosticsEditor {
             }),
             "summary": self.summary,
             "paths_to_update": self.paths_to_update.iter().map(|(path, server_id)|
-                (path.path.to_string_lossy(), server_id)
+                (path.path.to_string_lossy(), server_id.0)
             ).collect::<Vec<_>>(),
             "paths_states": self.path_states.iter().map(|state|
                 json!({
@@ -196,7 +197,11 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(&mut self, language_server_id: Option<usize>, cx: &mut ViewContext<Self>) {
+    fn update_excerpts(
+        &mut self,
+        language_server_id: Option<LanguageServerId>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let mut paths = Vec::new();
         self.paths_to_update.retain(|path, server_id| {
             if language_server_id
@@ -809,6 +814,7 @@ mod tests {
             )
             .await;
 
+        let language_server_id = LanguageServerId(0);
         let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
@@ -816,7 +822,7 @@ mod tests {
         project.update(cx, |project, cx| {
             project
                 .update_diagnostic_entries(
-                    0,
+                    language_server_id,
                     PathBuf::from("/test/main.rs"),
                     None,
                     vec![
@@ -965,10 +971,10 @@ mod tests {
 
         // Diagnostics are added for another earlier path.
         project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(0, cx);
+            project.disk_based_diagnostics_started(language_server_id, cx);
             project
                 .update_diagnostic_entries(
-                    0,
+                    language_server_id,
                     PathBuf::from("/test/consts.rs"),
                     None,
                     vec![DiagnosticEntry {
@@ -985,7 +991,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            project.disk_based_diagnostics_finished(0, cx);
+            project.disk_based_diagnostics_finished(language_server_id, cx);
         });
 
         view.next_notification(cx).await;
@@ -1065,10 +1071,10 @@ mod tests {
 
         // Diagnostics are added to the first path
         project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(0, cx);
+            project.disk_based_diagnostics_started(language_server_id, cx);
             project
                 .update_diagnostic_entries(
-                    0,
+                    language_server_id,
                     PathBuf::from("/test/consts.rs"),
                     None,
                     vec![
@@ -1101,7 +1107,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            project.disk_based_diagnostics_finished(0, cx);
+            project.disk_based_diagnostics_finished(language_server_id, cx);
         });
 
         view.next_notification(cx).await;

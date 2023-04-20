@@ -26,6 +26,7 @@ use language::{
     },
     Buffer, DiagnosticEntry, File as _, PointUtf16, Rope, RopeFingerprint, Unclipped,
 };
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use postage::{
     barrier,
@@ -67,8 +68,14 @@ pub struct LocalWorktree {
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     _background_scanner_task: Task<()>,
     share: Option<ShareState>,
-    diagnostics: HashMap<Arc<Path>, Vec<(usize, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>)>>,
-    diagnostic_summaries: HashMap<Arc<Path>, HashMap<usize, DiagnosticSummary>>,
+    diagnostics: HashMap<
+        Arc<Path>,
+        Vec<(
+            LanguageServerId,
+            Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        )>,
+    >,
+    diagnostic_summaries: HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
     visible: bool,
@@ -82,7 +89,7 @@ pub struct RemoteWorktree {
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
-    diagnostic_summaries: HashMap<Arc<Path>, HashMap<usize, DiagnosticSummary>>,
+    diagnostic_summaries: HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>,
     visible: bool,
     disconnected: bool,
 }
@@ -463,7 +470,7 @@ impl Worktree {
 
     pub fn diagnostic_summaries(
         &self,
-    ) -> impl Iterator<Item = (Arc<Path>, usize, DiagnosticSummary)> + '_ {
+    ) -> impl Iterator<Item = (Arc<Path>, LanguageServerId, DiagnosticSummary)> + '_ {
         match self {
             Worktree::Local(worktree) => &worktree.diagnostic_summaries,
             Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
@@ -518,13 +525,16 @@ impl LocalWorktree {
     pub fn diagnostics_for_path(
         &self,
         path: &Path,
-    ) -> Vec<(usize, Vec<DiagnosticEntry<Unclipped<PointUtf16>>>)> {
+    ) -> Vec<(
+        LanguageServerId,
+        Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+    )> {
         self.diagnostics.get(path).cloned().unwrap_or_default()
     }
 
     pub fn update_diagnostics(
         &mut self,
-        server_id: usize,
+        server_id: LanguageServerId,
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut ModelContext<Worktree>,
@@ -570,7 +580,7 @@ impl LocalWorktree {
                         worktree_id: self.id().to_proto(),
                         summary: Some(proto::DiagnosticSummary {
                             path: worktree_path.to_string_lossy().to_string(),
-                            language_server_id: server_id as u64,
+                            language_server_id: server_id.0 as u64,
                             error_count: new_summary.error_count as u32,
                             warning_count: new_summary.warning_count as u32,
                         }),
@@ -1135,7 +1145,7 @@ impl RemoteWorktree {
         path: Arc<Path>,
         summary: &proto::DiagnosticSummary,
     ) {
-        let server_id = summary.language_server_id as usize;
+        let server_id = LanguageServerId(summary.language_server_id as usize);
         let summary = DiagnosticSummary {
             error_count: summary.error_count as usize,
             warning_count: summary.warning_count as usize,

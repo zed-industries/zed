@@ -303,7 +303,7 @@ async fn test_managing_language_servers(
 
     rust_buffer2.update(cx, |buffer, cx| {
         buffer.update_diagnostics(
-            0,
+            LanguageServerId(0),
             DiagnosticSet::from_sorted_entries(
                 vec![DiagnosticEntry {
                     diagnostic: Default::default(),
@@ -582,7 +582,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, cx| {
         project
             .update_diagnostics(
-                0,
+                LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
                     uri: Url::from_file_path("/dir/a.rs").unwrap(),
                     version: None,
@@ -599,7 +599,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .unwrap();
         project
             .update_diagnostics(
-                0,
+                LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
                     uri: Url::from_file_path("/dir/b.rs").unwrap(),
                     version: None,
@@ -675,7 +675,7 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, cx| {
         project
             .update_diagnostics(
-                0,
+                LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
                     uri: Url::from_file_path("/root/other.rs").unwrap(),
                     version: None,
@@ -767,7 +767,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
-            language_server_id: 0,
+            language_server_id: LanguageServerId(0),
         }
     );
 
@@ -784,7 +784,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
-            language_server_id: 0,
+            language_server_id: LanguageServerId(0),
             path: (worktree_id, Path::new("a.rs")).into()
         }
     );
@@ -793,7 +793,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsFinished {
-            language_server_id: 0
+            language_server_id: LanguageServerId(0)
         }
     );
 
@@ -831,7 +831,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
-            language_server_id: 0,
+            language_server_id: LanguageServerId(0),
             path: (worktree_id, Path::new("a.rs")).into()
         }
     );
@@ -892,7 +892,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
-            language_server_id: 1
+            language_server_id: LanguageServerId(1)
         }
     );
     project.read_with(cx, |project, _| {
@@ -900,7 +900,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             project
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
-            [1]
+            [LanguageServerId(1)]
         );
     });
 
@@ -910,7 +910,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsFinished {
-            language_server_id: 1
+            language_server_id: LanguageServerId(1)
         }
     );
     project.read_with(cx, |project, _| {
@@ -918,7 +918,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             project
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
-            [0; 0]
+            [LanguageServerId(0); 0]
         );
     });
 }
@@ -1403,7 +1403,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
         project
             .update_buffer_diagnostics(
                 &buffer,
-                0,
+                LanguageServerId(0),
                 None,
                 vec![
                     DiagnosticEntry {
@@ -1464,7 +1464,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
     project.update(cx, |project, cx| {
         project
             .update_diagnostic_entries(
-                0,
+                LanguageServerId(0),
                 Path::new("/dir/a.rs").to_owned(),
                 None,
                 vec![DiagnosticEntry {
@@ -1481,7 +1481,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
             .unwrap();
         project
             .update_diagnostic_entries(
-                1,
+                LanguageServerId(1),
                 Path::new("/dir/a.rs").to_owned(),
                 None,
                 vec![DiagnosticEntry {
@@ -1633,7 +1633,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
                         new_text: "".into(),
                     },
                 ],
-                0,
+                LanguageServerId(0),
                 Some(lsp_document_version),
                 cx,
             )
@@ -1728,7 +1728,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestApp
                         new_text: "".into(),
                     },
                 ],
-                0,
+                LanguageServerId(0),
                 None,
                 cx,
             )
@@ -1832,7 +1832,7 @@ async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
                         .unindent(),
                     },
                 ],
-                0,
+                LanguageServerId(0),
                 None,
                 cx,
             )
@@ -3011,7 +3011,9 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     };
 
     project
-        .update(cx, |p, cx| p.update_diagnostics(0, message, &[], cx))
+        .update(cx, |p, cx| {
+            p.update_diagnostics(LanguageServerId(0), message, &[], cx)
+        })
         .unwrap();
     let buffer = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 

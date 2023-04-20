@@ -36,7 +36,7 @@ use language::{
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageString, MarkedString,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LanguageString, MarkedString,
 };
 use lsp_command::*;
 use lsp_glob_set::LspGlobSet;
@@ -95,10 +95,10 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_changes_tx: mpsc::UnboundedSender<BufferMessage>,
     languages: Arc<LanguageRegistry>,
-    language_servers: HashMap<usize, LanguageServerState>,
-    language_server_ids: HashMap<(WorktreeId, LanguageServerName), usize>,
-    language_server_statuses: BTreeMap<usize, LanguageServerStatus>,
-    last_workspace_edits_by_language_server: HashMap<usize, ProjectTransaction>,
+    language_servers: HashMap<LanguageServerId, LanguageServerState>,
+    language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
+    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
     client: Arc<client::Client>,
     next_entry_id: Arc<AtomicUsize>,
     join_project_response_message_id: u32,
@@ -123,7 +123,7 @@ pub struct Project {
     /// A mapping from a buffer ID to None means that we've started waiting for an ID but haven't finished loading it.
     /// Used for re-issuing buffer requests when peers temporarily disconnect
     incomplete_remote_buffers: HashMap<u64, Option<ModelHandle<Buffer>>>,
-    buffer_snapshots: HashMap<u64, HashMap<usize, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
+    buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<usize>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
@@ -189,14 +189,14 @@ pub enum Event {
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted {
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
     },
     DiskBasedDiagnosticsFinished {
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
     },
     DiagnosticsUpdated {
         path: ProjectPath,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
@@ -336,10 +336,14 @@ impl DiagnosticSummary {
         self.error_count == 0 && self.warning_count == 0
     }
 
-    pub fn to_proto(&self, language_server_id: usize, path: &Path) -> proto::DiagnosticSummary {
+    pub fn to_proto(
+        &self,
+        language_server_id: LanguageServerId,
+        path: &Path,
+    ) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_string_lossy().to_string(),
-            language_server_id: language_server_id as u64,
+            language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
         }
@@ -541,7 +545,7 @@ impl Project {
                     .into_iter()
                     .map(|server| {
                         (
-                            server.id as usize,
+                            LanguageServerId(server.id as usize),
                             LanguageServerStatus {
                                 name: server.name,
                                 pending_work: Default::default(),
@@ -1025,7 +1029,7 @@ impl Project {
                 .send(proto::StartLanguageServer {
                     project_id,
                     server: Some(proto::LanguageServer {
-                        id: *server_id as u64,
+                        id: server_id.0 as u64,
                         name: status.name.clone(),
                     }),
                 })
@@ -1152,7 +1156,7 @@ impl Project {
             .into_iter()
             .map(|server| {
                 (
-                    server.id as usize,
+                    LanguageServerId(server.id as usize),
                     LanguageServerStatus {
                         name: server.name,
                         pending_work: Default::default(),
@@ -1444,7 +1448,7 @@ impl Project {
     fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
@@ -2381,7 +2385,7 @@ impl Project {
                         .send(proto::StartLanguageServer {
                             project_id,
                             server: Some(proto::LanguageServer {
-                                id: server_id as u64,
+                                id: server_id.0 as u64,
                                 name: language_server.name().to_string(),
                             }),
                         })
@@ -2603,7 +2607,7 @@ impl Project {
     fn on_lsp_progress(
         &mut self,
         progress: lsp::ProgressParams,
-        server_id: usize,
+        server_id: LanguageServerId,
         disk_based_diagnostics_progress_token: Option<String>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2715,7 +2719,7 @@ impl Project {
 
     fn on_lsp_work_start(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         token: String,
         progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
@@ -2728,7 +2732,7 @@ impl Project {
 
     fn on_lsp_work_progress(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         token: String,
         progress: LanguageServerProgress,
         cx: &mut ModelContext<Self>,
@@ -2755,7 +2759,7 @@ impl Project {
 
     fn on_lsp_work_end(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         token: String,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2767,7 +2771,7 @@ impl Project {
 
     fn on_lsp_did_change_watched_files(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         params: DidChangeWatchedFilesRegistrationOptions,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2785,7 +2789,7 @@ impl Project {
     async fn on_lsp_workspace_edit(
         this: WeakModelHandle<Self>,
         params: lsp::ApplyWorkspaceEditParams,
-        server_id: usize,
+        server_id: LanguageServerId,
         adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         mut cx: AsyncAppContext,
@@ -2818,14 +2822,14 @@ impl Project {
 
     fn broadcast_language_server_update(
         &self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         event: proto::update_language_server::Variant,
     ) {
         if let Some(project_id) = self.remote_id() {
             self.client
                 .send(proto::UpdateLanguageServer {
                     project_id,
-                    language_server_id: language_server_id as u64,
+                    language_server_id: language_server_id.0 as u64,
                     variant: Some(event),
                 })
                 .log_err();
@@ -2840,7 +2844,7 @@ impl Project {
 
     pub fn update_diagnostics(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
         cx: &mut ModelContext<Self>,
@@ -2960,7 +2964,7 @@ impl Project {
 
     pub fn update_diagnostic_entries(
         &mut self,
-        server_id: usize,
+        server_id: LanguageServerId,
         abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -2997,7 +3001,7 @@ impl Project {
     fn update_buffer_diagnostics(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        server_id: usize,
+        server_id: LanguageServerId,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
@@ -4712,7 +4716,7 @@ impl Project {
 
     pub fn language_servers_running_disk_based_diagnostics(
         &self,
-    ) -> impl Iterator<Item = usize> + '_ {
+    ) -> impl Iterator<Item = LanguageServerId> + '_ {
         self.language_server_statuses
             .iter()
             .filter_map(|(id, status)| {
@@ -4736,7 +4740,7 @@ impl Project {
     pub fn diagnostic_summaries<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = (ProjectPath, usize, DiagnosticSummary)> + 'a {
+    ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
         self.visible_worktrees(cx).flat_map(move |worktree| {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
@@ -4750,7 +4754,7 @@ impl Project {
 
     pub fn disk_based_diagnostics_started(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(Event::DiskBasedDiagnosticsStarted { language_server_id });
@@ -4758,7 +4762,7 @@ impl Project {
 
     pub fn disk_based_diagnostics_finished(
         &mut self,
-        language_server_id: usize,
+        language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(Event::DiskBasedDiagnosticsFinished { language_server_id });
@@ -5065,7 +5069,7 @@ impl Project {
                             .update_diagnostic_summary(project_path.path.clone(), &summary);
                     });
                     cx.emit(Event::DiagnosticsUpdated {
-                        language_server_id: summary.language_server_id as usize,
+                        language_server_id: LanguageServerId(summary.language_server_id as usize),
                         path: project_path,
                     });
                 }
@@ -5086,7 +5090,7 @@ impl Project {
             .ok_or_else(|| anyhow!("invalid server"))?;
         this.update(&mut cx, |this, cx| {
             this.language_server_statuses.insert(
-                server.id as usize,
+                LanguageServerId(server.id as usize),
                 LanguageServerStatus {
                     name: server.name,
                     pending_work: Default::default(),
@@ -5106,7 +5110,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let language_server_id = envelope.payload.language_server_id as usize;
+            let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
 
             match envelope
                 .payload
@@ -6142,7 +6146,7 @@ impl Project {
         &mut self,
         buffer: &ModelHandle<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
-        server_id: usize,
+        server_id: LanguageServerId,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
@@ -6245,7 +6249,7 @@ impl Project {
     fn buffer_snapshot_for_lsp_version(
         &mut self,
         buffer: &ModelHandle<Buffer>,
-        server_id: usize,
+        server_id: LanguageServerId,
         version: Option<i32>,
         cx: &AppContext,
     ) -> Result<TextBufferSnapshot> {
@@ -6314,14 +6318,18 @@ impl Project {
     fn language_server_for_buffer(
         &self,
         buffer: &Buffer,
-        server_id: usize,
+        server_id: LanguageServerId,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
         self.language_servers_iter_for_buffer(buffer, cx)
             .find(|(_, s)| s.server_id() == server_id)
     }
 
-    fn language_server_ids_for_buffer(&self, buffer: &Buffer, cx: &AppContext) -> Vec<usize> {
+    fn language_server_ids_for_buffer(
+        &self,
+        buffer: &Buffer,
+        cx: &AppContext,
+    ) -> Vec<LanguageServerId> {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
             language
