@@ -4322,7 +4322,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
     cx.set_state(
         &[
             "one ",   //
-            "twoˇ",  //
+            "twoˇ",   //
             "three ", //
             "four",   //
         ]
@@ -4397,7 +4397,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
         &[
             "one",   //
             "",      //
-            "twoˇ", //
+            "twoˇ",  //
             "",      //
             "three", //
             "four",  //
@@ -4412,7 +4412,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
     cx.assert_editor_state(
         &[
             "one ",   //
-            "twoˇ",  //
+            "twoˇ",   //
             "three ", //
             "four",   //
         ]

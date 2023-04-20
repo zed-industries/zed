@@ -21,8 +21,7 @@ use std::{
     sync::Arc,
 };
 use util::{
-    channel::ReleaseChannel, fs::remove_matching, github::latest_github_release, http::HttpClient,
-    paths, ResultExt,
+    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
 
 const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
@@ -35,15 +34,6 @@ actions!(
 );
 
 pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
-    // Disable Copilot for stable releases.
-    if *cx.global::<ReleaseChannel>() == ReleaseChannel::Stable {
-        cx.update_global::<collections::CommandPaletteFilter, _, _>(|filter, _cx| {
-            filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
-            filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
-        });
-        return;
-    }
-
     let copilot = cx.add_model({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(http, node_runtime, cx)
