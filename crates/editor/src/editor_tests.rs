@@ -729,21 +729,19 @@ fn test_fold_action(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
-    let (_, view) = cx.add_window(|cx| {
-        let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(
-                vec![
-                    (Point::new(1, 0)..Point::new(1, 0), "\t"),
-                    (Point::new(1, 1)..Point::new(1, 1), "\t"),
-                ],
-                None,
-                cx,
-            );
-        });
-        build_editor(buffer.clone(), cx)
-    });
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx));
+    let (_, view) = cx.add_window(|cx| build_editor(buffer.clone(), cx));
 
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(
+            vec![
+                (Point::new(1, 0)..Point::new(1, 0), "\t"),
+                (Point::new(1, 1)..Point::new(1, 1), "\t"),
+            ],
+            None,
+            cx,
+        );
+    });
     view.update(cx, |view, cx| {
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -5848,6 +5846,7 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
         &r#"
         ˇuse some::modified;
 
+
         fn main() {
             println!("hello there");
 
@@ -5868,6 +5867,7 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.assert_editor_state(
         &r#"
         use some::modified;
+
 
         fn main() {
         ˇ    println!("hello there");
@@ -5891,6 +5891,7 @@ async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppCon
     cx.assert_editor_state(
         &r#"
         ˇuse some::modified;
+
 
         fn main() {
             println!("hello there");
