@@ -1,6 +1,7 @@
 import { useColors } from "./colors"
 import { Theme } from "./config"
-import { Intensity } from "./intensity"
+import { ContainedText, InteractiveContainer, buildStates, container } from "./container"
+import { ElementIntensities, Intensity } from "./intensity"
 
 type Font = "Zed Mono" | "Zed Sans"
 
@@ -135,4 +136,30 @@ export function text(
     }
 
     return text
+}
+
+export function interactiveText(
+    theme: Theme,
+    intensities: ElementIntensities,
+    options: Partial<TextStyle>,
+): InteractiveContainer<ContainedText> {
+    const { fg } = intensities;
+    const { color = 'neutral', ...mergedOptions } = options;
+    const { neutral, ...themeColor } = useColors(theme);
+    const states = buildStates(theme, intensities);
+
+    const common = {
+        container: container.blank,
+    };
+
+    const createText = (fgColor: Intensity): ContainedText => ({
+        ...common,
+        text: text(theme, fgColor, { ...mergedOptions, color: themeColor[color](fg) }),
+    });
+
+    return {
+        default: createText(states.default.fg),
+        hovered: createText(states.hovered.fg),
+        pressed: createText(states.pressed.fg),
+    };
 }

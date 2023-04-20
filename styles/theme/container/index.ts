@@ -11,13 +11,22 @@ export type Margin = [number, number, number, number]
 export type Padding = [number, number, number, number]
 
 export interface ContainerStyle {
-    background: string
-    margin: Margin
-    padding: Padding
-    borderRadius: number
-    border: Border
+    background?: string
+    margin?: Margin
+    padding?: Padding
+    borderRadius?: number
+    border?: Border
     width: number | "auto"
     height: number | "auto"
+}
+
+const blankContainer: ContainerStyle = {
+    width: "auto",
+    height: "auto",
+}
+
+export const container: Record<string, ContainerStyle> = {
+    blank: blankContainer,
 }
 
 export enum IconSize {
@@ -110,8 +119,6 @@ export function buildStates(
     return elementStates
 }
 
-
-// Builds each of the states for a given set of ElementIntensities
 export function buildState(
     startingIntensity: StateIntensity,
     change: number
