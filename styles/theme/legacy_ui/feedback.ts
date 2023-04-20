@@ -1,22 +1,22 @@
 import { labelButton } from "@components/button"
 import { Theme } from "@theme/config"
+import { interactiveText, text } from "@theme/text"
 
 export default function feedback(theme: Theme) {
+    const link_text = interactiveText(theme)
+    const info_text = text(theme)
+
     const legacy_properties = {
         button_margin: 8,
+        // Should be info_text
+        info_text_default: info_text,
+        // Should be link_text
+        link_text_default: link_text.default,
+        link_text_hover: link_text.hovered,
     }
 
     return {
         ...legacy_properties,
         submit_button: labelButton(theme),
-        info_text_default: text(layer, "sans", "default", { size: "xs" }),
-        link_text_default: text(layer, "sans", "default", {
-            size: "xs",
-            underline: true,
-        }),
-        link_text_hover: text(layer, "sans", "hovered", {
-            size: "xs",
-            underline: true,
-        }),
     }
 }

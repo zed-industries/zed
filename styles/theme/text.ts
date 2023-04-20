@@ -114,11 +114,17 @@ const DEFAULT_TEXT_OPTIONS: Partial<TextStyle> = {
     lineHeight: 1,
 }
 
+const DEFAULT_TEXT_INTENSITY: Intensity = 100
+
 export function text(
     theme: Theme,
-    intensity: Intensity,
-    options: Partial<TextStyle>,
+    intensity?: Intensity,
+    options?: Partial<TextStyle>,
 ): TextStyle {
+    if (!intensity) {
+        intensity = DEFAULT_TEXT_INTENSITY
+    }
+
     const themeColor = useColors(theme)
     const color = options.color ? themeColor[options.color](intensity) : themeColor.neutral(intensity)
 
@@ -140,13 +146,19 @@ export function text(
 
 export function interactiveText(
     theme: Theme,
-    intensities: ElementIntensities,
-    options: Partial<TextStyle>,
+    options?: Partial<TextStyle>,
 ): InteractiveContainer<ContainedText> {
-    const { fg } = intensities;
+
+    const DEFAULT_INTENSITIES: ElementIntensities = {
+        bg: DEFAULT_TEXT_INTENSITY,
+        border: DEFAULT_TEXT_INTENSITY,
+        fg: DEFAULT_TEXT_INTENSITY,
+    }
+
+    const { fg } = DEFAULT_INTENSITIES;
     const { color = 'neutral', ...mergedOptions } = options;
     const { neutral, ...themeColor } = useColors(theme);
-    const states = buildStates(theme, intensities);
+    const states = buildStates(theme, DEFAULT_INTENSITIES);
 
     const common = {
         container: container.blank,
