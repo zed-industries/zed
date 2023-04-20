@@ -873,6 +873,15 @@ impl AppContext {
         })
     }
 
+    pub fn update_active_window<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        callback: F,
+    ) -> Option<T> {
+        self.platform
+            .main_window_id()
+            .and_then(|id| self.update_window(id, callback))
+    }
+
     pub fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
@@ -1210,17 +1219,26 @@ impl AppContext {
         T: 'static + Default,
         F: FnOnce(&mut T, &mut AppContext) -> U,
     {
-        self.update(|this| {
-            let type_id = TypeId::of::<T>();
-            let mut state = this
-                .globals
-                .remove(&type_id)
-                .unwrap_or_else(|| Box::new(T::default()));
-            let result = update(state.downcast_mut().unwrap(), this);
-            this.globals.insert(type_id, state);
-            this.notify_global(type_id);
-            result
+        self.update(|mut this| {
+            Self::update_default_global_internal(&mut this, |global, cx| update(global, cx))
         })
+    }
+
+    fn update_default_global_internal<C, T, F, U>(this: &mut C, update: F) -> U
+    where
+        C: DerefMut<Target = AppContext>,
+        T: 'static + Default,
+        F: FnOnce(&mut T, &mut C) -> U,
+    {
+        let type_id = TypeId::of::<T>();
+        let mut state = this
+            .globals
+            .remove(&type_id)
+            .unwrap_or_else(|| Box::new(T::default()));
+        let result = update(state.downcast_mut().unwrap(), this);
+        this.globals.insert(type_id, state);
+        this.notify_global(type_id);
+        result
     }
 
     pub fn update_global<T, F, U>(&mut self, update: F) -> U

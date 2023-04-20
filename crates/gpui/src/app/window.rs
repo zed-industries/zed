@@ -274,6 +274,14 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         AppContext::update_global_internal(self, |global, cx| update(global, cx))
     }
 
+    pub fn update_default_global<T, F, U>(&mut self, update: F) -> U
+    where
+        T: 'static + Default,
+        F: FnOnce(&mut T, &mut Self) -> U,
+    {
+        AppContext::update_default_global_internal(self, |global, cx| update(global, cx))
+    }
+
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
