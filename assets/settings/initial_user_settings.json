@@ -7,5 +7,5 @@
 // custom settings, run the `open default settings` command
 // from the command palette or from `Zed` application menu.
 {
-    "buffer_font_size": 15
+  "buffer_font_size": 15
 }
