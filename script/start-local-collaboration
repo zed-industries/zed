@@ -17,6 +17,12 @@ MESSAGE
   exit 1
 fi
 
+# Install jq if it's not installed
+if ! command -v jq &> /dev/null; then
+    echo "Installing jq..."
+    brew install jq
+fi
+
 # Start one Zed instance as the current user and a second instance with a different user.
 username_1=$(curl -sH "Authorization: bearer $GITHUB_TOKEN" https://api.github.com/user | jq -r .login)
 username_2=nathansobo
@@ -25,7 +31,6 @@ if [[ $username_1 == $username_2 ]]; then
 fi
 
 # Make each Zed instance take up half of the screen.
-
 output=$(system_profiler SPDisplaysDataType -json)
 resolution=$(echo "$output" | jq -r '.SPDisplaysDataType[0].spdisplays_ndrvs[] | select(.spdisplays_online == "spdisplays_yes") | ._spdisplays_resolution')
 width=$(echo "$resolution" | jq -Rr 'split(" x ")[0]')
