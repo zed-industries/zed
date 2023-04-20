@@ -16,12 +16,14 @@ export function hexToIntensity(hex: string): Intensity {
 }
 
 export function numberToIntensity(number: number): Intensity {
-    if (number < 1 || number > 100)
+    const i = Math.ceil(Math.min(Math.max(number, 1), 100))
+
+    if (i < 1 || i > 100)
         throw new Error(
-            `Intensity ${number} out of range. Intensity must be between 1 and 100`
+            `Intensity ${i} out of range. Intensity must be between 1 and 100`
         )
 
-    return number as Intensity
+    return i as Intensity
 }
 
 // Dumb but it works
@@ -147,7 +149,7 @@ export interface ElementIntensities<T = ElementIntensity> {
     fg: T
 }
 
-/** Resolves ElementIntensity down to a single Intensity based on the theme's appearance
+/** Resolves ElementIntensity down to a single Intensity per property based on the theme's appearance
  *
  * If two intensities are provided, the first is used for dark appearance and the second for light appearance
  *
@@ -176,4 +178,19 @@ export function useElementIntensities(
     }
 
     return { ...intensity, ...elementIntensities }
+}
+
+export const calculateIntensity = (
+    intensity: number,
+    change: number
+): Intensity => {
+    let newIntensity = intensity + change
+    if (newIntensity > 100) {
+        // If the new intensity is too high, change the direction and use the same change value
+        newIntensity = intensity - change
+    }
+
+    const finalIntensity = numberToIntensity(newIntensity)
+
+    return finalIntensity
 }

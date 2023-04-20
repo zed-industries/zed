@@ -49,3 +49,26 @@ export interface TextStyle {
     color: string
     lineHeight: number
 }
+
+const textDefaults = {
+    family: family.sans,
+    size: size.md,
+    weight: weight.regular,
+    lineHeight: 1,
+}
+
+export function useText(
+    color: string,
+    family: Font = textDefaults.family,
+    size: number = textDefaults.size,
+    weight: Weight = textDefaults.weight,
+    lineHeight: number = textDefaults.lineHeight,
+): TextStyle {
+    return {
+        family,
+        size,
+        weight,
+        color,
+        lineHeight,
+    }
+}

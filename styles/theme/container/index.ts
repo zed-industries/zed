@@ -1,6 +1,11 @@
 import { Border, Theme } from "@/theme"
 import { TextStyle } from "@/theme/font"
-import { Intensity, numberToIntensity } from "../intensity"
+import {
+    ElementIntensities,
+    Intensity,
+    calculateIntensity,
+    useElementIntensities,
+} from "../intensity"
 
 export type Margin = [number, number, number, number]
 export type Padding = [number, number, number, number]
@@ -11,8 +16,8 @@ export interface ContainerStyle {
     padding: Padding
     borderRadius: number
     border: Border
-    width: number
-    height: number
+    width: number | "auto"
+    height: number | "auto"
 }
 
 export enum IconSize {
@@ -60,52 +65,64 @@ export interface InteractiveToggleableContainer<T = InteractiveContainer> {
     active: T
 }
 
-export interface StateIntensities {
-    default: Intensity
-    hovered: Intensity
-    pressed: Intensity
-    active: Intensity
+type State = "default" | "hovered" | "pressed"
+type States = Partial<Record<State, boolean>>
+
+type ContainerColors = {
+    bg: Intensity
+    border: Intensity
+    fg: Intensity
 }
 
-export function buildStateIntensities(
+export type StateIntensity = ContainerColors
+export type StateIntensities = Record<State, StateIntensity>
+
+export function buildStates(
     theme: Theme,
-    baseIntensity: number,
-    scaleFactor: number
+    startingIntensity: ElementIntensities,
 ): StateIntensities {
-    const isLightTheme = theme.appearance === "light"
-    const intensitySteps = isLightTheme ? [0, 5, 10, 15] : [0, 12, 18, 24]
-    const defaultIntensity = numberToIntensity(baseIntensity)
+    const light = theme.appearance === "light"
+    const multiplier = light ? 1 : 1.2;
+    const stepSize = 5;
+    const startingOffset = light ? 5 : 12;
+    const intensitySteps = [0, 1, 2, 3].map(step => multiplier * stepSize * step + startingOffset);
+
+    const scaleFactor = theme.intensity.scaleFactor
 
     const scaledIntensitySteps = intensitySteps.map(
         (intensity) => intensity * scaleFactor
     )
 
-    const calculateIntensity = (
-        intensity: number,
-        change: number
-    ): Intensity => {
-        let newIntensity = intensity + change
-        if (newIntensity > 100) {
-            // If the new intensity is too high, change the direction and use the same change value
-            newIntensity = intensity - change
-        }
+    const resolvedIntensity = useElementIntensities(theme, startingIntensity)
 
-        // Round the ouput to ensure it is a valid intensity
-        const finalIntensity = Math.ceil(
-            Math.min(Math.max(newIntensity, 1), 100)
-        )
-
-        return numberToIntensity(finalIntensity)
+    const defaultState: StateIntensity = {
+        bg: resolvedIntensity.bg,
+        border: resolvedIntensity.border,
+        fg: resolvedIntensity.fg,
     }
 
-    const stateIntensities: StateIntensities = {
-        default: defaultIntensity,
-        hovered: calculateIntensity(defaultIntensity, scaledIntensitySteps[1]),
-        pressed: calculateIntensity(defaultIntensity, scaledIntensitySteps[2]),
-        active: calculateIntensity(defaultIntensity, scaledIntensitySteps[3]),
+    const elementStates = {
+        default: defaultState,
+        hovered: buildState(defaultState, scaledIntensitySteps[1]),
+        pressed: buildState(defaultState, scaledIntensitySteps[2]),
     }
 
-    return stateIntensities
+    return elementStates
+}
+
+
+// Builds each of the states for a given set of ElementIntensities
+export function buildState(
+    startingIntensity: StateIntensity,
+    change: number
+): StateIntensity {
+    const stateIntensity: StateIntensity = {
+        bg: calculateIntensity(startingIntensity.bg, change),
+        border: calculateIntensity(startingIntensity.border, change),
+        fg: calculateIntensity(startingIntensity.fg, change),
+    }
+
+    return stateIntensity
 }
 
 export const checkContrast = (
