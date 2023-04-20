@@ -290,7 +290,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |action: &OpenPaths, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
-                open_paths(&action.paths, &app_state, cx).detach();
+                open_paths(&action.paths, &app_state, None, cx).detach();
             }
         }
     });
@@ -303,15 +303,28 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             }
 
             let app_state = app_state.upgrade()?;
+            let window_id = cx.window_id();
             let action = action.clone();
-            let close = workspace.prepare_to_close(false, cx);
+            let is_remote = workspace.project.read(cx).is_remote();
+            let has_worktree = workspace.project.read(cx).worktrees(cx).next().is_some();
+            let has_dirty_items = workspace.items(cx).any(|item| item.is_dirty(cx));
+            let close_task = if is_remote || has_worktree || has_dirty_items {
+                None
+            } else {
+                Some(workspace.prepare_to_close(false, cx))
+            };
 
             Some(cx.spawn_weak(|_, mut cx| async move {
-                let can_close = close.await?;
-                if can_close {
-                    cx.update(|cx| open_paths(&action.paths, &app_state, cx))
-                        .await?;
-                }
+                let window_id_to_replace = if let Some(close_task) = close_task {
+                    if !close_task.await? {
+                        return Ok(());
+                    }
+                    Some(window_id)
+                } else {
+                    None
+                };
+                cx.update(|cx| open_paths(&action.paths, &app_state, window_id_to_replace, cx))
+                    .await?;
                 Ok(())
             }))
         }
@@ -854,6 +867,7 @@ impl Workspace {
     fn new_local(
         abs_paths: Vec<PathBuf>,
         app_state: Arc<AppState>,
+        requesting_window_id: Option<usize>,
         cx: &mut AppContext,
     ) -> Task<(
         ViewHandle<Workspace>,
@@ -868,7 +882,8 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+            let mut serialized_workspace =
+                persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
             let paths_to_open = serialized_workspace
                 .as_ref()
@@ -915,7 +930,7 @@ impl Workspace {
                     let mut workspace = Workspace::new(
                         serialized_workspace,
                         workspace_id,
-                        project_handle,
+                        project_handle.clone(),
                         app_state.dock_default_item_factory,
                         app_state.background_actions,
                         cx,
@@ -924,46 +939,54 @@ impl Workspace {
                     workspace
                 };
 
-            let workspace = {
-                let (bounds, display) = if let Some(bounds) = window_bounds_override {
-                    (Some(bounds), None)
-                } else {
-                    serialized_workspace
-                        .as_ref()
-                        .and_then(|serialized_workspace| {
-                            let display = serialized_workspace.display?;
-                            let mut bounds = serialized_workspace.bounds?;
-
-                            // Stored bounds are relative to the containing display.
-                            // So convert back to global coordinates if that screen still exists
-                            if let WindowBounds::Fixed(mut window_bounds) = bounds {
-                                if let Some(screen) = cx.platform().screen_by_id(display) {
-                                    let screen_bounds = screen.bounds();
-                                    window_bounds.set_origin_x(
-                                        window_bounds.origin_x() + screen_bounds.origin_x(),
-                                    );
-                                    window_bounds.set_origin_y(
-                                        window_bounds.origin_y() + screen_bounds.origin_y(),
-                                    );
-                                    bounds = WindowBounds::Fixed(window_bounds);
-                                } else {
-                                    // Screen no longer exists. Return none here.
-                                    return None;
-                                }
-                            }
-
-                            Some((bounds, display))
+            let workspace = requesting_window_id
+                .and_then(|window_id| {
+                    cx.update(|cx| {
+                        cx.replace_root_view(window_id, |cx| {
+                            build_workspace(cx, serialized_workspace.take())
                         })
-                        .unzip()
-                };
+                    })
+                })
+                .unwrap_or_else(|| {
+                    let (bounds, display) = if let Some(bounds) = window_bounds_override {
+                        (Some(bounds), None)
+                    } else {
+                        serialized_workspace
+                            .as_ref()
+                            .and_then(|serialized_workspace| {
+                                let display = serialized_workspace.display?;
+                                let mut bounds = serialized_workspace.bounds?;
 
-                // Use the serialized workspace to construct the new window
-                cx.add_window(
-                    (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                    |cx| build_workspace(cx, serialized_workspace),
-                )
-                .1
-            };
+                                // Stored bounds are relative to the containing display.
+                                // So convert back to global coordinates if that screen still exists
+                                if let WindowBounds::Fixed(mut window_bounds) = bounds {
+                                    if let Some(screen) = cx.platform().screen_by_id(display) {
+                                        let screen_bounds = screen.bounds();
+                                        window_bounds.set_origin_x(
+                                            window_bounds.origin_x() + screen_bounds.origin_x(),
+                                        );
+                                        window_bounds.set_origin_y(
+                                            window_bounds.origin_y() + screen_bounds.origin_y(),
+                                        );
+                                        bounds = WindowBounds::Fixed(window_bounds);
+                                    } else {
+                                        // Screen no longer exists. Return none here.
+                                        return None;
+                                    }
+                                }
+
+                                Some((bounds, display))
+                            })
+                            .unzip()
+                    };
+
+                    // Use the serialized workspace to construct the new window
+                    cx.add_window(
+                        (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
+                        |cx| build_workspace(cx, serialized_workspace),
+                    )
+                    .1
+                });
 
             notify_if_database_failed(&workspace, &mut cx);
 
@@ -1056,7 +1079,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), cx);
+            let task = Self::new_local(Vec::new(), app_state.clone(), None, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -3025,6 +3048,7 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: &Arc<AppState>,
+    requesting_window_id: Option<usize>,
     cx: &mut AppContext,
 ) -> Task<
     Result<(
@@ -3057,7 +3081,8 @@ pub fn open_paths(
                     .contains(&false);
 
             cx.update(|cx| {
-                let task = Workspace::new_local(abs_paths, app_state.clone(), cx);
+                let task =
+                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx);
 
                 cx.spawn(|mut cx| async move {
                     let (workspace, items) = task.await;
@@ -3081,7 +3106,7 @@ pub fn open_new(
     cx: &mut AppContext,
     init: impl FnOnce(&mut Workspace, &mut ViewContext<Workspace>) + 'static,
 ) -> Task<()> {
-    let task = Workspace::new_local(Vec::new(), app_state.clone(), cx);
+    let task = Workspace::new_local(Vec::new(), app_state.clone(), None, cx);
     cx.spawn(|mut cx| async move {
         let (workspace, opened_paths) = task.await;
 

@@ -1,5 +1,6 @@
 name = "Python"
 path_suffixes = ["py", "pyi"]
+first_line_pattern = '^#!.*\bpython[0-9.]*\b'
 line_comment = "# "
 autoclose_before = ";:.,=}])>"
 brackets = [

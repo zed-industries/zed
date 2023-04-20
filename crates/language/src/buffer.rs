@@ -187,6 +187,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     Reloaded,
+    LanguageChanged,
     Reparsed,
     DiagnosticsUpdated,
     Closed,
@@ -536,6 +537,7 @@ impl Buffer {
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
+        cx.emit(Event::LanguageChanged);
     }
 
     pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
@@ -1313,10 +1315,10 @@ impl Buffer {
         self.text.wait_for_edits(edit_ids)
     }
 
-    pub fn wait_for_anchors<'a>(
+    pub fn wait_for_anchors(
         &mut self,
-        anchors: impl IntoIterator<Item = &'a Anchor>,
-    ) -> impl Future<Output = Result<()>> {
+        anchors: impl IntoIterator<Item = Anchor>,
+    ) -> impl 'static + Future<Output = Result<()>> {
         self.text.wait_for_anchors(anchors)
     }
 

@@ -1489,6 +1489,55 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_above(cx: &mut gpui::TestAppContext) {
+    let mut cx = EditorTestContext::new(cx);
+    cx.update(|cx| {
+        cx.update_global::<Settings, _, _>(|settings, _| {
+            settings.editor_overrides.tab_size = Some(NonZeroU32::new(4).unwrap());
+        });
+    });
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::language()),
+        )
+        .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(indoc! {"
+        const a: ˇA = (
+            (ˇ
+                «const_functionˇ»(ˇ),
+                so«mˇ»et«hˇ»ing_ˇelse,ˇ
+            )ˇ
+        ˇ);ˇ
+    "});
+    cx.update_editor(|e, cx| e.newline_above(&NewlineAbove, cx));
+    cx.assert_editor_state(indoc! {"
+        ˇ
+        const a: A = (
+            ˇ
+            (
+                ˇ
+                ˇ
+                const_function(),
+                ˇ
+                ˇ
+                ˇ
+                ˇ
+                something_else,
+                ˇ
+            )
+            ˇ
+            ˇ
+        );
+    "});
+}
+
+#[gpui::test]
 async fn test_newline_below(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx);
     cx.update(|cx| {

@@ -702,6 +702,7 @@ mod tests {
             open_paths(
                 &[PathBuf::from("/root/a"), PathBuf::from("/root/b")],
                 &app_state,
+                None,
                 cx,
             )
         })
@@ -709,7 +710,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.window_ids().len(), 1);
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
         assert_eq!(cx.window_ids().len(), 1);
@@ -728,6 +729,7 @@ mod tests {
             open_paths(
                 &[PathBuf::from("/root/b"), PathBuf::from("/root/c")],
                 &app_state,
+                None,
                 cx,
             )
         })
@@ -735,16 +737,36 @@ mod tests {
         .unwrap();
         assert_eq!(cx.window_ids().len(), 2);
 
+        // Replace existing windows
+        let window_id = cx.window_ids()[0];
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from("/root/c"), PathBuf::from("/root/d")],
                 &app_state,
+                Some(window_id),
                 cx,
             )
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_ids().len(), 3);
+        assert_eq!(cx.window_ids().len(), 2);
+        let workspace_1 = cx
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
+            .unwrap()
+            .clone()
+            .downcast::<Workspace>()
+            .unwrap();
+        workspace_1.update(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .worktrees(cx)
+                    .map(|w| w.read(cx).abs_path())
+                    .collect::<Vec<_>>(),
+                &[Path::new("/root/c").into(), Path::new("/root/d").into()]
+            );
+            assert!(workspace.left_sidebar().read(cx).is_open());
+            assert!(workspace.active_pane().is_focused(cx));
+        });
     }
 
     #[gpui::test]
@@ -756,7 +778,7 @@ mod tests {
             .insert_tree("/root", json!({"a": "hey"}))
             .await;
 
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
         assert_eq!(cx.window_ids().len(), 1);
@@ -799,7 +821,7 @@ mod tests {
         assert!(!cx.is_window_edited(workspace.window_id()));
 
         // Opening the buffer again doesn't impact the window's edited state.
-        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, cx))
+        cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
             .await
             .unwrap();
         let editor = workspace.read_with(cx, |workspace, cx| {

@@ -1,6 +1,6 @@
 mod base_keymap_picker;
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
@@ -198,6 +198,10 @@ impl WelcomePage {
 }
 
 impl Item for WelcomePage {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
+        Some("Welcome to Zed!".into())
+    }
+
     fn tab_content(
         &self,
         _detail: Option<usize>,

@@ -572,7 +572,7 @@ async fn location_links_from_proto(
                     .and_then(deserialize_anchor)
                     .ok_or_else(|| anyhow!("missing origin end"))?;
                 buffer
-                    .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                    .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))
                     .await?;
                 Some(Location {
                     buffer,
@@ -597,7 +597,7 @@ async fn location_links_from_proto(
             .and_then(deserialize_anchor)
             .ok_or_else(|| anyhow!("missing target end"))?;
         buffer
-            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+            .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))
             .await?;
         let target = Location {
             buffer,
@@ -868,7 +868,7 @@ impl LspCommand for GetReferences {
                 .and_then(deserialize_anchor)
                 .ok_or_else(|| anyhow!("missing target end"))?;
             target_buffer
-                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))
                 .await?;
             locations.push(Location {
                 buffer: target_buffer,
@@ -1012,7 +1012,7 @@ impl LspCommand for GetDocumentHighlights {
                 .and_then(deserialize_anchor)
                 .ok_or_else(|| anyhow!("missing target end"))?;
             buffer
-                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([&start, &end]))
+                .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))
                 .await?;
             let kind = match proto::document_highlight::Kind::from_i32(highlight.kind) {
                 Some(proto::document_highlight::Kind::Text) => DocumentHighlightKind::TEXT,

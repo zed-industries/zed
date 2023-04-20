@@ -1,5 +1,6 @@
 use std::{
     any::TypeId,
+    borrow::Cow,
     ops::{Range, RangeInclusive},
     sync::Arc,
 };
@@ -245,6 +246,10 @@ impl Entity for FeedbackEditor {
 }
 
 impl Item for FeedbackEditor {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
+        Some("Send Feedback".into())
+    }
+
     fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> Element<Pane> {
         Flex::row()
             .with_child(

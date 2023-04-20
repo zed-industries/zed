@@ -187,8 +187,6 @@ impl<D: PickerDelegate> Picker<D> {
             confirmed: false,
             pending_update_matches: Task::ready(None),
         };
-        // TODO! How can the delegate notify the picker to update?
-        // cx.observe(&delegate, |_, _, cx| cx.notify()).detach();
         this.update_matches(String::new(), cx);
         this
     }

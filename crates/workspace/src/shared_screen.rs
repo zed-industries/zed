@@ -14,7 +14,10 @@ use gpui::{
 };
 use settings::Settings;
 use smallvec::SmallVec;
-use std::sync::{Arc, Weak};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Weak},
+};
 
 pub enum Event {
     Close,
@@ -94,6 +97,9 @@ impl View for SharedScreen {
 }
 
 impl Item for SharedScreen {
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<Cow<str>> {
+        Some(format!("{}'s screen", self.user.github_login).into())
+    }
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(nav_history) = self.nav_history.as_ref() {
             nav_history.push::<()>(None, cx);
