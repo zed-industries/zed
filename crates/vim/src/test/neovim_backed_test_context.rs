@@ -153,6 +153,7 @@ impl<'a> NeovimBackedTestContext<'a> {
             }
         }
 
+        dbg!(initial_state);
         let _state_context = self.set_shared_state(initial_state).await;
         let _keystroke_context = self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_state_matches().await;

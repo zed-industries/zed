@@ -104,6 +104,10 @@ pub fn marked_text_ranges_by(
 ///    ```text
 ///    one «ˇreversed» selection and one «forwardˇ» selection
 ///    ```
+///
+/// Any • characters in the input string will be replaced with spaces. This makes
+/// it easier to test cases with trailing spaces, which tend to get trimmed from the
+/// source code.
 pub fn marked_text_ranges(
     marked_text: &str,
     ranges_are_directed: bool,
@@ -114,6 +118,7 @@ pub fn marked_text_ranges(
     let mut current_range_start = None;
     let mut current_range_cursor = None;
 
+    let marked_text = marked_text.replace("•", " ");
     for (marked_ix, marker) in marked_text.match_indices(&['«', '»', 'ˇ']) {
         unmarked_text.push_str(&marked_text[prev_marked_ix..marked_ix]);
         let unmarked_len = unmarked_text.len();

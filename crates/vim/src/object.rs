@@ -434,19 +434,20 @@ mod test {
     use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
 
     const WORD_LOCATIONS: &'static str = indoc! {"
-        The quick ˇbrowˇnˇ
+        The quick ˇbrowˇnˇ•••
         fox ˇjuˇmpsˇ over
-        the lazy dogˇ
+        the lazy dogˇ••
         ˇ
         ˇ
         ˇ
-        Thˇeˇ-ˇquˇickˇ ˇbrownˇ
-        ˇ
-        ˇ
+        Thˇeˇ-ˇquˇickˇ ˇbrownˇ•
+        ˇ••
+        ˇ••
         ˇ  fox-jumpˇs over
-        the lazy dogˇ
+        the lazy dogˇ•
         ˇ
-        "};
+        "
+    };
 
     #[gpui::test]
     async fn test_change_word_object(cx: &mut gpui::TestAppContext) {

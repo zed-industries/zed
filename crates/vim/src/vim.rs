@@ -13,9 +13,10 @@ mod visual;
 use std::sync::Arc;
 
 use collections::CommandPaletteFilter;
-use editor::{Bias, Cancel, Editor, EditorMode};
+use editor::{Bias, Cancel, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions, AppContext, Subscription, ViewContext, WeakViewHandle, WindowContext,
+    actions, impl_actions, AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use language::CursorShape;
 use motion::Motion;
@@ -142,6 +143,35 @@ impl Vim {
         cx.update_default_global(update)
     }
 
+    fn set_active_editor(&mut self, editor: ViewHandle<Editor>, cx: &mut WindowContext) {
+        self.active_editor = Some(editor.downgrade());
+        self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
+            Event::SelectionsChanged { local: true } => {
+                let editor = editor.read(cx);
+                if editor.leader_replica_id().is_none() {
+                    let newest_empty = editor.selections.newest::<usize>(cx).is_empty();
+                    local_selections_changed(newest_empty, cx);
+                }
+            }
+            Event::InputIgnored { text } => {
+                Vim::active_editor_input_ignored(text.clone(), cx);
+            }
+            _ => {}
+        }));
+
+        if self.enabled {
+            let editor = editor.read(cx);
+            let editor_mode = editor.mode();
+            let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
+
+            if editor_mode == EditorMode::Full && !newest_selection_empty {
+                self.switch_mode(Mode::Visual { line: false }, true, cx);
+            }
+        }
+
+        self.sync_vim_settings(cx);
+    }
+
     fn update_active_editor<S>(
         &self,
         cx: &mut WindowContext,
@@ -179,6 +209,7 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
+        dbg!("push_operator", &operator);
         self.state.operator_stack.push(operator);
         self.sync_vim_settings(cx);
     }
@@ -218,6 +249,7 @@ impl Vim {
     }
 
     fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
+        dbg!(&text);
         if text.is_empty() {
             return;
         }
@@ -253,11 +285,14 @@ impl Vim {
 
             cx.update_active_window(|cx| {
                 if self.enabled {
-                    self.active_editor = cx
+                    let active_editor = cx
                         .root_view()
                         .downcast_ref::<Workspace>()
                         .and_then(|workspace| workspace.read(cx).active_item(cx))
-                        .and_then(|item| item.downcast::<Editor>().map(|h| h.downgrade()));
+                        .and_then(|item| item.downcast::<Editor>());
+                    if let Some(active_editor) = active_editor {
+                        self.set_active_editor(active_editor, cx);
+                    }
                     self.switch_mode(Mode::Normal, false, cx);
                 }
                 self.sync_vim_settings(cx);
@@ -290,4 +325,12 @@ impl Vim {
         editor.selections.line_mode = false;
         editor.remove_keymap_context_layer::<Self>();
     }
+}
+
+fn local_selections_changed(newest_empty: bool, cx: &mut WindowContext) {
+    Vim::update(cx, |vim, cx| {
+        if vim.enabled && vim.state.mode == Mode::Normal && !newest_empty {
+            vim.switch_mode(Mode::Visual { line: false }, false, cx)
+        }
+    })
 }
