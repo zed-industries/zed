@@ -187,6 +187,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     Reloaded,
+    LanguageChanged,
     Reparsed,
     DiagnosticsUpdated,
     Closed,
@@ -536,6 +537,7 @@ impl Buffer {
         self.syntax_map.lock().clear();
         self.language = language;
         self.reparse(cx);
+        cx.emit(Event::LanguageChanged);
     }
 
     pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
