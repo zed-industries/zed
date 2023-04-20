@@ -21,8 +21,7 @@ use std::{
     sync::Arc,
 };
 use util::{
-    channel::ReleaseChannel, fs::remove_matching, github::latest_github_release, http::HttpClient,
-    paths, ResultExt,
+    fs::remove_matching, github::latest_github_release, http::HttpClient, paths, ResultExt,
 };
 
 const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
