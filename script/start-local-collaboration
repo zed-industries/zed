@@ -25,33 +25,26 @@ if [[ $username_1 == $username_2 ]]; then
 fi
 
 # Make each Zed instance take up half of the screen.
-resolution_line=$(system_profiler SPDisplaysDataType | grep Resolution | head -n1)
-screen_size=($(echo $resolution_line | egrep -o '\s*(\d+)\s*x\s*(\d+).*)' | egrep -o '[0-9]+'))
-scale_factor=1
-if [[ $resolution_line =~ Retina ]]; then scale_factor=2; fi
-width=$(expr ${screen_size[0]} / 2 / $scale_factor)
-height=${screen_size[1] / $scale_factor}
+
+output=$(system_profiler SPDisplaysDataType -json)
+resolution=$(echo "$output" | jq -r '.SPDisplaysDataType[0].spdisplays_ndrvs[] | select(.spdisplays_online == "spdisplays_yes") | ._spdisplays_resolution')
+width=$(echo "$resolution" | jq -Rr 'split(" x ")[0]')
+half_width=$(($width / 2))
+height=$(echo "$resolution" | jq -Rr 'split(" x ")[1]')
 y=0
 
-position_1=0,${y}
-position_2=${width},${y}
+echo "Width: $width"
+echo "Half-width: $half_width"
+echo "Height: $height"
 
-# Uncomment the following for debugging purposes.
-# echo "Resolution line: $resolution_line"
-# echo "Screen size: $screen_size"
-# echo "Screen size 0: ${screen_size[0]}"
-# echo "Screen size 1: ${screen_size[1]}"
-# echo "Scale factor: $scale_factor"
-# echo "Width: $width"
-# echo "Height: $height"
-# echo "Position 1: $position_1"
-# echo "Position 2: $position_2"
+position_1=0,${y}
+position_2=${half_width},${y}
 
 # Authenticate using the collab server's admin secret.
 export ZED_STATELESS=1
 export ZED_ADMIN_API_TOKEN=secret
 export ZED_SERVER_URL=http://localhost:8080
-export ZED_WINDOW_SIZE=${width},${height}
+export ZED_WINDOW_SIZE=${half_width},${height}
 
 cargo build
 sleep 0.5
