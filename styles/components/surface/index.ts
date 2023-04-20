@@ -10,7 +10,7 @@ import { useColors } from "@theme/colors"
 import { border } from "@theme/border"
 import { buildSurfaceTokens } from "./tokens"
 
-export type SurfaceLevel = 0 | 1
+export type SurfaceLevel = 0 | 1 | 2
 
 export function surfaceStyle(
     theme: Theme,
@@ -24,13 +24,22 @@ export function surfaceStyle(
     // SInce we've already resolved the theme's appearance intensity above we can direclty cast ElementIntensities to <Intensity>
     let surfaceIntensity: ElementIntensities<Intensity>
 
-    if (level === 0) {
-        surfaceIntensity = addToElementIntensities(resolvedIntensity, 10)
-    } else surfaceIntensity = resolvedIntensity
+    switch (level) {
+        case 1:
+            surfaceIntensity = addToElementIntensities(resolvedIntensity, 10)
+            break
+        case 2:
+            surfaceIntensity = addToElementIntensities(resolvedIntensity, 20)
+            break
+        default:
+            surfaceIntensity = resolvedIntensity
+    }
+
+    const borderIntensity = surfaceIntensity.border as Intensity
 
     return {
         background: color.neutral(surfaceIntensity.bg),
-        border: border(theme, intensity),
+        border: border(theme, borderIntensity),
     }
 }
 
@@ -47,6 +56,7 @@ export function buildSurfaceLevels(theme: Theme) {
         background: surfaceStyle(theme, 0, surfaceIntensities),
         panel: surfaceStyle(theme, 1, surfaceIntensities),
         pane: surfaceStyle(theme, 1, surfaceIntensities),
+        popover: surfaceStyle(theme, 2, surfaceIntensities),
     }
 
     return surface

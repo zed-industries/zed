@@ -6,9 +6,7 @@ import {
     calculateIntensity,
     useElementIntensities,
 } from "../intensity"
-
-export type Margin = [number, number, number, number]
-export type Padding = [number, number, number, number]
+import { Padding, Margin } from "@theme/properties"
 
 export interface ContainerStyle {
     background?: string
@@ -75,7 +73,6 @@ export interface InteractiveToggleableContainer<T = InteractiveContainer> {
 }
 
 type State = "default" | "hovered" | "pressed"
-type States = Partial<Record<State, boolean>>
 
 type ContainerColors = {
     bg: Intensity

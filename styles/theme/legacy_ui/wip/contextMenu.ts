@@ -1,15 +1,37 @@
-import { ColorScheme } from "../themes/common/colorScheme"
-import { background, border, borderColor, text } from "./components"
+import { border } from "@theme/border"
+import { Theme } from "@theme/config"
+import { weight } from "@theme/text"
 
-export default function contextMenu(colorScheme: ColorScheme) {
-    let layer = colorScheme.middle
-    return {
-        background: background(layer),
-        cornerRadius: 10,
-        padding: 4,
-        shadow: colorScheme.popoverShadow,
-        border: border(layer),
+export default function contextMenu(theme: Theme) {
+    const container = {}
+
+    const legacy_properties = {
         keystrokeMargin: 30,
+    }
+
+    // container()
+    // flex() // container with flex
+    // interactiveFlex() // interactive<container> with flex
+    // shadow() or add shdow to container
+
+    const containerStyle = container(theme,
+        {
+            background: background(theme, "popover"),
+            borderRadius: 10,
+            padding: 4,
+            border: border(theme, "popover"),
+            shadow: shadow(theme),
+        })
+
+    const item = interactiveFlex(theme, {})
+
+    const keystroke = label(theme, {
+        weight: weight.bold,
+    })
+
+    return {
+        ...legacy_properties,
+        ...containerStyle,
         item: {
             iconSpacing: 8,
             iconWidth: 14,
