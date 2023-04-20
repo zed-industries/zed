@@ -1,24 +1,25 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, keymap_matcher::Keystroke, Action, AnyViewHandle, AppContext, Drawable,
-    Entity, MouseState, View, ViewContext, ViewHandle,
+    actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Drawable, MouseState,
+    ViewContext,
 };
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
 use std::cmp;
 use util::ResultExt;
 use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(CommandPalette::toggle);
-    Picker::<CommandPalette>::init(cx);
+    cx.add_action(toggle_command_palette);
+    Picker::<CommandPaletteDelegate>::init(cx);
 }
 
 actions!(command_palette, [Toggle]);
 
-pub struct CommandPalette {
-    picker: ViewHandle<Picker<Self>>,
+pub type CommandPalette = Picker<CommandPaletteDelegate>;
+
+pub struct CommandPaletteDelegate {
     actions: Vec<Command>,
     matches: Vec<StringMatch>,
     selected_ix: usize,
@@ -40,9 +41,19 @@ struct Command {
     keystrokes: Vec<Keystroke>,
 }
 
-impl CommandPalette {
-    pub fn new(focused_view_id: usize, cx: &mut ViewContext<Self>) -> Self {
-        let this = cx.weak_handle();
+fn toggle_command_palette(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+    let workspace = cx.handle();
+    let focused_view_id = cx.focused_view_id().unwrap_or_else(|| workspace.id());
+
+    cx.defer(move |workspace, cx| {
+        workspace.toggle_modal(cx, |_, cx| {
+            cx.add_view(|cx| Picker::new(CommandPaletteDelegate::new(focused_view_id, cx), cx))
+        });
+    });
+}
+
+impl CommandPaletteDelegate {
+    pub fn new(focused_view_id: usize, cx: &mut ViewContext<Picker<Self>>) -> Self {
         let actions = cx
             .available_actions(focused_view_id)
             .filter_map(|(name, action, bindings)| {
@@ -65,73 +76,20 @@ impl CommandPalette {
             })
             .collect();
 
-        let picker = cx.add_view(|cx| Picker::new("Execute a command...", this, cx));
         Self {
-            picker,
             actions,
             matches: vec![],
             selected_ix: 0,
             focused_view_id,
         }
     }
-
-    fn toggle(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        let workspace = cx.handle();
-        let focused_view_id = cx.focused_view_id().unwrap_or_else(|| workspace.id());
-
-        cx.defer(move |workspace, cx| {
-            let this = cx.add_view(|cx| Self::new(focused_view_id, cx));
-            workspace.toggle_modal(cx, |_, cx| {
-                cx.subscribe(&this, Self::on_event).detach();
-                this
-            });
-        });
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => workspace.dismiss_modal(cx),
-            Event::Confirmed {
-                window_id,
-                focused_view_id,
-                action,
-            } => {
-                let window_id = *window_id;
-                let focused_view_id = *focused_view_id;
-                let action = action.boxed_clone();
-                workspace.dismiss_modal(cx);
-                cx.defer(move |_, cx| cx.dispatch_any_action_at(window_id, focused_view_id, action))
-            }
-        }
-    }
 }
 
-impl Entity for CommandPalette {
-    type Event = Event;
-}
-
-impl View for CommandPalette {
-    fn ui_name() -> &'static str {
-        "CommandPalette"
+impl PickerDelegate for CommandPaletteDelegate {
+    fn placeholder_text(&self) -> std::sync::Arc<str> {
+        "Execute a command...".into()
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
-        ChildView::new(&self.picker, cx).boxed()
-    }
-
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.picker);
-        }
-    }
-}
-
-impl PickerDelegate for CommandPalette {
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -140,14 +98,14 @@ impl PickerDelegate for CommandPalette {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
         self.selected_ix = ix;
     }
 
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut gpui::ViewContext<Self>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
         let candidates = self
             .actions
@@ -159,7 +117,7 @@ impl PickerDelegate for CommandPalette {
                 char_bag: command.name.chars().collect(),
             })
             .collect::<Vec<_>>();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |picker, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -182,33 +140,36 @@ impl PickerDelegate for CommandPalette {
                 )
                 .await
             };
-            this.update(&mut cx, |this, _| {
-                this.matches = matches;
-                if this.matches.is_empty() {
-                    this.selected_ix = 0;
-                } else {
-                    this.selected_ix = cmp::min(this.selected_ix, this.matches.len() - 1);
-                }
-            })
-            .log_err();
+            picker
+                .update(&mut cx, |picker, _| {
+                    let delegate = picker.delegate_mut();
+                    delegate.matches = matches;
+                    if delegate.matches.is_empty() {
+                        delegate.selected_ix = 0;
+                    } else {
+                        delegate.selected_ix =
+                            cmp::min(delegate.selected_ix, delegate.matches.len() - 1);
+                    }
+                })
+                .log_err();
         })
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        cx.emit(PickerEvent::Dismiss);
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         if !self.matches.is_empty() {
+            let window_id = cx.window_id();
+            let focused_view_id = self.focused_view_id;
             let action_ix = self.matches[self.selected_ix].candidate_id;
-            cx.emit(Event::Confirmed {
-                window_id: cx.window_id(),
-                focused_view_id: self.focused_view_id,
-                action: self.actions.remove(action_ix).action,
+            let action = self.actions.remove(action_ix).action;
+            cx.defer(move |_, cx| {
+                cx.dispatch_any_action_at(window_id, focused_view_id, action);
             });
-        } else {
-            cx.emit(Event::Dismissed);
         }
+        cx.emit(PickerEvent::Dismiss);
     }
 
     fn render_match(
@@ -353,7 +314,7 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            CommandPalette::toggle(workspace, &Toggle, cx)
+            toggle_command_palette(workspace, &Toggle, cx);
         });
 
         let palette = workspace.read_with(cx, |workspace, _| {
@@ -362,7 +323,9 @@ mod tests {
 
         palette
             .update(cx, |palette, cx| {
-                palette.update_matches("bcksp".to_string(), cx)
+                palette
+                    .delegate_mut()
+                    .update_matches("bcksp".to_string(), cx)
             })
             .await;
 
@@ -383,12 +346,12 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            CommandPalette::toggle(workspace, &Toggle, cx);
+            CommandPaletteDelegate::toggle(workspace, &Toggle, cx);
         });
 
         // Assert editor command not present
         let palette = workspace.read_with(cx, |workspace, _| {
-            workspace.modal::<CommandPalette>().unwrap()
+            workspace.modal::<CommandPaletteDelegate>().unwrap()
         });
 
         palette

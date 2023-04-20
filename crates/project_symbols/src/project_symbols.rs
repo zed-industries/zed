@@ -176,7 +176,7 @@ impl PickerDelegate for ProjectSymbolsView {
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Dismissed);
     }
 

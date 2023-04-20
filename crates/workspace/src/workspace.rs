@@ -96,6 +96,10 @@ lazy_static! {
         .and_then(parse_pixel_position_env_var);
 }
 
+pub trait Modal: View {
+    fn dismiss_on_event(event: &Self::Event) -> bool;
+}
+
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
@@ -1335,7 +1339,7 @@ impl Workspace {
         add_view: F,
     ) -> Option<ViewHandle<V>>
     where
-        V: 'static + View,
+        V: 'static + Modal,
         F: FnOnce(&mut Self, &mut ViewContext<Self>) -> ViewHandle<V>,
     {
         cx.notify();
@@ -1347,6 +1351,12 @@ impl Workspace {
             Some(already_open_modal)
         } else {
             let modal = add_view(self, cx);
+            cx.subscribe(&modal, |this, _, event, cx| {
+                if V::dismiss_on_event(event) {
+                    this.dismiss_modal(cx);
+                }
+            })
+            .detach();
             cx.focus(&modal);
             self.modal = Some(modal.into_any());
             None

@@ -229,7 +229,7 @@ impl PickerDelegate for OutlineView {
         cx.emit(Event::Dismissed);
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<Self>) {
         self.restore_active_editor(cx);
         cx.emit(Event::Dismissed);
     }

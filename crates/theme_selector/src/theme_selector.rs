@@ -156,7 +156,7 @@ impl PickerDelegate for ThemeSelector {
         cx.emit(Event::Dismissed);
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<Self>) {
         if !self.selection_completed {
             Self::set_theme(self.original_theme.clone(), cx);
             self.selection_completed = true;

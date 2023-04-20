@@ -163,7 +163,7 @@ impl PickerDelegate for LanguageSelector {
         cx.emit(Event::Dismissed);
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Dismissed);
     }
 
