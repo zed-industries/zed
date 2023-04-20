@@ -1,4 +1,4 @@
-import * as font from "@/theme/font"
+import * as font from "@theme/text"
 import { Highlight } from "@/theme/highlight"
 import { Color, chroma } from "@/theme/color"
 import { Border } from "@/theme/border"

@@ -12,7 +12,7 @@ import {
     buildStates,
     checkContrast,
 } from "@theme/container"
-import { TextStyle, useText } from "@theme/font"
+import { TextStyle, useText } from "@theme/text"
 import { ElementIntensities, useElementIntensities } from "@theme/intensity"
 
 type ButtonSizes = "small" | "medium" | "large"

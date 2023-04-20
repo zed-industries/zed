@@ -1,5 +1,5 @@
 import { Syntax, SyntaxStyle } from "@/theme/syntax"
-import * as font from "@/theme/font"
+import * as font from "@theme/text"
 import { Color, chroma } from "@/theme/color"
 
 const TEMP_COLOR: Color = chroma("red")

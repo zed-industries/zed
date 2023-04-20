@@ -1,5 +1,5 @@
 import { Border, Theme } from "@/theme"
-import { TextStyle } from "@/theme/font"
+import { TextStyle } from "@theme/text"
 import {
     ElementIntensities,
     Intensity,

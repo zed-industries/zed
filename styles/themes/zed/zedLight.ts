@@ -1,5 +1,5 @@
 import { ThemeConfig } from "@/theme/config"
-import * as font from "@/theme/font"
+import * as font from "@theme/text"
 
 const zedDark: ThemeConfig = {
     name: "Zed Light",
