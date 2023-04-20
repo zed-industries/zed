@@ -1315,7 +1315,7 @@ impl AppContext {
     {
         self.update(|this| {
             let window_id = post_inc(&mut this.next_window_id);
-            let platform_window = this.platform.add_status_item();
+            let platform_window = this.platform.add_status_item(window_id);
             let window = this.build_window(window_id, platform_window, build_root_view);
             let root_view = window.root_view().clone().downcast::<V>().unwrap();
 
