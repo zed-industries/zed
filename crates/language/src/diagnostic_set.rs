@@ -1,5 +1,6 @@
 use crate::Diagnostic;
 use collections::HashMap;
+use lsp::LanguageServerId;
 use std::{
     cmp::{Ordering, Reverse},
     iter,
@@ -129,7 +130,12 @@ impl DiagnosticSet {
         })
     }
 
-    pub fn groups(&self, output: &mut Vec<DiagnosticGroup<Anchor>>, buffer: &text::BufferSnapshot) {
+    pub fn groups(
+        &self,
+        language_server_id: LanguageServerId,
+        output: &mut Vec<(LanguageServerId, DiagnosticGroup<Anchor>)>,
+        buffer: &text::BufferSnapshot,
+    ) {
         let mut groups = HashMap::default();
         for entry in self.diagnostics.iter() {
             groups
@@ -144,16 +150,22 @@ impl DiagnosticSet {
             entries
                 .iter()
                 .position(|entry| entry.diagnostic.is_primary)
-                .map(|primary_ix| DiagnosticGroup {
-                    entries,
-                    primary_ix,
+                .map(|primary_ix| {
+                    (
+                        language_server_id,
+                        DiagnosticGroup {
+                            entries,
+                            primary_ix,
+                        },
+                    )
                 })
         }));
-        output[start_ix..].sort_unstable_by(|a, b| {
-            a.entries[a.primary_ix]
+        output[start_ix..].sort_unstable_by(|(id_a, group_a), (id_b, group_b)| {
+            group_a.entries[group_a.primary_ix]
                 .range
                 .start
-                .cmp(&b.entries[b.primary_ix].range.start, buffer)
+                .cmp(&group_b.entries[group_b.primary_ix].range.start, buffer)
+                .then_with(|| id_a.cmp(&id_b))
         });
     }
 

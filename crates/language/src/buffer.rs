@@ -2548,16 +2548,26 @@ impl BufferSnapshot {
         })
     }
 
-    pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {
+    pub fn diagnostic_groups(
+        &self,
+        language_server_id: Option<LanguageServerId>,
+    ) -> Vec<(LanguageServerId, DiagnosticGroup<Anchor>)> {
         let mut groups = Vec::new();
-        for diagnostics in self.diagnostics.values() {
-            diagnostics.groups(&mut groups, self);
+
+        if let Some(language_server_id) = language_server_id {
+            if let Some(diagnostics) = self.diagnostics.get(&language_server_id) {
+                diagnostics.groups(language_server_id, &mut groups, self);
+            }
+        } else {
+            for (&language_server_id, diagnostics) in self.diagnostics.iter() {
+                diagnostics.groups(language_server_id, &mut groups, self);
+            }
         }
 
-        groups.sort_by(|a, b| {
-            let a_start = &a.entries[a.primary_ix].range.start;
-            let b_start = &b.entries[b.primary_ix].range.start;
-            a_start.cmp(b_start, self)
+        groups.sort_by(|(id_a, group_a), (id_b, group_b)| {
+            let a_start = &group_a.entries[group_a.primary_ix].range.start;
+            let b_start = &group_b.entries[group_b.primary_ix].range.start;
+            a_start.cmp(b_start, self).then_with(|| id_a.cmp(&id_b))
         });
 
         groups
