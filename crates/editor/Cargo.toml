@@ -58,7 +58,7 @@ postage = { workspace = true }
 rand = { version = "0.8.3", optional = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }
 smol = "1.2"
 tree-sitter-rust = { version = "*", optional = true }
 tree-sitter-html = { version = "*", optional = true }

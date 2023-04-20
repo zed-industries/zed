@@ -16,4 +16,4 @@ settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 project = { path = "../project" }
 
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }

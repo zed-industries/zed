@@ -13,7 +13,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
-use collections::HashMap;
 use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
@@ -21,6 +20,7 @@ use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use settings::Settings;
 use similar::{ChangeTag, TextDiff};
+use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
@@ -73,7 +73,7 @@ pub struct Buffer {
     syntax_map: Mutex<SyntaxMap>,
     parsing_in_background: bool,
     parse_count: usize,
-    diagnostics: HashMap<LanguageServerId, DiagnosticSet>,
+    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     diagnostics_update_count: usize,
@@ -90,7 +90,7 @@ pub struct BufferSnapshot {
     pub git_diff: git::diff::BufferDiff,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
-    diagnostics: HashMap<LanguageServerId, DiagnosticSet>,
+    diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     diagnostics_update_count: usize,
     file_update_count: usize,
     git_diff_update_count: usize,
@@ -1652,7 +1652,10 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
-            self.diagnostics.insert(server_id, diagnostics);
+            match self.diagnostics.binary_search_by_key(&server_id, |e| e.0) {
+                Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
+                Ok(ix) => self.diagnostics[ix].1 = diagnostics,
+            };
             self.diagnostics_timestamp = lamport_timestamp;
             self.diagnostics_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
@@ -2530,8 +2533,8 @@ impl BufferSnapshot {
     {
         let mut iterators: Vec<_> = self
             .diagnostics
-            .values()
-            .map(|collection| {
+            .iter()
+            .map(|(_, collection)| {
                 collection
                     .range::<T, O>(search_range.clone(), self, true, reversed)
                     .peekable()
@@ -2555,12 +2558,17 @@ impl BufferSnapshot {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
-            if let Some(diagnostics) = self.diagnostics.get(&language_server_id) {
-                diagnostics.groups(language_server_id, &mut groups, self);
+            if let Ok(ix) = self
+                .diagnostics
+                .binary_search_by_key(&language_server_id, |e| e.0)
+            {
+                self.diagnostics[ix]
+                    .1
+                    .groups(language_server_id, &mut groups, self);
             }
         } else {
-            for (&language_server_id, diagnostics) in self.diagnostics.iter() {
-                diagnostics.groups(language_server_id, &mut groups, self);
+            for (language_server_id, diagnostics) in self.diagnostics.iter() {
+                diagnostics.groups(*language_server_id, &mut groups, self);
             }
         }
 
@@ -2581,8 +2589,8 @@ impl BufferSnapshot {
         O: 'a + FromAnchor,
     {
         self.diagnostics
-            .values()
-            .flat_map(move |set| set.group(group_id, self))
+            .iter()
+            .flat_map(move |(_, set)| set.group(group_id, self))
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
