@@ -28,11 +28,11 @@ pub use watched_json::watch_files;
 
 #[derive(Clone)]
 pub struct Settings {
+    pub features: Features,
     pub buffer_font_family_name: String,
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub default_buffer_font_size: f32,
-    pub enable_copilot_integration: bool,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
     pub cursor_blink: bool,
@@ -177,43 +177,7 @@ pub struct EditorSettings {
     pub ensure_final_newline_on_save: Option<bool>,
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
-    #[schemars(skip)]
-    pub copilot: Option<OnOff>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OnOff {
-    On,
-    Off,
-}
-
-impl OnOff {
-    pub fn as_bool(&self) -> bool {
-        match self {
-            OnOff::On => true,
-            OnOff::Off => false,
-        }
-    }
-
-    pub fn from_bool(value: bool) -> OnOff {
-        match value {
-            true => OnOff::On,
-            false => OnOff::Off,
-        }
-    }
-}
-
-impl From<OnOff> for bool {
-    fn from(value: OnOff) -> bool {
-        value.as_bool()
-    }
-}
-
-impl From<bool> for OnOff {
-    fn from(value: bool) -> OnOff {
-        OnOff::from_bool(value)
-    }
+    pub show_copilot_suggestions: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -437,14 +401,25 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
     #[serde(default)]
-    #[schemars(skip)]
-    pub enable_copilot_integration: Option<bool>,
+    pub features: FeaturesContent,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub initialization_options: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct Features {
+    pub copilot: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct FeaturesContent {
+    pub copilot: Option<bool>,
 }
 
 impl Settings {
@@ -500,7 +475,7 @@ impl Settings {
                 format_on_save: required(defaults.editor.format_on_save),
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
-                copilot: required(defaults.editor.copilot),
+                show_copilot_suggestions: required(defaults.editor.show_copilot_suggestions),
             },
             editor_overrides: Default::default(),
             git: defaults.git.unwrap(),
@@ -517,7 +492,9 @@ impl Settings {
             telemetry_overrides: Default::default(),
             auto_update: defaults.auto_update.unwrap(),
             base_keymap: Default::default(),
-            enable_copilot_integration: defaults.enable_copilot_integration.unwrap(),
+            features: Features {
+                copilot: defaults.features.copilot.unwrap(),
+            },
         }
     }
 
@@ -569,10 +546,7 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
-        merge(
-            &mut self.enable_copilot_integration,
-            data.enable_copilot_integration,
-        );
+        merge(&mut self.features.copilot, data.features.copilot);
 
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
@@ -596,12 +570,15 @@ impl Settings {
         self
     }
 
-    pub fn copilot_on(&self, language: Option<&str>) -> bool {
-        if self.enable_copilot_integration {
-            self.language_setting(language, |settings| settings.copilot.map(Into::into))
-        } else {
-            false
-        }
+    pub fn features(&self) -> &Features {
+        &self.features
+    }
+
+    pub fn show_copilot_suggestions(&self, language: Option<&str>) -> bool {
+        self.features.copilot
+            && self.language_setting(language, |settings| {
+                settings.show_copilot_suggestions.map(Into::into)
+            })
     }
 
     pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
@@ -740,7 +717,7 @@ impl Settings {
                 format_on_save: Some(FormatOnSave::On),
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
-                copilot: Some(OnOff::On),
+                show_copilot_suggestions: Some(true),
             },
             editor_overrides: Default::default(),
             journal_defaults: Default::default(),
@@ -760,7 +737,7 @@ impl Settings {
             telemetry_overrides: Default::default(),
             auto_update: true,
             base_keymap: Default::default(),
-            enable_copilot_integration: true,
+            features: Features { copilot: true },
         }
     }
 
@@ -1125,7 +1102,7 @@ mod tests {
                 {
                     "language_overrides": {
                         "JSON": {
-                            "copilot": "off"
+                            "show_copilot_suggestions": false
                         }
                     }
                 }
@@ -1135,7 +1112,7 @@ mod tests {
                 settings.languages.insert(
                     "Rust".into(),
                     EditorSettings {
-                        copilot: Some(OnOff::On),
+                        show_copilot_suggestions: Some(true),
                         ..Default::default()
                     },
                 );
@@ -1144,10 +1121,10 @@ mod tests {
                 {
                     "language_overrides": {
                         "Rust": {
-                            "copilot": "on"
+                            "show_copilot_suggestions": true
                         },
                         "JSON": {
-                            "copilot": "off"
+                            "show_copilot_suggestions": false
                         }
                     }
                 }
@@ -1163,21 +1140,21 @@ mod tests {
                 {
                     "languages": {
                         "JSON": {
-                            "copilot": "off"
+                            "show_copilot_suggestions": false
                         }
                     }
                 }
             "#
             .unindent(),
             |settings| {
-                settings.editor.copilot = Some(OnOff::On);
+                settings.editor.show_copilot_suggestions = Some(true);
             },
             r#"
                 {
-                    "copilot": "on",
+                    "show_copilot_suggestions": true,
                     "languages": {
                         "JSON": {
-                            "copilot": "off"
+                            "show_copilot_suggestions": false
                         }
                     }
                 }
@@ -1187,13 +1164,13 @@ mod tests {
     }
 
     #[test]
-    fn test_update_langauge_copilot() {
+    fn test_update_language_copilot() {
         assert_new_settings(
             r#"
                 {
                     "languages": {
                         "JSON": {
-                            "copilot": "off"
+                            "show_copilot_suggestions": false
                         }
                     }
                 }
@@ -1203,7 +1180,7 @@ mod tests {
                 settings.languages.insert(
                     "Rust".into(),
                     EditorSettings {
-                        copilot: Some(OnOff::On),
+                        show_copilot_suggestions: Some(true),
                         ..Default::default()
                     },
                 );
@@ -1212,10 +1189,10 @@ mod tests {
                 {
                     "languages": {
                         "Rust": {
-                            "copilot": "on"
+                            "show_copilot_suggestions": true
                         },
                         "JSON": {
-                            "copilot": "off"
+                            "show_copilot_suggestions": false
                         }
                     }
                 }

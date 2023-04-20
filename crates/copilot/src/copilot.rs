@@ -29,7 +29,10 @@ const COPILOT_AUTH_NAMESPACE: &'static str = "copilot_auth";
 actions!(copilot_auth, [SignIn, SignOut]);
 
 const COPILOT_NAMESPACE: &'static str = "copilot";
-actions!(copilot, [NextSuggestion, PreviousSuggestion, Reinstall]);
+actions!(
+    copilot,
+    [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
+);
 
 pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
     // Disable Copilot for stable releases.
@@ -172,7 +175,7 @@ impl Copilot {
             let http = http.clone();
             let node_runtime = node_runtime.clone();
             move |this, cx| {
-                if cx.global::<Settings>().enable_copilot_integration {
+                if cx.global::<Settings>().features.copilot {
                     if matches!(this.server, CopilotServer::Disabled) {
                         let start_task = cx
                             .spawn({
@@ -194,12 +197,14 @@ impl Copilot {
         })
         .detach();
 
-        if cx.global::<Settings>().enable_copilot_integration {
+        if cx.global::<Settings>().features.copilot {
             let start_task = cx
                 .spawn({
                     let http = http.clone();
                     let node_runtime = node_runtime.clone();
-                    move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+                    move |this, cx| async {
+                        Self::start_language_server(http, node_runtime, this, cx).await
+                    }
                 })
                 .shared();
 

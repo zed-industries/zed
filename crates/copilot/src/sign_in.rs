@@ -2,11 +2,17 @@ use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     elements::*,
     geometry::rect::RectF,
+    impl_internal_actions,
     platform::{WindowBounds, WindowKind, WindowOptions},
     AppContext, ClipboardItem, Element, Entity, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use theme::ui::modal;
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+struct ClickedConnect;
+
+impl_internal_actions!(copilot_verification, [ClickedConnect]);
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct CopyUserCode;
@@ -56,6 +62,12 @@ pub fn init(cx: &mut AppContext) {
         }
     })
     .detach();
+
+    cx.add_action(
+        |code_verification: &mut CopilotCodeVerification, _: &ClickedConnect, _| {
+            code_verification.connect_clicked = true;
+        },
+    );
 }
 
 fn create_copilot_auth_window(
@@ -81,11 +93,15 @@ fn create_copilot_auth_window(
 
 pub struct CopilotCodeVerification {
     status: Status,
+    connect_clicked: bool,
 }
 
 impl CopilotCodeVerification {
     pub fn new(status: Status) -> Self {
-        Self { status }
+        Self {
+            status,
+            connect_clicked: false,
+        }
     }
 
     pub fn set_status(&mut self, status: Status, cx: &mut ViewContext<Self>) {
@@ -143,6 +159,7 @@ impl CopilotCodeVerification {
     }
 
     fn render_prompting_modal(
+        connect_clicked: bool,
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
         cx: &mut gpui::RenderContext<Self>,
@@ -189,13 +206,20 @@ impl CopilotCodeVerification {
                     .with_style(style.auth.prompting.hint.container.clone())
                     .boxed(),
                 theme::ui::cta_button_with_click(
-                    "Connect to GitHub",
+                    if connect_clicked {
+                        "Waiting for connection..."
+                    } else {
+                        "Connect to GitHub"
+                    },
                     style.auth.content_width,
                     &style.auth.cta_button,
                     cx,
                     {
                         let verification_uri = data.verification_uri.clone();
-                        move |_, cx| cx.platform().open_url(&verification_uri)
+                        move |_, cx| {
+                            cx.platform().open_url(&verification_uri);
+                            cx.dispatch_action(ClickedConnect)
+                        }
                     },
                 )
                 .boxed(),
@@ -343,9 +367,20 @@ impl View for CopilotCodeVerification {
                     match &self.status {
                         Status::SigningIn {
                             prompt: Some(prompt),
-                        } => Self::render_prompting_modal(&prompt, &style.copilot, cx),
-                        Status::Unauthorized => Self::render_unauthorized_modal(&style.copilot, cx),
-                        Status::Authorized => Self::render_enabled_modal(&style.copilot, cx),
+                        } => Self::render_prompting_modal(
+                            self.connect_clicked,
+                            &prompt,
+                            &style.copilot,
+                            cx,
+                        ),
+                        Status::Unauthorized => {
+                            self.connect_clicked = false;
+                            Self::render_unauthorized_modal(&style.copilot, cx)
+                        }
+                        Status::Authorized => {
+                            self.connect_clicked = false;
+                            Self::render_enabled_modal(&style.copilot, cx)
+                        }
                         _ => Empty::new().boxed(),
                     },
                 ])
