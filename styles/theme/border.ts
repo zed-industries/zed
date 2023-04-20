@@ -1,4 +1,5 @@
 import { useColors } from "./colors"
+import * as color from "./color"
 import { Theme } from "./config"
 import { Intensity } from "./intensity"
 
@@ -7,17 +8,12 @@ type BorderStyle = "solid" | "dashed" | "dotted" | "double" | "wavy"
 // TODO: Update borders in Rust to allow strokw width per-side
 // TODO: Update borders in Rust to allow setting the border style from the theme
 export interface BorderOptions {
+    /** A color family from the Theme */
+    color: keyof color.Scales
     width: number
     style: BorderStyle
     inset: boolean
     side: "all" | "top" | "bottom" | "left" | "right"
-}
-
-const DEFAULT_BORDER_OPTIONS: Partial<BorderOptions> = {
-    width: 1,
-    style: "solid",
-    side: "all",
-    inset: false,
 }
 
 interface Border {
@@ -32,12 +28,19 @@ interface Border {
     overlay?: boolean
 }
 
+const DEFAULT_BORDER_OPTIONS: Partial<BorderOptions> = {
+    width: 1,
+    style: "solid",
+    side: "all",
+    inset: false,
+}
+
 export function border(
     theme: Theme,
     intensity: Intensity,
     options?: Partial<BorderOptions>,
 ): Border {
-    const color = useColors(theme)
+    const themeColor = useColors(theme)
 
     const mergedOptions = {
         ...DEFAULT_BORDER_OPTIONS,
@@ -51,8 +54,10 @@ export function border(
         right: mergedOptions.side === "all" || mergedOptions.side === "right",
     }
 
+    const color = options.color ? themeColor[options.color](intensity) : themeColor.neutral(intensity)
+
     const border: Border = {
-        color: color.neutral(intensity),
+        color: color,
         width: mergedOptions.width,
         overlay: mergedOptions.inset,
         ...side

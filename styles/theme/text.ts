@@ -1,3 +1,7 @@
+import { useColors } from "./colors"
+import { Theme } from "./config"
+import { Intensity } from "./intensity"
+
 type Font = "Zed Mono" | "Zed Sans"
 
 export interface Families {
@@ -102,25 +106,33 @@ export interface TextStyle {
     lineHeight: number
 }
 
-const textDefaults = {
+const DEFAULT_TEXT_OPTIONS: Partial<TextStyle> = {
     family: family.sans,
     size: size.md,
     weight: weight.regular,
     lineHeight: 1,
 }
 
-export function useText(
-    color: string,
-    family: Font = textDefaults.family,
-    size: number = textDefaults.size,
-    weight: Weight = textDefaults.weight,
-    lineHeight: number = textDefaults.lineHeight,
+export function text(
+    theme: Theme,
+    intensity: Intensity,
+    options: Partial<TextStyle>,
 ): TextStyle {
-    return {
-        family,
-        size,
-        weight,
-        color,
-        lineHeight,
+    const themeColor = useColors(theme)
+    const color = options.color ? themeColor[options.color](intensity) : themeColor.neutral(intensity)
+
+    const mergedOptions = {
+        ...DEFAULT_TEXT_OPTIONS,
+        ...options,
     }
+
+    const text: TextStyle = {
+        family: mergedOptions.family,
+        size: mergedOptions.size,
+        weight: mergedOptions.weight,
+        color,
+        lineHeight: mergedOptions.lineHeight,
+    }
+
+    return text
 }
