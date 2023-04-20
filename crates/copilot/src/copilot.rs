@@ -202,7 +202,9 @@ impl Copilot {
                 .spawn({
                     let http = http.clone();
                     let node_runtime = node_runtime.clone();
-                    move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+                    move |this, cx| async {
+                        Self::start_language_server(http, node_runtime, this, cx).await
+                    }
                 })
                 .shared();
 
