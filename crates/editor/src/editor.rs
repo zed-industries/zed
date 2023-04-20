@@ -395,6 +395,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_async_action(Editor::find_all_references);
     cx.add_action(Editor::next_copilot_suggestion);
     cx.add_action(Editor::previous_copilot_suggestion);
+    cx.add_action(Editor::copilot_suggest);
 
     hover_popover::init(cx);
     link_go_to_definition::init(cx);
@@ -1014,6 +1015,8 @@ impl CodeActionsMenu {
 pub struct CopilotState {
     excerpt_id: Option<ExcerptId>,
     pending_refresh: Task<Option<()>>,
+    pending_cycling_refresh: Task<Option<()>>,
+    cycled: bool,
     completions: Vec<copilot::Completion>,
     active_completion_index: usize,
 }
@@ -1022,9 +1025,11 @@ impl Default for CopilotState {
     fn default() -> Self {
         Self {
             excerpt_id: None,
+            pending_cycling_refresh: Task::ready(Some(())),
             pending_refresh: Task::ready(Some(())),
             completions: Default::default(),
             active_completion_index: 0,
+            cycled: false,
         }
     }
 }
@@ -1065,6 +1070,26 @@ impl CopilotState {
             Some(&completion.text[prefix_len..completion.text.len() - suffix_len])
         } else {
             None
+        }
+    }
+
+    fn cycle_completions(&mut self, direction: Direction) {
+        match direction {
+            Direction::Prev => {
+                self.active_completion_index = if self.active_completion_index == 0 {
+                    self.completions.len() - 1
+                } else {
+                    self.active_completion_index - 1
+                };
+            }
+            Direction::Next => {
+                if self.completions.len() == 0 {
+                    self.active_completion_index = 0
+                } else {
+                    self.active_completion_index =
+                        (self.active_completion_index + 1) % self.completions.len();
+                }
+            }
         }
     }
 
@@ -1265,7 +1290,7 @@ impl Editor {
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-                cx.observe_global::<Settings, _>(Self::on_settings_changed),
+                cx.observe_global::<Settings, _>(Self::settings_changed),
             ],
         };
         this.end_selection(cx);
@@ -2026,13 +2051,13 @@ impl Editor {
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
             if had_active_copilot_suggestion {
-                this.refresh_copilot_suggestions(cx);
+                this.refresh_copilot_suggestions(true, cx);
                 if !this.has_active_copilot_suggestion(cx) {
                     this.trigger_completion_on_input(&text, cx);
                 }
             } else {
                 this.trigger_completion_on_input(&text, cx);
-                this.refresh_copilot_suggestions(cx);
+                this.refresh_copilot_suggestions(true, cx);
             }
         });
     }
@@ -2114,7 +2139,7 @@ impl Editor {
                 .collect();
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
-            this.refresh_copilot_suggestions(cx);
+            this.refresh_copilot_suggestions(true, cx);
         });
     }
 
@@ -2512,7 +2537,7 @@ impl Editor {
                 });
             }
 
-            this.refresh_copilot_suggestions(cx);
+            this.refresh_copilot_suggestions(true, cx);
         });
 
         let project = self.project.clone()?;
@@ -2805,10 +2830,14 @@ impl Editor {
         None
     }
 
-    fn refresh_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+    fn refresh_copilot_suggestions(
+        &mut self,
+        debounce: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
         let copilot = Copilot::global(cx)?;
         if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
-            self.hide_copilot_suggestion(cx);
+            self.clear_copilot_suggestions(cx);
             return None;
         }
         self.update_visible_copilot_suggestion(cx);
@@ -2816,28 +2845,35 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
         let language_name = snapshot.language_at(cursor).map(|language| language.name());
-        if !cx.global::<Settings>().copilot_on(language_name.as_deref()) {
-            self.hide_copilot_suggestion(cx);
+        if !cx
+            .global::<Settings>()
+            .show_copilot_suggestions(language_name.as_deref())
+        {
+            self.clear_copilot_suggestions(cx);
             return None;
         }
 
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
-            cx.background().timer(COPILOT_DEBOUNCE_TIMEOUT).await;
-            let (completion, completions_cycling) = copilot.update(&mut cx, |copilot, cx| {
-                (
-                    copilot.completions(&buffer, buffer_position, cx),
-                    copilot.completions_cycling(&buffer, buffer_position, cx),
-                )
-            });
+            if debounce {
+                cx.background().timer(COPILOT_DEBOUNCE_TIMEOUT).await;
+            }
 
-            let (completion, completions_cycling) = futures::join!(completion, completions_cycling);
-            let mut completions = Vec::new();
-            completions.extend(completion.log_err().into_iter().flatten());
-            completions.extend(completions_cycling.log_err().into_iter().flatten());
+            let completions = copilot
+                .update(&mut cx, |copilot, cx| {
+                    copilot.completions(&buffer, buffer_position, cx)
+                })
+                .await
+                .log_err()
+                .into_iter()
+                .flatten()
+                .collect_vec();
+
             this.upgrade(&cx)?.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
+                    this.copilot_state.cycled = false;
+                    this.copilot_state.pending_cycling_refresh = Task::ready(None);
                     this.copilot_state.completions.clear();
                     this.copilot_state.active_completion_index = 0;
                     this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
@@ -2854,15 +2890,61 @@ impl Editor {
         Some(())
     }
 
-    fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
+    fn cycle_suggestions(
+        &mut self,
+        direction: Direction,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<()> {
+        let copilot = Copilot::global(cx)?;
+        if self.mode != EditorMode::Full || !copilot.read(cx).status().is_authorized() {
+            return None;
+        }
+
+        if self.copilot_state.cycled {
+            self.copilot_state.cycle_completions(direction);
+            self.update_visible_copilot_suggestion(cx);
+        } else {
+            let cursor = self.selections.newest_anchor().head();
+            let (buffer, buffer_position) =
+                self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
+            self.copilot_state.pending_cycling_refresh = cx.spawn_weak(|this, mut cx| async move {
+                let completions = copilot
+                    .update(&mut cx, |copilot, cx| {
+                        copilot.completions_cycling(&buffer, buffer_position, cx)
+                    })
+                    .await;
+
+                this.upgrade(&cx)?.update(&mut cx, |this, cx| {
+                    this.copilot_state.cycled = true;
+                    for completion in completions.log_err().into_iter().flatten() {
+                        this.copilot_state.push_completion(completion);
+                    }
+                    this.copilot_state.cycle_completions(direction);
+                    this.update_visible_copilot_suggestion(cx);
+                });
+
+                Some(())
+            });
+        }
+
+        Some(())
+    }
+
+    fn copilot_suggest(&mut self, _: &copilot::Suggest, cx: &mut ViewContext<Self>) {
         if !self.has_active_copilot_suggestion(cx) {
-            self.refresh_copilot_suggestions(cx);
+            self.refresh_copilot_suggestions(false, cx);
             return;
         }
 
-        self.copilot_state.active_completion_index =
-            (self.copilot_state.active_completion_index + 1) % self.copilot_state.completions.len();
         self.update_visible_copilot_suggestion(cx);
+    }
+
+    fn next_copilot_suggestion(&mut self, _: &copilot::NextSuggestion, cx: &mut ViewContext<Self>) {
+        if self.has_active_copilot_suggestion(cx) {
+            self.cycle_suggestions(Direction::Next, cx);
+        } else {
+            self.refresh_copilot_suggestions(false, cx);
+        }
     }
 
     fn previous_copilot_suggestion(
@@ -2870,18 +2952,11 @@ impl Editor {
         _: &copilot::PreviousSuggestion,
         cx: &mut ViewContext<Self>,
     ) {
-        if !self.has_active_copilot_suggestion(cx) {
-            self.refresh_copilot_suggestions(cx);
-            return;
+        if self.has_active_copilot_suggestion(cx) {
+            self.cycle_suggestions(Direction::Prev, cx);
+        } else {
+            self.refresh_copilot_suggestions(false, cx);
         }
-
-        self.copilot_state.active_completion_index =
-            if self.copilot_state.active_completion_index == 0 {
-                self.copilot_state.completions.len() - 1
-            } else {
-                self.copilot_state.active_completion_index - 1
-            };
-        self.update_visible_copilot_suggestion(cx);
     }
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -2923,11 +2998,11 @@ impl Editor {
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
         {
-            self.display_map.update(cx, |map, cx| {
+            self.display_map.update(cx, move |map, cx| {
                 map.replace_suggestion(
                     Some(Suggestion {
                         position: cursor,
-                        text: text.into(),
+                        text: text.trim_end().into(),
                     }),
                     cx,
                 )
@@ -2936,6 +3011,11 @@ impl Editor {
         } else {
             self.hide_copilot_suggestion(cx);
         }
+    }
+
+    fn clear_copilot_suggestions(&mut self, cx: &mut ViewContext<Self>) {
+        self.copilot_state = Default::default();
+        self.hide_copilot_suggestion(cx);
     }
 
     pub fn render_code_actions_indicator(
@@ -3223,7 +3303,7 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
             this.insert("", cx);
-            this.refresh_copilot_suggestions(cx);
+            this.refresh_copilot_suggestions(true, cx);
         });
     }
 
@@ -3239,7 +3319,7 @@ impl Editor {
                 })
             });
             this.insert("", cx);
-            this.refresh_copilot_suggestions(cx);
+            this.refresh_copilot_suggestions(true, cx);
         });
     }
 
@@ -3335,7 +3415,7 @@ impl Editor {
         self.transact(cx, |this, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
-            this.refresh_copilot_suggestions(cx);
+            this.refresh_copilot_suggestions(true, cx);
         });
     }
 
@@ -4015,7 +4095,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_copilot_suggestions(cx);
+            self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
         }
     }
@@ -4030,7 +4110,7 @@ impl Editor {
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(cx);
-            self.refresh_copilot_suggestions(cx);
+            self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
         }
     }
@@ -6491,8 +6571,8 @@ impl Editor {
         cx.notify();
     }
 
-    fn on_settings_changed(&mut self, cx: &mut ViewContext<Self>) {
-        self.refresh_copilot_suggestions(cx);
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.refresh_copilot_suggestions(true, cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {

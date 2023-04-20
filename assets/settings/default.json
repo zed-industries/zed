@@ -1,6 +1,11 @@
 {
     // The name of the Zed theme to use for the UI
     "theme": "One Dark",
+    // Features that can be globally enabled or disabled
+    "features": {
+        // Show Copilot icon in status bar
+        "copilot": true
+    },
     // The name of a font to use for rendering text in the editor
     "buffer_font_family": "Zed Mono",
     // The OpenType features to enable for text in the editor.
@@ -13,11 +18,6 @@
     // The factor to grow the active pane by. Defaults to 1.0
     // which gives the same size as all other panes.
     "active_pane_magnification": 1.0,
-    // Enable / disable copilot integration.
-    "enable_copilot_integration": true,
-    // Controls whether copilot provides suggestion immediately
-    // or waits for a `copilot::Toggle`
-    "copilot": "on",
     // Whether to enable vim modes and key bindings
     "vim_mode": false,
     // Whether to show the informational hover box when moving the mouse
@@ -30,6 +30,9 @@
     // Whether to pop the completions menu while typing in an editor without
     // explicitly requesting it.
     "show_completions_on_input": true,
+    // Controls whether copilot provides suggestion immediately
+    // or waits for a `copilot::Toggle`
+    "show_copilot_suggestions": true,
     // Whether the screen sharing icon is shown in the os status bar.
     "show_call_status_icon": true,
     // Whether to use language servers to provide code intelligence.
