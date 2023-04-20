@@ -8,7 +8,7 @@ use gpui::{
 use menu::{Cancel, Confirm};
 use settings::Settings;
 use text::{Bias, Point};
-use workspace::Workspace;
+use workspace::{Modal, Workspace};
 
 actions!(go_to_line, [Toggle]);
 
@@ -65,11 +65,7 @@ impl GoToLine {
             .active_item(cx)
             .and_then(|active_item| active_item.downcast::<Editor>())
         {
-            workspace.toggle_modal(cx, |_, cx| {
-                let view = cx.add_view(|cx| GoToLine::new(editor, cx));
-                cx.subscribe(&view, Self::on_event).detach();
-                view
-            });
+            workspace.toggle_modal(cx, |_, cx| cx.add_view(|cx| GoToLine::new(editor, cx)));
         }
     }
 
@@ -89,17 +85,6 @@ impl GoToLine {
             }
         });
         cx.emit(Event::Dismissed);
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => workspace.dismiss_modal(cx),
-        }
     }
 
     fn on_line_editor_event(
@@ -192,5 +177,11 @@ impl View for GoToLine {
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.line_editor);
+    }
+}
+
+impl Modal for GoToLine {
+    fn dismiss_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Dismissed)
     }
 }

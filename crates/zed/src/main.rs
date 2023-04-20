@@ -520,7 +520,7 @@ async fn watch_themes(
             .await
             .log_err()?;
         if output.status.success() {
-            cx.update(|cx| theme_selector::ThemeSelector::reload(themes.clone(), cx))
+            cx.update(|cx| theme_selector::reload(themes.clone(), cx))
         } else {
             eprintln!(
                 "build script failed {}",

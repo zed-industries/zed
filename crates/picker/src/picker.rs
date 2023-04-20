@@ -24,6 +24,7 @@ pub struct Picker<D: PickerDelegate> {
     max_size: Vector2F,
     theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
     confirmed: bool,
+    pending_update_matches: Task<Option<()>>,
 }
 
 pub trait PickerDelegate: Sized + 'static {
@@ -184,6 +185,7 @@ impl<D: PickerDelegate> Picker<D> {
             max_size: vec2f(540., 420.),
             theme,
             confirmed: false,
+            pending_update_matches: Task::ready(None),
         };
         // TODO! How can the delegate notify the picker to update?
         // cx.observe(&delegate, |_, _, cx| cx.notify()).detach();
@@ -238,22 +240,24 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         let update = self.delegate.update_matches(query, cx);
-        cx.spawn_weak(|this, mut cx| async move {
+        self.matches_updated(cx);
+        self.pending_update_matches = cx.spawn_weak(|this, mut cx| async move {
             update.await;
             this.upgrade(&cx)?
-                .update(&mut cx, |this, cx| {
-                    let index = this.delegate.selected_index();
-                    let target = if this.delegate.center_selection_after_match_updates() {
-                        ScrollTarget::Center(index)
-                    } else {
-                        ScrollTarget::Show(index)
-                    };
-                    this.list_state.scroll_to(target);
-                    cx.notify();
-                })
+                .update(&mut cx, |this, cx| this.matches_updated(cx))
                 .log_err()
-        })
-        .detach()
+        });
+    }
+
+    fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
+        let index = self.delegate.selected_index();
+        let target = if self.delegate.center_selection_after_match_updates() {
+            ScrollTarget::Center(index)
+        } else {
+            ScrollTarget::Show(index)
+        };
+        self.list_state.scroll_to(target);
+        cx.notify();
     }
 
     pub fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
@@ -306,7 +310,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    pub fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         self.confirmed = true;
         self.delegate.confirm(cx);
     }

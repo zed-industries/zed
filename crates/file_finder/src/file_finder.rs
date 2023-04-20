@@ -94,8 +94,7 @@ impl FileFinderDelegate {
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
         cx.observe(&project, |picker, _, cx| {
-            let query = picker.query(cx);
-            picker.delegate_mut().spawn_search(query, cx).detach();
+            picker.update_matches(picker.query(cx), cx);
         })
         .detach();
         Self {
@@ -366,16 +365,21 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
         let (_, finder) = cx.add_window(|cx| {
             Picker::new(
-                FileFinderDelegate::new(workspace.read(cx).project().clone(), None, cx),
+                FileFinderDelegate::new(
+                    workspace.downgrade(),
+                    workspace.read(cx).project().clone(),
+                    None,
+                    cx,
+                ),
                 cx,
             )
         });
 
         let query = "hi".to_string();
         finder
-            .update(cx, |f, cx| f.spawn_search(query.clone(), cx))
+            .update(cx, |f, cx| f.delegate_mut().spawn_search(query.clone(), cx))
             .await;
-        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 5));
+        finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 5));
 
         finder.update(cx, |finder, cx| {
             let delegate = finder.delegate_mut();
@@ -385,7 +389,7 @@ mod tests {
             // returning only a subset of the matches that would have been found.
             drop(delegate.spawn_search(query.clone(), cx));
             delegate.set_matches(
-                finder.delegate().latest_search_id,
+                delegate.latest_search_id,
                 true, // did-cancel
                 query.clone(),
                 vec![matches[1].clone(), matches[3].clone()],
@@ -445,14 +449,19 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
         let (_, finder) = cx.add_window(|cx| {
             Picker::new(
-                FileFinderDelegate::new(workspace.read(cx).project().clone(), None, cx),
+                FileFinderDelegate::new(
+                    workspace.downgrade(),
+                    workspace.read(cx).project().clone(),
+                    None,
+                    cx,
+                ),
                 cx,
             )
         });
         finder
-            .update(cx, |f, cx| f.spawn_search("hi".into(), cx))
+            .update(cx, |f, cx| f.delegate_mut().spawn_search("hi".into(), cx))
             .await;
-        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 7));
+        finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 7));
     }
 
     #[gpui::test]
@@ -472,20 +481,29 @@ mod tests {
         .await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
         let (_, finder) = cx.add_window(|cx| {
-            FileFinderDelegate::new(workspace.read(cx).project().clone(), None, cx)
+            Picker::new(
+                FileFinderDelegate::new(
+                    workspace.downgrade(),
+                    workspace.read(cx).project().clone(),
+                    None,
+                    cx,
+                ),
+                cx,
+            )
         });
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
         finder
-            .update(cx, |f, cx| f.spawn_search("thf".into(), cx))
+            .update(cx, |f, cx| f.delegate_mut().spawn_search("thf".into(), cx))
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
-            assert_eq!(finder.matches.len(), 1);
+            let delegate = finder.delegate();
+            assert_eq!(delegate.matches.len(), 1);
 
             let (file_name, file_name_positions, full_path, full_path_positions) =
-                finder.labels_for_match(&finder.matches[0]);
+                delegate.labels_for_match(&delegate.matches[0]);
             assert_eq!(file_name, "the-file");
             assert_eq!(file_name_positions, &[0, 1, 4]);
             assert_eq!(full_path, "the-file");
@@ -495,9 +513,9 @@ mod tests {
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
         finder
-            .update(cx, |f, cx| f.spawn_search("thf/".into(), cx))
+            .update(cx, |f, cx| f.delegate_mut().spawn_search("thf/".into(), cx))
             .await;
-        finder.read_with(cx, |f, _| assert_eq!(f.matches.len(), 0));
+        finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 0));
     }
 
     #[gpui::test]
@@ -526,22 +544,31 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let (_, finder) = cx.add_window(|cx| {
-            FileFinderDelegate::new(workspace.read(cx).project().clone(), None, cx)
+            Picker::new(
+                FileFinderDelegate::new(
+                    workspace.downgrade(),
+                    workspace.read(cx).project().clone(),
+                    None,
+                    cx,
+                ),
+                cx,
+            )
         });
 
         // Run a search that matches two files with the same relative path.
         finder
-            .update(cx, |f, cx| f.spawn_search("a.t".into(), cx))
+            .update(cx, |f, cx| f.delegate_mut().spawn_search("a.t".into(), cx))
             .await;
 
         // Can switch between different matches with the same relative path.
-        finder.update(cx, |f, cx| {
-            assert_eq!(f.matches.len(), 2);
-            assert_eq!(f.selected_index(), 0);
-            f.set_selected_index(1, cx);
-            assert_eq!(f.selected_index(), 1);
-            f.set_selected_index(0, cx);
-            assert_eq!(f.selected_index(), 0);
+        finder.update(cx, |finder, cx| {
+            let delegate = finder.delegate_mut();
+            assert_eq!(delegate.matches.len(), 2);
+            assert_eq!(delegate.selected_index(), 0);
+            delegate.set_selected_index(1, cx);
+            assert_eq!(delegate.selected_index(), 1);
+            delegate.set_selected_index(0, cx);
+            assert_eq!(delegate.selected_index(), 0);
         });
     }
 
@@ -573,16 +600,27 @@ mod tests {
         // so that one should be sorted earlier
         let b_path = Some(Arc::from(Path::new("/root/dir2/b.txt")));
         let (_, finder) = cx.add_window(|cx| {
-            FileFinderDelegate::new(workspace.read(cx).project().clone(), b_path, cx)
+            Picker::new(
+                FileFinderDelegate::new(
+                    workspace.downgrade(),
+                    workspace.read(cx).project().clone(),
+                    b_path,
+                    cx,
+                ),
+                cx,
+            )
         });
 
         finder
-            .update(cx, |f, cx| f.spawn_search("a.txt".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut().spawn_search("a.txt".into(), cx)
+            })
             .await;
 
         finder.read_with(cx, |f, _| {
-            assert_eq!(f.matches[0].path.as_ref(), Path::new("dir2/a.txt"));
-            assert_eq!(f.matches[1].path.as_ref(), Path::new("dir1/a.txt"));
+            let delegate = f.delegate();
+            assert_eq!(delegate.matches[0].path.as_ref(), Path::new("dir2/a.txt"));
+            assert_eq!(delegate.matches[1].path.as_ref(), Path::new("dir1/a.txt"));
         });
     }
 
@@ -606,14 +644,22 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
         let (_, finder) = cx.add_window(|cx| {
-            FileFinderDelegate::new(workspace.read(cx).project().clone(), None, cx)
+            Picker::new(
+                FileFinderDelegate::new(
+                    workspace.downgrade(),
+                    workspace.read(cx).project().clone(),
+                    None,
+                    cx,
+                ),
+                cx,
+            )
         });
         finder
-            .update(cx, |f, cx| f.spawn_search("dir".into(), cx))
+            .update(cx, |f, cx| f.delegate_mut().spawn_search("dir".into(), cx))
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
-            assert_eq!(finder.matches.len(), 0);
+            assert_eq!(finder.delegate().matches.len(), 0);
         });
     }
 }

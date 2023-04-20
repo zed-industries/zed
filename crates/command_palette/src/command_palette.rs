@@ -12,7 +12,7 @@ use workspace::Workspace;
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(toggle_command_palette);
-    Picker::<CommandPaletteDelegate>::init(cx);
+    CommandPalette::init(cx);
 }
 
 actions!(command_palette, [Toggle]);
@@ -155,9 +155,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         })
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        cx.emit(PickerEvent::Dismiss);
-    }
+    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
 
     fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         if !self.matches.is_empty() {
@@ -330,8 +328,8 @@ mod tests {
             .await;
 
         palette.update(cx, |palette, cx| {
-            assert_eq!(palette.matches[0].string, "editor: backspace");
-            palette.confirm(cx);
+            assert_eq!(palette.delegate().matches[0].string, "editor: backspace");
+            palette.confirm(&Default::default(), cx);
         });
 
         editor.read_with(cx, |editor, cx| {
@@ -346,20 +344,24 @@ mod tests {
         });
 
         workspace.update(cx, |workspace, cx| {
-            CommandPaletteDelegate::toggle(workspace, &Toggle, cx);
+            toggle_command_palette(workspace, &Toggle, cx);
         });
 
         // Assert editor command not present
         let palette = workspace.read_with(cx, |workspace, _| {
-            workspace.modal::<CommandPaletteDelegate>().unwrap()
+            workspace.modal::<CommandPalette>().unwrap()
         });
 
         palette
             .update(cx, |palette, cx| {
-                palette.update_matches("bcksp".to_string(), cx)
+                palette
+                    .delegate_mut()
+                    .update_matches("bcksp".to_string(), cx)
             })
             .await;
 
-        palette.update(cx, |palette, _| assert!(palette.matches.is_empty()));
+        palette.update(cx, |palette, _| {
+            assert!(palette.delegate().matches.is_empty())
+        });
     }
 }
