@@ -209,7 +209,7 @@ impl<V: View> DragAndDrop<V> {
                                 )
                                 .with_cursor_style(CursorStyle::Arrow)
                                 .on_up(MouseButton::Left, |_, _, cx| {
-                                    cx.defer(|_, cx| {
+                                    cx.window_context().defer(|cx| {
                                         cx.update_global::<Self, _, _>(|this, cx| {
                                             this.finish_dragging(cx)
                                         });
@@ -217,7 +217,7 @@ impl<V: View> DragAndDrop<V> {
                                     cx.propagate_event();
                                 })
                                 .on_up_out(MouseButton::Left, |_, _, cx| {
-                                    cx.defer(|_, cx| {
+                                    cx.window_context().defer(|cx| {
                                         cx.update_global::<Self, _, _>(|this, cx| {
                                             this.finish_dragging(cx)
                                         });
@@ -244,14 +244,14 @@ impl<V: View> DragAndDrop<V> {
                                 .boxed()
                         })
                         .on_up(MouseButton::Left, |_, _, cx| {
-                            cx.defer(|_, cx| {
+                            cx.window_context().defer(|cx| {
                                 cx.update_global::<Self, _, _>(|this, _| {
                                     this.currently_dragged = None;
                                 });
                             });
                         })
                         .on_up_out(MouseButton::Left, |_, _, cx| {
-                            cx.defer(|_, cx| {
+                            cx.window_context().defer(|cx| {
                                 cx.update_global::<Self, _, _>(|this, _| {
                                     this.currently_dragged = None;
                                 });

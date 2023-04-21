@@ -2954,6 +2954,10 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         }
     }
 
+    pub fn window_context(&mut self) -> &mut WindowContext<'a, 'b> {
+        &mut self.window_context
+    }
+
     pub fn handle(&self) -> ViewHandle<V> {
         ViewHandle::new(
             self.window_id,

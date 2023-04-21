@@ -174,7 +174,7 @@ impl UpdateView for WindowContext<'_, '_> {
                 &mut cx,
             )
         })
-        .unwrap()
+        .expect("view is already on the stack")
     }
 }
 
