@@ -3,7 +3,7 @@ use std::path::Path;
 use fuzzy::StringMatch;
 use gpui::{
     elements::{Label, LabelStyle},
-    Element, AnyElement, View,
+    AnyElement, Element, View,
 };
 use workspace::WorkspaceLocation;
 

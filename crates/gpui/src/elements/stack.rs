@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{self, json, ToJson},
-    Element, AnyElement, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 /// Element which renders it's children in a stack on top of each other.
