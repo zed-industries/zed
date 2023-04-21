@@ -1741,8 +1741,6 @@ impl View for Pane {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
-        let this = cx.handle().downgrade();
-
         enum MouseNavigationHandler {}
 
         Stack::new()
@@ -1836,20 +1834,17 @@ impl View for Pane {
                         .boxed()
                     }
                 })
-                .on_down(MouseButton::Navigate(NavigationDirection::Back), {
-                    let this = this.clone();
+                .on_down(
+                    MouseButton::Navigate(NavigationDirection::Back),
                     move |_, _, cx| {
-                        cx.dispatch_action(GoBack {
-                            pane: Some(this.clone()),
-                        });
-                    }
-                })
+                        let pane = cx.weak_handle();
+                        cx.dispatch_action(GoBack { pane: Some(pane) });
+                    },
+                )
                 .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
-                    let this = this.clone();
                     move |_, _, cx| {
-                        cx.dispatch_action(GoForward {
-                            pane: Some(this.clone()),
-                        })
+                        let pane = cx.weak_handle();
+                        cx.dispatch_action(GoForward { pane: Some(pane) })
                     }
                 })
                 .boxed(),

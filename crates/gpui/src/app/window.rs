@@ -116,6 +116,7 @@ pub struct WindowContext<'a: 'b, 'b> {
     pub(crate) window: Reference<'b, Window>,
     pub(crate) window_id: usize,
     pub(crate) refreshing: bool,
+    pub(crate) removed: bool,
 }
 
 impl Deref for WindowContext<'_, '_> {
@@ -216,6 +217,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             window: Reference::Mutable(window),
             window_id,
             refreshing: false,
+            removed: false,
         }
     }
 
@@ -225,7 +227,12 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
             window: Reference::Immutable(window),
             window_id,
             refreshing: false,
+            removed: false,
         }
+    }
+
+    pub fn remove_window(&mut self) {
+        self.removed = true;
     }
 
     pub fn window_id(&self) -> usize {

@@ -265,8 +265,7 @@ where
                         icon(style).boxed()
                     })
                     .on_click(platform::MouseButton::Left, move |_, _, cx| {
-                        let window_id = cx.window_id();
-                        cx.remove_window(window_id);
+                        cx.remove_window();
                     })
                     .with_cursor_style(platform::CursorStyle::PointingHand)
                     .aligned()

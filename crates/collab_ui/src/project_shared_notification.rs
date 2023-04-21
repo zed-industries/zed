@@ -94,14 +94,12 @@ impl ProjectSharedNotification {
     }
 
     fn join(&mut self, _: &JoinProject, cx: &mut ViewContext<Self>) {
-        let window_id = cx.window_id();
-        cx.remove_window(window_id);
+        cx.remove_window();
         cx.propagate_action();
     }
 
     fn dismiss(&mut self, _: &DismissProject, cx: &mut ViewContext<Self>) {
-        let window_id = cx.window_id();
-        cx.remove_window(window_id);
+        cx.remove_window();
     }
 
     fn render_owner(&self, cx: &mut ViewContext<Self>) -> Element<Self> {

@@ -700,8 +700,7 @@ impl Workspace {
                 }
 
                 project::Event::Closed => {
-                    let window_id = cx.window_id();
-                    cx.remove_window(window_id);
+                    cx.remove_window();
                 }
 
                 _ => {}

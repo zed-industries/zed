@@ -868,7 +868,9 @@ impl AppContext {
             let mut window = app_context.windows.remove(&window_id)?;
             let mut window_context = WindowContext::mutable(app_context, &mut window, window_id);
             let result = callback(&mut window_context);
-            app_context.windows.insert(window_id, window);
+            if !window_context.removed {
+                app_context.windows.insert(window_id, window);
+            }
             Some(result)
         })
     }

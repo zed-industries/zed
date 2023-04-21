@@ -74,8 +74,8 @@ where
             .boxed()
     })
     .on_up(MouseButton::Left, {
-        let pane = cx.handle().downgrade();
         move |event, _, cx| {
+            let pane = cx.weak_handle();
             handle_dropped_item(event, &pane, drop_index, allow_same_pane, split_margin, cx);
             cx.notify();
         }

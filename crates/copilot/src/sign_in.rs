@@ -273,10 +273,7 @@ impl CopilotCodeVerification {
                     style.auth.content_width,
                     &style.auth.cta_button,
                     cx,
-                    |_, _, cx| {
-                        let window_id = cx.window_id();
-                        cx.remove_window(window_id)
-                    },
+                    |_, _, cx| cx.remove_window(),
                 )
                 .boxed(),
             ])
@@ -335,8 +332,7 @@ impl CopilotCodeVerification {
                     &style.auth.cta_button,
                     cx,
                     |_, _, cx| {
-                        let window_id = cx.window_id();
-                        cx.remove_window(window_id);
+                        cx.remove_window();
                         cx.platform().open_url(COPILOT_SIGN_UP_URL)
                     },
                 )
