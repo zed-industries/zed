@@ -12,7 +12,7 @@ use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -252,12 +252,63 @@ pub struct TerminalSettings {
     pub working_directory: Option<WorkingDirectory>,
     pub font_size: Option<f32>,
     pub font_family: Option<String>,
+    pub line_height: Option<TerminalLineHeight>,
     pub font_features: Option<fonts::Features>,
     pub env: Option<HashMap<String, String>>,
     pub blinking: Option<TerminalBlink>,
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
     pub copy_on_select: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+#[serde(untagged)]
+pub enum TerminalLineHeight {
+    #[default]
+    #[serde(deserialize_with = "comfortable")]
+    Comfortable,
+    #[serde(deserialize_with = "standard")]
+    Standard,
+    Custom(f32),
+}
+
+// Copied from: https://github.com/serde-rs/serde/issues/1158#issuecomment-365362959
+fn comfortable<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    enum Helper {
+        #[serde(rename = "comfortable")]
+        Variant,
+    }
+    Helper::deserialize(deserializer)?;
+    Ok(())
+}
+
+// Copied from: https://github.com/serde-rs/serde/issues/1158#issuecomment-365362959
+fn standard<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    enum Helper {
+        #[serde(rename = "standard")]
+        Variant,
+    }
+    Helper::deserialize(deserializer)?;
+    Ok(())
+}
+
+impl TerminalLineHeight {
+    fn value(&self) -> f32 {
+        match self {
+            TerminalLineHeight::Comfortable => 1.618,
+            TerminalLineHeight::Standard => 1.3,
+            TerminalLineHeight::Custom(line_height) => *line_height,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -313,6 +364,14 @@ pub enum WorkingDirectory {
 impl Default for WorkingDirectory {
     fn default() -> Self {
         Self::CurrentProjectDirectory
+    }
+}
+
+impl TerminalSettings {
+    fn line_height(&self) -> Option<f32> {
+        self.line_height
+            .to_owned()
+            .map(|line_height| line_height.value())
     }
 }
 
@@ -640,16 +699,6 @@ impl Settings {
         })
     }
 
-    fn terminal_setting<F, R: Default + Clone>(&self, f: F) -> R
-    where
-        F: Fn(&TerminalSettings) -> Option<&R>,
-    {
-        f(&self.terminal_overrides)
-            .or_else(|| f(&self.terminal_defaults))
-            .cloned()
-            .unwrap_or_else(|| R::default())
-    }
-
     pub fn telemetry(&self) -> TelemetrySettings {
         TelemetrySettings {
             diagnostics: Some(self.telemetry_diagnostics()),
@@ -671,20 +720,33 @@ impl Settings {
             .expect("missing default")
     }
 
+    fn terminal_setting<F, R>(&self, f: F) -> R
+    where
+        F: Fn(&TerminalSettings) -> Option<R>,
+    {
+        None.or_else(|| f(&self.terminal_overrides))
+            .or_else(|| f(&self.terminal_defaults))
+            .expect("missing default")
+    }
+
+    pub fn terminal_line_height(&self) -> f32 {
+        self.terminal_setting(|terminal_setting| terminal_setting.line_height())
+    }
+
     pub fn terminal_scroll(&self) -> AlternateScroll {
-        self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.as_ref())
+        self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.to_owned())
     }
 
     pub fn terminal_shell(&self) -> Shell {
-        self.terminal_setting(|terminal_setting| terminal_setting.shell.as_ref())
+        self.terminal_setting(|terminal_setting| terminal_setting.shell.to_owned())
     }
 
     pub fn terminal_env(&self) -> HashMap<String, String> {
-        self.terminal_setting(|terminal_setting| terminal_setting.env.as_ref())
+        self.terminal_setting(|terminal_setting| terminal_setting.env.to_owned())
     }
 
     pub fn terminal_strategy(&self) -> WorkingDirectory {
-        self.terminal_setting(|terminal_setting| terminal_setting.working_directory.as_ref())
+        self.terminal_setting(|terminal_setting| terminal_setting.working_directory.to_owned())
     }
 
     #[cfg(any(test, feature = "test-support"))]
