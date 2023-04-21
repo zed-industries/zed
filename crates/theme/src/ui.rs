@@ -27,28 +27,40 @@ pub struct CheckboxStyle {
     pub hovered_and_checked: ContainerStyle,
 }
 
-pub fn checkbox<Tag: 'static, V: View>(
+pub fn checkbox<Tag, V, F>(
     label: &'static str,
     style: &CheckboxStyle,
     checked: bool,
+    id: usize,
     cx: &mut ViewContext<V>,
-    change: fn(checked: bool, cx: &mut EventContext<V>) -> (),
-) -> MouseEventHandler<Tag, V> {
+    change: F,
+) -> MouseEventHandler<Tag, V>
+where
+    Tag: 'static,
+    V: View,
+    F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
+{
     let label = Label::new(label, style.label.text.clone())
         .contained()
         .with_style(style.label.container);
-
-    checkbox_with_label(label, style, checked, cx, change)
+    checkbox_with_label(label, style, checked, id, cx, change)
 }
 
-pub fn checkbox_with_label<Tag: 'static, D: Element<V>, V: View>(
+pub fn checkbox_with_label<Tag, D, V, F>(
     label: D,
     style: &CheckboxStyle,
     checked: bool,
+    id: usize,
     cx: &mut ViewContext<V>,
-    change: fn(checked: bool, cx: &mut EventContext<V>) -> (),
-) -> MouseEventHandler<Tag, V> {
-    MouseEventHandler::new(0, cx, |state, _| {
+    change: F,
+) -> MouseEventHandler<Tag, V>
+where
+    Tag: 'static,
+    D: Element<V>,
+    V: View,
+    F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
+{
+    MouseEventHandler::new(id, cx, |state, _| {
         let indicator = if checked {
             svg(&style.icon)
         } else {
@@ -75,8 +87,8 @@ pub fn checkbox_with_label<Tag: 'static, D: Element<V>, V: View>(
             .with_child(label)
             .align_children_center()
     })
-    .on_click(platform::MouseButton::Left, move |_, _, cx| {
-        change(!checked, cx)
+    .on_click(platform::MouseButton::Left, move |_, view, cx| {
+        change(view, !checked, cx)
     })
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
