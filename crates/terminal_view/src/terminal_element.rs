@@ -11,7 +11,7 @@ use gpui::{
     serde_json::json,
     text_layout::{Line, RunStyle},
     Drawable, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
-    SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle, WeakViewHandle,
+    SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -161,20 +161,17 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: WeakModelHandle<Terminal>,
-    view: WeakViewHandle<TerminalView>,
     focused: bool,
     cursor_visible: bool,
 }
 
 impl TerminalElement {
     pub fn new(
-        view: WeakViewHandle<TerminalView>,
         terminal: WeakModelHandle<Terminal>,
         focused: bool,
         cursor_visible: bool,
     ) -> TerminalElement {
         TerminalElement {
-            view,
             terminal,
             focused,
             cursor_visible,
@@ -387,14 +384,13 @@ impl TerminalElement {
         &self,
         scene: &mut SceneBuilder,
         origin: Vector2F,
-        view_id: usize,
         visible_bounds: RectF,
         mode: TermMode,
-        _cx: &mut ViewContext<TerminalView>,
+        cx: &mut ViewContext<TerminalView>,
     ) {
         let connection = self.terminal;
 
-        let mut region = MouseRegion::new::<Self>(view_id, 0, visible_bounds);
+        let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
 
         // Terminal Emulator controlled behavior:
         region = region
@@ -740,14 +736,7 @@ impl Drawable<TerminalView> for TerminalElement {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(
-                scene,
-                origin,
-                self.view.id(),
-                visible_bounds,
-                layout.mode,
-                cx,
-            );
+            self.attach_mouse_handlers(scene, origin, visible_bounds, layout.mode, cx);
 
             scene.push_cursor_region(gpui::CursorRegion {
                 bounds,
