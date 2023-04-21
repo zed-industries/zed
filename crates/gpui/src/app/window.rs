@@ -15,7 +15,7 @@ use crate::{
     util::post_inc,
     Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle,
     AppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
-    MouseRegionId, ParentId, ReadModel, SceneBuilder, Subscription, UpdateModel, UpdateView,
+    MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateModel, UpdateView,
     UpgradeModelHandle, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakModelHandle,
     WeakViewHandle, WindowInvalidation,
 };
@@ -130,12 +130,6 @@ impl Deref for WindowContext<'_> {
 impl DerefMut for WindowContext<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app_context
-    }
-}
-
-impl ReadModel for WindowContext<'_> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app_context.read_model(handle)
     }
 }
 

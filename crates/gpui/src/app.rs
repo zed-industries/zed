@@ -121,10 +121,6 @@ pub trait View: Entity + Sized {
     }
 }
 
-pub trait ReadModel {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
-}
-
 pub trait ReadModelWith {
     fn read_model_with<E: Entity, T>(
         &self,
@@ -1285,6 +1281,17 @@ impl AppContext {
         })
     }
 
+    pub fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        if let Some(model) = self.models.get(&handle.model_id) {
+            model
+                .as_any()
+                .downcast_ref()
+                .expect("downcast is type safe")
+        } else {
+            panic!("circular model reference");
+        }
+    }
+
     pub fn add_window<V, F>(
         &mut self,
         window_options: WindowOptions,
@@ -2082,19 +2089,6 @@ impl AppContext {
     }
 }
 
-impl ReadModel for AppContext {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        if let Some(model) = self.models.get(&handle.model_id) {
-            model
-                .as_any()
-                .downcast_ref()
-                .expect("downcast is type safe")
-        } else {
-            panic!("circular model reference");
-        }
-    }
-}
-
 impl UpdateModel for AppContext {
     fn update_model<T: Entity, V>(
         &mut self,
@@ -2861,12 +2855,6 @@ impl<M> AsMut<AppContext> for ModelContext<'_, M> {
     }
 }
 
-impl<M> ReadModel for ModelContext<'_, M> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.read_model(handle)
-    }
-}
-
 impl<M> UpdateModel for ModelContext<'_, M> {
     fn update_model<T: Entity, V>(
         &mut self,
@@ -3466,12 +3454,6 @@ impl<V> UpgradeViewHandle for ViewContext<'_, '_, V> {
     }
 }
 
-impl<V: View> ReadModel for ViewContext<'_, '_, V> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.window_context.read_model(handle)
-    }
-}
-
 impl<V: View> UpdateModel for ViewContext<'_, '_, V> {
     fn update_model<T: Entity, O>(
         &mut self,
@@ -3685,7 +3667,7 @@ impl<T: Entity> ModelHandle<T> {
         self.model_id
     }
 
-    pub fn read<'a, C: ReadModel>(&self, cx: &'a C) -> &'a T {
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.read_model(self)
     }
 
