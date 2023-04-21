@@ -1156,7 +1156,6 @@ impl ProjectPanel {
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
     ) -> Element<Self> {
-        let this = cx.handle().downgrade();
         let kind = details.kind;
         let path = details.path.clone();
         let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
@@ -1231,21 +1230,17 @@ impl ProjectPanel {
                 });
             }
         })
-        .on_move(move |_, _, cx| {
+        .on_move(move |_, this, cx| {
             if cx
                 .global::<DragAndDrop<Workspace>>()
                 .currently_dragged::<ProjectEntryId>(cx.window_id())
                 .is_some()
             {
-                if let Some(this) = this.upgrade(cx) {
-                    this.update(cx, |this, _| {
-                        this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
-                            path.parent().map(|parent| Arc::from(parent))
-                        } else {
-                            Some(path.clone())
-                        };
-                    })
-                }
+                this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
+                    path.parent().map(|parent| Arc::from(parent))
+                } else {
+                    Some(path.clone())
+                };
             }
         })
         .as_draggable(entry_id, {
