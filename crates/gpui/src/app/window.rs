@@ -111,15 +111,15 @@ impl Window {
     }
 }
 
-pub struct WindowContext<'a: 'b, 'b> {
+pub struct WindowContext<'a> {
     pub(crate) app_context: Reference<'a, AppContext>,
-    pub(crate) window: Reference<'b, Window>,
+    pub(crate) window: Reference<'a, Window>,
     pub(crate) window_id: usize,
     pub(crate) refreshing: bool,
     pub(crate) removed: bool,
 }
 
-impl Deref for WindowContext<'_, '_> {
+impl Deref for WindowContext<'_> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
@@ -127,19 +127,19 @@ impl Deref for WindowContext<'_, '_> {
     }
 }
 
-impl DerefMut for WindowContext<'_, '_> {
+impl DerefMut for WindowContext<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app_context
     }
 }
 
-impl ReadModel for WindowContext<'_, '_> {
+impl ReadModel for WindowContext<'_> {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         self.app_context.read_model(handle)
     }
 }
 
-impl UpdateModel for WindowContext<'_, '_> {
+impl UpdateModel for WindowContext<'_> {
     fn update_model<T: Entity, R>(
         &mut self,
         handle: &ModelHandle<T>,
@@ -149,13 +149,13 @@ impl UpdateModel for WindowContext<'_, '_> {
     }
 }
 
-impl ReadView for WindowContext<'_, '_> {
+impl ReadView for WindowContext<'_> {
     fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
         self.app_context.read_view(handle)
     }
 }
 
-impl UpdateView for WindowContext<'_, '_> {
+impl UpdateView for WindowContext<'_> {
     type Output<S> = S;
 
     fn update_view<T, S>(
@@ -179,7 +179,7 @@ impl UpdateView for WindowContext<'_, '_> {
     }
 }
 
-impl UpgradeModelHandle for WindowContext<'_, '_> {
+impl UpgradeModelHandle for WindowContext<'_> {
     fn upgrade_model_handle<T: Entity>(
         &self,
         handle: &WeakModelHandle<T>,
@@ -196,7 +196,7 @@ impl UpgradeModelHandle for WindowContext<'_, '_> {
     }
 }
 
-impl UpgradeViewHandle for WindowContext<'_, '_> {
+impl UpgradeViewHandle for WindowContext<'_> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.app_context.upgrade_view_handle(handle)
     }
@@ -206,10 +206,10 @@ impl UpgradeViewHandle for WindowContext<'_, '_> {
     }
 }
 
-impl<'a: 'b, 'b> WindowContext<'a, 'b> {
+impl<'a> WindowContext<'a> {
     pub fn mutable(
         app_context: &'a mut AppContext,
-        window: &'b mut Window,
+        window: &'a mut Window,
         window_id: usize,
     ) -> Self {
         Self {
@@ -221,7 +221,7 @@ impl<'a: 'b, 'b> WindowContext<'a, 'b> {
         }
     }
 
-    pub fn immutable(app_context: &'a AppContext, window: &'b Window, window_id: usize) -> Self {
+    pub fn immutable(app_context: &'a AppContext, window: &'a Window, window_id: usize) -> Self {
         Self {
             app_context: Reference::Immutable(app_context),
             window: Reference::Immutable(window),
