@@ -787,7 +787,7 @@ impl Pane {
         let pane = pane_handle.read(cx);
 
         if pane.items.is_empty() {
-            return Some(Task::Ready(Some(Ok(()))));
+            return None;
         }
         let active_item_id = pane.items[pane.active_item_index].id();
 
