@@ -32,7 +32,7 @@ use std::{
 };
 use util::TryFutureExt;
 use workspace::{
-    item::{Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
@@ -654,7 +654,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some("diagnostics")
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.editor.breadcrumbs(theme, cx)
     }
 
