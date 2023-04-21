@@ -263,42 +263,11 @@ pub struct TerminalSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-#[serde(untagged)]
 pub enum TerminalLineHeight {
     #[default]
-    #[serde(deserialize_with = "comfortable")]
     Comfortable,
-    #[serde(deserialize_with = "standard")]
     Standard,
     Custom(f32),
-}
-
-// Copied from: https://github.com/serde-rs/serde/issues/1158#issuecomment-365362959
-fn comfortable<'de, D>(deserializer: D) -> Result<(), D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    enum Helper {
-        #[serde(rename = "comfortable")]
-        Variant,
-    }
-    Helper::deserialize(deserializer)?;
-    Ok(())
-}
-
-// Copied from: https://github.com/serde-rs/serde/issues/1158#issuecomment-365362959
-fn standard<'de, D>(deserializer: D) -> Result<(), D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    enum Helper {
-        #[serde(rename = "standard")]
-        Variant,
-    }
-    Helper::deserialize(deserializer)?;
-    Ok(())
 }
 
 impl TerminalLineHeight {
