@@ -13,11 +13,11 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle,
-    AppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
-    MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateModel, UpdateView,
-    UpgradeModelHandle, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakModelHandle,
-    WeakViewHandle, WindowInvalidation,
+    AccessAppContext, Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle,
+    AnyWeakViewHandle, AppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle,
+    MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateModel, UpdateView,
+    UpgradeModelHandle, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
+    WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -130,6 +130,16 @@ impl Deref for WindowContext<'_> {
 impl DerefMut for WindowContext<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.app_context
+    }
+}
+
+impl AccessAppContext for WindowContext<'_> {
+    fn read<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.app_context.read(f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        self.app_context.update(f)
     }
 }
 

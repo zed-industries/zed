@@ -121,6 +121,11 @@ pub trait View: Entity + Sized {
     }
 }
 
+pub trait AccessAppContext {
+    fn read<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T;
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T;
+}
+
 pub trait ReadModelWith {
     fn read_model_with<E: Entity, T>(
         &self,
@@ -148,11 +153,11 @@ pub trait UpgradeModelHandle {
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle>;
 }
 
-pub trait UpgradeViewHandle {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>>;
+// pub trait UpgradeViewHandle {
+//     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>>;
 
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle>;
-}
+//     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle>;
+// }
 
 pub trait ReadViewWith {
     fn read_view_with<V, T>(
@@ -178,9 +183,6 @@ pub trait UpdateView {
 
 #[derive(Clone)]
 pub struct App(Rc<RefCell<AppContext>>);
-
-#[derive(Clone)]
-pub struct AsyncAppContext(Rc<RefCell<AppContext>>);
 
 impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
@@ -328,6 +330,9 @@ impl App {
     }
 }
 
+#[derive(Clone)]
+pub struct AsyncAppContext(Rc<RefCell<AppContext>>);
+
 impl AsyncAppContext {
     pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
     where
@@ -403,6 +408,16 @@ impl AsyncAppContext {
 
     pub fn background(&self) -> Arc<executor::Background> {
         self.0.borrow().background.clone()
+    }
+}
+
+impl AccessAppContext for AsyncAppContext {
+    fn read<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.0.borrow().read(f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        self.0.borrow_mut().update(f)
     }
 }
 
@@ -2089,6 +2104,16 @@ impl AppContext {
     }
 }
 
+impl AccessAppContext for AppContext {
+    fn read<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        f(self)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        f(self)
+    }
+}
+
 impl UpdateModel for AppContext {
     fn update_model<T: Entity, V>(
         &mut self,
@@ -3427,6 +3452,16 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 }
 
+impl<V> AccessAppContext for ViewContext<'_, '_, V> {
+    fn read<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.window_context.read(f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        self.window_context.update(f)
+    }
+}
+
 impl<V> UpgradeModelHandle for ViewContext<'_, '_, V> {
     fn upgrade_model_handle<T: Entity>(
         &self,
@@ -4223,13 +4258,13 @@ impl<T> WeakHandle for WeakViewHandle<T> {
     }
 }
 
-impl<T: View> WeakViewHandle<T> {
+impl<V: View> WeakViewHandle<V> {
     fn new(window_id: usize, view_id: usize) -> Self {
         Self {
             any_handle: AnyWeakViewHandle {
                 window_id,
                 view_id,
-                view_type: TypeId::of::<T>(),
+                view_type: TypeId::of::<V>(),
             },
             view_type: PhantomData,
         }
@@ -4247,8 +4282,20 @@ impl<T: View> WeakViewHandle<T> {
         self.any_handle
     }
 
-    pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<ViewHandle<T>> {
-        cx.upgrade_view_handle(self)
+    pub fn upgrade(&self, cx: &impl AccessAppContext) -> Option<ViewHandle<V>> {
+        cx.read(|cx| cx.upgrade_view_handle(self))
+    }
+
+    pub fn update<T>(
+        &self,
+        cx: &mut impl AccessAppContext,
+        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
+    ) -> Option<T> {
+        cx.update(|cx| {
+            let handle = cx.upgrade_view_handle(self)?;
+
+            cx.update_window(self.window_id, |cx| handle.update(cx, update))
+        })
     }
 }
 
