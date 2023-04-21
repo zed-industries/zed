@@ -867,8 +867,6 @@ impl EditorElement {
             }
         }
 
-        scene.push_layer(Some(bounds));
-
         scene.paint_layer(Some(bounds), |scene| {
             for cursor in cursors {
                 cursor.paint(scene, content_origin, cx);
