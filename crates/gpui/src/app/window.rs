@@ -14,7 +14,7 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle,
-    AppContext, Drawable, Effect, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
+    AppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
     MouseRegionId, ParentId, ReadModel, ReadView, SceneBuilder, Subscription, UpdateModel,
     UpdateView, UpgradeModelHandle, UpgradeViewHandle, View, ViewContext, ViewHandle,
     WeakModelHandle, WeakViewHandle, WindowInvalidation,
@@ -1391,7 +1391,7 @@ impl ChildView {
     }
 }
 
-impl<V: View> Drawable<V> for ChildView {
+impl<V: View> Element<V> for ChildView {
     type LayoutState = ();
     type PaintState = ();
 

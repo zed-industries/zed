@@ -1,7 +1,7 @@
 use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Drawable, MouseState,
+    actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Element, MouseState,
     ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
@@ -176,7 +176,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
         let settings = cx.global::<Settings>();
@@ -188,8 +188,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         Flex::row()
             .with_child(
                 Label::new(mat.string.clone(), style.label.clone())
-                    .with_highlights(mat.positions.clone())
-                    .boxed(),
+                    .with_highlights(mat.positions.clone()),
             )
             .with_children(command.keystrokes.iter().map(|keystroke| {
                 Flex::row()
@@ -206,8 +205,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                                 Some(
                                     Label::new(label, key_style.label.clone())
                                         .contained()
-                                        .with_style(key_style.container)
-                                        .boxed(),
+                                        .with_style(key_style.container),
                                 )
                             } else {
                                 None
@@ -217,17 +215,15 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .with_child(
                         Label::new(keystroke.key.clone(), key_style.label.clone())
                             .contained()
-                            .with_style(key_style.container)
-                            .boxed(),
+                            .with_style(key_style.container),
                     )
                     .contained()
                     .with_margin_left(keystroke_spacing)
                     .flex_float()
-                    .boxed()
             }))
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_any()
     }
 }
 

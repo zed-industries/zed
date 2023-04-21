@@ -7,7 +7,7 @@ use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
-    Axis, Drawable, Element, ElementStateHandle, MouseRegion, SceneBuilder, View, ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, MouseRegion, SceneBuilder, View, ViewContext,
 };
 
 use super::{ConstrainedBox, Hook};
@@ -78,14 +78,14 @@ struct ResizeHandleState {
 pub struct Resizable<V: View> {
     side: Side,
     handle_size: f32,
-    child: Element<V>,
+    child: AnyElement<V>,
     state: Rc<ResizeHandleState>,
     _state_handle: ElementStateHandle<Rc<ResizeHandleState>>,
 }
 
 impl<V: View> Resizable<V> {
     pub fn new<Tag: 'static, T: View>(
-        child: Element<V>,
+        child: AnyElement<V>,
         element_id: usize,
         side: Side,
         handle_size: f32,
@@ -108,7 +108,6 @@ impl<V: View> Resizable<V> {
                 Axis::Horizontal => constrained.with_max_width(state.custom_dimension.get()),
                 Axis::Vertical => constrained.with_max_height(state.custom_dimension.get()),
             }
-            .boxed()
         })
         .on_after_layout({
             let state = state.clone();
@@ -116,7 +115,7 @@ impl<V: View> Resizable<V> {
                 state.actual_dimension.set(side.relevant_component(size));
             }
         })
-        .boxed();
+        .into_any();
 
         Self {
             side,
@@ -132,7 +131,7 @@ impl<V: View> Resizable<V> {
     }
 }
 
-impl<V: View> Drawable<V> for Resizable<V> {
+impl<V: View> Element<V> for Resizable<V> {
     type LayoutState = ();
     type PaintState = ();
 

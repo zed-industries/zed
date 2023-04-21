@@ -7,7 +7,7 @@ use crate::{
 
 pub struct Select {
     handle: WeakViewHandle<Self>,
-    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> Element<Self>>,
+    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> AnyElement<Self>>,
     selected_item_ix: usize,
     item_count: usize,
     is_open: bool,
@@ -41,7 +41,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl Select {
-    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> Element<Self>>(
+    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> AnyElement<Self>>(
         item_count: usize,
         cx: &mut ViewContext<Self>,
         render_item: F,
@@ -92,9 +92,9 @@ impl View for Select {
         "Select"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if self.item_count == 0 {
-            return Empty::new().boxed();
+            return Empty::new().into_any();
         }
 
         enum Header {}
@@ -107,71 +107,58 @@ impl View for Select {
         };
         let mut result = Flex::column().with_child(
             MouseEventHandler::<Header, _>::new(self.handle.id(), cx, |mouse_state, cx| {
-                Container::new((self.render_item)(
+                (self.render_item)(
                     self.selected_item_ix,
                     ItemType::Header,
                     mouse_state.hovered(),
                     cx,
-                ))
+                )
+                .contained()
                 .with_style(style.header)
-                .boxed()
             })
             .on_click(
                 MouseButton::Left,
                 move |_, _, cx: &mut EventContext<Self>| cx.dispatch_action(ToggleSelect),
-            )
-            .boxed(),
+            ),
         );
         if self.is_open {
-            result.add_child(
-                Overlay::new(
-                    Container::new(
-                        ConstrainedBox::new(
-                            UniformList::new(
-                                self.list_state.clone(),
-                                self.item_count,
-                                cx,
-                                move |this, mut range, items, cx| {
-                                    let selected_item_ix = this.selected_item_ix;
-                                    range.end = range.end.min(this.item_count);
-                                    items.extend(range.map(|ix| {
-                                        MouseEventHandler::<Item, _>::new(
-                                            ix,
-                                            cx,
-                                            |mouse_state, cx| {
-                                                (this.render_item)(
-                                                    ix,
-                                                    if ix == selected_item_ix {
-                                                        ItemType::Selected
-                                                    } else {
-                                                        ItemType::Unselected
-                                                    },
-                                                    mouse_state.hovered(),
-                                                    cx,
-                                                )
-                                            },
-                                        )
-                                        .on_click(
-                                            MouseButton::Left,
-                                            move |_, _, cx: &mut EventContext<Self>| {
-                                                cx.dispatch_action(SelectItem(ix))
-                                            },
-                                        )
-                                        .boxed()
-                                    }))
+            result.add_child(Overlay::new(
+                UniformList::new(
+                    self.list_state.clone(),
+                    self.item_count,
+                    cx,
+                    move |this, mut range, items, cx| {
+                        let selected_item_ix = this.selected_item_ix;
+                        range.end = range.end.min(this.item_count);
+                        items.extend(range.map(|ix| {
+                            MouseEventHandler::<Item, _>::new(ix, cx, |mouse_state, cx| {
+                                (this.render_item)(
+                                    ix,
+                                    if ix == selected_item_ix {
+                                        ItemType::Selected
+                                    } else {
+                                        ItemType::Unselected
+                                    },
+                                    mouse_state.hovered(),
+                                    cx,
+                                )
+                            })
+                            .on_click(
+                                MouseButton::Left,
+                                move |_, _, cx: &mut EventContext<Self>| {
+                                    cx.dispatch_action(SelectItem(ix))
                                 },
                             )
-                            .boxed(),
-                        )
-                        .with_max_height(200.)
-                        .boxed(),
-                    )
-                    .with_style(style.menu)
-                    .boxed(),
+                            .into_any()
+                        }))
+                    },
                 )
-                .boxed(),
-            )
+                .constrained()
+                .with_max_height(200.)
+                .contained()
+                .with_style(style.menu),
+            ));
         }
-        result.boxed()
+        result.into_any()
     }
 }

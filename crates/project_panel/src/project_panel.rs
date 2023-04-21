@@ -6,14 +6,14 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex, Label,
-        MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
+        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, ClipboardItem, Drawable, Element, Entity, ModelHandle, Task, View, ViewContext,
+    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -1098,31 +1098,27 @@ impl ProjectPanel {
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
         cx: &mut ViewContext<V>,
-    ) -> Element<V> {
+    ) -> AnyElement<V> {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
         Flex::row()
             .with_child(
-                ConstrainedBox::new(if kind == EntryKind::Dir {
+                if kind == EntryKind::Dir {
                     if details.is_expanded {
-                        Svg::new("icons/chevron_down_8.svg")
-                            .with_color(style.icon_color)
-                            .boxed()
+                        Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
                     } else {
-                        Svg::new("icons/chevron_right_8.svg")
-                            .with_color(style.icon_color)
-                            .boxed()
+                        Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
                     }
+                    .constrained()
                 } else {
-                    Empty::new().boxed()
-                })
+                    Empty::new().constrained()
+                }
                 .with_max_width(style.icon_size)
                 .with_max_height(style.icon_size)
                 .aligned()
                 .constrained()
-                .with_width(style.icon_size)
-                .boxed(),
+                .with_width(style.icon_size),
             )
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
@@ -1131,21 +1127,21 @@ impl ProjectPanel {
                     .aligned()
                     .left()
                     .flex(1.0, true)
-                    .boxed()
+                    .into_any()
             } else {
                 Label::new(details.filename.clone(), style.text.clone())
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
                     .left()
-                    .boxed()
+                    .into_any()
             })
             .constrained()
             .with_height(style.height)
             .contained()
             .with_style(row_container_style)
             .with_padding_left(padding)
-            .boxed()
+            .into_any_named("project panel entry visual element")
     }
 
     fn render_entry(
@@ -1155,7 +1151,7 @@ impl ProjectPanel {
         dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let kind = details.kind;
         let path = details.path.clone();
         let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
@@ -1259,7 +1255,7 @@ impl ProjectPanel {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .boxed()
+        .into_any_named("project panel entry")
     }
 }
 
@@ -1268,7 +1264,7 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
         enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
@@ -1310,7 +1306,6 @@ impl View for ProjectPanel {
                         .contained()
                         .with_style(container_style)
                         .expanded()
-                        .boxed()
                     })
                     .on_down(MouseButton::Right, move |e, _, cx| {
                         // When deploying the context menu anywhere below the last project entry,
@@ -1321,11 +1316,10 @@ impl View for ProjectPanel {
                                 position: e.position,
                             })
                         }
-                    })
-                    .boxed(),
+                    }),
                 )
-                .with_child(ChildView::new(&self.context_menu, cx).boxed())
-                .boxed()
+                .with_child(ChildView::new(&self.context_menu, cx))
+                .into_any_named("project panel")
         } else {
             Flex::column()
                 .with_child(
@@ -1345,18 +1339,16 @@ impl View for ProjectPanel {
                                 Box::new(workspace::Open),
                                 cx,
                             )
-                            .boxed()
                         }
                     })
                     .on_click(MouseButton::Left, move |_, _, cx| {
                         cx.dispatch_action(workspace::Open)
                     })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .boxed(),
+                    .with_cursor_style(CursorStyle::PointingHand),
                 )
                 .contained()
                 .with_style(container_style)
-                .boxed()
+                .into_any_named("empty project panel")
         }
     }
 

@@ -3,19 +3,19 @@ use std::ops::Range;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use serde_json::json;
 
-use crate::{json, Drawable, Element, SceneBuilder, SizeConstraint, View, ViewContext};
+use crate::{json, AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext};
 
 pub struct Clipped<V: View> {
-    child: Element<V>,
+    child: AnyElement<V>,
 }
 
 impl<V: View> Clipped<V> {
-    pub fn new(child: Element<V>) -> Self {
+    pub fn new(child: AnyElement<V>) -> Self {
         Self { child }
     }
 }
 
-impl<V: View> Drawable<V> for Clipped<V> {
+impl<V: View> Element<V> for Clipped<V> {
     type LayoutState = ();
     type PaintState = ();
 

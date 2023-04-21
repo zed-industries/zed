@@ -2,11 +2,11 @@ use gpui::{
     actions,
     color::Color,
     elements::{
-        Canvas, Container, ContainerStyle, Element, Flex, Label, Margin, MouseEventHandler,
+        AnyElement, Canvas, Container, ContainerStyle, Flex, Label, Margin, MouseEventHandler,
         Padding, ParentElement,
     },
     fonts::TextStyle,
-    AppContext, Border, Drawable, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
+    AppContext, Border, Element, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 use project::Project;
@@ -35,7 +35,7 @@ impl ThemeTestbench {
     }
 
     fn render_ramps(color_scheme: &ColorScheme) -> Flex<Self> {
-        fn display_ramp(ramp: &Vec<Color>) -> Element<ThemeTestbench> {
+        fn display_ramp(ramp: &Vec<Color>) -> AnyElement<ThemeTestbench> {
             Flex::row()
                 .with_children(ramp.iter().cloned().map(|color| {
                     Canvas::new(move |scene, bounds, _, _, _| {
@@ -46,10 +46,9 @@ impl ThemeTestbench {
                         });
                     })
                     .flex(1.0, false)
-                    .boxed()
                 }))
                 .flex(1.0, false)
-                .boxed()
+                .into_any()
         }
 
         Flex::column()
@@ -71,39 +70,30 @@ impl ThemeTestbench {
     ) -> Container<Self> {
         Flex::column()
             .with_child(
-                Self::render_button_set(0, layer_index, "base", &layer.base, cx)
-                    .flex(1., false)
-                    .boxed(),
+                Self::render_button_set(0, layer_index, "base", &layer.base, cx).flex(1., false),
             )
             .with_child(
                 Self::render_button_set(1, layer_index, "variant", &layer.variant, cx)
-                    .flex(1., false)
-                    .boxed(),
+                    .flex(1., false),
             )
             .with_child(
-                Self::render_button_set(2, layer_index, "on", &layer.on, cx)
-                    .flex(1., false)
-                    .boxed(),
+                Self::render_button_set(2, layer_index, "on", &layer.on, cx).flex(1., false),
             )
             .with_child(
                 Self::render_button_set(3, layer_index, "accent", &layer.accent, cx)
-                    .flex(1., false)
-                    .boxed(),
+                    .flex(1., false),
             )
             .with_child(
                 Self::render_button_set(4, layer_index, "positive", &layer.positive, cx)
-                    .flex(1., false)
-                    .boxed(),
+                    .flex(1., false),
             )
             .with_child(
                 Self::render_button_set(5, layer_index, "warning", &layer.warning, cx)
-                    .flex(1., false)
-                    .boxed(),
+                    .flex(1., false),
             )
             .with_child(
                 Self::render_button_set(6, layer_index, "negative", &layer.negative, cx)
-                    .flex(1., false)
-                    .boxed(),
+                    .flex(1., false),
             )
             .contained()
             .with_style(ContainerStyle {
@@ -183,7 +173,7 @@ impl ThemeTestbench {
         style_set: &StyleSet,
         style_override: Option<fn(&StyleSet) -> &Style>,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         enum TestBenchButton {}
         MouseEventHandler::<TestBenchButton, _>::new(layer_index + button_index, cx, |state, cx| {
             let style = if let Some(style_override) = style_override {
@@ -224,10 +214,9 @@ impl ThemeTestbench {
                     corner_radius: 2.,
                     ..Default::default()
                 })
-                .boxed()
         })
         .flex(1., true)
-        .boxed()
+        .into_any()
     }
 
     fn render_label(text: String, style: &Style, cx: &mut ViewContext<Self>) -> Label {
@@ -262,7 +251,7 @@ impl View for ThemeTestbench {
         "ThemeTestbench"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let color_scheme = &cx.global::<Settings>().theme.clone().color_scheme;
 
         Flex::row()
@@ -270,30 +259,16 @@ impl View for ThemeTestbench {
                 Self::render_ramps(color_scheme)
                     .contained()
                     .with_margin_right(10.)
-                    .flex(0.1, false)
-                    .boxed(),
+                    .flex(0.1, false),
             )
             .with_child(
                 Flex::column()
-                    .with_child(
-                        Self::render_layer(100, &color_scheme.lowest, cx)
-                            .flex(1., true)
-                            .boxed(),
-                    )
-                    .with_child(
-                        Self::render_layer(200, &color_scheme.middle, cx)
-                            .flex(1., true)
-                            .boxed(),
-                    )
-                    .with_child(
-                        Self::render_layer(300, &color_scheme.highest, cx)
-                            .flex(1., true)
-                            .boxed(),
-                    )
-                    .flex(1., false)
-                    .boxed(),
+                    .with_child(Self::render_layer(100, &color_scheme.lowest, cx).flex(1., true))
+                    .with_child(Self::render_layer(200, &color_scheme.middle, cx).flex(1., true))
+                    .with_child(Self::render_layer(300, &color_scheme.highest, cx).flex(1., true))
+                    .flex(1., false),
             )
-            .boxed()
+            .into_any()
     }
 }
 
@@ -303,11 +278,11 @@ impl Item for ThemeTestbench {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()
-            .boxed()
+            .into_any()
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

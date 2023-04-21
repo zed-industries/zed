@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene, Border, Drawable, ImageData, SceneBuilder, SizeConstraint, View, ViewContext,
+    scene, Border, Element, ImageData, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};
@@ -55,7 +55,7 @@ impl Image {
     }
 }
 
-impl<V: View> Drawable<V> for Image {
+impl<V: View> Element<V> for Image {
     type LayoutState = Option<Arc<ImageData>>;
     type PaintState = ();
 

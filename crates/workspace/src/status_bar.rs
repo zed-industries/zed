@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyViewHandle, Element, Entity, SceneBuilder, SizeConstraint, Subscription, View, ViewContext,
-    ViewHandle, WindowContext,
+    AnyElement, AnyViewHandle, Entity, SceneBuilder, SizeConstraint, Subscription, View,
+    ViewContext, ViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -46,7 +46,7 @@ impl View for StatusBar {
         "StatusBar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
 
         StatusBarElement {
@@ -56,9 +56,8 @@ impl View for StatusBar {
                         .aligned()
                         .contained()
                         .with_margin_right(theme.item_spacing)
-                        .boxed()
                 }))
-                .boxed(),
+                .into_any(),
 
             right: Flex::row()
                 .with_children(self.right_items.iter().rev().map(|i| {
@@ -66,15 +65,14 @@ impl View for StatusBar {
                         .aligned()
                         .contained()
                         .with_margin_left(theme.item_spacing)
-                        .boxed()
                 }))
-                .boxed(),
+                .into_any(),
         }
         .contained()
         .with_style(theme.container)
         .constrained()
         .with_height(theme.height)
-        .boxed()
+        .into_any()
     }
 }
 
@@ -147,11 +145,11 @@ impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
 }
 
 struct StatusBarElement {
-    left: Element<StatusBar>,
-    right: Element<StatusBar>,
+    left: AnyElement<StatusBar>,
+    right: AnyElement<StatusBar>,
 }
 
-impl Drawable<StatusBar> for StatusBarElement {
+impl Element<StatusBar> for StatusBarElement {
     type LayoutState = ();
     type PaintState = ();
 

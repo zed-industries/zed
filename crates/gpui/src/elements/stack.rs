@@ -3,13 +3,13 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{self, json, ToJson},
-    Drawable, Element, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 /// Element which renders it's children in a stack on top of each other.
 /// The first child determines the size of the others.
 pub struct Stack<V: View> {
-    children: Vec<Element<V>>,
+    children: Vec<AnyElement<V>>,
 }
 
 impl<V: View> Default for Stack<V> {
@@ -26,7 +26,7 @@ impl<V: View> Stack<V> {
     }
 }
 
-impl<V: View> Drawable<V> for Stack<V> {
+impl<V: View> Element<V> for Stack<V> {
     type LayoutState = ();
     type PaintState = ();
 
@@ -98,8 +98,8 @@ impl<V: View> Drawable<V> for Stack<V> {
     }
 }
 
-impl<V: View> Extend<Element<V>> for Stack<V> {
-    fn extend<T: IntoIterator<Item = Element<V>>>(&mut self, children: T) {
+impl<V: View> Extend<AnyElement<V>> for Stack<V> {
+    fn extend<T: IntoIterator<Item = AnyElement<V>>>(&mut self, children: T) {
         self.children.extend(children)
     }
 }

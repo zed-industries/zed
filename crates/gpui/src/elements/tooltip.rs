@@ -1,5 +1,5 @@
 use super::{
-    ContainerStyle, Drawable, Element, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
+    AnyElement, ContainerStyle, Element, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
     OverlayFitMode, ParentElement, Text,
 };
 use crate::{
@@ -20,8 +20,8 @@ use util::ResultExt;
 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub struct Tooltip<V: View> {
-    child: Element<V>,
-    tooltip: Option<Element<V>>,
+    child: AnyElement<V>,
+    tooltip: Option<AnyElement<V>>,
     _state: ElementStateHandle<Rc<TooltipState>>,
 }
 
@@ -55,7 +55,7 @@ impl<V: View> Tooltip<V> {
         text: String,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
-        child: Element<V>,
+        child: AnyElement<V>,
         cx: &mut ViewContext<V>,
     ) -> Self {
         struct ElementState<Tag>(Tag);
@@ -71,8 +71,7 @@ impl<V: View> Tooltip<V> {
                 style.clone(),
                 action.as_ref().map(|a| a.boxed_clone()),
                 true,
-            )
-            .boxed();
+            );
             Some(
                 Overlay::new(
                     Self::render_tooltip(focused_view_id, text, style, action, false)
@@ -80,14 +79,13 @@ impl<V: View> Tooltip<V> {
                         .dynamically(move |constraint, view, cx| {
                             SizeConstraint::strict_along(
                                 Axis::Vertical,
-                                collapsed_tooltip.layout(constraint, view, cx).y(),
+                                collapsed_tooltip.layout(constraint, view, cx).0.y(),
                             )
-                        })
-                        .boxed(),
+                        }),
                 )
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
                 .with_anchor_position(state.position.get())
-                .boxed(),
+                .into_any(),
             )
         } else {
             None
@@ -119,7 +117,7 @@ impl<V: View> Tooltip<V> {
                     cx.notify();
                 }
             })
-            .boxed();
+            .into_any();
         Self {
             child,
             tooltip,
@@ -133,7 +131,7 @@ impl<V: View> Tooltip<V> {
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
         measure: bool,
-    ) -> impl Drawable<V> {
+    ) -> impl Element<V> {
         Flex::row()
             .with_child({
                 let text = if let Some(max_text_width) = style.max_text_width {
@@ -145,9 +143,9 @@ impl<V: View> Tooltip<V> {
                 };
 
                 if measure {
-                    text.flex(1., false).boxed()
+                    text.flex(1., false).into_any()
                 } else {
-                    text.flex(1., false).aligned().boxed()
+                    text.flex(1., false).aligned().into_any()
                 }
             })
             .with_children(action.and_then(|action| {
@@ -158,9 +156,9 @@ impl<V: View> Tooltip<V> {
                     style.keystroke.text,
                 );
                 if measure {
-                    Some(keystroke_label.boxed())
+                    Some(keystroke_label.into_any())
                 } else {
-                    Some(keystroke_label.aligned().boxed())
+                    Some(keystroke_label.aligned().into_any())
                 }
             }))
             .contained()
@@ -168,7 +166,7 @@ impl<V: View> Tooltip<V> {
     }
 }
 
-impl<V: View> Drawable<V> for Tooltip<V> {
+impl<V: View> Element<V> for Tooltip<V> {
     type LayoutState = ();
     type PaintState = ();
 

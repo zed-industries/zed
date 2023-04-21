@@ -5,7 +5,7 @@ use std::{borrow::Cow, sync::Arc};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
-    AppContext, Drawable, Element, Entity, Subscription, View, ViewContext,
+    AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 
@@ -55,7 +55,7 @@ impl View for WelcomePage {
         "WelcomePage"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let self_handle = cx.handle();
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
@@ -73,78 +73,77 @@ impl View for WelcomePage {
         PaneBackdrop::new(
             self_handle.id(),
             Flex::column()
-                .with_children([
+                .with_child(
                     Flex::column()
-                        .with_children([
+                        .with_child(
                             theme::ui::svg(&theme.welcome.logo)
                                 .aligned()
                                 .contained()
-                                .aligned()
-                                .boxed(),
+                                .aligned(),
+                        )
+                        .with_child(
                             Label::new(
                                 "Code at the speed of thought",
                                 theme.welcome.logo_subheading.text.clone(),
                             )
                             .aligned()
                             .contained()
-                            .with_style(theme.welcome.logo_subheading.container)
-                            .boxed(),
-                        ])
+                            .with_style(theme.welcome.logo_subheading.container),
+                        )
                         .contained()
                         .with_style(theme.welcome.heading_group)
                         .constrained()
-                        .with_width(width)
-                        .boxed(),
+                        .with_width(width),
+                )
+                .with_child(
                     Flex::column()
-                        .with_children([
-                            theme::ui::cta_button(
-                                "Choose a theme",
-                                theme_selector::Toggle,
-                                width,
-                                &theme.welcome.button,
-                                cx,
-                            ),
-                            theme::ui::cta_button(
-                                "Choose a keymap",
-                                ToggleBaseKeymapSelector,
-                                width,
-                                &theme.welcome.button,
-                                cx,
-                            ),
-                            theme::ui::cta_button(
-                                "Install the CLI",
-                                install_cli::Install,
-                                width,
-                                &theme.welcome.button,
-                                cx,
-                            ),
-                        ])
+                        .with_child(theme::ui::cta_button(
+                            "Choose a theme",
+                            theme_selector::Toggle,
+                            width,
+                            &theme.welcome.button,
+                            cx,
+                        ))
+                        .with_child(theme::ui::cta_button(
+                            "Choose a keymap",
+                            ToggleBaseKeymapSelector,
+                            width,
+                            &theme.welcome.button,
+                            cx,
+                        ))
+                        .with_child(theme::ui::cta_button(
+                            "Install the CLI",
+                            install_cli::Install,
+                            width,
+                            &theme.welcome.button,
+                            cx,
+                        ))
                         .contained()
                         .with_style(theme.welcome.button_group)
                         .constrained()
-                        .with_width(width)
-                        .boxed(),
+                        .with_width(width),
+                )
+                .with_child(
                     Flex::column()
-                        .with_children([
-                            theme::ui::checkbox_with_label::<Metrics, Self>(
+                        .with_child(
+                            theme::ui::checkbox_with_label::<Metrics, _, Self>(
                                 Flex::column()
-                                    .with_children([
+                                    .with_child(
                                         Label::new(
                                             "Send anonymous usage data",
                                             theme.welcome.checkbox.label.text.clone(),
                                         )
                                         .contained()
-                                        .with_style(theme.welcome.checkbox.label.container)
-                                        .boxed(),
+                                        .with_style(theme.welcome.checkbox.label.container),
+                                    )
+                                    .with_child(
                                         Label::new(
                                             "Help > View Telemetry",
                                             theme.welcome.usage_note.text.clone(),
                                         )
                                         .contained()
-                                        .with_style(theme.welcome.usage_note.container)
-                                        .boxed(),
-                                    ])
-                                    .boxed(),
+                                        .with_style(theme.welcome.usage_note.container),
+                                    ),
                                 &theme.welcome.checkbox,
                                 metrics,
                                 cx,
@@ -155,8 +154,9 @@ impl View for WelcomePage {
                                 },
                             )
                             .contained()
-                            .with_style(theme.welcome.checkbox_container)
-                            .boxed(),
+                            .with_style(theme.welcome.checkbox_container),
+                        )
+                        .with_child(
                             theme::ui::checkbox::<Diagnostics, Self>(
                                 "Send crash reports",
                                 &theme.welcome.checkbox,
@@ -169,23 +169,21 @@ impl View for WelcomePage {
                                 },
                             )
                             .contained()
-                            .with_style(theme.welcome.checkbox_container)
-                            .boxed(),
-                        ])
+                            .with_style(theme.welcome.checkbox_container),
+                        )
                         .contained()
                         .with_style(theme.welcome.checkbox_group)
                         .constrained()
-                        .with_width(width)
-                        .boxed(),
-                ])
+                        .with_width(width),
+                )
                 .constrained()
                 .with_max_width(width)
                 .contained()
                 .with_uniform_padding(10.)
                 .aligned()
-                .boxed(),
+                .into_any(),
         )
-        .boxed()
+        .into_any_named("welcome page")
     }
 }
 
@@ -207,15 +205,14 @@ impl Item for WelcomePage {
         _detail: Option<usize>,
         style: &theme::Tab,
         _cx: &gpui::AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Flex::row()
             .with_child(
                 Label::new("Welcome to Zed!", style.label.clone())
                     .aligned()
-                    .contained()
-                    .boxed(),
+                    .contained(),
             )
-            .boxed()
+            .into_any()
     }
 
     fn show_toolbar(&self) -> bool {

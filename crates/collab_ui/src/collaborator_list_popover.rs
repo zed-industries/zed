@@ -30,7 +30,7 @@ impl View for CollaboratorListPopover {
         "CollaboratorListPopover"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         MouseEventHandler::<Self, Self>::new(0, cx, |_, _| {
@@ -40,12 +40,11 @@ impl View for CollaboratorListPopover {
                 .constrained()
                 .with_width(theme.contacts_popover.width)
                 .with_height(theme.contacts_popover.height)
-                .boxed()
         })
         .on_down_out(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleCollaboratorList);
         })
-        .boxed()
+        .into_any()
     }
 
     fn focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -117,7 +116,7 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
     icon_action: IA,
     icon_tooltip: String,
     cx: &mut ViewContext<CollaboratorListPopover>,
-) -> Element<CollaboratorListPopover> {
+) -> AnyElement<CollaboratorListPopover> {
     enum Username {}
     enum UsernameTooltip {}
     enum Icon {}
@@ -129,7 +128,7 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
 
     let username =
         MouseEventHandler::<Username, CollaboratorListPopover>::new(index, cx, |_, _| {
-            Label::new(username.to_owned(), username_theme.clone()).boxed()
+            Label::new(username.to_owned(), username_theme.clone())
         })
         .on_click(MouseButton::Left, move |_, _, cx| {
             if let Some(username_action) = username_action.clone() {
@@ -147,17 +146,16 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
                     tooltip_theme.clone(),
                     cx,
                 )
-                .boxed()
+                .into_any()
         } else {
-            username.boxed()
+            username.into_any()
         })
         .with_child(
-            MouseEventHandler::<Icon, CollaboratorListPopover>::new(index, cx, |_, _| icon.boxed())
+            MouseEventHandler::<Icon, CollaboratorListPopover>::new(index, cx, |_, _| icon)
                 .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(icon_action.clone())
                 })
-                .with_tooltip::<IconTooltip>(index, icon_tooltip, None, tooltip_theme, cx)
-                .boxed(),
+                .with_tooltip::<IconTooltip>(index, icon_tooltip, None, tooltip_theme, cx),
         )
-        .boxed()
+        .into_any()
 }

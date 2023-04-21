@@ -4,7 +4,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    Drawable, Element, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -23,7 +23,7 @@ pub enum Orientation {
 
 struct StateInner<V: View> {
     last_layout_width: Option<f32>,
-    render_item: Box<dyn FnMut(&mut V, usize, &mut ViewContext<V>) -> Element<V>>,
+    render_item: Box<dyn FnMut(&mut V, usize, &mut ViewContext<V>) -> AnyElement<V>>,
     rendered_range: Range<usize>,
     items: SumTree<ListItem<V>>,
     logical_scroll_top: Option<ListOffset>,
@@ -41,7 +41,7 @@ pub struct ListOffset {
 
 enum ListItem<V: View> {
     Unrendered,
-    Rendered(Rc<RefCell<Element<V>>>),
+    Rendered(Rc<RefCell<AnyElement<V>>>),
     Removed(f32),
 }
 
@@ -91,7 +91,7 @@ impl<V: View> List<V> {
     }
 }
 
-impl<V: View> Drawable<V> for List<V> {
+impl<V: View> Element<V> for List<V> {
     type LayoutState = ListOffset;
     type PaintState = ();
 
@@ -347,21 +347,21 @@ impl<V: View> Drawable<V> for List<V> {
 }
 
 impl<V: View> ListState<V> {
-    pub fn new<F>(
+    pub fn new<D, F>(
         element_count: usize,
         orientation: Orientation,
         overdraw: f32,
-        render_item: F,
+        mut render_item: F,
     ) -> Self
     where
-        V: View,
-        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> Element<V>,
+        D: Element<V>,
+        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> D,
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
-            render_item: Box::new(render_item),
+            render_item: Box::new(move |view, ix, cx| render_item(view, ix, cx).into_any()),
             rendered_range: 0..0,
             items,
             logical_scroll_top: None,
@@ -453,7 +453,7 @@ impl<V: View> StateInner<V> {
         constraint: SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> Option<Rc<RefCell<Element<V>>>> {
+    ) -> Option<Rc<RefCell<AnyElement<V>>>> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
         } else {
@@ -475,7 +475,7 @@ impl<V: View> StateInner<V> {
         &'a self,
         bounds: RectF,
         scroll_top: &ListOffset,
-    ) -> impl Iterator<Item = (Rc<RefCell<Element<V>>>, Vector2F)> + 'a {
+    ) -> impl Iterator<Item = (Rc<RefCell<AnyElement<V>>>, Vector2F)> + 'a {
         let mut item_origin = bounds.origin() - vec2f(0., scroll_top.offset_in_item);
         let mut cursor = self.items.cursor::<Count>();
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -660,7 +660,7 @@ mod tests {
                 let elements = elements.clone();
                 move |_, ix, _| {
                     let (id, height) = elements.borrow()[ix];
-                    TestElement::new(id, height).boxed()
+                    TestElement::new(id, height).into_any()
                 }
             });
 
@@ -765,7 +765,7 @@ mod tests {
                 let elements = elements.clone();
                 move |_, ix, _| {
                     let (id, height) = elements.borrow()[ix];
-                    TestElement::new(id, height).boxed()
+                    TestElement::new(id, height).into_any()
                 }
             });
 
@@ -920,8 +920,8 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().boxed()
+        fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+            Empty::new().into_any()
         }
     }
 
@@ -939,7 +939,7 @@ mod tests {
         }
     }
 
-    impl<V: View> Drawable<V> for TestElement {
+    impl<V: View> Element<V> for TestElement {
         type LayoutState = ();
         type PaintState = ();
 

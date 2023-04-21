@@ -4,7 +4,7 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    AnyViewHandle, AppContext, Axis, Element, Entity, MouseState, Task, View, ViewContext,
+    AnyElement, AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext,
     ViewHandle,
 };
 use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
@@ -41,7 +41,7 @@ pub trait PickerDelegate: Sized + 'static {
         state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> Element<Picker<Self>>;
+    ) -> AnyElement<Picker<Self>>;
     fn center_selection_after_match_updates(&self) -> bool {
         false
     }
@@ -56,7 +56,7 @@ impl<D: PickerDelegate> View for Picker<D> {
         "Picker"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = (self.theme.lock())(&cx.global::<settings::Settings>().theme);
         let query = self.query(cx);
         let match_count = self.delegate.match_count();
@@ -75,8 +75,7 @@ impl<D: PickerDelegate> View for Picker<D> {
             .with_child(
                 ChildView::new(&self.query_editor, cx)
                     .contained()
-                    .with_style(editor_style)
-                    .boxed(),
+                    .with_style(editor_style),
             )
             .with_children(if match_count == 0 {
                 if query.is_empty() {
@@ -86,7 +85,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                         Label::new("No matches", theme.no_matches.label.clone())
                             .contained()
                             .with_style(theme.no_matches.container)
-                            .boxed(),
+                            .into_any(),
                     )
                 }
             } else {
@@ -109,14 +108,14 @@ impl<D: PickerDelegate> View for Picker<D> {
                                     cx.dispatch_action(SelectIndex(ix))
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
-                                .boxed()
+                                .into_any()
                             }));
                         },
                     )
                     .contained()
                     .with_margin_top(6.0)
                     .flex(1., false)
-                    .boxed(),
+                    .into_any(),
                 )
             })
             .contained()
@@ -124,7 +123,7 @@ impl<D: PickerDelegate> View for Picker<D> {
             .constrained()
             .with_max_width(self.max_size.x())
             .with_max_height(self.max_size.y())
-            .named("picker")
+            .into_any_named("picker")
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {
