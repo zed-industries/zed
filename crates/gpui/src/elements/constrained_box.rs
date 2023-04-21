@@ -28,9 +28,9 @@ impl<V: View> ToJson for Constraint<V> {
 }
 
 impl<V: View> ConstrainedBox<V> {
-    pub fn new(child: Element<V>) -> Self {
+    pub fn new(child: impl Drawable<V>) -> Self {
         Self {
-            child,
+            child: child.into_element(),
             constraint: Constraint::Static(Default::default()),
         }
     }

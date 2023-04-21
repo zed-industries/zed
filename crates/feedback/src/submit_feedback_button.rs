@@ -37,7 +37,6 @@ impl View for SubmitFeedbackButton {
             Label::new("Submit as Markdown", style.text.clone())
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, |_, _, cx| {
@@ -53,7 +52,7 @@ impl View for SubmitFeedbackButton {
             theme.tooltip.clone(),
             cx,
         )
-        .boxed()
+        .into_element()
     }
 }
 

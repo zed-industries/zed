@@ -6,8 +6,8 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex, Label,
-        MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
+        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions,
@@ -1104,25 +1104,21 @@ impl ProjectPanel {
 
         Flex::row()
             .with_child(
-                ConstrainedBox::new(if kind == EntryKind::Dir {
+                if kind == EntryKind::Dir {
                     if details.is_expanded {
-                        Svg::new("icons/chevron_down_8.svg")
-                            .with_color(style.icon_color)
-                            .boxed()
+                        Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
                     } else {
-                        Svg::new("icons/chevron_right_8.svg")
-                            .with_color(style.icon_color)
-                            .boxed()
+                        Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
                     }
+                    .constrained()
                 } else {
-                    Empty::new().boxed()
-                })
+                    Empty::new().constrained()
+                }
                 .with_max_width(style.icon_size)
                 .with_max_height(style.icon_size)
                 .aligned()
                 .constrained()
-                .with_width(style.icon_size)
-                .boxed(),
+                .with_width(style.icon_size),
             )
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
@@ -1131,21 +1127,21 @@ impl ProjectPanel {
                     .aligned()
                     .left()
                     .flex(1.0, true)
-                    .boxed()
+                    .into_element()
             } else {
                 Label::new(details.filename.clone(), style.text.clone())
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
                     .left()
-                    .boxed()
+                    .into_element()
             })
             .constrained()
             .with_height(style.height)
             .contained()
             .with_style(row_container_style)
             .with_padding_left(padding)
-            .boxed()
+            .into_named_element("project panel entry visual element")
     }
 
     fn render_entry(
@@ -1259,7 +1255,7 @@ impl ProjectPanel {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .boxed()
+        .into_named_element("project panel entry")
     }
 }
 
@@ -1310,7 +1306,6 @@ impl View for ProjectPanel {
                         .contained()
                         .with_style(container_style)
                         .expanded()
-                        .boxed()
                     })
                     .on_down(MouseButton::Right, move |e, _, cx| {
                         // When deploying the context menu anywhere below the last project entry,
@@ -1321,11 +1316,10 @@ impl View for ProjectPanel {
                                 position: e.position,
                             })
                         }
-                    })
-                    .boxed(),
+                    }),
                 )
-                .with_child(ChildView::new(&self.context_menu, cx).boxed())
-                .boxed()
+                .with_child(ChildView::new(&self.context_menu, cx))
+                .into_named_element("project panel")
         } else {
             Flex::column()
                 .with_child(
@@ -1345,18 +1339,16 @@ impl View for ProjectPanel {
                                 Box::new(workspace::Open),
                                 cx,
                             )
-                            .boxed()
                         }
                     })
                     .on_click(MouseButton::Left, move |_, _, cx| {
                         cx.dispatch_action(workspace::Open)
                     })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .boxed(),
+                    .with_cursor_style(CursorStyle::PointingHand),
                 )
                 .contained()
                 .with_style(container_style)
-                .boxed()
+                .into_named_element("empty project panel")
         }
     }
 

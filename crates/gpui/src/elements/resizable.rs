@@ -108,7 +108,6 @@ impl<V: View> Resizable<V> {
                 Axis::Horizontal => constrained.with_max_width(state.custom_dimension.get()),
                 Axis::Vertical => constrained.with_max_height(state.custom_dimension.get()),
             }
-            .boxed()
         })
         .on_after_layout({
             let state = state.clone();
@@ -116,7 +115,7 @@ impl<V: View> Resizable<V> {
                 state.actual_dimension.set(side.relevant_component(size));
             }
         })
-        .boxed();
+        .into_element();
 
         Self {
             side,

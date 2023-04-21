@@ -231,17 +231,16 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         current_style.label.text.clone().into(),
                         syntax_runs,
                         &string_match.positions,
-                    ))
-                    .boxed(),
+                    )),
             )
             .with_child(
                 // Avoid styling the path differently when it is selected, since
                 // the symbol's syntax highlighting doesn't change when selected.
-                Label::new(path.to_string(), style.default.label.clone()).boxed(),
+                Label::new(path.to_string(), style.default.label.clone()),
             )
             .contained()
             .with_style(current_style.container)
-            .boxed()
+            .into_element()
     }
 }
 

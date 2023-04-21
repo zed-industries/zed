@@ -89,10 +89,9 @@ impl View for SharedScreen {
             })
             .contained()
             .with_style(cx.global::<Settings>().theme.shared_screen)
-            .boxed()
         })
         .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent_view())
-        .boxed()
+        .into_element()
     }
 }
 
@@ -120,18 +119,16 @@ impl Item for SharedScreen {
                     .with_width(style.type_icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(style.spacing)
-                    .boxed(),
+                    .with_margin_right(style.spacing),
             )
             .with_child(
                 Label::new(
                     format!("{}'s screen", self.user.github_login),
                     style.label.clone(),
                 )
-                .aligned()
-                .boxed(),
+                .aligned(),
             )
-            .boxed()
+            .into_element()
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {

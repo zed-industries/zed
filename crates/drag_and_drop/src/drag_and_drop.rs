@@ -227,21 +227,16 @@ impl<V: View> DragAndDrop<V> {
                                 .with_hoverable(false)
                                 .constrained()
                                 .with_width(region.width())
-                                .with_height(region.height())
-                                .boxed(),
+                                .with_height(region.height()),
                             )
                             .with_anchor_position(position)
-                            .boxed(),
+                            .into_element(),
                         )
                     }
 
                     State::Canceled => Some(
                         MouseEventHandler::<DraggedElementHandler, V>::new(0, cx, |_, _| {
-                            Empty::new()
-                                .constrained()
-                                .with_width(0.)
-                                .with_height(0.)
-                                .boxed()
+                            Empty::new().constrained().with_width(0.).with_height(0.)
                         })
                         .on_up(MouseButton::Left, |_, _, cx| {
                             cx.window_context().defer(|cx| {
@@ -257,7 +252,7 @@ impl<V: View> DragAndDrop<V> {
                                 });
                             });
                         })
-                        .boxed(),
+                        .into_element(),
                     ),
                 }
             })

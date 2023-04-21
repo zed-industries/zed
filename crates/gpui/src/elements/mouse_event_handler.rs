@@ -32,13 +32,13 @@ pub struct MouseEventHandler<Tag: 'static, V: View> {
 /// Element which provides a render_child callback with a MouseState and paints a mouse
 /// region under (or above) it for easy mouse event handling.
 impl<Tag, V: View> MouseEventHandler<Tag, V> {
-    pub fn new<F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
+    pub fn new<D, F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
     where
-        V: View,
-        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> Element<V>,
+        D: Drawable<V>,
+        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> D,
     {
         let mut mouse_state = cx.mouse_state::<Tag>(region_id);
-        let child = render_child(&mut mouse_state, cx);
+        let child = render_child(&mut mouse_state, cx).into_element();
         let notify_on_hover = mouse_state.accessed_hovered();
         let notify_on_click = mouse_state.accessed_clicked();
         Self {
@@ -58,10 +58,10 @@ impl<Tag, V: View> MouseEventHandler<Tag, V> {
     /// Modifies the MouseEventHandler to render the MouseRegion above the child element. Useful
     /// for drag and drop handling and similar events which should be captured before the child
     /// gets the opportunity
-    pub fn above<F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
+    pub fn above<D, F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
     where
-        V: View,
-        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> Element<V>,
+        D: Drawable<V>,
+        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> D,
     {
         let mut handler = Self::new(region_id, cx, render_child);
         handler.above = true;

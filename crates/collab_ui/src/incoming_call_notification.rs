@@ -112,7 +112,6 @@ impl IncomingCallNotification {
                 Image::from_data(avatar)
                     .with_style(theme.caller_avatar)
                     .aligned()
-                    .boxed()
             }))
             .with_child(
                 Flex::column()
@@ -122,8 +121,7 @@ impl IncomingCallNotification {
                             theme.caller_username.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.caller_username.container)
-                        .boxed(),
+                        .with_style(theme.caller_username.container),
                     )
                     .with_child(
                         Label::new(
@@ -138,8 +136,7 @@ impl IncomingCallNotification {
                             theme.caller_message.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.caller_message.container)
-                        .boxed(),
+                        .with_style(theme.caller_message.container),
                     )
                     .with_children(if initial_project.worktree_root_names.is_empty() {
                         None
@@ -150,19 +147,17 @@ impl IncomingCallNotification {
                                 theme.worktree_roots.text.clone(),
                             )
                             .contained()
-                            .with_style(theme.worktree_roots.container)
-                            .boxed(),
+                            .with_style(theme.worktree_roots.container),
                         )
                     })
                     .contained()
                     .with_style(theme.caller_metadata)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
             )
             .contained()
             .with_style(theme.caller_container)
             .flex(1., true)
-            .boxed()
+            .into_element()
     }
 
     fn render_buttons(&self, cx: &mut ViewContext<Self>) -> Element<Self> {
@@ -177,14 +172,12 @@ impl IncomingCallNotification {
                         .aligned()
                         .contained()
                         .with_style(theme.accept_button.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(RespondToCall { accept: true });
                 })
-                .flex(1., true)
-                .boxed(),
+                .flex(1., true),
             )
             .with_child(
                 MouseEventHandler::<Decline, Self>::new(0, cx, |_, cx| {
@@ -193,14 +186,12 @@ impl IncomingCallNotification {
                         .aligned()
                         .contained()
                         .with_style(theme.decline_button.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(RespondToCall { accept: false });
                 })
-                .flex(1., true)
-                .boxed(),
+                .flex(1., true),
             )
             .constrained()
             .with_width(
@@ -209,7 +200,7 @@ impl IncomingCallNotification {
                     .incoming_call_notification
                     .button_width,
             )
-            .boxed()
+            .into_element()
     }
 }
 
@@ -235,6 +226,6 @@ impl View for IncomingCallNotification {
             .contained()
             .with_background_color(background)
             .expanded()
-            .boxed()
+            .into_element()
     }
 }

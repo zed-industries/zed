@@ -50,7 +50,6 @@ impl View for DeployFeedbackButton {
                         .with_height(style.icon_size)
                         .contained()
                         .with_style(style.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, _, cx| {
@@ -64,10 +63,9 @@ impl View for DeployFeedbackButton {
                     Some(Box::new(GiveFeedback)),
                     theme.tooltip.clone(),
                     cx,
-                )
-                .boxed(),
+                ),
             )
-            .boxed()
+            .into_element()
     }
 }
 

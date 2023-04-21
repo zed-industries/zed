@@ -2088,29 +2088,24 @@ impl Workspace {
         };
 
         enum TitleBar {}
-        ConstrainedBox::new(
-            MouseEventHandler::<TitleBar, _>::new(0, cx, |_, cx| {
-                Container::new(
-                    Stack::new()
-                        .with_children(
-                            self.titlebar_item
-                                .as_ref()
-                                .map(|item| ChildView::new(item, cx).boxed()),
-                        )
-                        .boxed(),
+        MouseEventHandler::<TitleBar, _>::new(0, cx, |_, cx| {
+            Stack::new()
+                .with_children(
+                    self.titlebar_item
+                        .as_ref()
+                        .map(|item| ChildView::new(item, cx)),
                 )
+                .contained()
                 .with_style(container_theme)
-                .boxed()
-            })
-            .on_click(MouseButton::Left, |event, _, cx| {
-                if event.click_count == 2 {
-                    cx.zoom_window();
-                }
-            })
-            .boxed(),
-        )
+        })
+        .on_click(MouseButton::Left, |event, _, cx| {
+            if event.click_count == 2 {
+                cx.zoom_window();
+            }
+        })
+        .constrained()
         .with_height(theme.workspace.titlebar.height)
-        .named("titlebar")
+        .into_named_element("titlebar")
     }
 
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -2191,11 +2186,10 @@ impl Workspace {
                     .aligned()
                     .contained()
                     .with_style(theme.workspace.disconnected_overlay.container)
-                    .boxed()
                 })
                 .with_cursor_style(CursorStyle::Arrow)
                 .capture_all()
-                .boxed(),
+                .into_named_element("disconnected overlay"),
             )
         } else {
             None
@@ -2216,7 +2210,6 @@ impl Workspace {
                         ChildView::new(notification.as_any(), cx)
                             .contained()
                             .with_style(theme.notification)
-                            .boxed()
                     }))
                     .constrained()
                     .with_width(theme.notifications.width)
@@ -2225,7 +2218,7 @@ impl Workspace {
                     .aligned()
                     .bottom()
                     .right()
-                    .boxed(),
+                    .into_element(),
             )
         }
     }
@@ -2857,8 +2850,7 @@ impl View for Workspace {
                                                                 constraint.max.y(),
                                                             ),
                                                         )
-                                                    })
-                                                    .boxed(),
+                                                    }),
                                             )
                                         } else {
                                             None
@@ -2876,18 +2868,15 @@ impl View for Workspace {
                                                         self.active_pane(),
                                                         cx,
                                                     ))
-                                                    .flex(1., true)
-                                                    .boxed(),
+                                                    .flex(1., true),
                                                 )
                                                 .with_children(self.dock.render(
                                                     &theme,
                                                     DockAnchor::Bottom,
                                                     cx,
-                                                ))
-                                                .boxed(),
+                                                )),
                                         )
-                                        .flex(1., true)
-                                        .boxed(),
+                                        .flex(1., true),
                                     )
                                     .with_children(self.dock.render(&theme, DockAnchor::Right, cx))
                                     .with_children(
@@ -2903,49 +2892,38 @@ impl View for Workspace {
                                                                 constraint.max.y(),
                                                             ),
                                                         )
-                                                    })
-                                                    .boxed(),
+                                                    }),
                                             )
                                         } else {
                                             None
                                         },
                                     )
-                                    .boxed()
                             })
-                            .with_child(
-                                Overlay::new(
-                                    Stack::new()
-                                        .with_children(self.dock.render(
-                                            &theme,
-                                            DockAnchor::Expanded,
-                                            cx,
-                                        ))
-                                        .with_children(self.modal.as_ref().map(|modal| {
-                                            ChildView::new(modal, cx)
-                                                .contained()
-                                                .with_style(theme.workspace.modal)
-                                                .aligned()
-                                                .top()
-                                                .boxed()
-                                        }))
-                                        .with_children(
-                                            self.render_notifications(&theme.workspace, cx),
-                                        )
-                                        .boxed(),
-                                )
-                                .boxed(),
-                            )
-                            .flex(1.0, true)
-                            .boxed(),
+                            .with_child(Overlay::new(
+                                Stack::new()
+                                    .with_children(self.dock.render(
+                                        &theme,
+                                        DockAnchor::Expanded,
+                                        cx,
+                                    ))
+                                    .with_children(self.modal.as_ref().map(|modal| {
+                                        ChildView::new(modal, cx)
+                                            .contained()
+                                            .with_style(theme.workspace.modal)
+                                            .aligned()
+                                            .top()
+                                    }))
+                                    .with_children(self.render_notifications(&theme.workspace, cx)),
+                            ))
+                            .flex(1.0, true),
                     )
-                    .with_child(ChildView::new(&self.status_bar, cx).boxed())
+                    .with_child(ChildView::new(&self.status_bar, cx))
                     .contained()
-                    .with_background_color(theme.workspace.background)
-                    .boxed(),
+                    .with_background_color(theme.workspace.background),
             )
             .with_children(DragAndDrop::render(cx))
             .with_children(self.render_disconnected_overlay(cx))
-            .named("workspace")
+            .into_named_element("workspace")
     }
 
     fn focus_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {

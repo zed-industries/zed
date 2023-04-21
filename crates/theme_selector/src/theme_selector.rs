@@ -217,6 +217,6 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .with_highlights(theme_match.positions.clone())
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_element()
     }
 }

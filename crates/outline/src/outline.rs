@@ -220,6 +220,6 @@ impl PickerDelegate for OutlineViewDelegate {
             .with_padding_left(20. * outline_item.depth as f32)
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_element()
     }
 }

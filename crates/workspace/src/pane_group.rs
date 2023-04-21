@@ -165,7 +165,7 @@ impl Member {
                     Border::default()
                 };
 
-                let prompt = if let Some((_, leader)) = leader {
+                let leader_status_box = if let Some((_, leader)) = leader {
                     match leader.location {
                         ParticipantLocation::SharedProject {
                             project_id: leader_project_id,
@@ -195,7 +195,6 @@ impl Member {
                                             .with_style(
                                                 theme.workspace.external_location_message.container,
                                             )
-                                            .boxed()
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
@@ -208,7 +207,7 @@ impl Member {
                                     .aligned()
                                     .bottom()
                                     .right()
-                                    .boxed(),
+                                    .into_element(),
                                 )
                             }
                         }
@@ -225,7 +224,7 @@ impl Member {
                             .aligned()
                             .bottom()
                             .right()
-                            .boxed(),
+                            .into_element(),
                         ),
                         ParticipantLocation::External => Some(
                             Label::new(
@@ -240,7 +239,7 @@ impl Member {
                             .aligned()
                             .bottom()
                             .right()
-                            .boxed(),
+                            .into_element(),
                         ),
                     }
                 } else {
@@ -248,14 +247,9 @@ impl Member {
                 };
 
                 Stack::new()
-                    .with_child(
-                        ChildView::new(pane, cx)
-                            .contained()
-                            .with_border(border)
-                            .boxed(),
-                    )
-                    .with_children(prompt)
-                    .boxed()
+                    .with_child(ChildView::new(pane, cx).contained().with_border(border))
+                    .with_children(leader_status_box)
+                    .into_element()
             }
             Member::Axis(axis) => axis.render(
                 project,
@@ -388,12 +382,12 @@ impl PaneAxis {
                         Axis::Vertical => border.bottom = true,
                         Axis::Horizontal => border.right = true,
                     }
-                    member = Container::new(member).with_border(border).boxed();
+                    member = member.contained().with_border(border).into_element();
                 }
 
-                FlexItem::new(member).flex(flex, true).boxed()
+                FlexItem::new(member).flex(flex, true)
             }))
-            .boxed()
+            .into_element()
     }
 }
 

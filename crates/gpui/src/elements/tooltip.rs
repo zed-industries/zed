@@ -71,8 +71,7 @@ impl<V: View> Tooltip<V> {
                 style.clone(),
                 action.as_ref().map(|a| a.boxed_clone()),
                 true,
-            )
-            .boxed();
+            );
             Some(
                 Overlay::new(
                     Self::render_tooltip(focused_view_id, text, style, action, false)
@@ -80,14 +79,13 @@ impl<V: View> Tooltip<V> {
                         .dynamically(move |constraint, view, cx| {
                             SizeConstraint::strict_along(
                                 Axis::Vertical,
-                                collapsed_tooltip.layout(constraint, view, cx).y(),
+                                collapsed_tooltip.layout(constraint, view, cx).0.y(),
                             )
-                        })
-                        .boxed(),
+                        }),
                 )
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
                 .with_anchor_position(state.position.get())
-                .boxed(),
+                .into_element(),
             )
         } else {
             None
@@ -119,7 +117,7 @@ impl<V: View> Tooltip<V> {
                     cx.notify();
                 }
             })
-            .boxed();
+            .into_element();
         Self {
             child,
             tooltip,
@@ -145,9 +143,9 @@ impl<V: View> Tooltip<V> {
                 };
 
                 if measure {
-                    text.flex(1., false).boxed()
+                    text.flex(1., false).into_element()
                 } else {
-                    text.flex(1., false).aligned().boxed()
+                    text.flex(1., false).aligned().into_element()
                 }
             })
             .with_children(action.and_then(|action| {
@@ -158,9 +156,9 @@ impl<V: View> Tooltip<V> {
                     style.keystroke.text,
                 );
                 if measure {
-                    Some(keystroke_label.boxed())
+                    Some(keystroke_label.into_element())
                 } else {
-                    Some(keystroke_label.aligned().boxed())
+                    Some(keystroke_label.aligned().into_element())
                 }
             }))
             .contained()

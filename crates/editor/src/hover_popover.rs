@@ -344,7 +344,7 @@ impl InfoPopover {
                                 })
                                 .collect(),
                         )
-                        .boxed()
+                        .into_element()
                 } else {
                     let mut text_style = style.hover_popover.prose.clone();
                     text_style.font_size = style.text.font_size;
@@ -353,12 +353,10 @@ impl InfoPopover {
                         .with_soft_wrap(true)
                         .contained()
                         .with_style(style.hover_popover.block_style)
-                        .boxed()
+                        .into_element()
                 }
             }));
-            flex.contained()
-                .with_style(style.hover_popover.container)
-                .boxed()
+            flex.contained().with_style(style.hover_popover.container)
         })
         .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
         .with_cursor_style(CursorStyle::Arrow)
@@ -367,7 +365,7 @@ impl InfoPopover {
             top: HOVER_POPOVER_GAP,
             ..Default::default()
         })
-        .boxed()
+        .into_element()
     }
 }
 
@@ -399,7 +397,6 @@ impl DiagnosticPopover {
                 .with_soft_wrap(true)
                 .contained()
                 .with_style(container_style)
-                .boxed()
         })
         .with_padding(Padding {
             top: HOVER_POPOVER_GAP,
@@ -418,7 +415,7 @@ impl DiagnosticPopover {
             tooltip_style,
             cx,
         )
-        .boxed()
+        .into_element()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {

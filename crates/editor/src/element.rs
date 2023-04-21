@@ -1447,7 +1447,6 @@ impl EditorElement {
                                 .constrained()
                                 .with_width(style.button_width)
                                 .with_height(style.button_width)
-                                .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, move |_, _, cx| {
@@ -1462,7 +1461,6 @@ impl EditorElement {
                         )
                         .aligned()
                         .flex_float()
-                        .boxed()
                     });
 
                     if *starts_new_buffer {
@@ -1488,15 +1486,13 @@ impl EditorElement {
                                 )
                                 .contained()
                                 .with_style(style.filename.container)
-                                .aligned()
-                                .boxed(),
+                                .aligned(),
                             )
                             .with_children(parent_path.map(|path| {
                                 Label::new(path, style.path.text.clone().with_font_size(font_size))
                                     .contained()
                                     .with_style(style.path.container)
                                     .aligned()
-                                    .boxed()
                             }))
                             .with_children(jump_icon)
                             .contained()
@@ -1504,17 +1500,17 @@ impl EditorElement {
                             .with_padding_left(gutter_padding)
                             .with_padding_right(gutter_padding)
                             .expanded()
-                            .named("path header block")
+                            .into_named_element("path header block")
                     } else {
                         let text_style = self.style.text.clone();
                         Flex::row()
-                            .with_child(Label::new("⋯", text_style).boxed())
+                            .with_child(Label::new("⋯", text_style))
                             .with_children(jump_icon)
                             .contained()
                             .with_padding_left(gutter_padding)
                             .with_padding_right(gutter_padding)
                             .expanded()
-                            .named("collapsed context")
+                            .into_named_element("collapsed context")
                     }
                 }
             };
@@ -2535,7 +2531,7 @@ mod tests {
                     disposition: BlockDisposition::Above,
                     height: 3,
                     position: Anchor::min(),
-                    render: Arc::new(|_| Empty::new().boxed()),
+                    render: Arc::new(|_| Empty::new().into_element()),
                 }],
                 cx,
             );

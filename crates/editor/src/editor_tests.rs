@@ -2299,7 +2299,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 position: snapshot.anchor_after(Point::new(2, 0)),
                 disposition: BlockDisposition::Below,
                 height: 1,
-                render: Arc::new(|_| Empty::new().boxed()),
+                render: Arc::new(|_| Empty::new().into_element()),
             }],
             cx,
         );
@@ -4411,7 +4411,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
     cx.set_state(
         &[
             "one ",   //
-            "twoˇ",   //
+            "twoˇ",  //
             "three ", //
             "four",   //
         ]
@@ -4486,7 +4486,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
         &[
             "one",   //
             "",      //
-            "twoˇ",  //
+            "twoˇ", //
             "",      //
             "three", //
             "four",  //
@@ -4501,7 +4501,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext)
     cx.assert_editor_state(
         &[
             "one ",   //
-            "twoˇ",   //
+            "twoˇ",  //
             "three ", //
             "four",   //
         ]

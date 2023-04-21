@@ -105,18 +105,17 @@ impl View for ContactsPopover {
 
         MouseEventHandler::<ContactsPopover, Self>::new(0, cx, |_, _| {
             Flex::column()
-                .with_child(child.flex(1., true).boxed())
+                .with_child(child.flex(1., true))
                 .contained()
                 .with_style(theme.contacts_popover.container)
                 .constrained()
                 .with_width(theme.contacts_popover.width)
                 .with_height(theme.contacts_popover.height)
-                .boxed()
         })
         .on_down_out(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleContactsMenu);
         })
-        .boxed()
+        .into_element()
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {

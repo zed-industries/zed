@@ -103,23 +103,23 @@ impl View for DiagnosticIndicator {
 
                 let mut summary_row = Flex::row();
                 if self.summary.error_count > 0 {
-                    summary_row.add_children([
+                    summary_row.add_child(
                         Svg::new("icons/circle_x_mark_16.svg")
                             .with_color(style.icon_color_error)
                             .constrained()
                             .with_width(style.icon_width)
                             .aligned()
                             .contained()
-                            .with_margin_right(style.icon_spacing)
-                            .named("error-icon"),
+                            .with_margin_right(style.icon_spacing),
+                    );
+                    summary_row.add_child(
                         Label::new(self.summary.error_count.to_string(), style.text.clone())
-                            .aligned()
-                            .boxed(),
-                    ]);
+                            .aligned(),
+                    );
                 }
 
                 if self.summary.warning_count > 0 {
-                    summary_row.add_children([
+                    summary_row.add_child(
                         Svg::new("icons/triangle_exclamation_16.svg")
                             .with_color(style.icon_color_warning)
                             .constrained()
@@ -131,12 +131,12 @@ impl View for DiagnosticIndicator {
                                 style.summary_spacing
                             } else {
                                 0.
-                            })
-                            .named("warning-icon"),
+                            }),
+                    );
+                    summary_row.add_child(
                         Label::new(self.summary.warning_count.to_string(), style.text.clone())
-                            .aligned()
-                            .boxed(),
-                    ]);
+                            .aligned(),
+                    );
                 }
 
                 if self.summary.error_count == 0 && self.summary.warning_count == 0 {
@@ -146,7 +146,7 @@ impl View for DiagnosticIndicator {
                             .constrained()
                             .with_width(style.icon_width)
                             .aligned()
-                            .named("ok-icon"),
+                            .into_named_element("ok-icon"),
                     );
                 }
 
@@ -161,7 +161,6 @@ impl View for DiagnosticIndicator {
                     } else {
                         style.container_ok
                     })
-                    .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |_, _, cx| {
@@ -175,7 +174,7 @@ impl View for DiagnosticIndicator {
                 cx,
             )
             .aligned()
-            .boxed(),
+            .into_element(),
         );
 
         let style = &cx.global::<Settings>().theme.workspace.status_bar;
@@ -186,8 +185,7 @@ impl View for DiagnosticIndicator {
                 Label::new("Checking…", style.diagnostic_message.default.text.clone())
                     .aligned()
                     .contained()
-                    .with_margin_left(item_spacing)
-                    .boxed(),
+                    .with_margin_left(item_spacing),
             );
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message_style = style.diagnostic_message.clone();
@@ -200,17 +198,15 @@ impl View for DiagnosticIndicator {
                     .aligned()
                     .contained()
                     .with_margin_left(item_spacing)
-                    .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(GoToDiagnostic)
-                })
-                .boxed(),
+                }),
             );
         }
 
-        element.named("diagnostic indicator")
+        element.into_named_element("diagnostic indicator")
     }
 
     fn debug_json(&self, _: &gpui::AppContext) -> serde_json::Value {

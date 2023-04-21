@@ -73,9 +73,9 @@ impl AnchorCorner {
 }
 
 impl<V: View> Overlay<V> {
-    pub fn new(child: Element<V>) -> Self {
+    pub fn new(child: impl Drawable<V>) -> Self {
         Self {
-            child,
+            child: child.into_element(),
             anchor_position: None,
             anchor_corner: AnchorCorner::TopLeft,
             fit_mode: OverlayFitMode::None,

@@ -124,15 +124,13 @@ impl PickerDelegate for ContactFinderDelegate {
                     .with_style(theme.contact_finder.contact_avatar)
                     .aligned()
                     .left()
-                    .boxed()
             }))
             .with_child(
                 Label::new(user.github_login.clone(), style.label.clone())
                     .contained()
                     .with_style(theme.contact_finder.contact_username)
                     .aligned()
-                    .left()
-                    .boxed(),
+                    .left(),
             )
             .with_children(icon_path.map(|icon_path| {
                 Svg::new(icon_path)
@@ -147,12 +145,11 @@ impl PickerDelegate for ContactFinderDelegate {
                     .with_height(button_style.button_width)
                     .aligned()
                     .flex_float()
-                    .boxed()
             }))
             .contained()
             .with_style(style.container)
             .constrained()
             .with_height(theme.contact_finder.row_height)
-            .boxed()
+            .into_element()
     }
 }

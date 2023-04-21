@@ -75,8 +75,7 @@ impl<D: PickerDelegate> View for Picker<D> {
             .with_child(
                 ChildView::new(&self.query_editor, cx)
                     .contained()
-                    .with_style(editor_style)
-                    .boxed(),
+                    .with_style(editor_style),
             )
             .with_children(if match_count == 0 {
                 if query.is_empty() {
@@ -86,7 +85,7 @@ impl<D: PickerDelegate> View for Picker<D> {
                         Label::new("No matches", theme.no_matches.label.clone())
                             .contained()
                             .with_style(theme.no_matches.container)
-                            .boxed(),
+                            .into_element(),
                     )
                 }
             } else {
@@ -109,14 +108,14 @@ impl<D: PickerDelegate> View for Picker<D> {
                                     cx.dispatch_action(SelectIndex(ix))
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
-                                .boxed()
+                                .into_element()
                             }));
                         },
                     )
                     .contained()
                     .with_margin_top(6.0)
                     .flex(1., false)
-                    .boxed(),
+                    .into_element(),
                 )
             })
             .contained()
@@ -124,7 +123,7 @@ impl<D: PickerDelegate> View for Picker<D> {
             .constrained()
             .with_max_width(self.max_size.x())
             .with_max_height(self.max_size.y())
-            .named("picker")
+            .into_named_element("picker")
     }
 
     fn keymap_context(&self, _: &AppContext) -> KeymapContext {

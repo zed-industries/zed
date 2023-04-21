@@ -254,19 +254,15 @@ impl PickerDelegate for FileFinderDelegate {
             self.labels_for_match(path_match);
         Flex::column()
             .with_child(
-                Label::new(file_name, style.label.clone())
-                    .with_highlights(file_name_positions)
-                    .boxed(),
+                Label::new(file_name, style.label.clone()).with_highlights(file_name_positions),
             )
             .with_child(
-                Label::new(full_path, style.label.clone())
-                    .with_highlights(full_path_positions)
-                    .boxed(),
+                Label::new(full_path, style.label.clone()).with_highlights(full_path_positions),
             )
             .flex(1., false)
             .contained()
             .with_style(style.container)
-            .named("match")
+            .into_named_element("match")
     }
 }
 

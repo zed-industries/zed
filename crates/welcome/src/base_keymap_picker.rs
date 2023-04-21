@@ -143,6 +143,6 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .with_highlights(keymap_match.positions.clone())
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_element()
     }
 }

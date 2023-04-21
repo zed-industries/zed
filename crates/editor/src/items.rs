@@ -565,11 +565,7 @@ impl Item for Editor {
         cx: &AppContext,
     ) -> Element<T> {
         Flex::row()
-            .with_child(
-                Label::new(self.title(cx).to_string(), style.label.clone())
-                    .aligned()
-                    .boxed(),
-            )
+            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).aligned())
             .with_children(detail.and_then(|detail| {
                 let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                 let description = path.to_string_lossy();
@@ -580,11 +576,10 @@ impl Item for Editor {
                     )
                     .contained()
                     .with_style(style.description.container)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
                 )
             }))
-            .boxed()
+            .into_element()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
@@ -1120,9 +1115,9 @@ impl View for CursorPosition {
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }
-            Label::new(text, theme.cursor_position.clone()).boxed()
+            Label::new(text, theme.cursor_position.clone()).into_element()
         } else {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 }

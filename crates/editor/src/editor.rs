@@ -819,7 +819,6 @@ impl CompletionsMenu {
                                     ))
                                     .contained()
                                     .with_style(item_style)
-                                    .boxed()
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -828,7 +827,7 @@ impl CompletionsMenu {
                                 item_ix: Some(item_ix),
                             });
                         })
-                        .boxed(),
+                        .into_element(),
                     );
                 }
             },
@@ -848,7 +847,7 @@ impl CompletionsMenu {
         )
         .contained()
         .with_style(container_style)
-        .boxed()
+        .into_element()
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
@@ -982,7 +981,6 @@ impl CodeActionsMenu {
                                 .with_soft_wrap(false)
                                 .contained()
                                 .with_style(item_style)
-                                .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_down(MouseButton::Left, move |_, _, cx| {
@@ -990,7 +988,7 @@ impl CodeActionsMenu {
                                 item_ix: Some(item_ix),
                             });
                         })
-                        .boxed(),
+                        .into_element(),
                     );
                 }
             },
@@ -1004,7 +1002,7 @@ impl CodeActionsMenu {
         )
         .contained()
         .with_style(container_style)
-        .boxed();
+        .into_element();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -3138,7 +3136,6 @@ impl Editor {
                 MouseEventHandler::<CodeActions, _>::new(0, cx, |state, _| {
                     Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions.indicator.style_for(state, active).color)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
@@ -3147,7 +3144,7 @@ impl Editor {
                         deployed_from_indicator: true,
                     });
                 })
-                .boxed(),
+                .into_element(),
             )
         } else {
             None
@@ -3177,7 +3174,7 @@ impl Editor {
                             MouseEventHandler::<FoldIndicators, _>::new(
                                 ix as usize,
                                 cx,
-                                |mouse_state, _| -> Element<Editor> {
+                                |mouse_state, _| {
                                     Svg::new(match fold_status {
                                         FoldStatus::Folded => style.folded_icon.clone(),
                                         FoldStatus::Foldable => style.foldable_icon.clone(),
@@ -3198,7 +3195,6 @@ impl Editor {
                                     .with_height(line_height)
                                     .with_width(gutter_margin)
                                     .aligned()
-                                    .boxed()
                                 },
                             )
                             .with_cursor_style(CursorStyle::PointingHand)
@@ -3211,7 +3207,7 @@ impl Editor {
                                     });
                                 }
                             })
-                            .boxed()
+                            .into_element()
                         })
                     })
                     .flatten()
@@ -5893,7 +5889,7 @@ impl Editor {
                                     ChildView::new(&editor, cx)
                                         .contained()
                                         .with_padding_left(cx.anchor_x)
-                                        .boxed()
+                                        .into_element()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
@@ -7022,9 +7018,9 @@ impl View for Editor {
         }
 
         Stack::new()
-            .with_child(EditorElement::new(style.clone()).boxed())
-            .with_child(ChildView::new(&self.mouse_context_menu, cx).boxed())
-            .boxed()
+            .with_child(EditorElement::new(style.clone()))
+            .with_child(ChildView::new(&self.mouse_context_menu, cx))
+            .into_element()
     }
 
     fn ui_name() -> &'static str {
@@ -7497,11 +7493,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                 .with_highlights(highlights.clone())
                 .contained()
                 .with_margin_left(cx.anchor_x)
-                .boxed()
             }))
             .aligned()
             .left()
-            .boxed()
+            .into_element()
     })
 }
 

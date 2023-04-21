@@ -403,13 +403,13 @@ pub struct FlexItem<V: View> {
 }
 
 impl<V: View> FlexItem<V> {
-    pub fn new(child: Element<V>) -> Self {
+    pub fn new(child: impl Drawable<V>) -> Self {
         FlexItem {
             metadata: FlexParentData {
                 flex: None,
                 float: false,
             },
-            child,
+            child: child.into_element(),
         }
     }
 

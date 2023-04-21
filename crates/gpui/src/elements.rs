@@ -47,7 +47,7 @@ use std::{
 };
 use util::ResultExt;
 
-pub trait Drawable<V: View> {
+pub trait Drawable<V: View>: 'static {
     type LayoutState;
     type PaintState;
 
@@ -92,7 +92,7 @@ pub trait Drawable<V: View> {
         cx: &ViewContext<V>,
     ) -> serde_json::Value;
 
-    fn boxed(self) -> Element<V>
+    fn into_element(self) -> Element<V>
     where
         Self: 'static + Sized,
     {
@@ -103,17 +103,7 @@ pub trait Drawable<V: View> {
         }
     }
 
-    fn into_root(self, cx: &ViewContext<V>) -> RootElement<V>
-    where
-        Self: 'static + Sized,
-    {
-        RootElement {
-            element: self.boxed(),
-            view: cx.handle().downgrade(),
-        }
-    }
-
-    fn named(self, name: impl Into<Cow<'static, str>>) -> Element<V>
+    fn into_named_element(self, name: impl Into<Cow<'static, str>>) -> Element<V>
     where
         Self: 'static + Sized,
     {
@@ -124,53 +114,63 @@ pub trait Drawable<V: View> {
         }
     }
 
+    fn into_root_element(self, cx: &ViewContext<V>) -> RootElement<V>
+    where
+        Self: 'static + Sized,
+    {
+        RootElement {
+            element: self.into_element(),
+            view: cx.handle().downgrade(),
+        }
+    }
+
     fn constrained(self) -> ConstrainedBox<V>
     where
         Self: 'static + Sized,
     {
-        ConstrainedBox::new(self.boxed())
+        ConstrainedBox::new(self.into_element())
     }
 
     fn aligned(self) -> Align<V>
     where
         Self: 'static + Sized,
     {
-        Align::new(self.boxed())
+        Align::new(self.into_element())
     }
 
     fn clipped(self) -> Clipped<V>
     where
         Self: 'static + Sized,
     {
-        Clipped::new(self.boxed())
+        Clipped::new(self.into_element())
     }
 
     fn contained(self) -> Container<V>
     where
         Self: 'static + Sized,
     {
-        Container::new(self.boxed())
+        Container::new(self.into_element())
     }
 
     fn expanded(self) -> Expanded<V>
     where
         Self: 'static + Sized,
     {
-        Expanded::new(self.boxed())
+        Expanded::new(self.into_element())
     }
 
     fn flex(self, flex: f32, expanded: bool) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
-        FlexItem::new(self.boxed()).flex(flex, expanded)
+        FlexItem::new(self.into_element()).flex(flex, expanded)
     }
 
     fn flex_float(self) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
-        FlexItem::new(self.boxed()).float()
+        FlexItem::new(self.into_element()).float()
     }
 
     fn with_tooltip<Tag: 'static>(
@@ -184,7 +184,7 @@ pub trait Drawable<V: View> {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, V>(id, text, action, style, self.boxed(), cx)
+        Tooltip::new::<Tag, V>(id, text, action, style, self.into_element(), cx)
     }
 
     fn with_resize_handle<Tag: 'static>(
@@ -199,7 +199,7 @@ pub trait Drawable<V: View> {
         Self: 'static + Sized,
     {
         Resizable::new::<Tag, V>(
-            self.boxed(),
+            self.into_element(),
             element_id,
             side,
             handle_size,
@@ -499,6 +499,64 @@ impl<V: View> Element<V> {
     }
 }
 
+impl<V: View> Drawable<V> for Element<V> {
+    type LayoutState = ();
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, Self::LayoutState) {
+        let size = self.layout(constraint, view, cx);
+        (size, ())
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        _: &mut Self::LayoutState,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Self::PaintState {
+        self.paint(scene, bounds.origin(), visible_bounds, view, cx);
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        self.rect_for_text_range(range_utf16, view, cx)
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        self.debug(view, cx)
+    }
+
+    fn into_element(self) -> Element<V>
+    where
+        Self: Sized,
+    {
+        self
+    }
+}
+
 pub struct RootElement<V: View> {
     element: Element<V>,
     view: WeakViewHandle<V>,
@@ -510,7 +568,7 @@ impl<V: View> RootElement<V> {
     }
 }
 
-pub trait Component<V: View> {
+pub trait Component<V: View>: 'static {
     fn render(&self, view: &mut V, cx: &mut ViewContext<V>) -> Element<V>;
 }
 
@@ -718,21 +776,22 @@ impl<V: View, R: View> Drawable<V> for RootElement<R> {
 }
 
 pub trait ParentElement<'a, V: View>: Extend<Element<V>> + Sized {
-    fn add_children(&mut self, children: impl IntoIterator<Item = Element<V>>) {
-        self.extend(children);
+    fn add_children<D: Drawable<V>>(&mut self, children: impl IntoIterator<Item = D>) {
+        self.extend(children.into_iter().map(|child| child.into_element()));
     }
 
-    fn add_child(&mut self, child: Element<V>) {
-        self.add_children(Some(child));
+    fn add_child<D: Drawable<V>>(&mut self, child: D) {
+        self.extend(Some(child.into_element()));
     }
 
-    fn with_children(mut self, children: impl IntoIterator<Item = Element<V>>) -> Self {
-        self.add_children(children);
+    fn with_children<D: Drawable<V>>(mut self, children: impl IntoIterator<Item = D>) -> Self {
+        self.extend(children.into_iter().map(|child| child.into_element()));
         self
     }
 
-    fn with_child(self, child: Element<V>) -> Self {
-        self.with_children(Some(child))
+    fn with_child<D: Drawable<V>>(mut self, child: D) -> Self {
+        self.extend(Some(child.into_element()));
+        self
     }
 }
 

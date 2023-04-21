@@ -177,6 +177,6 @@ impl PickerDelegate for RecentProjectsDelegate {
             .flex(1., false)
             .contained()
             .with_style(style.container)
-            .named("match")
+            .into_named_element("match")
     }
 }

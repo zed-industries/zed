@@ -231,7 +231,7 @@ impl View for FeedbackEditor {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
-        ChildView::new(&self.editor, cx).boxed()
+        ChildView::new(&self.editor, cx).into_element()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -264,16 +264,14 @@ impl Item for FeedbackEditor {
                     .with_width(style.type_icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(style.spacing)
-                    .boxed(),
+                    .with_margin_right(style.spacing),
             )
             .with_child(
                 Label::new("Send Feedback", style.label.clone())
                     .aligned()
-                    .contained()
-                    .boxed(),
+                    .contained(),
             )
-            .boxed()
+            .into_element()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {

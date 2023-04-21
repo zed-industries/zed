@@ -202,9 +202,9 @@ impl View for Sidebar {
                     style.initial_size,
                     cx,
                 )
-                .boxed()
+                .into_element()
         } else {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 }
@@ -258,7 +258,7 @@ impl View for SidebarButtons {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()
-                            .with_child(Svg::new(icon_path).with_color(style.icon_color).boxed())
+                            .with_child(Svg::new(icon_path).with_color(style.icon_color))
                             .with_children(if !is_active && item_view.should_show_badge(cx) {
                                 Some(
                                     Empty::new()
@@ -267,8 +267,7 @@ impl View for SidebarButtons {
                                         .with_style(badge_style)
                                         .aligned()
                                         .bottom()
-                                        .right()
-                                        .boxed(),
+                                        .right(),
                                 )
                             } else {
                                 None
@@ -278,7 +277,6 @@ impl View for SidebarButtons {
                             .with_height(style.icon_size)
                             .contained()
                             .with_style(style.container)
-                            .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, {
@@ -292,12 +290,11 @@ impl View for SidebarButtons {
                         tooltip_style.clone(),
                         cx,
                     )
-                    .boxed()
                 },
             ))
             .contained()
             .with_style(group_style)
-            .boxed()
+            .into_element()
     }
 }
 

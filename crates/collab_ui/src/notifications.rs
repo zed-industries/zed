@@ -35,7 +35,6 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                         )
                         .aligned()
                         .top()
-                        .boxed()
                 }))
                 .with_child(
                     Text::new(
@@ -47,8 +46,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     .aligned()
                     .top()
                     .left()
-                    .flex(1., true)
-                    .boxed(),
+                    .flex(1., true),
                 )
                 .with_child(
                     MouseEventHandler::<Dismiss, V>::new(user.id as usize, cx, |state, _| {
@@ -63,7 +61,6 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                             .constrained()
                             .with_width(style.button_width)
                             .with_height(style.button_width)
-                            .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .with_padding(Padding::uniform(5.))
@@ -78,16 +75,14 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     )
                     .aligned()
                     .top()
-                    .flex_float()
-                    .boxed(),
+                    .flex_float(),
                 )
-                .named("contact notification header"),
+                .into_named_element("contact notification header"),
         )
         .with_children(body.map(|body| {
             Label::new(body, theme.body_message.text.clone())
                 .contained()
                 .with_style(theme.body_message.container)
-                .boxed()
         }))
         .with_children(if buttons.is_empty() {
             None
@@ -101,20 +96,17 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                                 Label::new(message, button.text.clone())
                                     .contained()
                                     .with_style(button.container)
-                                    .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(MouseButton::Left, move |_, _, cx| {
                                 cx.dispatch_any_action(action.boxed_clone())
                             })
-                            .boxed()
                         },
                     ))
                     .aligned()
-                    .right()
-                    .boxed(),
+                    .right(),
             )
         })
         .contained()
-        .boxed()
+        .into_element()
 }

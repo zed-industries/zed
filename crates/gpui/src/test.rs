@@ -243,6 +243,6 @@ impl View for EmptyView {
     }
 
     fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-        Drawable::boxed(Empty::new())
+        Empty::new().into_element()
     }
 }

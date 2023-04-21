@@ -308,7 +308,7 @@ mod tests {
         }
 
         fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 }

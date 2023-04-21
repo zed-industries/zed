@@ -403,11 +403,10 @@ impl View for TerminalView {
                     focused,
                     self.should_show_cursor(focused, cx),
                 )
-                .contained()
-                .boxed(),
+                .contained(),
             )
-            .with_child(ChildView::new(&self.context_menu, cx).boxed())
-            .boxed()
+            .with_child(ChildView::new(&self.context_menu, cx))
+            .into_element()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -561,11 +560,10 @@ impl Item for TerminalView {
                     .with_width(tab_theme.type_icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(tab_theme.spacing)
-                    .boxed(),
+                    .with_margin_right(tab_theme.spacing),
             )
-            .with_child(Label::new(title, tab_theme.label.clone()).aligned().boxed())
-            .boxed()
+            .with_child(Label::new(title, tab_theme.label.clone()).aligned())
+            .into_element()
     }
 
     fn clone_on_split(

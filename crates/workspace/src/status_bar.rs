@@ -56,9 +56,8 @@ impl View for StatusBar {
                         .aligned()
                         .contained()
                         .with_margin_right(theme.item_spacing)
-                        .boxed()
                 }))
-                .boxed(),
+                .into_element(),
 
             right: Flex::row()
                 .with_children(self.right_items.iter().rev().map(|i| {
@@ -66,15 +65,14 @@ impl View for StatusBar {
                         .aligned()
                         .contained()
                         .with_margin_left(theme.item_spacing)
-                        .boxed()
                 }))
-                .boxed(),
+                .into_element(),
         }
         .contained()
         .with_style(theme.container)
         .constrained()
         .with_height(theme.height)
-        .boxed()
+        .into_element()
     }
 }
 

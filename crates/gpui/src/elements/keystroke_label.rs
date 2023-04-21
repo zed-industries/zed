@@ -49,11 +49,10 @@ impl<V: View> Drawable<V> for KeystrokeLabel {
                     Label::new(keystroke.to_string(), self.text_style.clone())
                         .contained()
                         .with_style(self.container_style)
-                        .boxed()
                 }))
-                .boxed()
+                .into_element()
         } else {
-            Empty::new().collapsed().boxed()
+            Empty::new().collapsed().into_element()
         };
 
         let size = element.layout(constraint, view, cx);

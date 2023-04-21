@@ -973,7 +973,7 @@ pub mod tests {
                                         position,
                                         height,
                                         disposition,
-                                        render: Arc::new(|_| Empty::new().boxed()),
+                                        render: Arc::new(|_| Empty::new().into_element()),
                                     }
                                 })
                                 .collect::<Vec<_>>();

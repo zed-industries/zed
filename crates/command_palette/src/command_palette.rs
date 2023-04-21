@@ -188,8 +188,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         Flex::row()
             .with_child(
                 Label::new(mat.string.clone(), style.label.clone())
-                    .with_highlights(mat.positions.clone())
-                    .boxed(),
+                    .with_highlights(mat.positions.clone()),
             )
             .with_children(command.keystrokes.iter().map(|keystroke| {
                 Flex::row()
@@ -206,8 +205,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                                 Some(
                                     Label::new(label, key_style.label.clone())
                                         .contained()
-                                        .with_style(key_style.container)
-                                        .boxed(),
+                                        .with_style(key_style.container),
                                 )
                             } else {
                                 None
@@ -217,17 +215,15 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .with_child(
                         Label::new(keystroke.key.clone(), key_style.label.clone())
                             .contained()
-                            .with_style(key_style.container)
-                            .boxed(),
+                            .with_style(key_style.container),
                     )
                     .contained()
                     .with_margin_left(keystroke_spacing)
                     .flex_float()
-                    .boxed()
             }))
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_element()
     }
 }
 

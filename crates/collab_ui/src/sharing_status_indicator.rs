@@ -52,11 +52,10 @@ impl View for SharingStatusIndicator {
                 .constrained()
                 .with_width(18.)
                 .aligned()
-                .boxed()
         })
         .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(ToggleScreenSharing);
         })
-        .boxed()
+        .into_element()
     }
 }

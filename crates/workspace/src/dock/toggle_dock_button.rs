@@ -38,7 +38,7 @@ impl View for ToggleDockButton {
         let workspace = self.workspace.upgrade(cx);
 
         if workspace.is_none() {
-            return Empty::new().boxed();
+            return Empty::new().into_element();
         }
 
         let workspace = workspace.unwrap();
@@ -64,7 +64,6 @@ impl View for ToggleDockButton {
                     .with_height(style.icon_size)
                     .contained()
                     .with_style(style.container)
-                    .boxed()
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
@@ -98,7 +97,7 @@ impl View for ToggleDockButton {
                     cx,
                 )
         }
-        .boxed()
+        .into_element()
     }
 }
 

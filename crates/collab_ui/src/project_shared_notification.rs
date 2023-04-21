@@ -109,7 +109,6 @@ impl ProjectSharedNotification {
                 Image::from_data(avatar)
                     .with_style(theme.owner_avatar)
                     .aligned()
-                    .boxed()
             }))
             .with_child(
                 Flex::column()
@@ -119,8 +118,7 @@ impl ProjectSharedNotification {
                             theme.owner_username.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.owner_username.container)
-                        .boxed(),
+                        .with_style(theme.owner_username.container),
                     )
                     .with_child(
                         Label::new(
@@ -135,8 +133,7 @@ impl ProjectSharedNotification {
                             theme.message.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.message.container)
-                        .boxed(),
+                        .with_style(theme.message.container),
                     )
                     .with_children(if self.worktree_root_names.is_empty() {
                         None
@@ -147,19 +144,17 @@ impl ProjectSharedNotification {
                                 theme.worktree_roots.text.clone(),
                             )
                             .contained()
-                            .with_style(theme.worktree_roots.container)
-                            .boxed(),
+                            .with_style(theme.worktree_roots.container),
                         )
                     })
                     .contained()
                     .with_style(theme.owner_metadata)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
             )
             .contained()
             .with_style(theme.owner_container)
             .flex(1., true)
-            .boxed()
+            .into_element()
     }
 
     fn render_buttons(&self, cx: &mut ViewContext<Self>) -> Element<Self> {
@@ -177,7 +172,6 @@ impl ProjectSharedNotification {
                         .aligned()
                         .contained()
                         .with_style(theme.open_button.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, _, cx| {
@@ -186,8 +180,7 @@ impl ProjectSharedNotification {
                         follow_user_id: owner_user_id,
                     });
                 })
-                .flex(1., true)
-                .boxed(),
+                .flex(1., true),
             )
             .with_child(
                 MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, cx| {
@@ -196,14 +189,12 @@ impl ProjectSharedNotification {
                         .aligned()
                         .contained()
                         .with_style(theme.dismiss_button.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(DismissProject);
                 })
-                .flex(1., true)
-                .boxed(),
+                .flex(1., true),
             )
             .constrained()
             .with_width(
@@ -212,7 +203,7 @@ impl ProjectSharedNotification {
                     .project_shared_notification
                     .button_width,
             )
-            .boxed()
+            .into_element()
     }
 }
 
@@ -237,6 +228,6 @@ impl View for ProjectSharedNotification {
             .contained()
             .with_background_color(background)
             .expanded()
-            .boxed()
+            .into_element()
     }
 }

@@ -25,7 +25,7 @@ where
 
 impl<V: View, F> Drawable<V> for Canvas<V, F>
 where
-    F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
+    F: 'static + FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     type LayoutState = ();
     type PaintState = ();

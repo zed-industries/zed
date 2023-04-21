@@ -4685,7 +4685,7 @@ mod tests {
         impl super::View for View {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 post_inc(&mut self.render_count);
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -4737,7 +4737,7 @@ mod tests {
 
         impl super::View for View {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -4809,11 +4809,11 @@ mod tests {
             fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
                 enum Handler {}
                 let mouse_down_count = self.mouse_down_count.clone();
-                MouseEventHandler::<Handler, _>::new(0, cx, |_, _| Empty::new().boxed())
+                MouseEventHandler::<Handler, _>::new(0, cx, |_, _| Empty::new())
                     .on_down(MouseButton::Left, move |_, _, _| {
                         mouse_down_count.fetch_add(1, SeqCst);
                     })
-                    .boxed()
+                    .into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -4873,7 +4873,7 @@ mod tests {
             }
 
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
         }
 
@@ -5391,7 +5391,7 @@ mod tests {
 
         impl super::View for View {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -5458,7 +5458,7 @@ mod tests {
 
         impl super::View for View {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -5639,7 +5639,7 @@ mod tests {
 
         impl View for ViewA {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -5657,7 +5657,7 @@ mod tests {
 
         impl View for ViewB {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -5805,7 +5805,7 @@ mod tests {
 
         impl super::View for View {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
 
             fn ui_name() -> &'static str {
@@ -5932,7 +5932,7 @@ mod tests {
 
         impl super::View for View1 {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
             fn ui_name() -> &'static str {
                 "View1"
@@ -5940,7 +5940,7 @@ mod tests {
         }
         impl super::View for View2 {
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
             fn ui_name() -> &'static str {
                 "View2"
@@ -6110,7 +6110,7 @@ mod tests {
             }
 
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
         }
 
@@ -6172,7 +6172,7 @@ mod tests {
             }
 
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().named(format!("render count: {}", post_inc(&mut self.0)))
+                Empty::new().into_named_element(format!("render count: {}", post_inc(&mut self.0)))
             }
         }
 
@@ -6261,7 +6261,7 @@ mod tests {
             }
 
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
         }
 
@@ -6342,7 +6342,7 @@ mod tests {
 
             fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
                 self.rendered.set(true);
-                Empty::new().boxed()
+                Empty::new().into_element()
             }
         }
 
@@ -6367,9 +6367,9 @@ mod tests {
 
             fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
                 if let Some(child) = self.child.as_ref() {
-                    ChildView::new(child, cx).boxed()
+                    ChildView::new(child, cx).into_element()
                 } else {
-                    Empty::new().boxed()
+                    Empty::new().into_element()
                 }
             }
         }
@@ -6408,7 +6408,7 @@ mod tests {
         }
 
         fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 }

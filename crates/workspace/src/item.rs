@@ -930,7 +930,7 @@ pub(crate) mod test {
         }
 
         fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 
@@ -949,7 +949,7 @@ pub(crate) mod test {
             _: &AppContext,
         ) -> Element<V> {
             self.tab_detail.set(detail);
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
 
         fn for_each_project_item(

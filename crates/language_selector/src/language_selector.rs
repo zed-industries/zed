@@ -197,6 +197,6 @@ impl PickerDelegate for LanguageSelectorDelegate {
             .with_highlights(mat.positions.clone())
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_element()
     }
 }

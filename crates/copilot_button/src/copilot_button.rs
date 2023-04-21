@@ -159,13 +159,13 @@ impl View for CopilotButton {
         let settings = cx.global::<Settings>();
 
         if !settings.features.copilot {
-            return Empty::new().boxed();
+            return Empty::new().into_element();
         }
 
         let theme = settings.theme.clone();
         let active = self.popup_menu.read(cx).visible();
         let Some(copilot) = Copilot::global(cx) else {
-            return Empty::new().boxed();
+            return Empty::new().into_element();
         };
         let status = copilot.read(cx).status();
 
@@ -205,13 +205,12 @@ impl View for CopilotButton {
                                 .constrained()
                                 .with_width(style.icon_size)
                                 .aligned()
-                                .named("copilot-icon"),
+                                .into_named_element("copilot-icon"),
                             )
                             .constrained()
                             .with_height(style.icon_size)
                             .contained()
                             .with_style(style.container)
-                            .boxed()
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -228,17 +227,16 @@ impl View for CopilotButton {
                         _ => cx.dispatch_action(DeployCopilotStartMenu),
                     }
                 })
-                .with_tooltip::<Self>(0, "GitHub Copilot".into(), None, theme.tooltip.clone(), cx)
-                .boxed(),
+                .with_tooltip::<Self>(
+                    0,
+                    "GitHub Copilot".into(),
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                ),
             )
-            .with_child(
-                ChildView::new(&self.popup_menu, cx)
-                    .aligned()
-                    .top()
-                    .right()
-                    .boxed(),
-            )
-            .boxed()
+            .with_child(ChildView::new(&self.popup_menu, cx).aligned().top().right())
+            .into_element()
     }
 }
 
@@ -322,12 +320,10 @@ impl CopilotButton {
             Box::new(
                 move |state: &mut MouseState, style: &theme::ContextMenuItem| {
                     Flex::row()
-                        .with_children([
-                            Label::new("Copilot Settings", style.label.clone()).boxed(),
-                            theme::ui::icon(icon_style.style_for(state, false)).boxed(),
-                        ])
+                        .with_child(Label::new("Copilot Settings", style.label.clone()))
+                        .with_child(theme::ui::icon(icon_style.style_for(state, false)))
                         .align_children_center()
-                        .boxed()
+                        .into_element()
                 },
             ),
             OsOpen::new(COPILOT_SETTINGS_URL),

@@ -46,8 +46,7 @@ impl View for UpdateNotification {
                             .aligned()
                             .top()
                             .left()
-                            .flex(1., true)
-                            .boxed(),
+                            .flex(1., true),
                         )
                         .with_child(
                             MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
@@ -62,7 +61,6 @@ impl View for UpdateNotification {
                                     .constrained()
                                     .with_width(style.button_width)
                                     .with_height(style.button_width)
-                                    .boxed()
                             })
                             .with_padding(Padding::uniform(5.))
                             .on_click(MouseButton::Left, move |_, _, cx| {
@@ -73,26 +71,22 @@ impl View for UpdateNotification {
                             .with_height(cx.font_cache().line_height(theme.message.text.font_size))
                             .aligned()
                             .top()
-                            .flex_float()
-                            .boxed(),
-                        )
-                        .boxed(),
+                            .flex_float(),
+                        ),
                 )
                 .with_child({
                     let style = theme.action_message.style_for(state, false);
                     Text::new("View the release notes", style.text.clone())
                         .contained()
                         .with_style(style.container)
-                        .boxed()
                 })
                 .contained()
-                .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(ViewReleaseNotes)
         })
-        .boxed()
+        .into_named_element("update notification")
     }
 }
 

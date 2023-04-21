@@ -64,15 +64,14 @@ impl View for ActiveBufferLanguage {
                 Label::new(active_language_text, style.text.clone())
                     .contained()
                     .with_style(style.container)
-                    .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, |_, _, cx| {
                 cx.dispatch_action(crate::Toggle)
             })
-            .boxed()
+            .into_element()
         } else {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 }

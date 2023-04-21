@@ -114,8 +114,7 @@ impl View for BufferSearchBar {
                                 ChildView::new(&self.query_editor, cx)
                                     .aligned()
                                     .left()
-                                    .flex(1., true)
-                                    .boxed(),
+                                    .flex(1., true),
                             )
                             .with_children(self.active_searchable_item.as_ref().and_then(
                                 |searchable_item| {
@@ -132,8 +131,7 @@ impl View for BufferSearchBar {
                                         Label::new(message, theme.search.match_index.text.clone())
                                             .contained()
                                             .with_style(theme.search.match_index.container)
-                                            .aligned()
-                                            .boxed(),
+                                            .aligned(),
                                     )
                                 },
                             ))
@@ -143,15 +141,13 @@ impl View for BufferSearchBar {
                             .constrained()
                             .with_min_width(theme.search.editor.min_width)
                             .with_max_width(theme.search.editor.max_width)
-                            .flex(1., false)
-                            .boxed(),
+                            .flex(1., false),
                     )
                     .with_child(
                         Flex::row()
                             .with_child(self.render_nav_button("<", Direction::Prev, cx))
                             .with_child(self.render_nav_button(">", Direction::Next, cx))
-                            .aligned()
-                            .boxed(),
+                            .aligned(),
                     )
                     .with_child(
                         Flex::row()
@@ -175,16 +171,14 @@ impl View for BufferSearchBar {
                             ))
                             .contained()
                             .with_style(theme.search.option_button_group)
-                            .aligned()
-                            .boxed(),
+                            .aligned(),
                     )
-                    .flex(1., true)
-                    .boxed(),
+                    .flex(1., true),
             )
             .with_child(self.render_close_button(&theme.search, cx))
             .contained()
             .with_style(theme.search.container)
-            .named("search bar")
+            .into_named_element("search bar")
     }
 }
 
@@ -343,7 +337,6 @@ impl BufferSearchBar {
                 Label::new(icon, style.text.clone())
                     .contained()
                     .with_style(style.container)
-                    .boxed()
             })
             .on_click(MouseButton::Left, move |_, _, cx| {
                 cx.dispatch_any_action(option.to_toggle_action())
@@ -356,7 +349,7 @@ impl BufferSearchBar {
                 tooltip_style,
                 cx,
             )
-            .boxed(),
+            .into_element(),
         )
     }
 
@@ -391,7 +384,6 @@ impl BufferSearchBar {
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
@@ -405,7 +397,7 @@ impl BufferSearchBar {
             tooltip_style,
             cx,
         )
-        .boxed()
+        .into_element()
     }
 
     fn render_close_button(
@@ -429,7 +421,6 @@ impl BufferSearchBar {
                 .with_width(style.button_width)
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
@@ -437,7 +428,7 @@ impl BufferSearchBar {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<CloseButton>(0, tooltip.to_string(), Some(action), tooltip_style, cx)
-        .boxed()
+        .into_element()
     }
 
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {

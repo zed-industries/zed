@@ -11,7 +11,7 @@ use gpui::{
     platform,
     platform::MouseButton,
     scene::MouseClick,
-    Action, Drawable, Element, EventContext, MouseState, View, ViewContext,
+    Action, Drawable, EventContext, MouseState, View, ViewContext,
 };
 use serde::Deserialize;
 
@@ -36,14 +36,13 @@ pub fn checkbox<Tag: 'static, V: View>(
 ) -> MouseEventHandler<Tag, V> {
     let label = Label::new(label, style.label.text.clone())
         .contained()
-        .with_style(style.label.container)
-        .boxed();
+        .with_style(style.label.container);
 
     checkbox_with_label(label, style, checked, cx, change)
 }
 
-pub fn checkbox_with_label<Tag: 'static, V: View>(
-    label: Element<V>,
+pub fn checkbox_with_label<Tag: 'static, D: Drawable<V>, V: View>(
+    label: D,
     style: &CheckboxStyle,
     checked: bool,
     cx: &mut ViewContext<V>,
@@ -60,27 +59,21 @@ pub fn checkbox_with_label<Tag: 'static, V: View>(
         };
 
         Flex::row()
-            .with_children([
-                indicator
-                    .contained()
-                    .with_style(if checked {
-                        if state.hovered() {
-                            style.hovered_and_checked
-                        } else {
-                            style.checked
-                        }
-                    } else {
-                        if state.hovered() {
-                            style.hovered
-                        } else {
-                            style.default
-                        }
-                    })
-                    .boxed(),
-                label,
-            ])
+            .with_child(indicator.contained().with_style(if checked {
+                if state.hovered() {
+                    style.hovered_and_checked
+                } else {
+                    style.checked
+                }
+            } else {
+                if state.hovered() {
+                    style.hovered
+                } else {
+                    style.default
+                }
+            }))
+            .with_child(label)
             .align_children_center()
-            .boxed()
     })
     .on_click(platform::MouseButton::Left, move |_, _, cx| {
         change(!checked, cx)
@@ -151,21 +144,16 @@ pub fn keystroke_label_for<V: View>(
     action: Box<dyn Action>,
 ) -> Container<V> {
     Flex::row()
+        .with_child(Label::new(label_text, label_style.text.clone()).contained())
         .with_child(
-            Label::new(label_text, label_style.text.clone())
-                .contained()
-                .boxed(),
-        )
-        .with_child({
             KeystrokeLabel::new(
                 view_id,
                 action,
                 keystroke_style.container,
                 keystroke_style.text.clone(),
             )
-            .flex_float()
-            .boxed()
-        })
+            .flex_float(),
+        )
         .contained()
         .with_style(label_style.container)
 }
@@ -178,7 +166,7 @@ pub fn cta_button<L, A, V>(
     max_width: f32,
     style: &ButtonStyle,
     cx: &mut ViewContext<V>,
-) -> Element<V>
+) -> MouseEventHandler<A, V>
 where
     L: Into<Cow<'static, str>>,
     A: 'static + Action + Clone,
@@ -187,7 +175,6 @@ where
     cta_button_with_click::<A, _, _, _>(label, max_width, style, cx, move |_, _, cx| {
         cx.dispatch_action(action.clone())
     })
-    .boxed()
 }
 
 pub fn cta_button_with_click<Tag, L, V, F>(
@@ -211,7 +198,6 @@ where
             .with_style(style.container)
             .constrained()
             .with_max_width(max_width)
-            .boxed()
     })
     .on_click(MouseButton::Left, f)
     .with_cursor_style(platform::CursorStyle::PointingHand)
@@ -232,17 +218,18 @@ impl ModalStyle {
     }
 }
 
-pub fn modal<Tag, V, I, F>(
+pub fn modal<Tag, V, I, D, F>(
     title: I,
     style: &ModalStyle,
     cx: &mut ViewContext<V>,
     build_modal: F,
-) -> Element<V>
+) -> impl Drawable<V>
 where
     Tag: 'static,
     V: View,
     I: Into<Cow<'static, str>>,
-    F: FnOnce(&mut gpui::ViewContext<V>) -> Element<V>,
+    D: Drawable<V>,
+    F: FnOnce(&mut gpui::ViewContext<V>) -> D,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;
     // let active = cx.window_is_active(cx.window_id());
@@ -250,43 +237,39 @@ where
     Flex::column()
         .with_child(
             Stack::new()
-                .with_children([
-                    Label::new(
-                        title,
-                        style
-                            .title_text
-                            .style_for(&mut MouseState::default(), false)
-                            .clone(),
-                    )
-                    .boxed(),
+                .with_child(Label::new(
+                    title,
+                    style
+                        .title_text
+                        .style_for(&mut MouseState::default(), false)
+                        .clone(),
+                ))
+                .with_child(
                     // FIXME: Get a better tag type
                     MouseEventHandler::<Tag, V>::new(999999, cx, |state, _cx| {
                         let style = style.close_icon.style_for(state, false);
-                        icon(style).boxed()
+                        icon(style)
                     })
                     .on_click(platform::MouseButton::Left, move |_, _, cx| {
                         cx.remove_window();
                     })
                     .with_cursor_style(platform::CursorStyle::PointingHand)
                     .aligned()
-                    .right()
-                    .boxed(),
-                ])
+                    .right(),
+                )
                 .contained()
                 .with_style(style.titlebar)
                 .constrained()
-                .with_height(TITLEBAR_HEIGHT)
-                .boxed(),
+                .with_height(TITLEBAR_HEIGHT),
         )
         .with_child(
-            Container::new(build_modal(cx))
+            build_modal(cx)
+                .contained()
                 .with_style(style.container)
                 .constrained()
                 .with_width(style.dimensions().x())
-                .with_height(style.dimensions().y() - TITLEBAR_HEIGHT)
-                .boxed(),
+                .with_height(style.dimensions().y() - TITLEBAR_HEIGHT),
         )
         .constrained()
         .with_height(style.dimensions().y())
-        .boxed()
 }

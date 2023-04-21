@@ -45,7 +45,7 @@ impl HighlightedText {
     pub fn render<V: View>(self, style: impl Into<LabelStyle>) -> Element<V> {
         Label::new(self.text, style)
             .with_highlights(self.highlight_positions)
-            .boxed()
+            .into_element()
     }
 }
 

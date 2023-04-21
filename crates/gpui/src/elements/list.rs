@@ -347,21 +347,21 @@ impl<V: View> Drawable<V> for List<V> {
 }
 
 impl<V: View> ListState<V> {
-    pub fn new<F>(
+    pub fn new<D, F>(
         element_count: usize,
         orientation: Orientation,
         overdraw: f32,
-        render_item: F,
+        mut render_item: F,
     ) -> Self
     where
-        V: View,
-        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> Element<V>,
+        D: Drawable<V>,
+        F: 'static + FnMut(&mut V, usize, &mut ViewContext<V>) -> D,
     {
         let mut items = SumTree::new();
         items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
         Self(Rc::new(RefCell::new(StateInner {
             last_layout_width: None,
-            render_item: Box::new(render_item),
+            render_item: Box::new(move |view, ix, cx| render_item(view, ix, cx).into_element()),
             rendered_range: 0..0,
             items,
             logical_scroll_top: None,
@@ -660,7 +660,7 @@ mod tests {
                 let elements = elements.clone();
                 move |_, ix, _| {
                     let (id, height) = elements.borrow()[ix];
-                    TestElement::new(id, height).boxed()
+                    TestElement::new(id, height).into_element()
                 }
             });
 
@@ -765,7 +765,7 @@ mod tests {
                 let elements = elements.clone();
                 move |_, ix, _| {
                     let (id, height) = elements.borrow()[ix];
-                    TestElement::new(id, height).boxed()
+                    TestElement::new(id, height).into_element()
                 }
             });
 
@@ -921,7 +921,7 @@ mod tests {
         }
 
         fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().boxed()
+            Empty::new().into_element()
         }
     }
 

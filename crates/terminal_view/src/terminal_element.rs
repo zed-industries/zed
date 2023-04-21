@@ -600,11 +600,10 @@ impl Drawable<TerminalView> for TerminalElement {
                     .constrained()
                     .with_width(dimensions.width())
                     .with_height(dimensions.height())
-                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx)
-                    .boxed(),
+                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx),
             )
             .with_position_mode(gpui::elements::OverlayPositionMode::Local)
-            .boxed();
+            .into_element();
 
             tooltip.layout(
                 SizeConstraint::new(Vector2F::zero(), cx.window_size()),

@@ -44,7 +44,7 @@ impl View for Breadcrumbs {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let active_item = match &self.active_item {
             Some(active_item) => active_item,
-            None => return Empty::new().boxed(),
+            None => return Empty::new().into_element(),
         };
         let not_editor = active_item.downcast::<editor::Editor>().is_none();
 
@@ -53,24 +53,21 @@ impl View for Breadcrumbs {
 
         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
             Some(breadcrumbs) => breadcrumbs,
-            None => return Empty::new().boxed(),
+            None => return Empty::new().into_element(),
         }
         .into_iter()
         .map(|breadcrumb| {
-            let text = Text::new(
+            Text::new(
                 breadcrumb.text,
                 theme.workspace.breadcrumbs.default.text.clone(),
-            );
-            if let Some(highlights) = breadcrumb.highlights {
-                text.with_highlights(highlights).boxed()
-            } else {
-                text.boxed()
-            }
+            )
+            .with_highlights(breadcrumb.highlights.unwrap_or_default())
+            .into_element()
         });
 
         let crumbs = Flex::row()
             .with_children(Itertools::intersperse_with(breadcrumbs, || {
-                Label::new(" 〉 ", style.default.text.clone()).boxed()
+                Label::new(" 〉 ", style.default.text.clone()).into_element()
             }))
             .constrained()
             .with_height(theme.workspace.breadcrumb_height)
@@ -81,12 +78,12 @@ impl View for Breadcrumbs {
                 .with_style(style.default.container)
                 .aligned()
                 .left()
-                .boxed();
+                .into_element();
         }
 
         MouseEventHandler::<Breadcrumbs, Breadcrumbs>::new(0, cx, |state, _| {
             let style = style.style_for(state, false);
-            crumbs.with_style(style.container).boxed()
+            crumbs.with_style(style.container)
         })
         .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(outline::Toggle);
@@ -100,7 +97,7 @@ impl View for Breadcrumbs {
         )
         .aligned()
         .left()
-        .boxed()
+        .into_element()
     }
 }
 

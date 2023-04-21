@@ -39,8 +39,7 @@ impl View for FeedbackInfoText {
                     theme.feedback.info_text_default.text.clone(),
                 )
                 .with_soft_wrap(false)
-                .aligned()
-                .boxed(),
+                .aligned(),
             )
             .with_child(
                 MouseEventHandler::<OpenZedCommunityRepo, Self>::new(0, cx, |state, _| {
@@ -55,24 +54,21 @@ impl View for FeedbackInfoText {
                         .aligned()
                         .left()
                         .clipped()
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(OpenZedCommunityRepo)
-                })
-                .boxed(),
+                }),
             )
             .with_child(
                 Text::new(" on GitHub.", theme.feedback.info_text_default.text.clone())
                     .with_soft_wrap(false)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
             )
             .aligned()
             .left()
             .clipped()
-            .boxed()
+            .into_element()
     }
 }
 

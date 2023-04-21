@@ -72,7 +72,7 @@ impl View for CollabTitlebarItem {
         let workspace = if let Some(workspace) = self.workspace.upgrade(cx) {
             workspace
         } else {
-            return Empty::new().boxed();
+            return Empty::new().into_element();
         };
 
         let project = workspace.read(cx).project().read(cx);
@@ -97,8 +97,7 @@ impl View for CollabTitlebarItem {
                 .contained()
                 .with_margin_right(theme.workspace.titlebar.item_spacing)
                 .aligned()
-                .left()
-                .boxed(),
+                .left(),
         );
 
         let user = workspace.read(cx).user_store().read(cx).current_user();
@@ -128,9 +127,9 @@ impl View for CollabTitlebarItem {
         }
 
         Stack::new()
-            .with_child(left_container.boxed())
-            .with_child(right_container.aligned().right().boxed())
-            .boxed()
+            .with_child(left_container)
+            .with_child(right_container.aligned().right())
+            .into_element()
     }
 }
 
@@ -294,13 +293,13 @@ impl CollabTitlebarItem {
                                     Color::transparent_black(),
                                 )
                             }))
-                            .with_child(
-                                Label::new(user.github_login.clone(), item_style.label.clone())
-                                    .boxed(),
-                            )
+                            .with_child(Label::new(
+                                user.github_login.clone(),
+                                item_style.label.clone(),
+                            ))
                             .contained()
                             .with_style(item_style.container)
-                            .boxed()
+                            .into_element()
                     })),
                     ContextMenuItem::item("Sign out", SignOut),
                     ContextMenuItem::item("Send Feedback", feedback::feedback_editor::GiveFeedback),
@@ -345,8 +344,7 @@ impl CollabTitlebarItem {
                     .contained()
                     .with_margin_left(titlebar.toggle_contacts_button.default.icon_width)
                     .with_margin_top(titlebar.toggle_contacts_button.default.icon_width)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
             )
         };
 
@@ -366,7 +364,6 @@ impl CollabTitlebarItem {
                         .with_height(style.button_width)
                         .contained()
                         .with_style(style.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, _, cx| {
@@ -378,12 +375,11 @@ impl CollabTitlebarItem {
                     Some(Box::new(ToggleContactsMenu)),
                     theme.tooltip.clone(),
                     cx,
-                )
-                .boxed(),
+                ),
             )
             .with_children(badge)
             .with_children(self.render_contacts_popover_host(titlebar, cx))
-            .boxed()
+            .into_element()
     }
 
     fn render_toggle_screen_sharing_button(
@@ -415,7 +411,6 @@ impl CollabTitlebarItem {
                 .with_height(style.button_width)
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, _, cx| {
@@ -429,7 +424,7 @@ impl CollabTitlebarItem {
             cx,
         )
         .aligned()
-        .boxed()
+        .into_element()
     }
 
     fn render_in_call_share_unshare_button(
@@ -463,7 +458,6 @@ impl CollabTitlebarItem {
                         Label::new(label, style.text.clone())
                             .contained()
                             .with_style(style.container)
-                            .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, move |_, _, cx| {
@@ -479,13 +473,12 @@ impl CollabTitlebarItem {
                         None,
                         theme.tooltip.clone(),
                         cx,
-                    )
-                    .boxed(),
+                    ),
                 )
                 .aligned()
                 .contained()
                 .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .boxed(),
+                .into_element(),
         )
     }
 
@@ -506,7 +499,6 @@ impl CollabTitlebarItem {
                         .with_height(style.button_width)
                         .contained()
                         .with_style(style.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, _, cx| {
@@ -520,17 +512,15 @@ impl CollabTitlebarItem {
                     cx,
                 )
                 .contained()
-                .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .boxed(),
+                .with_margin_left(theme.workspace.titlebar.item_spacing),
             )
             .with_child(
                 ChildView::new(&self.user_menu, cx)
                     .aligned()
                     .bottom()
-                    .right()
-                    .boxed(),
+                    .right(),
             )
-            .boxed()
+            .into_element()
     }
 
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> Element<Self> {
@@ -540,13 +530,12 @@ impl CollabTitlebarItem {
             Label::new("Sign In", style.text.clone())
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(SignIn);
         })
-        .boxed()
+        .into_element()
     }
 
     fn render_contacts_popover_host<'a>(
@@ -555,14 +544,14 @@ impl CollabTitlebarItem {
         cx: &'a ViewContext<Self>,
     ) -> Option<Element<Self>> {
         self.contacts_popover.as_ref().map(|popover| {
-            Overlay::new(ChildView::new(popover, cx).boxed())
+            Overlay::new(ChildView::new(popover, cx))
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
                 .with_anchor_corner(AnchorCorner::TopRight)
                 .with_z_index(999)
                 .aligned()
                 .bottom()
                 .right()
-                .boxed()
+                .into_element()
         })
     }
 
@@ -572,7 +561,7 @@ impl CollabTitlebarItem {
         theme: &Theme,
         room: &ModelHandle<Room>,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Element<Self>> {
+    ) -> Vec<Container<Self>> {
         let mut participants = room
             .read(cx)
             .remote_participants()
@@ -600,8 +589,7 @@ impl CollabTitlebarItem {
                         theme,
                         cx,
                     ))
-                    .with_margin_right(theme.workspace.titlebar.face_pile_spacing)
-                    .boxed(),
+                    .with_margin_right(theme.workspace.titlebar.face_pile_spacing),
                 )
             })
             .collect()
@@ -626,7 +614,7 @@ impl CollabTitlebarItem {
             cx,
         ))
         .with_margin_right(theme.workspace.titlebar.item_spacing)
-        .boxed()
+        .into_element()
     }
 
     fn render_face_pile(
@@ -730,7 +718,7 @@ impl CollabTitlebarItem {
                     }
                 }
 
-                container.boxed()
+                container
             }))
             .with_children((|| {
                 let replica_id = replica_id?;
@@ -741,11 +729,10 @@ impl CollabTitlebarItem {
                         .with_width(theme.workspace.titlebar.avatar_ribbon.width)
                         .with_height(theme.workspace.titlebar.avatar_ribbon.height)
                         .aligned()
-                        .bottom()
-                        .boxed(),
+                        .bottom(),
                 )
             })())
-            .boxed();
+            .into_element();
 
         if let Some(location) = location {
             if let Some(replica_id) = replica_id {
@@ -769,7 +756,7 @@ impl CollabTitlebarItem {
                     theme.tooltip.clone(),
                     cx,
                 )
-                .boxed();
+                .into_element();
             } else if let ParticipantLocation::SharedProject { project_id } = location {
                 let user_id = user.id;
                 content = MouseEventHandler::<JoinProject, Self>::new(
@@ -791,7 +778,7 @@ impl CollabTitlebarItem {
                     theme.tooltip.clone(),
                     cx,
                 )
-                .boxed();
+                .into_element();
             }
         }
         content
@@ -831,7 +818,7 @@ impl CollabTitlebarItem {
             .with_width(avatar_style.outer_width)
             .with_height(avatar_style.outer_width)
             .aligned()
-            .boxed()
+            .into_element()
     }
 
     fn render_connection_status(
@@ -848,20 +835,14 @@ impl CollabTitlebarItem {
             | client::Status::Reauthenticating { .. }
             | client::Status::Reconnecting { .. }
             | client::Status::ReconnectionError { .. } => Some(
-                Container::new(
-                    Align::new(
-                        ConstrainedBox::new(
-                            Svg::new("icons/cloud_slash_12.svg")
-                                .with_color(theme.workspace.titlebar.offline_icon.color)
-                                .boxed(),
-                        )
-                        .with_width(theme.workspace.titlebar.offline_icon.width)
-                        .boxed(),
-                    )
-                    .boxed(),
-                )
-                .with_style(theme.workspace.titlebar.offline_icon.container)
-                .boxed(),
+                Svg::new("icons/cloud_slash_12.svg")
+                    .with_color(theme.workspace.titlebar.offline_icon.color)
+                    .constrained()
+                    .with_width(theme.workspace.titlebar.offline_icon.width)
+                    .aligned()
+                    .contained()
+                    .with_style(theme.workspace.titlebar.offline_icon.container)
+                    .into_element(),
             ),
             client::Status::UpgradeRequired => Some(
                 MouseEventHandler::<ConnectionStatusButton, Self>::new(0, cx, |_, _| {
@@ -872,13 +853,12 @@ impl CollabTitlebarItem {
                     .contained()
                     .with_style(theme.workspace.titlebar.outdated_warning.container)
                     .aligned()
-                    .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(auto_update::Check);
                 })
-                .boxed(),
+                .into_element(),
             ),
             _ => None,
         }

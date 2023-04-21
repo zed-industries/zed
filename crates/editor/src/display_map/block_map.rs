@@ -1045,21 +1045,21 @@ mod tests {
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().named("block 1")),
+                render: Arc::new(|_| Empty::new().into_named_element("block 1")),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 2)),
                 height: 2,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().named("block 2")),
+                render: Arc::new(|_| Empty::new().into_named_element("block 2")),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(3, 3)),
                 height: 3,
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| Empty::new().named("block 3")),
+                render: Arc::new(|_| Empty::new().into_named_element("block 3")),
             },
         ]);
 
@@ -1219,14 +1219,14 @@ mod tests {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().named("block 1")),
+                render: Arc::new(|_| Empty::new().into_named_element("block 1")),
                 height: 1,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 1)),
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| Empty::new().named("block 2")),
+                render: Arc::new(|_| Empty::new().into_named_element("block 2")),
                 height: 1,
             },
         ]);
@@ -1329,7 +1329,7 @@ mod tests {
                                 position,
                                 height,
                                 disposition,
-                                render: Arc::new(|_| Empty::new().boxed()),
+                                render: Arc::new(|_| Empty::new().into_element()),
                             }
                         })
                         .collect::<Vec<_>>();
