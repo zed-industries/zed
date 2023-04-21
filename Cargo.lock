@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.8.3"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -1341,14 +1341,17 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-tar",
+ "clock",
  "collections",
  "context_menu",
+ "fs",
  "futures 0.3.25",
  "gpui",
  "language",
  "log",
  "lsp",
  "node_runtime",
+ "rpc",
  "serde",
  "serde_derive",
  "settings",
@@ -1831,6 +1834,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "lsp",
  "postage",
  "project",
  "serde_json",
@@ -4687,6 +4691,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "copilot",
  "ctor",
  "db",
  "env_logger",
@@ -8517,7 +8522,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.83.0"
+version = "0.84.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

@@ -99,14 +99,11 @@ pub struct GetCompletionsParams {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetCompletionsDocument {
-    pub source: String,
     pub tab_size: u32,
     pub indent_size: u32,
     pub insert_spaces: bool,
     pub uri: lsp::Url,
-    pub path: String,
     pub relative_path: String,
-    pub language_id: String,
     pub position: lsp::Position,
     pub version: usize,
 }
@@ -168,4 +165,61 @@ pub struct StatusNotificationParams {
 impl lsp::notification::Notification for StatusNotification {
     type Params = StatusNotificationParams;
     const METHOD: &'static str = "statusNotification";
+}
+
+pub enum SetEditorInfo {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetEditorInfoParams {
+    pub editor_info: EditorInfo,
+    pub editor_plugin_info: EditorPluginInfo,
+}
+
+impl lsp::request::Request for SetEditorInfo {
+    type Params = SetEditorInfoParams;
+    type Result = String;
+    const METHOD: &'static str = "setEditorInfo";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorPluginInfo {
+    pub name: String,
+    pub version: String,
+}
+
+pub enum NotifyAccepted {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyAcceptedParams {
+    pub uuid: String,
+}
+
+impl lsp::request::Request for NotifyAccepted {
+    type Params = NotifyAcceptedParams;
+    type Result = String;
+    const METHOD: &'static str = "notifyAccepted";
+}
+
+pub enum NotifyRejected {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifyRejectedParams {
+    pub uuids: Vec<String>,
+}
+
+impl lsp::request::Request for NotifyRejected {
+    type Params = NotifyRejectedParams;
+    type Result = String;
+    const METHOD: &'static str = "notifyRejected";
 }

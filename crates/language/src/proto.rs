@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
-use lsp::DiagnosticSeverity;
+use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
 use std::{ops::Range, sync::Arc};
 use text::*;
@@ -40,6 +40,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
             crate::Operation::Buffer(text::Operation::Edit(edit)) => {
                 proto::operation::Variant::Edit(serialize_edit_operation(edit))
             }
+
             crate::Operation::Buffer(text::Operation::Undo {
                 undo,
                 lamport_timestamp,
@@ -58,6 +59,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                     })
                     .collect(),
             }),
+
             crate::Operation::UpdateSelections {
                 selections,
                 line_mode,
@@ -70,14 +72,18 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 line_mode: *line_mode,
                 cursor_shape: serialize_cursor_shape(cursor_shape) as i32,
             }),
+
             crate::Operation::UpdateDiagnostics {
-                diagnostics,
                 lamport_timestamp,
+                server_id,
+                diagnostics,
             } => proto::operation::Variant::UpdateDiagnostics(proto::UpdateDiagnostics {
                 replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
+                server_id: server_id.0 as u64,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
+
             crate::Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
@@ -267,11 +273,12 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
             }
             proto::operation::Variant::UpdateDiagnostics(message) => {
                 crate::Operation::UpdateDiagnostics {
-                    diagnostics: deserialize_diagnostics(message.diagnostics),
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
                     },
+                    server_id: LanguageServerId(message.server_id as usize),
+                    diagnostics: deserialize_diagnostics(message.diagnostics),
                 }
             }
             proto::operation::Variant::UpdateCompletionTriggers(message) => {
@@ -462,6 +469,7 @@ pub async fn deserialize_completion(
 
 pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
     proto::CodeAction {
+        server_id: action.server_id.0 as u64,
         start: Some(serialize_anchor(&action.range.start)),
         end: Some(serialize_anchor(&action.range.end)),
         lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
@@ -479,6 +487,7 @@ pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> 
         .ok_or_else(|| anyhow!("invalid end"))?;
     let lsp_action = serde_json::from_slice(&action.lsp_action)?;
     Ok(CodeAction {
+        server_id: LanguageServerId(action.server_id as usize),
         range: start..end,
         lsp_action,
     })
