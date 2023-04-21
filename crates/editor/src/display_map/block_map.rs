@@ -80,8 +80,8 @@ pub enum BlockStyle {
     Sticky,
 }
 
-pub struct BlockContext<'a, 'b, 'c, 'd> {
-    pub view_context: &'d mut ViewContext<'a, 'b, 'c, Editor>,
+pub struct BlockContext<'a, 'b, 'c> {
+    pub view_context: &'c mut ViewContext<'a, 'b, Editor>,
     pub anchor_x: f32,
     pub scroll_x: f32,
     pub gutter_width: f32,
@@ -932,15 +932,15 @@ impl BlockDisposition {
     }
 }
 
-impl<'a, 'b, 'c, 'd> Deref for BlockContext<'a, 'b, 'c, 'd> {
-    type Target = ViewContext<'a, 'b, 'c, Editor>;
+impl<'a, 'b, 'c> Deref for BlockContext<'a, 'b, 'c> {
+    type Target = ViewContext<'a, 'b, Editor>;
 
     fn deref(&self) -> &Self::Target {
         self.view_context
     }
 }
 
-impl DerefMut for BlockContext<'_, '_, '_, '_> {
+impl DerefMut for BlockContext<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.view_context
     }

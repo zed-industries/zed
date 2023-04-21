@@ -69,7 +69,7 @@ pub trait Entity: 'static {
 
 pub trait View: Entity + Sized {
     fn ui_name() -> &'static str;
-    fn render(&mut self, cx: &mut ViewContext<'_, '_, '_, Self>) -> Element<Self>;
+    fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> Element<Self>;
     fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn key_down(&mut self, _: &KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
@@ -2518,12 +2518,7 @@ pub trait AnyView {
     ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
     fn render(&mut self, cx: &mut WindowContext, view_id: usize) -> Box<dyn AnyRootElement>;
-    fn focus_in<'a, 'b>(
-        &mut self,
-        focused_id: usize,
-        cx: &mut WindowContext<'a, 'b>,
-        view_id: usize,
-    );
+    fn focus_in<'a, 'b>(&mut self, focused_id: usize, cx: &mut WindowContext<'a>, view_id: usize);
     fn focus_out(&mut self, focused_id: usize, cx: &mut WindowContext, view_id: usize);
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut WindowContext, view_id: usize) -> bool;
     fn key_up(&mut self, event: &KeyUpEvent, cx: &mut WindowContext, view_id: usize) -> bool;
@@ -2919,28 +2914,28 @@ impl<M> DerefMut for ModelContext<'_, M> {
     }
 }
 
-pub struct ViewContext<'a, 'b, 'c, T: ?Sized> {
-    window_context: Reference<'c, WindowContext<'a, 'b>>,
+pub struct ViewContext<'a, 'b, T: ?Sized> {
+    window_context: Reference<'b, WindowContext<'a>>,
     view_id: usize,
     view_type: PhantomData<T>,
 }
 
-impl<'a, 'b, 'c, T: View> Deref for ViewContext<'a, 'b, 'c, T> {
-    type Target = WindowContext<'a, 'b>;
+impl<'a, 'b, T: View> Deref for ViewContext<'a, 'b, T> {
+    type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.window_context
     }
 }
 
-impl<T: View> DerefMut for ViewContext<'_, '_, '_, T> {
+impl<T: View> DerefMut for ViewContext<'_, '_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.window_context
     }
 }
 
-impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
-    pub(crate) fn mutable(window_context: &'c mut WindowContext<'a, 'b>, view_id: usize) -> Self {
+impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
+    pub(crate) fn mutable(window_context: &'b mut WindowContext<'a>, view_id: usize) -> Self {
         Self {
             window_context: Reference::Mutable(window_context),
             view_id,
@@ -2948,7 +2943,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         }
     }
 
-    pub(crate) fn immutable(window_context: &'c WindowContext<'a, 'b>, view_id: usize) -> Self {
+    pub(crate) fn immutable(window_context: &'b WindowContext<'a>, view_id: usize) -> Self {
         Self {
             window_context: Reference::Immutable(window_context),
             view_id,
@@ -2956,7 +2951,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
         }
     }
 
-    pub fn window_context(&mut self) -> &mut WindowContext<'a, 'b> {
+    pub fn window_context(&mut self) -> &mut WindowContext<'a> {
         &mut self.window_context
     }
 
@@ -3450,7 +3445,7 @@ impl<'a, 'b, 'c, V: View> ViewContext<'a, 'b, 'c, V> {
     }
 }
 
-impl<V> UpgradeModelHandle for ViewContext<'_, '_, '_, V> {
+impl<V> UpgradeModelHandle for ViewContext<'_, '_, V> {
     fn upgrade_model_handle<T: Entity>(
         &self,
         handle: &WeakModelHandle<T>,
@@ -3467,7 +3462,7 @@ impl<V> UpgradeModelHandle for ViewContext<'_, '_, '_, V> {
     }
 }
 
-impl<V> UpgradeViewHandle for ViewContext<'_, '_, '_, V> {
+impl<V> UpgradeViewHandle for ViewContext<'_, '_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.window_context.upgrade_view_handle(handle)
     }
@@ -3477,13 +3472,13 @@ impl<V> UpgradeViewHandle for ViewContext<'_, '_, '_, V> {
     }
 }
 
-impl<V: View> ReadModel for ViewContext<'_, '_, '_, V> {
+impl<V: View> ReadModel for ViewContext<'_, '_, V> {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         self.window_context.read_model(handle)
     }
 }
 
-impl<V: View> UpdateModel for ViewContext<'_, '_, '_, V> {
+impl<V: View> UpdateModel for ViewContext<'_, '_, V> {
     fn update_model<T: Entity, O>(
         &mut self,
         handle: &ModelHandle<T>,
@@ -3493,13 +3488,13 @@ impl<V: View> UpdateModel for ViewContext<'_, '_, '_, V> {
     }
 }
 
-impl<V: View> ReadView for ViewContext<'_, '_, '_, V> {
+impl<V: View> ReadView for ViewContext<'_, '_, V> {
     fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         self.window_context.read_view(handle)
     }
 }
 
-impl<V: View> UpdateView for ViewContext<'_, '_, '_, V> {
+impl<V: View> UpdateView for ViewContext<'_, '_, V> {
     type Output<S> = S;
 
     fn update_view<T, S>(
@@ -3514,13 +3509,13 @@ impl<V: View> UpdateView for ViewContext<'_, '_, '_, V> {
     }
 }
 
-pub struct EventContext<'a, 'b, 'c, 'd, V: View> {
-    view_context: &'d mut ViewContext<'a, 'b, 'c, V>,
+pub struct EventContext<'a, 'b, 'c, V: View> {
+    view_context: &'c mut ViewContext<'a, 'b, V>,
     pub(crate) handled: bool,
 }
 
-impl<'a, 'b, 'c, 'd, V: View> EventContext<'a, 'b, 'c, 'd, V> {
-    pub(crate) fn new(view_context: &'d mut ViewContext<'a, 'b, 'c, V>) -> Self {
+impl<'a, 'b, 'c, V: View> EventContext<'a, 'b, 'c, V> {
+    pub(crate) fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
         EventContext {
             view_context,
             handled: true,
@@ -3532,21 +3527,21 @@ impl<'a, 'b, 'c, 'd, V: View> EventContext<'a, 'b, 'c, 'd, V> {
     }
 }
 
-impl<'a, 'b, 'c, 'd, V: View> Deref for EventContext<'a, 'b, 'c, 'd, V> {
-    type Target = ViewContext<'a, 'b, 'c, V>;
+impl<'a, 'b, 'c, V: View> Deref for EventContext<'a, 'b, 'c, V> {
+    type Target = ViewContext<'a, 'b, V>;
 
     fn deref(&self) -> &Self::Target {
         &self.view_context
     }
 }
 
-impl<V: View> DerefMut for EventContext<'_, '_, '_, '_, V> {
+impl<V: View> DerefMut for EventContext<'_, '_, '_, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.view_context
     }
 }
 
-impl<V: View> UpdateModel for EventContext<'_, '_, '_, '_, V> {
+impl<V: View> UpdateModel for EventContext<'_, '_, '_, V> {
     fn update_model<T: Entity, O>(
         &mut self,
         handle: &ModelHandle<T>,
@@ -3556,13 +3551,13 @@ impl<V: View> UpdateModel for EventContext<'_, '_, '_, '_, V> {
     }
 }
 
-impl<V: View> ReadView for EventContext<'_, '_, '_, '_, V> {
+impl<V: View> ReadView for EventContext<'_, '_, '_, V> {
     fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
         self.view_context.read_view(handle)
     }
 }
 
-impl<V: View> UpdateView for EventContext<'_, '_, '_, '_, V> {
+impl<V: View> UpdateView for EventContext<'_, '_, '_, V> {
     type Output<S> = S;
 
     fn update_view<T, S>(
@@ -3577,7 +3572,7 @@ impl<V: View> UpdateView for EventContext<'_, '_, '_, '_, V> {
     }
 }
 
-impl<V: View> UpgradeModelHandle for EventContext<'_, '_, '_, '_, V> {
+impl<V: View> UpgradeModelHandle for EventContext<'_, '_, '_, V> {
     fn upgrade_model_handle<T: Entity>(
         &self,
         handle: &WeakModelHandle<T>,
@@ -3594,7 +3589,7 @@ impl<V: View> UpgradeModelHandle for EventContext<'_, '_, '_, '_, V> {
     }
 }
 
-impl<V: View> UpgradeViewHandle for EventContext<'_, '_, '_, '_, V> {
+impl<V: View> UpgradeViewHandle for EventContext<'_, '_, '_, V> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.view_context.upgrade_view_handle(handle)
     }
@@ -4106,7 +4101,7 @@ impl AnyViewHandle {
         self.view_type
     }
 
-    pub fn debug_json<'a, 'b>(&self, cx: &'b WindowContext<'a, 'b>) -> serde_json::Value {
+    pub fn debug_json<'a, 'b>(&self, cx: &'b WindowContext<'a>) -> serde_json::Value {
         cx.views
             .get(&(self.window_id, self.view_id))
             .map_or_else(|| serde_json::Value::Null, |view| view.debug_json(cx))
