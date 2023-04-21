@@ -785,6 +785,10 @@ impl Pane {
     ) -> Option<Task<Result<()>>> {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
+
+        if pane.items.is_empty() {
+            return None;
+        }
         let active_item_id = pane.items[pane.active_item_index].id();
 
         let task = Self::close_item_by_id(workspace, pane_handle, active_item_id, cx);
@@ -2097,6 +2101,19 @@ mod tests {
     use crate::item::test::{TestItem, TestProjectItem};
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
+
+    #[gpui::test]
+    async fn test_remove_active_empty(cx: &mut TestAppContext) {
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, None, cx).await;
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(Pane::close_active_item(workspace, &CloseActiveItem, cx).is_none())
+        });
+    }
 
     #[gpui::test]
     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
