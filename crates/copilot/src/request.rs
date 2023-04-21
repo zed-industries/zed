@@ -143,8 +143,8 @@ pub enum LogMessage {}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogMessageParams {
-    pub message: String,
     pub level: u8,
+    pub message: String,
     pub metadata_str: String,
     pub extra: Vec<String>,
 }
