@@ -158,10 +158,6 @@ pub trait UpgradeViewHandle {
     fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle>;
 }
 
-pub trait ReadView {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
-}
-
 pub trait ReadViewWith {
     fn read_view_with<V, T>(
         &self,
@@ -1444,6 +1440,14 @@ impl AppContext {
         .unwrap()
     }
 
+    pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
+            view.as_any().downcast_ref().expect("downcast is type safe")
+        } else {
+            panic!("circular view reference for type {}", type_name::<T>());
+        }
+    }
+
     fn remove_dropped_entities(&mut self) {
         loop {
             let (dropped_models, dropped_views, dropped_element_states) =
@@ -2168,16 +2172,6 @@ impl UpgradeViewHandle for AppContext {
             ))
         } else {
             None
-        }
-    }
-}
-
-impl ReadView for AppContext {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
-            view.as_any().downcast_ref().expect("downcast is type safe")
-        } else {
-            panic!("circular view reference for type {}", type_name::<T>());
         }
     }
 }
@@ -3488,12 +3482,6 @@ impl<V: View> UpdateModel for ViewContext<'_, '_, V> {
     }
 }
 
-impl<V: View> ReadView for ViewContext<'_, '_, V> {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        self.window_context.read_view(handle)
-    }
-}
-
 impl<V: View> UpdateView for ViewContext<'_, '_, V> {
     type Output<S> = S;
 
@@ -3548,12 +3536,6 @@ impl<V: View> UpdateModel for EventContext<'_, '_, '_, V> {
         update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
     ) -> O {
         self.view_context.update_model(handle, update)
-    }
-}
-
-impl<V: View> ReadView for EventContext<'_, '_, '_, V> {
-    fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
-        self.view_context.read_view(handle)
     }
 }
 
@@ -3924,7 +3906,7 @@ impl<T: View> ViewHandle<T> {
         self.view_id
     }
 
-    pub fn read<'a, C: ReadView>(&self, cx: &'a C) -> &'a T {
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.read_view(self)
     }
 
