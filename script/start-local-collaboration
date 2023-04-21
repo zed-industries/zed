@@ -32,7 +32,8 @@ fi
 
 # Make each Zed instance take up half of the screen.
 output=$(system_profiler SPDisplaysDataType -json)
-resolution=$(echo "$output" | jq -r '.SPDisplaysDataType[0].spdisplays_ndrvs[] | select(.spdisplays_online == "spdisplays_yes") | ._spdisplays_resolution')
+main_display=$(echo "$output" | jq '.SPDisplaysDataType[].spdisplays_ndrvs[] | select(.spdisplays_main == "spdisplays_yes")')
+resolution=$(echo "$main_display" | jq -r '._spdisplays_resolution')
 width=$(echo "$resolution" | jq -Rr 'match("(\\d+) x (\\d+)").captures[0].string')
 half_width=$(($width / 2))
 height=$(echo "$resolution" | jq -Rr 'match("(\\d+) x (\\d+)").captures[1].string')
