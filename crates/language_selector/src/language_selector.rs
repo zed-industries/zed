@@ -182,7 +182,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let mat = &self.matches[ix];
@@ -197,6 +197,6 @@ impl PickerDelegate for LanguageSelectorDelegate {
             .with_highlights(mat.positions.clone())
             .contained()
             .with_style(style.container)
-            .into_element()
+            .into_any()
     }
 }

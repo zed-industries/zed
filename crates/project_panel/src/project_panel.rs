@@ -13,7 +13,7 @@ use gpui::{
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, ClipboardItem, Drawable, Element, Entity, ModelHandle, Task, View, ViewContext,
+    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
@@ -1098,7 +1098,7 @@ impl ProjectPanel {
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
         cx: &mut ViewContext<V>,
-    ) -> Element<V> {
+    ) -> AnyElement<V> {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
@@ -1127,21 +1127,21 @@ impl ProjectPanel {
                     .aligned()
                     .left()
                     .flex(1.0, true)
-                    .into_element()
+                    .into_any()
             } else {
                 Label::new(details.filename.clone(), style.text.clone())
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
                     .left()
-                    .into_element()
+                    .into_any()
             })
             .constrained()
             .with_height(style.height)
             .contained()
             .with_style(row_container_style)
             .with_padding_left(padding)
-            .into_named_element("project panel entry visual element")
+            .into_any_named("project panel entry visual element")
     }
 
     fn render_entry(
@@ -1151,7 +1151,7 @@ impl ProjectPanel {
         dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let kind = details.kind;
         let path = details.path.clone();
         let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
@@ -1255,7 +1255,7 @@ impl ProjectPanel {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .into_named_element("project panel entry")
+        .into_any_named("project panel entry")
     }
 }
 
@@ -1264,7 +1264,7 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
         enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
@@ -1319,7 +1319,7 @@ impl View for ProjectPanel {
                     }),
                 )
                 .with_child(ChildView::new(&self.context_menu, cx))
-                .into_named_element("project panel")
+                .into_any_named("project panel")
         } else {
             Flex::column()
                 .with_child(
@@ -1348,7 +1348,7 @@ impl View for ProjectPanel {
                 )
                 .contained()
                 .with_style(container_style)
-                .into_named_element("empty project panel")
+                .into_any_named("empty project panel")
         }
     }
 

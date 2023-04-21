@@ -27,7 +27,7 @@ impl View for DeployFeedbackButton {
         "DeployFeedbackButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let active = self.active;
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
@@ -65,7 +65,7 @@ impl View for DeployFeedbackButton {
                     cx,
                 ),
             )
-            .into_element()
+            .into_any()
     }
 }
 

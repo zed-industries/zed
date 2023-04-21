@@ -5,7 +5,7 @@ use gpui::{
     actions,
     anyhow::Result,
     elements::{Flex, ParentElement},
-    AppContext, Drawable, Element, Task, ViewContext,
+    AnyElement, AppContext, Element, Task, ViewContext,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
@@ -156,7 +156,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         mouse_state: &mut gpui::MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = settings.theme.picker.item.style_for(mouse_state, selected);
@@ -177,6 +177,6 @@ impl PickerDelegate for RecentProjectsDelegate {
             .flex(1., false)
             .contained()
             .with_style(style.container)
-            .into_named_element("match")
+            .into_any_named("match")
     }
 }

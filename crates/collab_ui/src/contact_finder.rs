@@ -96,7 +96,7 @@ impl PickerDelegate for ContactFinderDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let theme = &cx.global::<Settings>().theme;
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);
@@ -150,6 +150,6 @@ impl PickerDelegate for ContactFinderDelegate {
             .with_style(style.container)
             .constrained()
             .with_height(theme.contact_finder.row_height)
-            .into_element()
+            .into_any()
     }
 }

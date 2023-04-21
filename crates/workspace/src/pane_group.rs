@@ -71,7 +71,7 @@ impl PaneGroup {
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Element<Workspace> {
+    ) -> AnyElement<Workspace> {
         self.root.render(
             project,
             theme,
@@ -132,7 +132,7 @@ impl Member {
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Element<Workspace> {
+    ) -> AnyElement<Workspace> {
         enum FollowIntoExternalProject {}
 
         match self {
@@ -207,7 +207,7 @@ impl Member {
                                     .aligned()
                                     .bottom()
                                     .right()
-                                    .into_element(),
+                                    .into_any(),
                                 )
                             }
                         }
@@ -224,7 +224,7 @@ impl Member {
                             .aligned()
                             .bottom()
                             .right()
-                            .into_element(),
+                            .into_any(),
                         ),
                         ParticipantLocation::External => Some(
                             Label::new(
@@ -239,7 +239,7 @@ impl Member {
                             .aligned()
                             .bottom()
                             .right()
-                            .into_element(),
+                            .into_any(),
                         ),
                     }
                 } else {
@@ -249,7 +249,7 @@ impl Member {
                 Stack::new()
                     .with_child(ChildView::new(pane, cx).contained().with_border(border))
                     .with_children(leader_status_box)
-                    .into_element()
+                    .into_any()
             }
             Member::Axis(axis) => axis.render(
                 project,
@@ -361,7 +361,7 @@ impl PaneAxis {
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Workspace>,
-    ) -> Element<Workspace> {
+    ) -> AnyElement<Workspace> {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
@@ -382,12 +382,12 @@ impl PaneAxis {
                         Axis::Vertical => border.bottom = true,
                         Axis::Horizontal => border.right = true,
                     }
-                    member = member.contained().with_border(border).into_element();
+                    member = member.contained().with_border(border).into_any();
                 }
 
                 FlexItem::new(member).flex(flex, true)
             }))
-            .into_element()
+            .into_any()
     }
 }
 

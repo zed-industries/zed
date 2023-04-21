@@ -94,8 +94,8 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().into_element()
+        fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+            Empty::new().into_any()
         }
     }
 

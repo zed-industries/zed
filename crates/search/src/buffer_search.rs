@@ -92,7 +92,7 @@ impl View for BufferSearchBar {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
@@ -178,7 +178,7 @@ impl View for BufferSearchBar {
             .with_child(self.render_close_button(&theme.search, cx))
             .contained()
             .with_style(theme.search.container)
-            .into_named_element("search bar")
+            .into_any_named("search bar")
     }
 }
 
@@ -319,7 +319,7 @@ impl BufferSearchBar {
         icon: &'static str,
         option: SearchOption,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Element<Self>> {
+    ) -> Option<AnyElement<Self>> {
         if !option_supported {
             return None;
         }
@@ -349,7 +349,7 @@ impl BufferSearchBar {
                 tooltip_style,
                 cx,
             )
-            .into_element(),
+            .into_any(),
         )
     }
 
@@ -358,7 +358,7 @@ impl BufferSearchBar {
         icon: &'static str,
         direction: Direction,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -397,14 +397,14 @@ impl BufferSearchBar {
             tooltip_style,
             cx,
         )
-        .into_element()
+        .into_any()
     }
 
     fn render_close_button(
         &self,
         theme: &theme::Search,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let action = Box::new(Dismiss);
         let tooltip = "Dismiss Buffer Search";
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
@@ -428,7 +428,7 @@ impl BufferSearchBar {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<CloseButton>(0, tooltip.to_string(), Some(action), tooltip_style, cx)
-        .into_element()
+        .into_any()
     }
 
     fn deploy(pane: &mut Pane, action: &Deploy, cx: &mut ViewContext<Pane>) {

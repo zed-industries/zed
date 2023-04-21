@@ -3,7 +3,7 @@ use gpui::{
     color::Color,
     elements::{MouseEventHandler, Svg},
     platform::{Appearance, MouseButton},
-    AppContext, Drawable, Element, Entity, View, ViewContext,
+    AnyElement, AppContext, Element, Entity, View, ViewContext,
 };
 use settings::Settings;
 
@@ -40,7 +40,7 @@ impl View for SharingStatusIndicator {
         "SharingStatusIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let color = match cx.window_appearance() {
             Appearance::Light | Appearance::VibrantLight => Color::black(),
             Appearance::Dark | Appearance::VibrantDark => Color::white(),
@@ -56,6 +56,6 @@ impl View for SharingStatusIndicator {
         .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(ToggleScreenSharing);
         })
-        .into_element()
+        .into_any()
     }
 }

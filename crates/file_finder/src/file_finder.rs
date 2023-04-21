@@ -246,7 +246,7 @@ impl PickerDelegate for FileFinderDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let path_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
         let style = settings.theme.picker.item.style_for(mouse_state, selected);
@@ -262,7 +262,7 @@ impl PickerDelegate for FileFinderDelegate {
             .flex(1., false)
             .contained()
             .with_style(style.container)
-            .into_named_element("match")
+            .into_any_named("match")
     }
 }
 

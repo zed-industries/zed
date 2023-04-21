@@ -42,7 +42,7 @@ impl View for ContactNotification {
         "ContactNotification"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         match self.kind {
             ContactEventKind::Requested => render_user_notification(
                 self.user.clone(),

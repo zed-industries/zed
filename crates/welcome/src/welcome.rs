@@ -5,7 +5,7 @@ use std::{borrow::Cow, sync::Arc};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
-    AppContext, Drawable, Element, Entity, Subscription, View, ViewContext,
+    AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 
@@ -55,7 +55,7 @@ impl View for WelcomePage {
         "WelcomePage"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let self_handle = cx.handle();
         let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
@@ -181,9 +181,9 @@ impl View for WelcomePage {
                 .contained()
                 .with_uniform_padding(10.)
                 .aligned()
-                .into_element(),
+                .into_any(),
         )
-        .into_named_element("welcome page")
+        .into_any_named("welcome page")
     }
 }
 
@@ -205,14 +205,14 @@ impl Item for WelcomePage {
         _detail: Option<usize>,
         style: &theme::Tab,
         _cx: &gpui::AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Flex::row()
             .with_child(
                 Label::new("Welcome to Zed!", style.label.clone())
                     .aligned()
                     .contained(),
             )
-            .into_element()
+            .into_any()
     }
 
     fn show_toolbar(&self) -> bool {

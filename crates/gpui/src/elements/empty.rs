@@ -8,7 +8,7 @@ use crate::{
     json::{json, ToJson},
     SceneBuilder, View, ViewContext,
 };
-use crate::{Drawable, SizeConstraint};
+use crate::{Element, SizeConstraint};
 
 #[derive(Default)]
 pub struct Empty {
@@ -26,7 +26,7 @@ impl Empty {
     }
 }
 
-impl<V: View> Drawable<V> for Empty {
+impl<V: View> Element<V> for Empty {
     type LayoutState = ();
     type PaintState = ();
 

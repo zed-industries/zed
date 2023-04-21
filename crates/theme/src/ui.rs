@@ -11,7 +11,7 @@ use gpui::{
     platform,
     platform::MouseButton,
     scene::MouseClick,
-    Action, Drawable, EventContext, MouseState, View, ViewContext,
+    Action, Element, EventContext, MouseState, View, ViewContext,
 };
 use serde::Deserialize;
 
@@ -41,7 +41,7 @@ pub fn checkbox<Tag: 'static, V: View>(
     checkbox_with_label(label, style, checked, cx, change)
 }
 
-pub fn checkbox_with_label<Tag: 'static, D: Drawable<V>, V: View>(
+pub fn checkbox_with_label<Tag: 'static, D: Element<V>, V: View>(
     label: D,
     style: &CheckboxStyle,
     checked: bool,
@@ -223,12 +223,12 @@ pub fn modal<Tag, V, I, D, F>(
     style: &ModalStyle,
     cx: &mut ViewContext<V>,
     build_modal: F,
-) -> impl Drawable<V>
+) -> impl Element<V>
 where
     Tag: 'static,
     V: View,
     I: Into<Cow<'static, str>>,
-    D: Drawable<V>,
+    D: Element<V>,
     F: FnOnce(&mut gpui::ViewContext<V>) -> D,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;

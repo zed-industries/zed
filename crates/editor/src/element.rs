@@ -31,7 +31,7 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    Axis, Border, CursorRegion, Drawable, Element, EventContext, MouseRegion, Quad, SceneBuilder,
+    AnyElement, Axis, Border, CursorRegion, Element, EventContext, MouseRegion, Quad, SceneBuilder,
     SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
@@ -1500,7 +1500,7 @@ impl EditorElement {
                             .with_padding_left(gutter_padding)
                             .with_padding_right(gutter_padding)
                             .expanded()
-                            .into_named_element("path header block")
+                            .into_any_named("path header block")
                     } else {
                         let text_style = self.style.text.clone();
                         Flex::row()
@@ -1510,7 +1510,7 @@ impl EditorElement {
                             .with_padding_left(gutter_padding)
                             .with_padding_right(gutter_padding)
                             .expanded()
-                            .into_named_element("collapsed context")
+                            .into_any_named("collapsed context")
                     }
                 }
             };
@@ -1563,7 +1563,7 @@ impl EditorElement {
     }
 }
 
-impl Drawable<Editor> for EditorElement {
+impl Element<Editor> for EditorElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -2106,10 +2106,10 @@ pub struct LayoutState {
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     max_row: u32,
-    context_menu: Option<(DisplayPoint, Element<Editor>)>,
-    code_actions_indicator: Option<(u32, Element<Editor>)>,
-    hover_popovers: Option<(DisplayPoint, Vec<Element<Editor>>)>,
-    fold_indicators: Vec<Option<Element<Editor>>>,
+    context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
+    code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
+    hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
+    fold_indicators: Vec<Option<AnyElement<Editor>>>,
 }
 
 pub struct PositionMap {
@@ -2160,7 +2160,7 @@ impl PositionMap {
 
 struct BlockLayout {
     row: u32,
-    element: Element<Editor>,
+    element: AnyElement<Editor>,
     style: BlockStyle,
 }
 
@@ -2531,7 +2531,7 @@ mod tests {
                     disposition: BlockDisposition::Above,
                     height: 3,
                     position: Anchor::min(),
-                    render: Arc::new(|_| Empty::new().into_element()),
+                    render: Arc::new(|_| Empty::new().into_any()),
                 }],
                 cx,
             );

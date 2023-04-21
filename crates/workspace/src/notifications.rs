@@ -140,7 +140,7 @@ pub mod simple_message_notification {
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
         impl_actions,
         platform::{CursorStyle, MouseButton},
-        Action, AppContext, Drawable, Entity, View, ViewContext,
+        Action, AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;
@@ -229,7 +229,7 @@ pub mod simple_message_notification {
             "MessageNotification"
         }
 
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
             let theme = cx.global::<Settings>().theme.clone();
             let theme = &theme.simple_message_notification;
 
@@ -317,7 +317,7 @@ pub mod simple_message_notification {
             } else {
                 CursorStyle::Arrow
             })
-            .into_element()
+            .into_any()
         }
     }
 

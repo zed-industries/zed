@@ -563,7 +563,7 @@ impl Item for Editor {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Flex::row()
             .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).aligned())
             .with_children(detail.and_then(|detail| {
@@ -579,7 +579,7 @@ impl Item for Editor {
                     .aligned(),
                 )
             }))
-            .into_element()
+            .into_any()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
@@ -1108,16 +1108,16 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }
-            Label::new(text, theme.cursor_position.clone()).into_element()
+            Label::new(text, theme.cursor_position.clone()).into_any()
         } else {
-            Empty::new().into_element()
+            Empty::new().into_any()
         }
     }
 }

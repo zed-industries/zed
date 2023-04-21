@@ -1,7 +1,7 @@
 use gpui::{
     elements::{Flex, Label, MouseEventHandler, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
-    Drawable, Element, Entity, View, ViewContext, ViewHandle,
+    AnyElement, Element, Entity, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
@@ -29,7 +29,7 @@ impl View for FeedbackInfoText {
         "FeedbackInfoText"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         Flex::row()
@@ -68,7 +68,7 @@ impl View for FeedbackInfoText {
             .aligned()
             .left()
             .clipped()
-            .into_element()
+            .into_any()
     }
 }
 

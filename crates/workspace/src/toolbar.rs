@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
-    Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyElement, AnyViewHandle,
+    AppContext, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -59,7 +59,7 @@ impl View for Toolbar {
         "Toolbar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.toolbar;
 
         let mut primary_left_items = Vec::new();
@@ -77,9 +77,9 @@ impl View for Toolbar {
                         .contained()
                         .with_margin_right(spacing);
                     if let Some((flex, expanded)) = flex {
-                        primary_left_items.push(left_item.flex(flex, expanded).into_element());
+                        primary_left_items.push(left_item.flex(flex, expanded).into_any());
                     } else {
-                        primary_left_items.push(left_item.into_element());
+                        primary_left_items.push(left_item.into_any());
                     }
                 }
 
@@ -90,9 +90,9 @@ impl View for Toolbar {
                         .with_margin_left(spacing)
                         .flex_float();
                     if let Some((flex, expanded)) = flex {
-                        primary_right_items.push(right_item.flex(flex, expanded).into_element());
+                        primary_right_items.push(right_item.flex(flex, expanded).into_any());
                     } else {
-                        primary_right_items.push(right_item.into_element());
+                        primary_right_items.push(right_item.into_any());
                     }
                 }
 
@@ -101,7 +101,7 @@ impl View for Toolbar {
                         ChildView::new(item.as_any(), cx)
                             .constrained()
                             .with_height(theme.height)
-                            .into_element(),
+                            .into_any(),
                     );
                 }
             }
@@ -156,7 +156,7 @@ impl View for Toolbar {
             .with_children(secondary_item)
             .contained()
             .with_style(container_style)
-            .into_named_element("toolbar")
+            .into_any_named("toolbar")
     }
 }
 
@@ -171,7 +171,7 @@ fn nav_button<A: Action + Clone>(
     tooltip_action: A,
     action_name: &str,
     cx: &mut ViewContext<Toolbar>,
-) -> Element<Toolbar> {
+) -> AnyElement<Toolbar> {
     MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state, false)
@@ -207,7 +207,7 @@ fn nav_button<A: Action + Clone>(
     )
     .contained()
     .with_margin_right(spacing)
-    .into_named_element("nav button")
+    .into_any_named("nav button")
 }
 
 impl Toolbar {

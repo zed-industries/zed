@@ -1356,7 +1356,7 @@ impl Pane {
         });
     }
 
-    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Drawable<Self> {
+    fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         let pane = cx.handle().downgrade();
@@ -1445,9 +1445,9 @@ impl Pane {
                                         tooltip_theme,
                                         cx,
                                     )
-                                    .into_element()
+                                    .into_any()
                             } else {
-                                mouse_event_handler.into_element()
+                                mouse_event_handler.into_any()
                             }
                         }
                     });
@@ -1495,7 +1495,7 @@ impl Pane {
                     .with_border(filler_style.container.border)
             })
             .flex(1., true)
-            .into_named_element("filler"),
+            .into_any_named("filler"),
         );
 
         row
@@ -1546,7 +1546,7 @@ impl Pane {
         hovered: bool,
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let title = item.tab_content(detail, &tab_style, cx);
         Self::render_tab_with_title(title, item, pane, first, hovered, tab_style, cx)
     }
@@ -1559,20 +1559,20 @@ impl Pane {
         hovered: bool,
         tab_style: &theme::Tab,
         cx: &mut ViewContext<Workspace>,
-    ) -> Element<Workspace> {
+    ) -> AnyElement<Workspace> {
         let title = item.dragged_tab_content(detail, &tab_style, cx);
         Self::render_tab_with_title(title, item, pane, first, hovered, tab_style, cx)
     }
 
     fn render_tab_with_title<T: View>(
-        title: Element<T>,
+        title: AnyElement<T>,
         item: &Box<dyn ItemHandle>,
         pane: WeakViewHandle<Pane>,
         first: bool,
         hovered: bool,
         tab_style: &theme::Tab,
         cx: &mut ViewContext<T>,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         let mut container = tab_style.container.clone();
         if first {
             container.border.left = false;
@@ -1636,7 +1636,7 @@ impl Pane {
                             })
                         }
                     })
-                    .into_named_element("close-tab-icon")
+                    .into_any_named("close-tab-icon")
                     .constrained()
                 } else {
                     Empty::new().constrained()
@@ -1648,14 +1648,14 @@ impl Pane {
             .with_style(container)
             .constrained()
             .with_height(tab_style.height)
-            .into_element()
+            .into_any()
     }
 
     fn render_tab_bar_buttons(
         &mut self,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         Flex::row()
             // New menu
             .with_child(render_tab_bar_button(
@@ -1701,15 +1701,19 @@ impl Pane {
             .contained()
             .with_style(theme.workspace.tab_bar.pane_button_container)
             .flex(1., false)
-            .into_element()
+            .into_any()
     }
 
-    fn render_blank_pane(&mut self, theme: &Theme, _cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render_blank_pane(
+        &mut self,
+        theme: &Theme,
+        _cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
             .with_background_color(background)
-            .into_element()
+            .into_any()
     }
 }
 
@@ -1722,7 +1726,7 @@ impl View for Pane {
         "Pane"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum MouseNavigationHandler {}
 
         MouseEventHandler::<MouseNavigationHandler, _>::new(0, cx, |_, cx| {
@@ -1750,11 +1754,8 @@ impl View for Pane {
                             ),
                         );
 
-                        let mut tab_row = Flex::row().with_child(
-                            self.render_tabs(cx)
-                                .flex(1., true)
-                                .into_named_element("tabs"),
-                        );
+                        let mut tab_row = Flex::row()
+                            .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
 
                         if self.is_active {
                             tab_row.add_child(self.render_tab_bar_buttons(&theme, cx))
@@ -1765,7 +1766,7 @@ impl View for Pane {
                             .constrained()
                             .with_height(theme.workspace.tab_bar.height)
                             .flex(1., false)
-                            .into_named_element("tab bar")
+                            .into_any_named("tab bar")
                     })
                     .with_child({
                         enum PaneContentTabDropTarget {}
@@ -1797,7 +1798,7 @@ impl View for Pane {
                         .flex(1., true)
                     })
                     .with_child(ChildView::new(&self.tab_context_menu, cx))
-                    .into_element()
+                    .into_any()
             } else {
                 enum EmptyPane {}
                 let theme = cx.global::<Settings>().theme.clone();
@@ -1808,7 +1809,7 @@ impl View for Pane {
                 .on_down(MouseButton::Left, |_, _, cx| {
                     cx.focus_parent_view();
                 })
-                .into_element()
+                .into_any()
             }
         })
         .on_down(
@@ -1824,7 +1825,7 @@ impl View for Pane {
                 cx.dispatch_action(GoForward { pane: Some(pane) })
             }
         })
-        .into_named_element("pane")
+        .into_any_named("pane")
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -1876,7 +1877,7 @@ fn render_tab_bar_button<A: Action + Clone>(
     cx: &mut ViewContext<Pane>,
     action: A,
     context_menu: Option<ViewHandle<ContextMenu>>,
-) -> Element<Pane> {
+) -> AnyElement<Pane> {
     enum TabBarButton {}
 
     Stack::new()
@@ -1902,7 +1903,7 @@ fn render_tab_bar_button<A: Action + Clone>(
             context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
         )
         .flex(1., false)
-        .into_named_element("tab bar button")
+        .into_any_named("tab bar button")
 }
 
 impl ItemNavHistory {
@@ -2008,11 +2009,11 @@ impl NavHistory {
 
 pub struct PaneBackdrop<V: View> {
     child_view: usize,
-    child: Element<V>,
+    child: AnyElement<V>,
 }
 
 impl<V: View> PaneBackdrop<V> {
-    pub fn new(pane_item_view: usize, child: Element<V>) -> Self {
+    pub fn new(pane_item_view: usize, child: AnyElement<V>) -> Self {
         PaneBackdrop {
             child,
             child_view: pane_item_view,
@@ -2020,7 +2021,7 @@ impl<V: View> PaneBackdrop<V> {
     }
 }
 
-impl<V: View> Drawable<V> for PaneBackdrop<V> {
+impl<V: View> Element<V> for PaneBackdrop<V> {
     type LayoutState = ();
 
     type PaintState = ();

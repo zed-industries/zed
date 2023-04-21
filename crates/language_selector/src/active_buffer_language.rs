@@ -50,7 +50,7 @@ impl View for ActiveBufferLanguage {
         "ActiveBufferLanguage"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_language) = self.active_language.as_ref() {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
@@ -69,9 +69,9 @@ impl View for ActiveBufferLanguage {
             .on_click(MouseButton::Left, |_, _, cx| {
                 cx.dispatch_action(crate::Toggle)
             })
-            .into_element()
+            .into_any()
         } else {
-            Empty::new().into_element()
+            Empty::new().into_any()
         }
     }
 }

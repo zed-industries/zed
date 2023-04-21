@@ -201,7 +201,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let string_match = &self.matches[ix];
         let settings = cx.global::<Settings>();
         let style = &settings.theme.picker.item;
@@ -240,7 +240,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             )
             .contained()
             .with_style(current_style.container)
-            .into_element()
+            .into_any()
     }
 }
 

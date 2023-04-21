@@ -9,7 +9,7 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Border, Drawable, Element, SizeConstraint, ViewContext, ViewHandle,
+    AnyElement, AppContext, Border, Element, SizeConstraint, ViewContext, ViewHandle,
 };
 use settings::{DockAnchor, Settings};
 use theme::Theme;
@@ -315,7 +315,7 @@ impl Dock {
         theme: &Theme,
         anchor: DockAnchor,
         cx: &mut ViewContext<Workspace>,
-    ) -> Option<Element<Workspace>> {
+    ) -> Option<AnyElement<Workspace>> {
         let style = &theme.workspace.dock;
 
         self.position
@@ -382,7 +382,7 @@ impl Dock {
                             )
                         })
                     }
-                    .into_element()
+                    .into_any()
                 }
                 DockAnchor::Expanded => {
                     enum ExpandedDockWash {}
@@ -411,7 +411,7 @@ impl Dock {
                             .contained()
                             .with_style(style.maximized),
                         )
-                        .into_element()
+                        .into_any()
                 }
             })
     }

@@ -3,7 +3,7 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Drawable, Element, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
+    AnyElement, AppContext, Element, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
     WeakViewHandle,
 };
 use settings::Settings;
@@ -42,11 +42,11 @@ impl View for TerminalButton {
         "TerminalButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let workspace = self.workspace.upgrade(cx);
         let project = match workspace {
             Some(workspace) => workspace.read(cx).project().read(cx),
-            None => return Empty::new().into_element(),
+            None => return Empty::new().into_any(),
         };
 
         let focused_view = cx.focused_view_id();
@@ -79,7 +79,7 @@ impl View for TerminalButton {
                                     .constrained()
                                     .with_width(style.icon_size)
                                     .aligned()
-                                    .into_named_element("terminals-icon"),
+                                    .into_any_named("terminals-icon"),
                             )
                             .with_children(has_terminals.then(|| {
                                 Label::new(terminal_count.to_string(), style.label.text.clone())
@@ -112,7 +112,7 @@ impl View for TerminalButton {
                 ),
             )
             .with_child(ChildView::new(&self.popup_menu, cx).aligned().top().right())
-            .into_named_element("terminal button")
+            .into_any_named("terminal button")
     }
 }
 

@@ -85,7 +85,7 @@ impl View for DiagnosticIndicator {
         "DiagnosticIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum Summary {}
         enum Message {}
 
@@ -146,7 +146,7 @@ impl View for DiagnosticIndicator {
                             .constrained()
                             .with_width(style.icon_width)
                             .aligned()
-                            .into_named_element("ok-icon"),
+                            .into_any_named("ok-icon"),
                     );
                 }
 
@@ -174,7 +174,7 @@ impl View for DiagnosticIndicator {
                 cx,
             )
             .aligned()
-            .into_element(),
+            .into_any(),
         );
 
         let style = &cx.global::<Settings>().theme.workspace.status_bar;
@@ -206,7 +206,7 @@ impl View for DiagnosticIndicator {
             );
         }
 
-        element.into_named_element("diagnostic indicator")
+        element.into_any_named("diagnostic indicator")
     }
 
     fn debug_json(&self, _: &gpui::AppContext) -> serde_json::Value {

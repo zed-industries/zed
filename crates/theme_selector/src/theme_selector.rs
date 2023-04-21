@@ -1,5 +1,5 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{actions, elements::*, AppContext, Drawable, Element, MouseState, ViewContext};
+use gpui::{actions, elements::*, AnyElement, AppContext, Element, MouseState, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::{settings_file::SettingsFile, Settings};
 use staff_mode::StaffMode;
@@ -207,7 +207,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme;
         let theme_match = &self.matches[ix];
@@ -217,6 +217,6 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .with_highlights(theme_match.positions.clone())
             .contained()
             .with_style(style.container)
-            .into_element()
+            .into_any()
     }
 }

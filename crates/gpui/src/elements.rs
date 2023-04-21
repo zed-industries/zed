@@ -47,7 +47,7 @@ use std::{
 };
 use util::ResultExt;
 
-pub trait Drawable<V: View>: 'static {
+pub trait Element<V: View>: 'static {
     type LayoutState;
     type PaintState;
 
@@ -92,24 +92,22 @@ pub trait Drawable<V: View>: 'static {
         cx: &ViewContext<V>,
     ) -> serde_json::Value;
 
-    fn into_element(self) -> Element<V>
+    fn into_any(self) -> AnyElement<V>
     where
         Self: 'static + Sized,
     {
-        Element {
-            drawable: Box::new(Lifecycle::Init { element: self }),
-            view_type: PhantomData,
+        AnyElement {
+            state: Box::new(ElementState::Init { element: self }),
             name: None,
         }
     }
 
-    fn into_named_element(self, name: impl Into<Cow<'static, str>>) -> Element<V>
+    fn into_any_named(self, name: impl Into<Cow<'static, str>>) -> AnyElement<V>
     where
         Self: 'static + Sized,
     {
-        Element {
-            drawable: Box::new(Lifecycle::Init { element: self }),
-            view_type: PhantomData,
+        AnyElement {
+            state: Box::new(ElementState::Init { element: self }),
             name: Some(name.into()),
         }
     }
@@ -119,7 +117,7 @@ pub trait Drawable<V: View>: 'static {
         Self: 'static + Sized,
     {
         RootElement {
-            element: self.into_element(),
+            element: self.into_any(),
             view: cx.handle().downgrade(),
         }
     }
@@ -128,49 +126,49 @@ pub trait Drawable<V: View>: 'static {
     where
         Self: 'static + Sized,
     {
-        ConstrainedBox::new(self.into_element())
+        ConstrainedBox::new(self.into_any())
     }
 
     fn aligned(self) -> Align<V>
     where
         Self: 'static + Sized,
     {
-        Align::new(self.into_element())
+        Align::new(self.into_any())
     }
 
     fn clipped(self) -> Clipped<V>
     where
         Self: 'static + Sized,
     {
-        Clipped::new(self.into_element())
+        Clipped::new(self.into_any())
     }
 
     fn contained(self) -> Container<V>
     where
         Self: 'static + Sized,
     {
-        Container::new(self.into_element())
+        Container::new(self.into_any())
     }
 
     fn expanded(self) -> Expanded<V>
     where
         Self: 'static + Sized,
     {
-        Expanded::new(self.into_element())
+        Expanded::new(self.into_any())
     }
 
     fn flex(self, flex: f32, expanded: bool) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
-        FlexItem::new(self.into_element()).flex(flex, expanded)
+        FlexItem::new(self.into_any()).flex(flex, expanded)
     }
 
     fn flex_float(self) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
-        FlexItem::new(self.into_element()).float()
+        FlexItem::new(self.into_any()).float()
     }
 
     fn with_tooltip<Tag: 'static>(
@@ -184,7 +182,7 @@ pub trait Drawable<V: View>: 'static {
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, V>(id, text, action, style, self.into_element(), cx)
+        Tooltip::new::<Tag, V>(id, text, action, style, self.into_any(), cx)
     }
 
     fn with_resize_handle<Tag: 'static>(
@@ -199,7 +197,7 @@ pub trait Drawable<V: View>: 'static {
         Self: 'static + Sized,
     {
         Resizable::new::<Tag, V>(
-            self.into_element(),
+            self.into_any(),
             element_id,
             side,
             handle_size,
@@ -209,7 +207,7 @@ pub trait Drawable<V: View>: 'static {
     }
 }
 
-trait AnyDrawable<V: View> {
+trait AnyElementState<V: View> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
@@ -240,7 +238,7 @@ trait AnyDrawable<V: View> {
     fn metadata(&self) -> Option<&dyn Any>;
 }
 
-enum Lifecycle<V: View, E: Drawable<V>> {
+enum ElementState<V: View, E: Element<V>> {
     Empty,
     Init {
         element: E,
@@ -261,7 +259,7 @@ enum Lifecycle<V: View, E: Drawable<V>> {
     },
 }
 
-impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
+impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
@@ -270,16 +268,16 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
     ) -> Vector2F {
         let result;
         *self = match mem::take(self) {
-            Lifecycle::Empty => unreachable!(),
-            Lifecycle::Init { mut element }
-            | Lifecycle::PostLayout { mut element, .. }
-            | Lifecycle::PostPaint { mut element, .. } => {
+            ElementState::Empty => unreachable!(),
+            ElementState::Init { mut element }
+            | ElementState::PostLayout { mut element, .. }
+            | ElementState::PostPaint { mut element, .. } => {
                 let (size, layout) = element.layout(constraint, view, cx);
                 debug_assert!(size.x().is_finite());
                 debug_assert!(size.y().is_finite());
 
                 result = size;
-                Lifecycle::PostLayout {
+                ElementState::PostLayout {
                     element,
                     constraint,
                     size,
@@ -299,7 +297,7 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
         cx: &mut ViewContext<V>,
     ) {
         *self = match mem::take(self) {
-            Lifecycle::PostLayout {
+            ElementState::PostLayout {
                 mut element,
                 constraint,
                 size,
@@ -307,7 +305,7 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
             } => {
                 let bounds = RectF::new(origin, size);
                 let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
-                Lifecycle::PostPaint {
+                ElementState::PostPaint {
                     element,
                     constraint,
                     bounds,
@@ -316,7 +314,7 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
                     paint,
                 }
             }
-            Lifecycle::PostPaint {
+            ElementState::PostPaint {
                 mut element,
                 constraint,
                 bounds,
@@ -325,7 +323,7 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
             } => {
                 let bounds = RectF::new(origin, bounds.size());
                 let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
-                Lifecycle::PostPaint {
+                ElementState::PostPaint {
                     element,
                     constraint,
                     bounds,
@@ -334,8 +332,8 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
                     paint,
                 }
             }
-            Lifecycle::Empty => panic!("invalid element lifecycle state"),
-            Lifecycle::Init { .. } => {
+            ElementState::Empty => panic!("invalid element lifecycle state"),
+            ElementState::Init { .. } => {
                 panic!("invalid element lifecycle state, paint called before layout")
             }
         }
@@ -347,7 +345,7 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        if let Lifecycle::PostPaint {
+        if let ElementState::PostPaint {
             element,
             bounds,
             visible_bounds,
@@ -372,24 +370,26 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
 
     fn size(&self) -> Vector2F {
         match self {
-            Lifecycle::Empty | Lifecycle::Init { .. } => panic!("invalid element lifecycle state"),
-            Lifecycle::PostLayout { size, .. } => *size,
-            Lifecycle::PostPaint { bounds, .. } => bounds.size(),
+            ElementState::Empty | ElementState::Init { .. } => {
+                panic!("invalid element lifecycle state")
+            }
+            ElementState::PostLayout { size, .. } => *size,
+            ElementState::PostPaint { bounds, .. } => bounds.size(),
         }
     }
 
     fn metadata(&self) -> Option<&dyn Any> {
         match self {
-            Lifecycle::Empty => unreachable!(),
-            Lifecycle::Init { element }
-            | Lifecycle::PostLayout { element, .. }
-            | Lifecycle::PostPaint { element, .. } => element.metadata(),
+            ElementState::Empty => unreachable!(),
+            ElementState::Init { element }
+            | ElementState::PostLayout { element, .. }
+            | ElementState::PostPaint { element, .. } => element.metadata(),
         }
     }
 
     fn debug(&self, view: &V, cx: &ViewContext<V>) -> serde_json::Value {
         match self {
-            Lifecycle::PostPaint {
+            ElementState::PostPaint {
                 element,
                 constraint,
                 bounds,
@@ -419,25 +419,24 @@ impl<V: View, E: Drawable<V>> AnyDrawable<V> for Lifecycle<V, E> {
     }
 }
 
-impl<V: View, E: Drawable<V>> Default for Lifecycle<V, E> {
+impl<V: View, E: Element<V>> Default for ElementState<V, E> {
     fn default() -> Self {
         Self::Empty
     }
 }
 
-pub struct Element<V: View> {
-    drawable: Box<dyn AnyDrawable<V>>,
-    view_type: PhantomData<V>,
+pub struct AnyElement<V: View> {
+    state: Box<dyn AnyElementState<V>>,
     name: Option<Cow<'static, str>>,
 }
 
-impl<V: View> Element<V> {
+impl<V: View> AnyElement<V> {
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
 
     pub fn metadata<T: 'static>(&self) -> Option<&T> {
-        self.drawable
+        self.state
             .metadata()
             .and_then(|data| data.downcast_ref::<T>())
     }
@@ -448,7 +447,7 @@ impl<V: View> Element<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Vector2F {
-        self.drawable.layout(constraint, view, cx)
+        self.state.layout(constraint, view, cx)
     }
 
     pub fn paint(
@@ -459,7 +458,7 @@ impl<V: View> Element<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
-        self.drawable.paint(scene, origin, visible_bounds, view, cx);
+        self.state.paint(scene, origin, visible_bounds, view, cx);
     }
 
     pub fn rect_for_text_range(
@@ -468,15 +467,15 @@ impl<V: View> Element<V> {
         view: &V,
         cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.drawable.rect_for_text_range(range_utf16, view, cx)
+        self.state.rect_for_text_range(range_utf16, view, cx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.drawable.size()
+        self.state.size()
     }
 
     pub fn debug(&self, view: &V, cx: &ViewContext<V>) -> json::Value {
-        let mut value = self.drawable.debug(view, cx);
+        let mut value = self.state.debug(view, cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {
@@ -495,11 +494,11 @@ impl<V: View> Element<V> {
         T: 'static,
         F: FnOnce(Option<&T>) -> R,
     {
-        f(self.drawable.metadata().and_then(|m| m.downcast_ref()))
+        f(self.state.metadata().and_then(|m| m.downcast_ref()))
     }
 }
 
-impl<V: View> Drawable<V> for Element<V> {
+impl<V: View> Element<V> for AnyElement<V> {
     type LayoutState = ();
     type PaintState = ();
 
@@ -549,7 +548,7 @@ impl<V: View> Drawable<V> for Element<V> {
         self.debug(view, cx)
     }
 
-    fn into_element(self) -> Element<V>
+    fn into_any(self) -> AnyElement<V>
     where
         Self: Sized,
     {
@@ -558,18 +557,18 @@ impl<V: View> Drawable<V> for Element<V> {
 }
 
 pub struct RootElement<V: View> {
-    element: Element<V>,
+    element: AnyElement<V>,
     view: WeakViewHandle<V>,
 }
 
 impl<V: View> RootElement<V> {
-    pub fn new(element: Element<V>, view: WeakViewHandle<V>) -> Self {
+    pub fn new(element: AnyElement<V>, view: WeakViewHandle<V>) -> Self {
         Self { element, view }
     }
 }
 
 pub trait Component<V: View>: 'static {
-    fn render(&self, view: &mut V, cx: &mut ViewContext<V>) -> Element<V>;
+    fn render(&self, view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
 }
 
 pub struct ComponentHost<V: View, C: Component<V>> {
@@ -591,8 +590,8 @@ impl<V: View, C: Component<V>> DerefMut for ComponentHost<V, C> {
     }
 }
 
-impl<V: View, C: Component<V>> Drawable<V> for ComponentHost<V, C> {
-    type LayoutState = Element<V>;
+impl<V: View, C: Component<V>> Element<V> for ComponentHost<V, C> {
+    type LayoutState = AnyElement<V>;
     type PaintState = ();
 
     fn layout(
@@ -600,7 +599,7 @@ impl<V: View, C: Component<V>> Drawable<V> for ComponentHost<V, C> {
         constraint: SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> (Vector2F, Element<V>) {
+    ) -> (Vector2F, AnyElement<V>) {
         let mut element = self.component.render(view, cx);
         let size = element.layout(constraint, view, cx);
         (size, element)
@@ -611,7 +610,7 @@ impl<V: View, C: Component<V>> Drawable<V> for ComponentHost<V, C> {
         scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        element: &mut Element<V>,
+        element: &mut AnyElement<V>,
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) {
@@ -623,7 +622,7 @@ impl<V: View, C: Component<V>> Drawable<V> for ComponentHost<V, C> {
         range_utf16: Range<usize>,
         _: RectF,
         _: RectF,
-        element: &Element<V>,
+        element: &AnyElement<V>,
         _: &(),
         view: &V,
         cx: &ViewContext<V>,
@@ -634,7 +633,7 @@ impl<V: View, C: Component<V>> Drawable<V> for ComponentHost<V, C> {
     fn debug(
         &self,
         _: RectF,
-        element: &Element<V>,
+        element: &AnyElement<V>,
         _: &(),
         view: &V,
         cx: &ViewContext<V>,
@@ -718,7 +717,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
     }
 }
 
-impl<V: View, R: View> Drawable<V> for RootElement<R> {
+impl<V: View, R: View> Element<V> for RootElement<R> {
     type LayoutState = ();
     type PaintState = ();
 
@@ -775,27 +774,27 @@ impl<V: View, R: View> Drawable<V> for RootElement<R> {
     }
 }
 
-pub trait ParentElement<'a, V: View>: Extend<Element<V>> + Sized {
-    fn add_children<D: Drawable<V>>(&mut self, children: impl IntoIterator<Item = D>) {
-        self.extend(children.into_iter().map(|child| child.into_element()));
+pub trait ParentElement<'a, V: View>: Extend<AnyElement<V>> + Sized {
+    fn add_children<E: Element<V>>(&mut self, children: impl IntoIterator<Item = E>) {
+        self.extend(children.into_iter().map(|child| child.into_any()));
     }
 
-    fn add_child<D: Drawable<V>>(&mut self, child: D) {
-        self.extend(Some(child.into_element()));
+    fn add_child<D: Element<V>>(&mut self, child: D) {
+        self.extend(Some(child.into_any()));
     }
 
-    fn with_children<D: Drawable<V>>(mut self, children: impl IntoIterator<Item = D>) -> Self {
-        self.extend(children.into_iter().map(|child| child.into_element()));
+    fn with_children<D: Element<V>>(mut self, children: impl IntoIterator<Item = D>) -> Self {
+        self.extend(children.into_iter().map(|child| child.into_any()));
         self
     }
 
-    fn with_child<D: Drawable<V>>(mut self, child: D) -> Self {
-        self.extend(Some(child.into_element()));
+    fn with_child<D: Element<V>>(mut self, child: D) -> Self {
+        self.extend(Some(child.into_any()));
         self
     }
 }
 
-impl<'a, V: View, T> ParentElement<'a, V> for T where T: Extend<Element<V>> {}
+impl<'a, V: View, T> ParentElement<'a, V> for T where T: Extend<AnyElement<V>> {}
 
 pub fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
     if max_size.x().is_infinite() && max_size.y().is_infinite() {

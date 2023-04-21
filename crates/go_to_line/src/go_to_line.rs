@@ -143,7 +143,7 @@ impl View for GoToLine {
         "GoToLine"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
@@ -168,7 +168,7 @@ impl View for GoToLine {
             .with_style(theme.container)
             .constrained()
             .with_max_width(500.0)
-            .into_named_element("go to line")
+            .into_any_named("go to line")
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

@@ -4,7 +4,7 @@ use gpui::{
     geometry::rect::RectF,
     impl_internal_actions,
     platform::{WindowBounds, WindowKind, WindowOptions},
-    AnyViewHandle, AppContext, ClipboardItem, Drawable, Element, Entity, View, ViewContext,
+    AnyElement, AnyViewHandle, AppContext, ClipboardItem, Element, Entity, View, ViewContext,
     ViewHandle,
 };
 use settings::Settings;
@@ -119,7 +119,7 @@ impl CopilotCodeVerification {
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
         cx: &mut ViewContext<Self>,
-    ) -> impl Drawable<Self> {
+    ) -> impl Element<Self> {
         let copied = cx
             .read_from_clipboard()
             .map(|item| item.text() == &data.user_code)
@@ -167,7 +167,7 @@ impl CopilotCodeVerification {
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         enum ConnectButton {}
 
         Flex::column()
@@ -226,10 +226,13 @@ impl CopilotCodeVerification {
                 },
             ))
             .align_children_center()
-            .into_element()
+            .into_any()
     }
 
-    fn render_enabled_modal(style: &theme::Copilot, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render_enabled_modal(
+        style: &theme::Copilot,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         enum DoneButton {}
 
         let enabled_style = &style.auth.authorized;
@@ -267,13 +270,13 @@ impl CopilotCodeVerification {
                 |_, _, cx| cx.remove_window(),
             ))
             .align_children_center()
-            .into_element()
+            .into_any()
     }
 
     fn render_unauthorized_modal(
         style: &theme::Copilot,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let unauthorized_style = &style.auth.not_authorized;
 
         Flex::column()
@@ -324,7 +327,7 @@ impl CopilotCodeVerification {
                 },
             ))
             .align_children_center()
-            .into_element()
+            .into_any()
     }
 }
 
@@ -345,7 +348,7 @@ impl View for CopilotCodeVerification {
         cx.notify()
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum ConnectModal {}
 
         let style = cx.global::<Settings>().theme.clone();
@@ -357,7 +360,7 @@ impl View for CopilotCodeVerification {
             |cx| {
                 Flex::column()
                     .with_children([
-                        theme::ui::icon(&style.copilot.auth.header).into_element(),
+                        theme::ui::icon(&style.copilot.auth.header).into_any(),
                         match &self.status {
                             Status::SigningIn {
                                 prompt: Some(prompt),
@@ -375,12 +378,12 @@ impl View for CopilotCodeVerification {
                                 self.connect_clicked = false;
                                 Self::render_enabled_modal(&style.copilot, cx)
                             }
-                            _ => Empty::new().into_element(),
+                            _ => Empty::new().into_any(),
                         },
                     ])
                     .align_children_center()
             },
         )
-        .into_element()
+        .into_any()
     }
 }

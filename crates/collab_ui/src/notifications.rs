@@ -2,7 +2,7 @@ use client::User;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, Drawable, Element, View, ViewContext,
+    Action, AnyElement, Element, View, ViewContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
     dismiss_action: A,
     buttons: Vec<(&'static str, Box<dyn Action>)>,
     cx: &mut ViewContext<V>,
-) -> Element<V> {
+) -> AnyElement<V> {
     let theme = cx.global::<Settings>().theme.clone();
     let theme = &theme.contact_notification;
 
@@ -77,7 +77,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     .top()
                     .flex_float(),
                 )
-                .into_named_element("contact notification header"),
+                .into_any_named("contact notification header"),
         )
         .with_children(body.map(|body| {
             Label::new(body, theme.body_message.text.clone())
@@ -108,5 +108,5 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
             )
         })
         .contained()
-        .into_element()
+        .into_any()
 }

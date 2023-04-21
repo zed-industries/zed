@@ -68,11 +68,11 @@ impl View for CollabTitlebarItem {
         "CollabTitlebarItem"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let workspace = if let Some(workspace) = self.workspace.upgrade(cx) {
             workspace
         } else {
-            return Empty::new().into_element();
+            return Empty::new().into_any();
         };
 
         let project = workspace.read(cx).project().read(cx);
@@ -129,7 +129,7 @@ impl View for CollabTitlebarItem {
         Stack::new()
             .with_child(left_container)
             .with_child(right_container.aligned().right())
-            .into_element()
+            .into_any()
     }
 }
 
@@ -299,7 +299,7 @@ impl CollabTitlebarItem {
                             ))
                             .contained()
                             .with_style(item_style.container)
-                            .into_element()
+                            .into_any()
                     })),
                     ContextMenuItem::item("Sign out", SignOut),
                     ContextMenuItem::item("Send Feedback", feedback::feedback_editor::GiveFeedback),
@@ -325,7 +325,7 @@ impl CollabTitlebarItem {
         &self,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
 
         let badge = if self
@@ -379,7 +379,7 @@ impl CollabTitlebarItem {
             )
             .with_children(badge)
             .with_children(self.render_contacts_popover_host(titlebar, cx))
-            .into_element()
+            .into_any()
     }
 
     fn render_toggle_screen_sharing_button(
@@ -387,7 +387,7 @@ impl CollabTitlebarItem {
         theme: &Theme,
         room: &ModelHandle<Room>,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
@@ -424,7 +424,7 @@ impl CollabTitlebarItem {
             cx,
         )
         .aligned()
-        .into_element()
+        .into_any()
     }
 
     fn render_in_call_share_unshare_button(
@@ -432,7 +432,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Element<Self>> {
+    ) -> Option<AnyElement<Self>> {
         let project = workspace.read(cx).project();
         if project.read(cx).is_remote() {
             return None;
@@ -478,11 +478,15 @@ impl CollabTitlebarItem {
                 .aligned()
                 .contained()
                 .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .into_element(),
+                .into_any(),
         )
     }
 
-    fn render_user_menu_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render_user_menu_button(
+        &self,
+        theme: &Theme,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
 
         Stack::new()
@@ -520,10 +524,10 @@ impl CollabTitlebarItem {
                     .bottom()
                     .right(),
             )
-            .into_element()
+            .into_any()
     }
 
-    fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
             let style = titlebar.sign_in_prompt.style_for(state, false);
@@ -535,14 +539,14 @@ impl CollabTitlebarItem {
         .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(SignIn);
         })
-        .into_element()
+        .into_any()
     }
 
     fn render_contacts_popover_host<'a>(
         &'a self,
         _theme: &'a theme::Titlebar,
         cx: &'a ViewContext<Self>,
-    ) -> Option<Element<Self>> {
+    ) -> Option<AnyElement<Self>> {
         self.contacts_popover.as_ref().map(|popover| {
             Overlay::new(ChildView::new(popover, cx))
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
@@ -551,7 +555,7 @@ impl CollabTitlebarItem {
                 .aligned()
                 .bottom()
                 .right()
-                .into_element()
+                .into_any()
         })
     }
 
@@ -602,7 +606,7 @@ impl CollabTitlebarItem {
         user: &Arc<User>,
         peer_id: PeerId,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         Container::new(self.render_face_pile(
             user,
@@ -614,7 +618,7 @@ impl CollabTitlebarItem {
             cx,
         ))
         .with_margin_right(theme.workspace.titlebar.item_spacing)
-        .into_element()
+        .into_any()
     }
 
     fn render_face_pile(
@@ -626,7 +630,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let project_id = workspace.read(cx).project().read(cx).remote_id();
         let room = ActiveCall::global(cx).read(cx).room();
         let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
@@ -732,7 +736,7 @@ impl CollabTitlebarItem {
                         .bottom(),
                 )
             })())
-            .into_element();
+            .into_any();
 
         if let Some(location) = location {
             if let Some(replica_id) = replica_id {
@@ -756,7 +760,7 @@ impl CollabTitlebarItem {
                     theme.tooltip.clone(),
                     cx,
                 )
-                .into_element();
+                .into_any();
             } else if let ParticipantLocation::SharedProject { project_id } = location {
                 let user_id = user.id;
                 content = MouseEventHandler::<JoinProject, Self>::new(
@@ -778,7 +782,7 @@ impl CollabTitlebarItem {
                     theme.tooltip.clone(),
                     cx,
                 )
-                .into_element();
+                .into_any();
             }
         }
         content
@@ -807,7 +811,7 @@ impl CollabTitlebarItem {
         avatar: Arc<ImageData>,
         avatar_style: AvatarStyle,
         background_color: Color,
-    ) -> Element<V> {
+    ) -> AnyElement<V> {
         Image::from_data(avatar)
             .with_style(avatar_style.image)
             .aligned()
@@ -818,14 +822,14 @@ impl CollabTitlebarItem {
             .with_width(avatar_style.outer_width)
             .with_height(avatar_style.outer_width)
             .aligned()
-            .into_element()
+            .into_any()
     }
 
     fn render_connection_status(
         &self,
         status: &client::Status,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Element<Self>> {
+    ) -> Option<AnyElement<Self>> {
         enum ConnectionStatusButton {}
 
         let theme = &cx.global::<Settings>().theme.clone();
@@ -842,7 +846,7 @@ impl CollabTitlebarItem {
                     .aligned()
                     .contained()
                     .with_style(theme.workspace.titlebar.offline_icon.container)
-                    .into_element(),
+                    .into_any(),
             ),
             client::Status::UpgradeRequired => Some(
                 MouseEventHandler::<ConnectionStatusButton, Self>::new(0, cx, |_, _| {
@@ -858,7 +862,7 @@ impl CollabTitlebarItem {
                 .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(auto_update::Check);
                 })
-                .into_element(),
+                .into_any(),
             ),
             _ => None,
         }
@@ -875,7 +879,7 @@ impl AvatarRibbon {
     }
 }
 
-impl Drawable<CollabTitlebarItem> for AvatarRibbon {
+impl Element<CollabTitlebarItem> for AvatarRibbon {
     type LayoutState = ();
 
     type PaintState = ();

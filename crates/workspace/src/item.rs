@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use client::{proto, Client};
 use gpui::{
-    fonts::HighlightStyle, AnyViewHandle, AppContext, Element, ModelHandle, Task, View,
+    fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, ModelHandle, Task, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -59,7 +59,7 @@ pub trait Item: View {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<V>;
+    ) -> AnyElement<V>;
     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -180,13 +180,13 @@ pub trait ItemHandle: 'static + fmt::Debug {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Pane>;
+    ) -> AnyElement<Pane>;
     fn dragged_tab_content(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Workspace>;
+    ) -> AnyElement<Workspace>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
@@ -283,7 +283,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Pane> {
+    ) -> AnyElement<Pane> {
         self.read(cx).tab_content(detail, style, cx)
     }
 
@@ -292,7 +292,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Workspace> {
+    ) -> AnyElement<Workspace> {
         self.read(cx).tab_content(detail, style, cx)
     }
 
@@ -770,7 +770,7 @@ pub(crate) mod test {
     use super::{Item, ItemEvent};
     use crate::{sidebar::SidebarItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
-        elements::Empty, AppContext, Drawable, Element, Entity, ModelHandle, Task, View,
+        elements::Empty, AnyElement, AppContext, Element, Entity, ModelHandle, Task, View,
         ViewContext, ViewHandle, WeakViewHandle,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
@@ -929,8 +929,8 @@ pub(crate) mod test {
             "TestItem"
         }
 
-        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-            Empty::new().into_element()
+        fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+            Empty::new().into_any()
         }
     }
 
@@ -947,9 +947,9 @@ pub(crate) mod test {
             detail: Option<usize>,
             _: &theme::Tab,
             _: &AppContext,
-        ) -> Element<V> {
+        ) -> AnyElement<V> {
             self.tab_detail.set(detail);
-            Empty::new().into_element()
+            Empty::new().into_any()
         }
 
         fn for_each_project_item(

@@ -2075,7 +2075,7 @@ impl Workspace {
         self.leader_state.followers.contains(&peer_id)
     }
 
-    fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         // TODO: There should be a better system in place for this
         // (https://github.com/zed-industries/zed/issues/1290)
         let is_fullscreen = cx.window_is_fullscreen();
@@ -2105,7 +2105,7 @@ impl Workspace {
         })
         .constrained()
         .with_height(theme.workspace.titlebar.height)
-        .into_named_element("titlebar")
+        .into_any_named("titlebar")
     }
 
     fn active_item_path_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -2173,7 +2173,7 @@ impl Workspace {
     fn render_disconnected_overlay(
         &self,
         cx: &mut ViewContext<Workspace>,
-    ) -> Option<Element<Workspace>> {
+    ) -> Option<AnyElement<Workspace>> {
         if self.project.read(cx).is_read_only() {
             enum DisconnectedOverlay {}
             Some(
@@ -2189,7 +2189,7 @@ impl Workspace {
                 })
                 .with_cursor_style(CursorStyle::Arrow)
                 .capture_all()
-                .into_named_element("disconnected overlay"),
+                .into_any_named("disconnected overlay"),
             )
         } else {
             None
@@ -2200,7 +2200,7 @@ impl Workspace {
         &self,
         theme: &theme::Workspace,
         cx: &AppContext,
-    ) -> Option<Element<Workspace>> {
+    ) -> Option<AnyElement<Workspace>> {
         if self.notifications.is_empty() {
             None
         } else {
@@ -2218,7 +2218,7 @@ impl Workspace {
                     .aligned()
                     .bottom()
                     .right()
-                    .into_element(),
+                    .into_any(),
             )
         }
     }
@@ -2826,7 +2826,7 @@ impl View for Workspace {
         "Workspace"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(
@@ -2923,7 +2923,7 @@ impl View for Workspace {
             )
             .with_children(DragAndDrop::render(cx))
             .with_children(self.render_disconnected_overlay(cx))
-            .into_named_element("workspace")
+            .into_any_named("workspace")
     }
 
     fn focus_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {

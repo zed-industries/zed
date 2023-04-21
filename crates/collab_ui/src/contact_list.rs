@@ -748,7 +748,7 @@ impl ContactList {
         is_pending: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
@@ -785,7 +785,7 @@ impl ContactList {
                     .contact_row
                     .style_for(&mut Default::default(), is_selected),
             )
-            .into_element()
+            .into_any()
     }
 
     fn render_participant_project(
@@ -797,7 +797,7 @@ impl ContactList {
         is_selected: bool,
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -881,7 +881,7 @@ impl ContactList {
                 });
             }
         })
-        .into_element()
+        .into_any()
     }
 
     fn render_participant_screen(
@@ -890,7 +890,7 @@ impl ContactList {
         is_selected: bool,
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -974,7 +974,7 @@ impl ContactList {
         .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(OpenSharedScreen { peer_id });
         })
-        .into_element()
+        .into_any()
     }
 
     fn render_header(
@@ -983,7 +983,7 @@ impl ContactList {
         is_selected: bool,
         is_collapsed: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         enum Header {}
         enum LeaveCallContactList {}
 
@@ -1046,7 +1046,7 @@ impl ContactList {
         .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleExpanded(section))
         })
-        .into_element()
+        .into_any()
     }
 
     fn render_contact(
@@ -1056,7 +1056,7 @@ impl ContactList {
         theme: &theme::ContactList,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
@@ -1155,7 +1155,7 @@ impl ContactList {
             event_handler = event_handler.with_cursor_style(CursorStyle::PointingHand);
         }
 
-        event_handler.into_element()
+        event_handler.into_any()
     }
 
     fn render_contact_request(
@@ -1165,7 +1165,7 @@ impl ContactList {
         is_incoming: bool,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         enum Decline {}
         enum Accept {}
         enum Cancel {}
@@ -1266,7 +1266,7 @@ impl ContactList {
                     .contact_row
                     .style_for(&mut Default::default(), is_selected),
             )
-            .into_element()
+            .into_any()
     }
 
     fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
@@ -1295,7 +1295,7 @@ impl View for ContactList {
         cx
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum AddContact {}
         let theme = cx.global::<Settings>().theme.clone();
 
@@ -1331,7 +1331,7 @@ impl View for ContactList {
                     .with_height(theme.contact_list.user_query_editor_height),
             )
             .with_child(List::new(self.list_state.clone()).flex(1., false))
-            .into_element()
+            .into_any()
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -1347,7 +1347,7 @@ impl View for ContactList {
     }
 }
 
-fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Drawable<ContactList> {
+fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<ContactList> {
     Svg::new(svg_path)
         .with_color(style.color)
         .constrained()

@@ -6,7 +6,8 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Drawable, Element, Entity, MouseState, Subscription, View, ViewContext, ViewHandle,
+    AnyElement, AppContext, Element, Entity, MouseState, Subscription, View, ViewContext,
+    ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
 use workspace::{
@@ -155,17 +156,17 @@ impl View for CopilotButton {
         "CopilotButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let settings = cx.global::<Settings>();
 
         if !settings.features.copilot {
-            return Empty::new().into_element();
+            return Empty::new().into_any();
         }
 
         let theme = settings.theme.clone();
         let active = self.popup_menu.read(cx).visible();
         let Some(copilot) = Copilot::global(cx) else {
-            return Empty::new().into_element();
+            return Empty::new().into_any();
         };
         let status = copilot.read(cx).status();
 
@@ -205,7 +206,7 @@ impl View for CopilotButton {
                                 .constrained()
                                 .with_width(style.icon_size)
                                 .aligned()
-                                .into_named_element("copilot-icon"),
+                                .into_any_named("copilot-icon"),
                             )
                             .constrained()
                             .with_height(style.icon_size)
@@ -236,7 +237,7 @@ impl View for CopilotButton {
                 ),
             )
             .with_child(ChildView::new(&self.popup_menu, cx).aligned().top().right())
-            .into_element()
+            .into_any()
     }
 }
 
@@ -323,7 +324,7 @@ impl CopilotButton {
                         .with_child(Label::new("Copilot Settings", style.label.clone()))
                         .with_child(theme::ui::icon(icon_style.style_for(state, false)))
                         .align_children_center()
-                        .into_element()
+                        .into_any()
                 },
             ),
             OsOpen::new(COPILOT_SETTINGS_URL),

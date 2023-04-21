@@ -2,11 +2,11 @@ use gpui::{
     actions,
     color::Color,
     elements::{
-        Canvas, Container, ContainerStyle, Element, Flex, Label, Margin, MouseEventHandler,
+        AnyElement, Canvas, Container, ContainerStyle, Flex, Label, Margin, MouseEventHandler,
         Padding, ParentElement,
     },
     fonts::TextStyle,
-    AppContext, Border, Drawable, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
+    AppContext, Border, Element, Entity, ModelHandle, Quad, Task, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
 use project::Project;
@@ -35,7 +35,7 @@ impl ThemeTestbench {
     }
 
     fn render_ramps(color_scheme: &ColorScheme) -> Flex<Self> {
-        fn display_ramp(ramp: &Vec<Color>) -> Element<ThemeTestbench> {
+        fn display_ramp(ramp: &Vec<Color>) -> AnyElement<ThemeTestbench> {
             Flex::row()
                 .with_children(ramp.iter().cloned().map(|color| {
                     Canvas::new(move |scene, bounds, _, _, _| {
@@ -48,7 +48,7 @@ impl ThemeTestbench {
                     .flex(1.0, false)
                 }))
                 .flex(1.0, false)
-                .into_element()
+                .into_any()
         }
 
         Flex::column()
@@ -173,7 +173,7 @@ impl ThemeTestbench {
         style_set: &StyleSet,
         style_override: Option<fn(&StyleSet) -> &Style>,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         enum TestBenchButton {}
         MouseEventHandler::<TestBenchButton, _>::new(layer_index + button_index, cx, |state, cx| {
             let style = if let Some(style_override) = style_override {
@@ -216,7 +216,7 @@ impl ThemeTestbench {
                 })
         })
         .flex(1., true)
-        .into_element()
+        .into_any()
     }
 
     fn render_label(text: String, style: &Style, cx: &mut ViewContext<Self>) -> Label {
@@ -251,7 +251,7 @@ impl View for ThemeTestbench {
         "ThemeTestbench"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let color_scheme = &cx.global::<Settings>().theme.clone().color_scheme;
 
         Flex::row()
@@ -268,7 +268,7 @@ impl View for ThemeTestbench {
                     .with_child(Self::render_layer(300, &color_scheme.highest, cx).flex(1., true))
                     .flex(1., false),
             )
-            .into_element()
+            .into_any()
     }
 }
 
@@ -278,11 +278,11 @@ impl Item for ThemeTestbench {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()
-            .into_element()
+            .into_any()
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

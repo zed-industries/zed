@@ -5,7 +5,7 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
-    AppContext, Drawable, EventContext, MouseState, Quad, View, ViewContext, WeakViewHandle,
+    AppContext, Element, EventContext, MouseState, Quad, View, ViewContext, WeakViewHandle,
 };
 use project::ProjectEntryId;
 use settings::Settings;
@@ -27,7 +27,7 @@ pub fn dragged_item_receiver<Tag, D, F>(
 ) -> MouseEventHandler<Tag, Pane>
 where
     Tag: 'static,
-    D: Drawable<Pane>,
+    D: Element<Pane>,
     F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> D,
 {
     MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {

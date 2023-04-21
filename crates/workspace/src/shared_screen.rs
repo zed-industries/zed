@@ -69,7 +69,7 @@ impl View for SharedScreen {
         "SharedScreen"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum Focus {}
 
         let frame = self.frame.clone();
@@ -91,7 +91,7 @@ impl View for SharedScreen {
             .with_style(cx.global::<Settings>().theme.shared_screen)
         })
         .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent_view())
-        .into_element()
+        .into_any()
     }
 }
 
@@ -110,7 +110,7 @@ impl Item for SharedScreen {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::Element<V> {
+    ) -> gpui::AnyElement<V> {
         Flex::row()
             .with_child(
                 Svg::new("icons/disable_screen_sharing_12.svg")
@@ -128,7 +128,7 @@ impl Item for SharedScreen {
                 )
                 .aligned(),
             )
-            .into_element()
+            .into_any()
     }
 
     fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {

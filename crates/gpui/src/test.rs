@@ -19,7 +19,7 @@ use crate::{
     platform,
     platform::Platform,
     util::CwdBacktrace,
-    AppContext, Drawable, Element, Entity, FontCache, Handle, Subscription, TestAppContext, View,
+    AnyElement, AppContext, Element, Entity, FontCache, Handle, Subscription, TestAppContext, View,
     ViewContext,
 };
 
@@ -242,7 +242,7 @@ impl View for EmptyView {
         "empty view"
     }
 
-    fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
-        Empty::new().into_element()
+    fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+        Empty::new().into_any()
     }
 }

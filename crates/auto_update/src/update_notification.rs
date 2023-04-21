@@ -2,7 +2,7 @@ use crate::ViewReleaseNotes;
 use gpui::{
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
     platform::{AppVersion, CursorStyle, MouseButton},
-    Drawable, Entity, View, ViewContext,
+    Element, Entity, View, ViewContext,
 };
 use menu::Cancel;
 use settings::Settings;
@@ -26,7 +26,7 @@ impl View for UpdateNotification {
         "UpdateNotification"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let theme = &theme.update_notification;
 
@@ -86,7 +86,7 @@ impl View for UpdateNotification {
         .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(ViewReleaseNotes)
         })
-        .into_named_element("update notification")
+        .into_any_named("update notification")
     }
 }
 

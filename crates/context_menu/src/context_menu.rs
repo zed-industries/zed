@@ -26,10 +26,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::cancel);
 }
 
-pub type StaticItem = Box<dyn Fn(&mut AppContext) -> Element<ContextMenu>>;
+pub type StaticItem = Box<dyn Fn(&mut AppContext) -> AnyElement<ContextMenu>>;
 
 type ContextMenuItemBuilder =
-    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> Element<ContextMenu>>;
+    Box<dyn Fn(&mut MouseState, &theme::ContextMenuItem) -> AnyElement<ContextMenu>>;
 
 pub enum ContextMenuItemLabel {
     String(Cow<'static, str>),
@@ -142,9 +142,9 @@ impl View for ContextMenu {
         cx
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if !self.visible {
-            return Empty::new().into_element();
+            return Empty::new().into_any();
         }
 
         // Render the menu once at minimum width.
@@ -165,7 +165,7 @@ impl View for ContextMenu {
             .with_anchor_position(self.anchor_position)
             .with_anchor_corner(self.anchor_corner)
             .with_position_mode(self.position_mode)
-            .into_element()
+            .into_any()
     }
 
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -327,10 +327,7 @@ impl ContextMenu {
         self.position_mode = mode;
     }
 
-    fn render_menu_for_measurement(
-        &self,
-        cx: &mut ViewContext<Self>,
-    ) -> impl Drawable<ContextMenu> {
+    fn render_menu_for_measurement(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
         let style = cx.global::<Settings>().theme.context_menu.clone();
         Flex::row()
             .with_child(
@@ -347,7 +344,7 @@ impl ContextMenu {
                                     Label::new(label.to_string(), style.label.clone())
                                         .contained()
                                         .with_style(style.container)
-                                        .into_element()
+                                        .into_any()
                                 }
                                 ContextMenuItemLabel::Element(element) => {
                                     element(&mut Default::default(), style)
@@ -363,7 +360,7 @@ impl ContextMenu {
                             .with_style(style.separator)
                             .constrained()
                             .with_height(1.)
-                            .into_element(),
+                            .into_any(),
                     }
                 })),
             )
@@ -391,10 +388,10 @@ impl ContextMenu {
                                     style.keystroke.container,
                                     style.keystroke.text.clone(),
                                 )
-                                .into_element()
+                                .into_any()
                             }
 
-                            ContextMenuItem::Static(_) => Empty::new().into_element(),
+                            ContextMenuItem::Static(_) => Empty::new().into_any(),
 
                             ContextMenuItem::Separator => Empty::new()
                                 .collapsed()
@@ -402,7 +399,7 @@ impl ContextMenu {
                                 .with_height(1.)
                                 .contained()
                                 .with_style(style.separator)
-                                .into_element(),
+                                .into_any(),
                         }
                     }))
                     .contained()
@@ -412,7 +409,7 @@ impl ContextMenu {
             .with_style(style.container)
     }
 
-    fn render_menu(&self, cx: &mut ViewContext<Self>) -> impl Drawable<ContextMenu> {
+    fn render_menu(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
         enum Menu {}
         enum MenuItem {}
 
@@ -441,7 +438,7 @@ impl ContextMenu {
                                         ContextMenuItemLabel::String(label) => {
                                             Label::new(label.clone(), style.label.clone())
                                                 .contained()
-                                                .into_element()
+                                                .into_any()
                                         }
                                         ContextMenuItemLabel::Element(element) => {
                                             element(state, style)
@@ -468,7 +465,7 @@ impl ContextMenu {
                                 cx.dispatch_any_action_at(window_id, view_id, action.boxed_clone());
                             })
                             .on_drag(MouseButton::Left, |_, _, _| {})
-                            .into_element()
+                            .into_any()
                         }
 
                         ContextMenuItem::Static(f) => f(cx),
@@ -478,7 +475,7 @@ impl ContextMenu {
                             .with_height(1.)
                             .contained()
                             .with_style(style.separator)
-                            .into_element(),
+                            .into_any(),
                     }
                 }))
                 .contained()

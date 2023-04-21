@@ -89,16 +89,16 @@ impl View for ProjectDiagnosticsEditor {
         "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new("No problems in workspace", theme.empty_message.clone())
                 .aligned()
                 .contained()
                 .with_style(theme.container)
-                .into_element()
+                .into_any()
         } else {
-            ChildView::new(&self.editor, cx).into_element()
+            ChildView::new(&self.editor, cx).into_any()
         }
     }
 
@@ -535,7 +535,7 @@ impl Item for ProjectDiagnosticsEditor {
         _detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         render_summary(
             &self.summary,
             &style.label.text,
@@ -718,7 +718,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
             .with_padding_left(cx.gutter_padding)
             .with_padding_right(cx.gutter_padding)
             .expanded()
-            .into_named_element("diagnostic header")
+            .into_any_named("diagnostic header")
     })
 }
 
@@ -726,9 +726,9 @@ pub(crate) fn render_summary<T: View>(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,
-) -> Element<T> {
+) -> AnyElement<T> {
     if summary.error_count == 0 && summary.warning_count == 0 {
-        Label::new("No problems", text_style.clone()).into_element()
+        Label::new("No problems", text_style.clone()).into_any()
     } else {
         let icon_width = theme.tab_icon_width;
         let icon_spacing = theme.tab_icon_spacing;
@@ -773,7 +773,7 @@ pub(crate) fn render_summary<T: View>(
                 )
                 .aligned(),
             )
-            .into_element()
+            .into_any()
     }
 }
 

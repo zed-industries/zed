@@ -96,7 +96,7 @@ impl View for ContactsPopover {
         "ContactsPopover"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let child = match &self.child {
             Child::ContactList(child) => ChildView::new(child, cx),
@@ -115,7 +115,7 @@ impl View for ContactsPopover {
         .on_down_out(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleContactsMenu);
         })
-        .into_element()
+        .into_any()
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {

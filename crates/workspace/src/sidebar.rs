@@ -188,7 +188,7 @@ impl View for Sidebar {
         "Sidebar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.sidebar;
@@ -202,9 +202,9 @@ impl View for Sidebar {
                     style.initial_size,
                     cx,
                 )
-                .into_element()
+                .into_any()
         } else {
-            Empty::new().into_element()
+            Empty::new().into_any()
         }
     }
 }
@@ -225,7 +225,7 @@ impl View for SidebarButtons {
         "SidebarToggleButton"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.sidebar_buttons;
@@ -294,7 +294,7 @@ impl View for SidebarButtons {
             ))
             .contained()
             .with_style(group_style)
-            .into_element()
+            .into_any()
     }
 }
 

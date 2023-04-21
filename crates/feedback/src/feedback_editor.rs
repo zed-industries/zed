@@ -13,7 +13,7 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Svg},
     platform::PromptLevel,
-    serde_json, AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, Task, View,
+    serde_json, AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View,
     ViewContext, ViewHandle,
 };
 use isahc::Request;
@@ -230,8 +230,8 @@ impl View for FeedbackEditor {
         "FeedbackEditor"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
-        ChildView::new(&self.editor, cx).into_element()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        ChildView::new(&self.editor, cx).into_any()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -255,7 +255,7 @@ impl Item for FeedbackEditor {
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Flex::row()
             .with_child(
                 Svg::new("icons/feedback_16.svg")
@@ -271,7 +271,7 @@ impl Item for FeedbackEditor {
                     .aligned()
                     .contained(),
             )
-            .into_element()
+            .into_any()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
