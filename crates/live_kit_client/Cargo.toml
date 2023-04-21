@@ -32,7 +32,7 @@ anyhow = "1.0.38"
 async-broadcast = "0.4"
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"
-futures = "0.3"
+futures = { workspace = true }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11.1"
 postage = { workspace = true }
@@ -56,7 +56,7 @@ cocoa = "0.24"
 core-foundation = "0.9.3"
 core-graphics = "0.22.3"
 foreign-types = "0.3"
-futures = "0.3"
+futures = { workspace = true }
 hmac = "0.12"
 jwt = "0.16"
 lazy_static = "1.4"

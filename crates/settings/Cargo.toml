@@ -18,7 +18,7 @@ gpui = { path = "../gpui" }
 sqlez = { path = "../sqlez" }
 fs = { path = "../fs" }
 anyhow = "1.0.38"
-futures = "0.3"
+futures = { workspace = true }
 theme = { path = "../theme" }
 staff_mode = { path = "../staff_mode" }
 util = { path = "../util" }

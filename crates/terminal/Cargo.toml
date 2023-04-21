@@ -20,7 +20,7 @@ procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f
 smallvec = { workspace = true }
 smol = "1.2.5"
 mio-extras = "2.0.6"
-futures = "0.3"
+futures = { workspace = true }
 ordered-float = "2.1.1"
 itertools = "0.10"
 dirs = "4.0.0"

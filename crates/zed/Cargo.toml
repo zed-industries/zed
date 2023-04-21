@@ -76,7 +76,7 @@ chrono = "0.4"
 ctor = "0.1.20"
 easy-parallel = "3.1.0"
 env_logger = "0.9"
-futures = "0.3"
+futures = { workspace = true }
 ignore = "0.4"
 image = "0.23"
 indexmap = "1.6.2"

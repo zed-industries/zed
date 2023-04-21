@@ -22,7 +22,7 @@ sum_tree = { path = "../sum_tree" }
 anyhow = "1.0.38"
 async-recursion = "0.3"
 async-tungstenite = { version = "0.16", features = ["async-tls"] }
-futures = "0.3"
+futures = { workspace = true }
 image = "0.23"
 lazy_static = "1.4.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
