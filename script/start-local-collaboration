@@ -17,6 +17,12 @@ MESSAGE
   exit 1
 fi
 
+# Install jq if it's not installed
+if ! command -v jq &> /dev/null; then
+    echo "Installing jq..."
+    brew install jq
+fi
+
 # Start one Zed instance as the current user and a second instance with a different user.
 username_1=$(curl -sH "Authorization: bearer $GITHUB_TOKEN" https://api.github.com/user | jq -r .login)
 username_2=nathansobo
@@ -25,22 +31,22 @@ if [[ $username_1 == $username_2 ]]; then
 fi
 
 # Make each Zed instance take up half of the screen.
-resolution_line=$(system_profiler SPDisplaysDataType | grep Resolution | head -n1)
-screen_size=($(echo $resolution_line | egrep -o '[0-9]+'))
-scale_factor=1
-if [[ $resolution_line =~ Retina ]]; then scale_factor=2; fi
-width=$(expr ${screen_size[0]} / 2 / $scale_factor)
-height=${screen_size[1] / $scale_factor}
+output=$(system_profiler SPDisplaysDataType -json)
+main_display=$(echo "$output" | jq '.SPDisplaysDataType[].spdisplays_ndrvs[] | select(.spdisplays_main == "spdisplays_yes")')
+resolution=$(echo "$main_display" | jq -r '._spdisplays_resolution')
+width=$(echo "$resolution" | jq -Rr 'match("(\\d+) x (\\d+)").captures[0].string')
+half_width=$(($width / 2))
+height=$(echo "$resolution" | jq -Rr 'match("(\\d+) x (\\d+)").captures[1].string')
 y=0
 
 position_1=0,${y}
-position_2=${width},${y}
+position_2=${half_width},${y}
 
 # Authenticate using the collab server's admin secret.
 export ZED_STATELESS=1
 export ZED_ADMIN_API_TOKEN=secret
 export ZED_SERVER_URL=http://localhost:8080
-export ZED_WINDOW_SIZE=${width},${height}
+export ZED_WINDOW_SIZE=${half_width},${height}
 
 cargo build
 sleep 0.5
