@@ -1251,7 +1251,7 @@ impl ProjectPanel {
         .as_draggable(entry_id, {
             let row_container_style = theme.dragged_entry.container;
 
-            move |_, cx: &mut ViewContext<ProjectPanel>| {
+            move |_, cx: &mut ViewContext<Workspace>| {
                 let theme = cx.global::<Settings>().theme.clone();
                 Self::render_entry_visual_element(
                     &details,

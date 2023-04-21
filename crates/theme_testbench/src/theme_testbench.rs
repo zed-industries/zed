@@ -298,7 +298,12 @@ impl View for ThemeTestbench {
 }
 
 impl Item for ThemeTestbench {
-    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> Element<Pane> {
+    fn tab_content<T: View>(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &AppContext,
+    ) -> Element<T> {
         Label::new("Theme Testbench", style.label.clone())
             .aligned()
             .contained()

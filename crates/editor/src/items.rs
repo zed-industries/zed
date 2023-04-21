@@ -558,12 +558,12 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Pane> {
+    ) -> Element<T> {
         Flex::row()
             .with_child(
                 Label::new(self.title(cx).to_string(), style.label.clone())

@@ -546,12 +546,12 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title().into())
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
-    ) -> Element<Pane> {
+    ) -> Element<T> {
         let title = self.terminal().read(cx).title();
 
         Flex::row()

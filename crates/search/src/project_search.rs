@@ -249,12 +249,12 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Pane> {
+    ) -> Element<T> {
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifying_glass_12.svg")

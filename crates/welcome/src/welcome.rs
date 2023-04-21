@@ -10,7 +10,7 @@ use gpui::{
 use settings::{settings_file::SettingsFile, Settings};
 
 use workspace::{
-    item::Item, open_new, sidebar::SidebarSide, AppState, Pane, PaneBackdrop, Welcome, Workspace,
+    item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
 };
 
@@ -202,12 +202,12 @@ impl Item for WelcomePage {
         Some("Welcome to Zed!".into())
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         style: &theme::Tab,
         _cx: &gpui::AppContext,
-    ) -> Element<Pane> {
+    ) -> Element<T> {
         Flex::row()
             .with_child(
                 Label::new("Welcome to Zed!", style.label.clone())

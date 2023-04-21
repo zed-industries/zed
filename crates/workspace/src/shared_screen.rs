@@ -1,6 +1,6 @@
 use crate::{
     item::{Item, ItemEvent},
-    ItemNavHistory, Pane, WorkspaceId,
+    ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
 use call::participant::{Frame, RemoteVideoTrack};
@@ -106,12 +106,12 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_content(
+    fn tab_content<V: View>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::Element<Pane> {
+    ) -> gpui::Element<V> {
         Flex::row()
             .with_child(
                 Svg::new("icons/disable_screen_sharing_12.svg")

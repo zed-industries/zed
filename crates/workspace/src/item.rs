@@ -54,12 +54,12 @@ pub trait Item: View {
     fn tab_description<'a>(&'a self, _: usize, _: &'a AppContext) -> Option<Cow<str>> {
         None
     }
-    fn tab_content(
+    fn tab_content<V: View>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Pane>;
+    ) -> Element<V>;
     fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
@@ -181,6 +181,12 @@ pub trait ItemHandle: 'static + fmt::Debug {
         style: &theme::Tab,
         cx: &AppContext,
     ) -> Element<Pane>;
+    fn dragged_tab_content(
+        &self,
+        detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> Element<Workspace>;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[usize; 3]>;
@@ -278,6 +284,15 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         style: &theme::Tab,
         cx: &AppContext,
     ) -> Element<Pane> {
+        self.read(cx).tab_content(detail, style, cx)
+    }
+
+    fn dragged_tab_content(
+        &self,
+        detail: Option<usize>,
+        style: &theme::Tab,
+        cx: &AppContext,
+    ) -> Element<Workspace> {
         self.read(cx).tab_content(detail, style, cx)
     }
 
@@ -927,12 +942,12 @@ pub(crate) mod test {
             })
         }
 
-        fn tab_content(
+        fn tab_content<V: View>(
             &self,
             detail: Option<usize>,
             _: &theme::Tab,
             _: &AppContext,
-        ) -> Element<Pane> {
+        ) -> Element<V> {
             self.tab_detail.set(detail);
             Empty::new().boxed()
         }

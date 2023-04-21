@@ -530,12 +530,12 @@ impl ProjectDiagnosticsEditor {
 }
 
 impl Item for ProjectDiagnosticsEditor {
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<Pane> {
+    ) -> Element<T> {
         render_summary(
             &self.summary,
             &style.label.text,
@@ -717,11 +717,11 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     })
 }
 
-pub(crate) fn render_summary(
+pub(crate) fn render_summary<T: View>(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,
-) -> Element<Pane> {
+) -> Element<T> {
     if summary.error_count == 0 && summary.warning_count == 0 {
         Label::new("No problems", text_style.clone()).boxed()
     } else {

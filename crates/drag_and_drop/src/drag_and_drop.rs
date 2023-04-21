@@ -111,7 +111,7 @@ impl<V: View> DragAndDrop<V> {
         })
     }
 
-    pub fn drag_started(event: MouseDown, cx: &mut ViewContext<V>) {
+    pub fn drag_started(event: MouseDown, cx: &mut WindowContext) {
         cx.update_global(|this: &mut Self, _| {
             this.currently_dragged = Some(State::Down {
                 region_offset: event.position - event.region.origin(),
@@ -123,7 +123,7 @@ impl<V: View> DragAndDrop<V> {
     pub fn dragging<T: Any>(
         event: MouseDrag,
         payload: Rc<T>,
-        cx: &mut ViewContext<V>,
+        cx: &mut WindowContext,
         render: Rc<impl 'static + Fn(&T, &mut ViewContext<V>) -> Element<V>>,
     ) {
         let window_id = cx.window_id();
@@ -297,20 +297,20 @@ impl<V: View> DragAndDrop<V> {
 }
 
 pub trait Draggable<V: View> {
-    fn as_draggable<P: Any>(
+    fn as_draggable<D: View, P: Any>(
         self,
         payload: P,
-        render: impl 'static + Fn(&P, &mut ViewContext<V>) -> Element<V>,
+        render: impl 'static + Fn(&P, &mut ViewContext<D>) -> Element<D>,
     ) -> Self
     where
         Self: Sized;
 }
 
 impl<Tag, V: View> Draggable<V> for MouseEventHandler<Tag, V> {
-    fn as_draggable<P: Any>(
+    fn as_draggable<D: View, P: Any>(
         self,
         payload: P,
-        render: impl 'static + Fn(&P, &mut ViewContext<V>) -> Element<V>,
+        render: impl 'static + Fn(&P, &mut ViewContext<D>) -> Element<D>,
     ) -> Self
     where
         Self: Sized,
@@ -319,12 +319,12 @@ impl<Tag, V: View> Draggable<V> for MouseEventHandler<Tag, V> {
         let render = Rc::new(render);
         self.on_down(MouseButton::Left, move |e, _, cx| {
             cx.propagate_event();
-            DragAndDrop::<V>::drag_started(e, cx);
+            DragAndDrop::<D>::drag_started(e, cx);
         })
         .on_drag(MouseButton::Left, move |e, _, cx| {
             let payload = payload.clone();
             let render = render.clone();
-            DragAndDrop::<V>::dragging(e, payload, cx, render)
+            DragAndDrop::<D>::dragging(e, payload, cx, render)
         })
     }
 }

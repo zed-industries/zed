@@ -1401,7 +1401,7 @@ impl Pane {
                             enum Tab {}
                             let mouse_event_handler =
                                 MouseEventHandler::<Tab, Pane>::new(ix, cx, |_, cx| {
-                                    Self::render_tab::<Pane>(
+                                    Self::render_tab(
                                         &item,
                                         pane.clone(),
                                         ix == 0,
@@ -1466,9 +1466,9 @@ impl Pane {
                             let theme = cx.global::<Settings>().theme.clone();
 
                             let detail = detail.clone();
-                            move |dragged_item: &DraggedItem, cx: &mut ViewContext<Pane>| {
+                            move |dragged_item: &DraggedItem, cx: &mut ViewContext<Workspace>| {
                                 let tab_style = &theme.workspace.tab_bar.dragged_tab;
-                                Self::render_tab::<Pane>(
+                                Self::render_dragged_tab(
                                     &dragged_item.item,
                                     dragged_item.pane.clone(),
                                     false,
@@ -1541,7 +1541,7 @@ impl Pane {
         tab_details
     }
 
-    fn render_tab<V: View>(
+    fn render_tab(
         item: &Box<dyn ItemHandle>,
         pane: WeakViewHandle<Pane>,
         first: bool,
@@ -1551,6 +1551,31 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) -> Element<Self> {
         let title = item.tab_content(detail, &tab_style, cx);
+        Self::render_tab_with_title(title, item, pane, first, hovered, tab_style, cx)
+    }
+
+    fn render_dragged_tab(
+        item: &Box<dyn ItemHandle>,
+        pane: WeakViewHandle<Pane>,
+        first: bool,
+        detail: Option<usize>,
+        hovered: bool,
+        tab_style: &theme::Tab,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Element<Workspace> {
+        let title = item.dragged_tab_content(detail, &tab_style, cx);
+        Self::render_tab_with_title(title, item, pane, first, hovered, tab_style, cx)
+    }
+
+    fn render_tab_with_title<T: View>(
+        title: Element<T>,
+        item: &Box<dyn ItemHandle>,
+        pane: WeakViewHandle<Pane>,
+        first: bool,
+        hovered: bool,
+        tab_style: &theme::Tab,
+        cx: &mut ViewContext<T>,
+    ) -> Element<T> {
         let mut container = tab_style.container.clone();
         if first {
             container.border.left = false;

@@ -26,7 +26,7 @@ use util::ResultExt;
 use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    AppState, Pane, Workspace,
+    AppState, Workspace,
 };
 
 use crate::{submit_feedback_button::SubmitFeedbackButton, system_specs::SystemSpecs};
@@ -250,7 +250,12 @@ impl Item for FeedbackEditor {
         Some("Send Feedback".into())
     }
 
-    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> Element<Pane> {
+    fn tab_content<T: View>(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &AppContext,
+    ) -> Element<T> {
         Flex::row()
             .with_child(
                 Svg::new("icons/feedback_16.svg")
