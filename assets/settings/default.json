@@ -206,7 +206,10 @@
     //      particularly if they use box characters
     //         "line_height": "standard",
     //  3. Use a custom line height.
-    //         "line_height": 1.2,
+    //         "line_height": {
+    //           "custom": 2
+    //         },
+    //
     "line_height": "comfortable"
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.

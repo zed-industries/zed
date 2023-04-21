@@ -12,7 +12,7 @@ use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
