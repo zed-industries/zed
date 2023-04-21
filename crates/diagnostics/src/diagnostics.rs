@@ -34,7 +34,7 @@ use std::{
 use util::TryFutureExt;
 use workspace::{
     item::{Item, ItemEvent, ItemHandle},
-    ItemNavHistory, Pane, Workspace,
+    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy]);
@@ -653,6 +653,14 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn serialized_item_kind() -> Option<&'static str> {
         Some("diagnostics")
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+        self.editor.breadcrumbs(theme, cx)
+    }
+
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
     fn deserialize(
