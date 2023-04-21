@@ -249,13 +249,6 @@ impl Copilot {
                     cx.clone(),
                 )?;
 
-                let server = server.initialize(Default::default()).await?;
-                let status = server
-                    .request::<request::CheckStatus>(request::CheckStatusParams {
-                        local_checks_only: false,
-                    })
-                    .await?;
-
                 server
                     .on_notification::<LogMessage, _>(|params, _cx| {
                         match params.level {
@@ -275,6 +268,13 @@ impl Copilot {
                         |_, _| { /* Silence the notification */ },
                     )
                     .detach();
+
+                let server = server.initialize(Default::default()).await?;
+                let status = server
+                    .request::<request::CheckStatus>(request::CheckStatusParams {
+                        local_checks_only: false,
+                    })
+                    .await?;
 
                 anyhow::Ok((server, status))
             };

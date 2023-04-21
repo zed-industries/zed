@@ -44,4 +44,3 @@ language = { path = "../language", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-workspace = { path = "../workspace", features = ["test-support"] }

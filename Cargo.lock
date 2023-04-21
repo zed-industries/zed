@@ -1354,7 +1354,6 @@ dependencies = [
  "smol",
  "theme",
  "util",
- "workspace",
 ]
 
 [[package]]
