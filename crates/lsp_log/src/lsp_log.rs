@@ -7,16 +7,15 @@ use gpui::{
         AnchorCorner, ChildView, Empty, Flex, Label, MouseEventHandler, Overlay, OverlayFitMode,
         ParentElement, Stack,
     },
-    impl_internal_actions,
     platform::MouseButton,
-    AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext, View, ViewContext,
-    ViewHandle,
+    AnyElement, AppContext, Element, Entity, ModelHandle, View, ViewContext, ViewHandle,
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
 use project::{Project, WorktreeId};
 use settings::Settings;
 use std::{borrow::Cow, sync::Arc};
 use theme::Theme;
+use util::ResultExt;
 use workspace::{
     item::{Item, ItemHandle},
     ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -51,21 +50,10 @@ enum MessageKind {
     Receive,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct ActivateLog {
-    server_id: LanguageServerId,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct ToggleMenu;
-
-impl_internal_actions!(log, [ActivateLog, ToggleMenu]);
 actions!(log, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(LspLogView::deploy);
-    cx.add_action(LspLogToolbarItemView::toggle_menu);
-    cx.add_action(LspLogToolbarItemView::activate_log_for_server);
+    cx.add_action(LspLogView::open);
 }
 
 impl LspLogView {
@@ -84,14 +72,16 @@ impl LspLogView {
                         message.push('\n');
                         this.on_io(language_server_id, is_output, &message, cx);
                     })
+                    .log_err();
                 }
             }
+            anyhow::Ok(())
         })
         .detach();
         this
     }
 
-    fn deploy(
+    fn open(
         workspace: &mut Workspace,
         _: &OpenLanguageServerLogs,
         cx: &mut ViewContext<Workspace>,
@@ -105,9 +95,9 @@ impl LspLogView {
         workspace.add_item(Box::new(log_view), cx);
     }
 
-    fn activate_log(&mut self, action: &ActivateLog, cx: &mut ViewContext<Self>) {
-        self.enable_logs_for_language_server(action.server_id, cx);
-        self.current_server_id = Some(action.server_id);
+    fn activate_log(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
+        self.enable_logs_for_language_server(server_id, cx);
+        self.current_server_id = Some(server_id);
         cx.notify();
     }
 
@@ -188,19 +178,24 @@ impl View for LspLogView {
         "LspLogView"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(id) = self.current_server_id {
             if let Some(log) = self.enabled_logs.get_mut(&id) {
-                return ChildView::new(&log.editor, cx).boxed();
+                return ChildView::new(&log.editor, cx).into_any();
             }
         }
-        Empty::new().boxed()
+        Empty::new().into_any()
     }
 }
 
 impl Item for LspLogView {
-    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
-        Label::new("Logs", style.label.clone()).boxed()
+    fn tab_content<V: View>(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &AppContext,
+    ) -> AnyElement<V> {
+        Label::new("Logs", style.label.clone()).into_any()
     }
 }
 
@@ -208,7 +203,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        _: &mut ViewContext<Self>,
     ) -> workspace::ToolbarItemLocation {
         self.menu_open = false;
         if let Some(item) = active_pane_item {
@@ -229,9 +224,9 @@ impl View for LspLogToolbarItemView {
         "LspLogView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = cx.global::<Settings>().theme.clone();
-        let Some(log_view) = self.log_view.as_ref() else { return Empty::new().boxed() };
+        let Some(log_view) = self.log_view.as_ref() else { return Empty::new().into_any() };
         let project = self.project.read(cx);
         let mut language_servers = project.language_servers().collect::<Vec<_>>();
         language_servers.sort_by_key(|a| a.0);
@@ -272,21 +267,19 @@ impl View for LspLogToolbarItemView {
                             .with_style(theme.contacts_popover.container)
                             .constrained()
                             .with_width(200.)
-                            .with_height(400.)
-                            .boxed(),
+                            .with_height(400.),
                     )
                     .with_fit_mode(OverlayFitMode::SwitchAnchor)
                     .with_anchor_corner(AnchorCorner::TopRight)
                     .with_z_index(999)
                     .aligned()
                     .bottom()
-                    .right()
-                    .boxed(),
+                    .right(),
                 )
             } else {
                 None
             })
-            .boxed()
+            .into_any()
     }
 }
 
@@ -299,15 +292,15 @@ impl LspLogToolbarItemView {
         }
     }
 
-    fn toggle_menu(&mut self, _: &ToggleMenu, cx: &mut ViewContext<Self>) {
+    fn toggle_menu(&mut self, cx: &mut ViewContext<Self>) {
         self.menu_open = !self.menu_open;
         cx.notify();
     }
 
-    fn activate_log_for_server(&mut self, action: &ActivateLog, cx: &mut ViewContext<Self>) {
+    fn activate_log_for_server(&mut self, id: LanguageServerId, cx: &mut ViewContext<Self>) {
         if let Some(log_view) = &self.log_view {
             log_view.update(cx, |log_view, cx| {
-                log_view.activate_log(action, cx);
+                log_view.activate_log(id, cx);
             });
             self.menu_open = false;
         }
@@ -318,9 +311,10 @@ impl LspLogToolbarItemView {
         current_server: Option<(LanguageServerId, LanguageServerName, WorktreeId)>,
         project: &ModelHandle<Project>,
         theme: &Arc<Theme>,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        MouseEventHandler::<ToggleMenu>::new(0, cx, move |state, cx| {
+        cx: &mut ViewContext<Self>,
+    ) -> impl Element<Self> {
+        enum ToggleMenu {}
+        MouseEventHandler::<ToggleMenu, Self>::new(0, cx, move |state, cx| {
             let project = project.read(cx);
             let label: Cow<str> = current_server
                 .and_then(|(_, server_name, worktree_id)| {
@@ -329,12 +323,11 @@ impl LspLogToolbarItemView {
                     Some(format!("{} - ({})", server_name.0, worktree.root_name()).into())
                 })
                 .unwrap_or_else(|| "No server selected".into());
-            Label::new(label, theme.context_menu.item.default.label.clone()).boxed()
+            Label::new(label, theme.context_menu.item.default.label.clone())
         })
-        .on_click(MouseButton::Left, move |_, cx| {
-            cx.dispatch_action(ToggleMenu);
+        .on_click(MouseButton::Left, move |_, view, cx| {
+            view.toggle_menu(cx);
         })
-        .boxed()
     }
 
     fn render_language_server_menu_item(
@@ -343,8 +336,9 @@ impl LspLogToolbarItemView {
         worktree_id: WorktreeId,
         project: &ModelHandle<Project>,
         theme: &Arc<Theme>,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
+        cx: &mut ViewContext<Self>,
+    ) -> Option<impl Element<Self>> {
+        enum ActivateLog {}
         let project = project.read(cx);
         let worktree = project.worktree_for_id(worktree_id, cx)?;
         let worktree = &worktree.read(cx);
@@ -354,13 +348,12 @@ impl LspLogToolbarItemView {
         let label = format!("{} - ({})", name.0, worktree.root_name());
 
         Some(
-            MouseEventHandler::<ActivateLog>::new(id.0, cx, move |state, cx| {
-                Label::new(label, theme.context_menu.item.default.label.clone()).boxed()
+            MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, cx| {
+                Label::new(label, theme.context_menu.item.default.label.clone())
             })
-            .on_click(MouseButton::Left, move |_, cx| {
-                cx.dispatch_action(ActivateLog { server_id: id })
-            })
-            .boxed(),
+            .on_click(MouseButton::Left, move |_, view, cx| {
+                view.activate_log_for_server(id, cx);
+            }),
         )
     }
 }
