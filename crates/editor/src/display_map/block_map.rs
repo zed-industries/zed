@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{fonts::HighlightStyle, Element, ViewContext};
+use gpui::{fonts::HighlightStyle, AnyElement, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -50,7 +50,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> Element<Editor>>;
+pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> AnyElement<Editor>>;
 
 pub struct Block {
     id: BlockId,
@@ -69,7 +69,7 @@ where
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Arc<dyn Fn(&mut BlockContext) -> Element<Editor>>,
+    pub render: Arc<dyn Fn(&mut BlockContext) -> AnyElement<Editor>>,
     pub disposition: BlockDisposition,
 }
 
@@ -80,8 +80,8 @@ pub enum BlockStyle {
     Sticky,
 }
 
-pub struct BlockContext<'a, 'b, 'c, 'd> {
-    pub view_context: &'d mut ViewContext<'a, 'b, 'c, Editor>,
+pub struct BlockContext<'a, 'b, 'c> {
+    pub view_context: &'c mut ViewContext<'a, 'b, Editor>,
     pub anchor_x: f32,
     pub scroll_x: f32,
     pub gutter_width: f32,
@@ -932,22 +932,22 @@ impl BlockDisposition {
     }
 }
 
-impl<'a, 'b, 'c, 'd> Deref for BlockContext<'a, 'b, 'c, 'd> {
-    type Target = ViewContext<'a, 'b, 'c, Editor>;
+impl<'a, 'b, 'c> Deref for BlockContext<'a, 'b, 'c> {
+    type Target = ViewContext<'a, 'b, Editor>;
 
     fn deref(&self) -> &Self::Target {
         self.view_context
     }
 }
 
-impl DerefMut for BlockContext<'_, '_, '_, '_> {
+impl DerefMut for BlockContext<'_, '_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.view_context
     }
 }
 
 impl Block {
-    pub fn render(&self, cx: &mut BlockContext) -> Element<Editor> {
+    pub fn render(&self, cx: &mut BlockContext) -> AnyElement<Editor> {
         self.render.lock()(cx)
     }
 
@@ -994,7 +994,7 @@ mod tests {
     use crate::display_map::suggestion_map::SuggestionMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use crate::multi_buffer::MultiBuffer;
-    use gpui::{elements::Empty, Drawable};
+    use gpui::{elements::Empty, Element};
     use rand::prelude::*;
     use settings::Settings;
     use std::env;
@@ -1045,21 +1045,21 @@ mod tests {
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().named("block 1")),
+                render: Arc::new(|_| Empty::new().into_any_named("block 1")),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 2)),
                 height: 2,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().named("block 2")),
+                render: Arc::new(|_| Empty::new().into_any_named("block 2")),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(3, 3)),
                 height: 3,
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| Empty::new().named("block 3")),
+                render: Arc::new(|_| Empty::new().into_any_named("block 3")),
             },
         ]);
 
@@ -1219,14 +1219,14 @@ mod tests {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| Empty::new().named("block 1")),
+                render: Arc::new(|_| Empty::new().into_any_named("block 1")),
                 height: 1,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 1)),
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| Empty::new().named("block 2")),
+                render: Arc::new(|_| Empty::new().into_any_named("block 2")),
                 height: 1,
             },
         ]);
@@ -1329,7 +1329,7 @@ mod tests {
                                 position,
                                 height,
                                 disposition,
-                                render: Arc::new(|_| Empty::new().boxed()),
+                                render: Arc::new(|_| Empty::new().into_any()),
                             }
                         })
                         .collect::<Vec<_>>();

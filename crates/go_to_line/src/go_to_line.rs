@@ -143,7 +143,7 @@ impl View for GoToLine {
         "GoToLine"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
@@ -153,26 +153,22 @@ impl View for GoToLine {
             self.max_point.row + 1
         );
 
-        ConstrainedBox::new(
-            Container::new(
-                Flex::new(Axis::Vertical)
-                    .with_child(
-                        Container::new(ChildView::new(&self.line_editor, cx).boxed())
-                            .with_style(theme.input_editor.container)
-                            .boxed(),
-                    )
-                    .with_child(
-                        Container::new(Label::new(label, theme.no_matches.label.clone()).boxed())
-                            .with_style(theme.no_matches.container)
-                            .boxed(),
-                    )
-                    .boxed(),
+        Flex::new(Axis::Vertical)
+            .with_child(
+                ChildView::new(&self.line_editor, cx)
+                    .contained()
+                    .with_style(theme.input_editor.container),
             )
+            .with_child(
+                Label::new(label, theme.no_matches.label.clone())
+                    .contained()
+                    .with_style(theme.no_matches.container),
+            )
+            .contained()
             .with_style(theme.container)
-            .boxed(),
-        )
-        .with_max_width(500.0)
-        .named("go to line")
+            .constrained()
+            .with_max_width(500.0)
+            .into_any_named("go to line")
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

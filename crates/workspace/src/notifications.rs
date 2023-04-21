@@ -140,7 +140,7 @@ pub mod simple_message_notification {
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
         impl_actions,
         platform::{CursorStyle, MouseButton},
-        Action, AppContext, Drawable, Entity, View, ViewContext,
+        Action, AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;
@@ -229,7 +229,7 @@ pub mod simple_message_notification {
             "MessageNotification"
         }
 
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::Element<Self> {
+        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
             let theme = cx.global::<Settings>().theme.clone();
             let theme = &theme.simple_message_notification;
 
@@ -255,8 +255,7 @@ pub mod simple_message_notification {
                                     .aligned()
                                     .top()
                                     .left()
-                                    .flex(1., true)
-                                    .boxed(),
+                                    .flex(1., true),
                             )
                             .with_child(
                                 MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
@@ -271,7 +270,6 @@ pub mod simple_message_notification {
                                         .constrained()
                                         .with_width(style.button_width)
                                         .with_height(style.button_width)
-                                        .boxed()
                                 })
                                 .with_padding(Padding::uniform(5.))
                                 .on_click(MouseButton::Left, move |_, _, cx| {
@@ -285,23 +283,18 @@ pub mod simple_message_notification {
                                 )
                                 .aligned()
                                 .top()
-                                .flex_float()
-                                .boxed(),
-                            )
-                            .boxed(),
+                                .flex_float(),
+                            ),
                     )
                     .with_children({
                         let style = theme.action_message.style_for(state, false);
                         if let Some(click_message) = click_message {
                             Some(
-                                Flex::row()
-                                    .with_child(
-                                        Text::new(click_message, style.text.clone())
-                                            .contained()
-                                            .with_style(style.container)
-                                            .boxed(),
-                                    )
-                                    .boxed(),
+                                Flex::row().with_child(
+                                    Text::new(click_message, style.text.clone())
+                                        .contained()
+                                        .with_style(style.container),
+                                ),
                             )
                         } else {
                             None
@@ -309,7 +302,6 @@ pub mod simple_message_notification {
                         .into_iter()
                     })
                     .contained()
-                    .boxed()
             })
             // Since we're not using a proper overlay, we have to capture these extra events
             .on_down(MouseButton::Left, |_, _, _| {})
@@ -325,7 +317,7 @@ pub mod simple_message_notification {
             } else {
                 CursorStyle::Arrow
             })
-            .boxed()
+            .into_any()
         }
     }
 

@@ -89,16 +89,16 @@ impl View for ProjectDiagnosticsEditor {
         "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new("No problems in workspace", theme.empty_message.clone())
                 .aligned()
                 .contained()
                 .with_style(theme.container)
-                .boxed()
+                .into_any()
         } else {
-            ChildView::new(&self.editor, cx).boxed()
+            ChildView::new(&self.editor, cx).into_any()
         }
     }
 
@@ -535,7 +535,7 @@ impl Item for ProjectDiagnosticsEditor {
         _detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         render_summary(
             &self.summary,
             &style.label.text,
@@ -694,8 +694,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 icon.constrained()
                     .with_width(icon_width)
                     .aligned()
-                    .contained()
-                    .boxed(),
+                    .contained(),
             )
             .with_child(
                 Label::new(
@@ -706,22 +705,20 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 .contained()
                 .with_style(style.message.container)
                 .with_margin_left(cx.gutter_padding)
-                .aligned()
-                .boxed(),
+                .aligned(),
             )
             .with_children(diagnostic.code.clone().map(|code| {
                 Label::new(code, style.code.text.clone().with_font_size(font_size))
                     .contained()
                     .with_style(style.code.container)
                     .aligned()
-                    .boxed()
             }))
             .contained()
             .with_style(style.container)
             .with_padding_left(cx.gutter_padding)
             .with_padding_right(cx.gutter_padding)
             .expanded()
-            .named("diagnostic header")
+            .into_any_named("diagnostic header")
     })
 }
 
@@ -729,23 +726,24 @@ pub(crate) fn render_summary<T: View>(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,
-) -> Element<T> {
+) -> AnyElement<T> {
     if summary.error_count == 0 && summary.warning_count == 0 {
-        Label::new("No problems", text_style.clone()).boxed()
+        Label::new("No problems", text_style.clone()).into_any()
     } else {
         let icon_width = theme.tab_icon_width;
         let icon_spacing = theme.tab_icon_spacing;
         let summary_spacing = theme.tab_summary_spacing;
         Flex::row()
-            .with_children([
+            .with_child(
                 Svg::new("icons/circle_x_mark_12.svg")
                     .with_color(text_style.color)
                     .constrained()
                     .with_width(icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(icon_spacing)
-                    .named("no-icon"),
+                    .with_margin_right(icon_spacing),
+            )
+            .with_child(
                 Label::new(
                     summary.error_count.to_string(),
                     LabelStyle {
@@ -753,8 +751,9 @@ pub(crate) fn render_summary<T: View>(
                         highlight_text: None,
                     },
                 )
-                .aligned()
-                .boxed(),
+                .aligned(),
+            )
+            .with_child(
                 Svg::new("icons/triangle_exclamation_12.svg")
                     .with_color(text_style.color)
                     .constrained()
@@ -762,8 +761,9 @@ pub(crate) fn render_summary<T: View>(
                     .aligned()
                     .contained()
                     .with_margin_left(summary_spacing)
-                    .with_margin_right(icon_spacing)
-                    .named("warn-icon"),
+                    .with_margin_right(icon_spacing),
+            )
+            .with_child(
                 Label::new(
                     summary.warning_count.to_string(),
                     LabelStyle {
@@ -771,10 +771,9 @@ pub(crate) fn render_summary<T: View>(
                         highlight_text: None,
                     },
                 )
-                .aligned()
-                .boxed(),
-            ])
-            .boxed()
+                .aligned(),
+            )
+            .into_any()
     }
 }
 

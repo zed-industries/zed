@@ -41,7 +41,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
-    AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Drawable, Element, Entity,
+    AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, Entity,
     ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -725,7 +725,7 @@ impl ContextMenu {
         cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, Element<Editor>) {
+    ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
             ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
@@ -777,7 +777,7 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> Element<Editor> {
+    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum CompletionTag {}
 
         let completions = self.completions.clone();
@@ -819,7 +819,6 @@ impl CompletionsMenu {
                                     ))
                                     .contained()
                                     .with_style(item_style)
-                                    .boxed()
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -828,7 +827,7 @@ impl CompletionsMenu {
                                 item_ix: Some(item_ix),
                             });
                         })
-                        .boxed(),
+                        .into_any(),
                     );
                 }
             },
@@ -848,7 +847,7 @@ impl CompletionsMenu {
         )
         .contained()
         .with_style(container_style)
-        .boxed()
+        .into_any()
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
@@ -954,7 +953,7 @@ impl CodeActionsMenu {
         mut cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, Element<Editor>) {
+    ) -> (DisplayPoint, AnyElement<Editor>) {
         enum ActionTag {}
 
         let container_style = style.autocomplete.container;
@@ -982,7 +981,6 @@ impl CodeActionsMenu {
                                 .with_soft_wrap(false)
                                 .contained()
                                 .with_style(item_style)
-                                .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_down(MouseButton::Left, move |_, _, cx| {
@@ -990,7 +988,7 @@ impl CodeActionsMenu {
                                 item_ix: Some(item_ix),
                             });
                         })
-                        .boxed(),
+                        .into_any(),
                     );
                 }
             },
@@ -1004,7 +1002,7 @@ impl CodeActionsMenu {
         )
         .contained()
         .with_style(container_style)
-        .boxed();
+        .into_any();
 
         if self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
@@ -3131,14 +3129,13 @@ impl Editor {
         style: &EditorStyle,
         active: bool,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Element<Self>> {
+    ) -> Option<AnyElement<Self>> {
         if self.available_code_actions.is_some() {
             enum CodeActions {}
             Some(
                 MouseEventHandler::<CodeActions, _>::new(0, cx, |state, _| {
                     Svg::new("icons/bolt_8.svg")
                         .with_color(style.code_actions.indicator.style_for(state, active).color)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
@@ -3147,7 +3144,7 @@ impl Editor {
                         deployed_from_indicator: true,
                     });
                 })
-                .boxed(),
+                .into_any(),
             )
         } else {
             None
@@ -3162,7 +3159,7 @@ impl Editor {
         line_height: f32,
         gutter_margin: f32,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<Option<Element<Self>>> {
+    ) -> Vec<Option<AnyElement<Self>>> {
         enum FoldIndicators {}
 
         let style = style.folds.clone();
@@ -3177,7 +3174,7 @@ impl Editor {
                             MouseEventHandler::<FoldIndicators, _>::new(
                                 ix as usize,
                                 cx,
-                                |mouse_state, _| -> Element<Editor> {
+                                |mouse_state, _| {
                                     Svg::new(match fold_status {
                                         FoldStatus::Folded => style.folded_icon.clone(),
                                         FoldStatus::Foldable => style.foldable_icon.clone(),
@@ -3198,7 +3195,6 @@ impl Editor {
                                     .with_height(line_height)
                                     .with_width(gutter_margin)
                                     .aligned()
-                                    .boxed()
                                 },
                             )
                             .with_cursor_style(CursorStyle::PointingHand)
@@ -3211,7 +3207,7 @@ impl Editor {
                                     });
                                 }
                             })
-                            .boxed()
+                            .into_any()
                         })
                     })
                     .flatten()
@@ -3230,7 +3226,7 @@ impl Editor {
         cursor_position: DisplayPoint,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, Element<Editor>)> {
+    ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
         self.context_menu
             .as_ref()
             .map(|menu| menu.render(cursor_position, style, cx))
@@ -5893,7 +5889,7 @@ impl Editor {
                                     ChildView::new(&editor, cx)
                                         .contained()
                                         .with_padding_left(cx.anchor_x)
-                                        .boxed()
+                                        .into_any()
                                 }
                             }),
                             disposition: BlockDisposition::Below,
@@ -7007,7 +7003,7 @@ impl Entity for Editor {
 }
 
 impl View for Editor {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let style = self.style(cx);
         let font_changed = self.display_map.update(cx, |map, cx| {
             map.set_fold_ellipses_color(style.folds.ellipses.text_color);
@@ -7022,9 +7018,9 @@ impl View for Editor {
         }
 
         Stack::new()
-            .with_child(EditorElement::new(style.clone()).boxed())
-            .with_child(ChildView::new(&self.mouse_context_menu, cx).boxed())
-            .boxed()
+            .with_child(EditorElement::new(style.clone()))
+            .with_child(ChildView::new(&self.mouse_context_menu, cx))
+            .into_any()
     }
 
     fn ui_name() -> &'static str {
@@ -7497,11 +7493,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
                 .with_highlights(highlights.clone())
                 .contained()
                 .with_margin_left(cx.anchor_x)
-                .boxed()
             }))
             .aligned()
             .left()
-            .boxed()
+            .into_any()
     })
 }
 

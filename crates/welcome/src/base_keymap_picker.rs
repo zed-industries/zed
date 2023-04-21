@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
-    elements::{Drawable as _, Label},
+    elements::{Element as _, Label},
     AppContext, Task, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
@@ -134,7 +134,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         mouse_state: &mut gpui::MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> gpui::Element<Picker<Self>> {
+    ) -> gpui::AnyElement<Picker<Self>> {
         let theme = &cx.global::<Settings>().theme;
         let keymap_match = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);
@@ -143,6 +143,6 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .with_highlights(keymap_match.positions.clone())
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_any()
     }
 }

@@ -8,7 +8,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, Drawable, SceneBuilder, SizeConstraint, View, ViewContext,
+    scene, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 pub struct Svg {
@@ -30,7 +30,7 @@ impl Svg {
     }
 }
 
-impl<V: View> Drawable<V> for Svg {
+impl<V: View> Element<V> for Svg {
     type LayoutState = Option<usvg::Tree>;
     type PaintState = ();
 

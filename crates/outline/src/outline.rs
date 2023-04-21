@@ -202,7 +202,7 @@ impl PickerDelegate for OutlineViewDelegate {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> Element<Picker<Self>> {
+    ) -> AnyElement<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = settings.theme.picker.item.style_for(mouse_state, selected);
@@ -220,6 +220,6 @@ impl PickerDelegate for OutlineViewDelegate {
             .with_padding_left(20. * outline_item.depth as f32)
             .contained()
             .with_style(style.container)
-            .boxed()
+            .into_any()
     }
 }

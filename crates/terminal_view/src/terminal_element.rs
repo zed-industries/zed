@@ -10,7 +10,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Drawable, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
+    AnyElement, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
     SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
 };
 use itertools::Itertools;
@@ -45,7 +45,7 @@ pub struct LayoutState {
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
-    hyperlink_tooltip: Option<Element<TerminalView>>,
+    hyperlink_tooltip: Option<AnyElement<TerminalView>>,
     gutter: f32,
 }
 
@@ -552,7 +552,7 @@ impl TerminalElement {
     }
 }
 
-impl Drawable<TerminalView> for TerminalElement {
+impl Element<TerminalView> for TerminalElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
@@ -605,11 +605,10 @@ impl Drawable<TerminalView> for TerminalElement {
                     .constrained()
                     .with_width(dimensions.width())
                     .with_height(dimensions.height())
-                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx)
-                    .boxed(),
+                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx),
             )
             .with_position_mode(gpui::elements::OverlayPositionMode::Local)
-            .boxed();
+            .into_any();
 
             tooltip.layout(
                 SizeConstraint::new(Vector2F::zero(), cx.window_size()),

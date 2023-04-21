@@ -12,7 +12,7 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle, Subscription,
+    Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
@@ -178,7 +178,7 @@ impl View for ProjectSearchView {
         "ProjectSearchView"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let model = &self.model.read(cx);
         if model.match_ranges.is_empty() {
             enum Status {}
@@ -197,16 +197,15 @@ impl View for ProjectSearchView {
                     .contained()
                     .with_background_color(theme.editor.background)
                     .flex(1., true)
-                    .boxed()
             })
             .on_down(MouseButton::Left, |_, _, cx| {
                 cx.focus_parent_view();
             })
-            .boxed()
+            .into_any_named("project search view")
         } else {
             ChildView::new(&self.results_editor, cx)
                 .flex(1., true)
-                .boxed()
+                .into_any_named("project search view")
         }
     }
 
@@ -254,7 +253,7 @@ impl Item for ProjectSearchView {
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifying_glass_12.svg")
@@ -263,17 +262,14 @@ impl Item for ProjectSearchView {
                     .with_width(tab_theme.type_icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(tab_theme.spacing)
-                    .boxed(),
+                    .with_margin_right(tab_theme.spacing),
             )
             .with_children(self.model.read(cx).active_query.as_ref().map(|query| {
                 let query_text = util::truncate_and_trailoff(query.as_str(), MAX_TAB_TITLE_LEN);
 
-                Label::new(query_text, tab_theme.label.clone())
-                    .aligned()
-                    .boxed()
+                Label::new(query_text, tab_theme.label.clone()).aligned()
             }))
-            .boxed()
+            .into_any()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
@@ -752,7 +748,7 @@ impl ProjectSearchBar {
         icon: &'static str,
         direction: Direction,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -778,7 +774,6 @@ impl ProjectSearchBar {
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
@@ -792,7 +787,7 @@ impl ProjectSearchBar {
             tooltip_style,
             cx,
         )
-        .boxed()
+        .into_any()
     }
 
     fn render_option_button(
@@ -800,7 +795,7 @@ impl ProjectSearchBar {
         icon: &'static str,
         option: SearchOption,
         cx: &mut ViewContext<Self>,
-    ) -> Element<Self> {
+    ) -> AnyElement<Self> {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
         MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
@@ -813,7 +808,6 @@ impl ProjectSearchBar {
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_any_action(option.to_toggle_action())
@@ -826,7 +820,7 @@ impl ProjectSearchBar {
             tooltip_style,
             cx,
         )
-        .boxed()
+        .into_any()
     }
 
     fn is_option_enabled(&self, option: SearchOption, cx: &AppContext) -> bool {
@@ -852,7 +846,7 @@ impl View for ProjectSearchBar {
         "ProjectSearchBar"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
             let theme = cx.global::<Settings>().theme.clone();
@@ -868,8 +862,7 @@ impl View for ProjectSearchBar {
                             ChildView::new(&search.query_editor, cx)
                                 .aligned()
                                 .left()
-                                .flex(1., true)
-                                .boxed(),
+                                .flex(1., true),
                         )
                         .with_children(search.active_match_index.map(|match_ix| {
                             Label::new(
@@ -883,7 +876,6 @@ impl View for ProjectSearchBar {
                             .contained()
                             .with_style(theme.search.match_index.container)
                             .aligned()
-                            .boxed()
                         }))
                         .contained()
                         .with_style(editor_container)
@@ -891,15 +883,13 @@ impl View for ProjectSearchBar {
                         .constrained()
                         .with_min_width(theme.search.editor.min_width)
                         .with_max_width(theme.search.editor.max_width)
-                        .flex(1., false)
-                        .boxed(),
+                        .flex(1., false),
                 )
                 .with_child(
                     Flex::row()
                         .with_child(self.render_nav_button("<", Direction::Prev, cx))
                         .with_child(self.render_nav_button(">", Direction::Next, cx))
-                        .aligned()
-                        .boxed(),
+                        .aligned(),
                 )
                 .with_child(
                     Flex::row()
@@ -912,16 +902,15 @@ impl View for ProjectSearchBar {
                         .with_child(self.render_option_button("Regex", SearchOption::Regex, cx))
                         .contained()
                         .with_style(theme.search.option_button_group)
-                        .aligned()
-                        .boxed(),
+                        .aligned(),
                 )
                 .contained()
                 .with_style(theme.search.container)
                 .aligned()
                 .left()
-                .named("project search")
+                .into_any_named("project search")
         } else {
-            Empty::new().boxed()
+            Empty::new().into_any()
         }
     }
 }

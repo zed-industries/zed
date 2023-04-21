@@ -2,7 +2,7 @@ use gpui::{
     color::Color,
     fonts::{Properties, Weight},
     text_layout::RunStyle,
-    Drawable, Element, Quad, SceneBuilder, View, ViewContext,
+    AnyElement, Element, Quad, SceneBuilder, View, ViewContext,
 };
 use log::LevelFilter;
 use pathfinder_geometry::rect::RectF;
@@ -30,12 +30,12 @@ impl gpui::View for TextView {
         "View"
     }
 
-    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> Element<TextView> {
-        TextElement.boxed()
+    fn render(&mut self, _: &mut gpui::ViewContext<Self>) -> AnyElement<TextView> {
+        TextElement.into_any()
     }
 }
 
-impl<V: View> Drawable<V> for TextElement {
+impl<V: View> Element<V> for TextElement {
     type LayoutState = ();
 
     type PaintState = ();

@@ -18,7 +18,7 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
     platform::KeyDownEvent,
-    AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, Task, View, ViewContext,
+    AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use project::{LocalWorktree, Project};
@@ -387,7 +387,7 @@ impl View for TerminalView {
         "Terminal"
     }
 
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let terminal_handle = self.terminal.clone().downgrade();
 
         let self_id = cx.view_id();
@@ -403,11 +403,10 @@ impl View for TerminalView {
                     focused,
                     self.should_show_cursor(focused, cx),
                 )
-                .contained()
-                .boxed(),
+                .contained(),
             )
-            .with_child(ChildView::new(&self.context_menu, cx).boxed())
-            .boxed()
+            .with_child(ChildView::new(&self.context_menu, cx))
+            .into_any()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -550,7 +549,7 @@ impl Item for TerminalView {
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
-    ) -> Element<T> {
+    ) -> AnyElement<T> {
         let title = self.terminal().read(cx).title();
 
         Flex::row()
@@ -561,11 +560,10 @@ impl Item for TerminalView {
                     .with_width(tab_theme.type_icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(tab_theme.spacing)
-                    .boxed(),
+                    .with_margin_right(tab_theme.spacing),
             )
-            .with_child(Label::new(title, tab_theme.label.clone()).aligned().boxed())
-            .boxed()
+            .with_child(Label::new(title, tab_theme.label.clone()).aligned())
+            .into_any()
     }
 
     fn clone_on_split(

@@ -4,7 +4,7 @@ use gpui::{
     elements::{Flex, MouseEventHandler, Padding, Text},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Axis, Drawable, Element, ModelHandle, Task, ViewContext,
+    AnyElement, AppContext, Axis, Element, ModelHandle, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity};
 use project::{HoverBlock, Project};
@@ -283,7 +283,7 @@ impl HoverState {
         style: &EditorStyle,
         visible_rows: Range<u32>,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, Vec<Element<Editor>>)> {
+    ) -> Option<(DisplayPoint, Vec<AnyElement<Editor>>)> {
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -323,7 +323,7 @@ pub struct InfoPopover {
 }
 
 impl InfoPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> Element<Editor> {
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         MouseEventHandler::<InfoPopover, _>::new(0, cx, |_, cx| {
             let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock>(1, None, cx);
             flex.extend(self.contents.iter().map(|content| {
@@ -344,7 +344,7 @@ impl InfoPopover {
                                 })
                                 .collect(),
                         )
-                        .boxed()
+                        .into_any()
                 } else {
                     let mut text_style = style.hover_popover.prose.clone();
                     text_style.font_size = style.text.font_size;
@@ -353,12 +353,10 @@ impl InfoPopover {
                         .with_soft_wrap(true)
                         .contained()
                         .with_style(style.hover_popover.block_style)
-                        .boxed()
+                        .into_any()
                 }
             }));
-            flex.contained()
-                .with_style(style.hover_popover.container)
-                .boxed()
+            flex.contained().with_style(style.hover_popover.container)
         })
         .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
         .with_cursor_style(CursorStyle::Arrow)
@@ -367,7 +365,7 @@ impl InfoPopover {
             top: HOVER_POPOVER_GAP,
             ..Default::default()
         })
-        .boxed()
+        .into_any()
     }
 }
 
@@ -378,7 +376,7 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> Element<Editor> {
+    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum PrimaryDiagnostic {}
 
         let mut text_style = style.hover_popover.prose.clone();
@@ -399,7 +397,6 @@ impl DiagnosticPopover {
                 .with_soft_wrap(true)
                 .contained()
                 .with_style(container_style)
-                .boxed()
         })
         .with_padding(Padding {
             top: HOVER_POPOVER_GAP,
@@ -418,7 +415,7 @@ impl DiagnosticPopover {
             tooltip_style,
             cx,
         )
-        .boxed()
+        .into_any()
     }
 
     pub fn activation_info(&self) -> (usize, Anchor) {

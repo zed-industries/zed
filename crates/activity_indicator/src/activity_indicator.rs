@@ -315,7 +315,7 @@ impl View for ActivityIndicator {
         "ActivityIndicator"
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let Content {
             icon,
             message,
@@ -343,20 +343,18 @@ impl View for ActivityIndicator {
                         .contained()
                         .with_margin_right(style.icon_spacing)
                         .aligned()
-                        .named("activity-icon")
+                        .into_any_named("activity-icon")
                 }))
                 .with_child(
                     Text::new(message, style.message.clone())
                         .with_soft_wrap(false)
-                        .aligned()
-                        .boxed(),
+                        .aligned(),
                 )
                 .constrained()
                 .with_height(style.height)
                 .contained()
                 .with_style(style.container)
                 .aligned()
-                .boxed()
         });
 
         if let Some(action) = action {
@@ -367,7 +365,7 @@ impl View for ActivityIndicator {
                 });
         }
 
-        element.boxed()
+        element.into_any()
     }
 }
 

@@ -8,7 +8,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle},
-    Drawable, SceneBuilder, SizeConstraint, View, ViewContext,
+    Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -127,7 +127,7 @@ impl Label {
     }
 }
 
-impl<V: View> Drawable<V> for Label {
+impl<V: View> Element<V> for Label {
     type LayoutState = Line;
     type PaintState = ();
 
