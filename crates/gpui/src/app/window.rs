@@ -444,6 +444,11 @@ impl<'a> WindowContext<'a> {
                             .map(|action_type| (action_type, depth)),
                     );
                 }
+            } else {
+                log::error!(
+                    "view {} not found when computing available actions",
+                    view_id
+                );
             }
         }
 
