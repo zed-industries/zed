@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyViewHandle, AppContext, DebugContext, ElementBox, Entity, LayoutContext, MeasurementContext,
-    PaintContext, RenderContext, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
+    AnyViewHandle, Element, Entity, SceneBuilder, SizeConstraint, Subscription, View, ViewContext,
+    ViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -23,7 +23,11 @@ pub trait StatusItemView: View {
 
 trait StatusItemViewHandle {
     fn as_any(&self) -> &AnyViewHandle;
-    fn set_active_pane_item(&self, active_pane_item: Option<&dyn ItemHandle>, cx: &mut AppContext);
+    fn set_active_pane_item(
+        &self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut WindowContext,
+    );
 }
 
 pub struct StatusBar {
@@ -42,7 +46,7 @@ impl View for StatusBar {
         "StatusBar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.status_bar;
 
         StatusBarElement {
@@ -125,7 +129,11 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
         self
     }
 
-    fn set_active_pane_item(&self, active_pane_item: Option<&dyn ItemHandle>, cx: &mut AppContext) {
+    fn set_active_pane_item(
+        &self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        cx: &mut WindowContext,
+    ) {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         });
@@ -139,48 +147,53 @@ impl From<&dyn StatusItemViewHandle> for AnyViewHandle {
 }
 
 struct StatusBarElement {
-    left: ElementBox,
-    right: ElementBox,
+    left: Element<StatusBar>,
+    right: Element<StatusBar>,
 }
 
-impl Element for StatusBarElement {
+impl Drawable<StatusBar> for StatusBarElement {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut StatusBar,
+        cx: &mut ViewContext<StatusBar>,
     ) -> (Vector2F, Self::LayoutState) {
         let max_width = constraint.max.x();
         constraint.min = vec2f(0., constraint.min.y());
 
-        let right_size = self.right.layout(constraint, cx);
+        let right_size = self.right.layout(constraint, view, cx);
         let constraint = SizeConstraint::new(
             vec2f(0., constraint.min.y()),
             vec2f(max_width - right_size.x(), constraint.max.y()),
         );
 
-        self.left.layout(constraint, cx);
+        self.left.layout(constraint, view, cx);
 
         (vec2f(max_width, right_size.y()), ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut StatusBar,
+        cx: &mut ViewContext<StatusBar>,
     ) -> Self::PaintState {
         let origin_y = bounds.upper_right().y();
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         let left_origin = vec2f(bounds.lower_left().x(), origin_y);
-        self.left.paint(left_origin, visible_bounds, cx);
+        self.left
+            .paint(scene, left_origin, visible_bounds, view, cx);
 
         let right_origin = vec2f(bounds.upper_right().x() - self.right.size().x(), origin_y);
-        self.right.paint(right_origin, visible_bounds, cx);
+        self.right
+            .paint(scene, right_origin, visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(
@@ -190,7 +203,8 @@ impl Element for StatusBarElement {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &StatusBar,
+        _: &ViewContext<StatusBar>,
     ) -> Option<RectF> {
         None
     }
@@ -200,7 +214,8 @@ impl Element for StatusBarElement {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &StatusBar,
+        _: &ViewContext<StatusBar>,
     ) -> serde_json::Value {
         json!({
             "type": "StatusBarElement",

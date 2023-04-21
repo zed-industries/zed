@@ -735,7 +735,7 @@ mod tests {
             .map_or(5, |o| o.parse().expect("invalid OPERATIONS variable"));
 
         for seed in starting_seed..(starting_seed + num_iterations) {
-            dbg!(seed);
+            eprintln!("seed = {}", seed);
             let mut rng = StdRng::seed_from_u64(seed);
 
             let rng = &mut rng;

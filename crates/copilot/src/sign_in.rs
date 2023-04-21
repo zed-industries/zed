@@ -4,7 +4,8 @@ use gpui::{
     geometry::rect::RectF,
     impl_internal_actions,
     platform::{WindowBounds, WindowKind, WindowOptions},
-    AppContext, ClipboardItem, Element, Entity, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, ClipboardItem, Drawable, Element, Entity, View, ViewContext,
+    ViewHandle,
 };
 use settings::Settings;
 use theme::ui::modal;
@@ -31,26 +32,32 @@ pub fn init(cx: &mut AppContext) {
             match &status {
                 crate::Status::SigningIn { prompt } => {
                     if let Some(code_verification_handle) = code_verification.as_mut() {
-                        if cx.has_window(code_verification_handle.window_id()) {
-                            code_verification_handle.update(cx, |code_verification_view, cx| {
-                                code_verification_view.set_status(status, cx)
+                        let window_id = code_verification_handle.window_id();
+                        if cx.has_window(window_id) {
+                            cx.update_window(window_id, |cx| {
+                                code_verification_handle.update(cx, |code_verification, cx| {
+                                    code_verification.set_status(status, cx)
+                                });
+                                cx.activate_window();
                             });
-                            cx.activate_window(code_verification_handle.window_id());
                         } else {
-                            create_copilot_auth_window(cx, &status, &mut code_verification);
+                            code_verification = Some(create_copilot_auth_window(cx, &status));
                         }
                     } else if let Some(_prompt) = prompt {
-                        create_copilot_auth_window(cx, &status, &mut code_verification);
+                        code_verification = Some(create_copilot_auth_window(cx, &status));
                     }
                 }
                 Status::Authorized | Status::Unauthorized => {
                     if let Some(code_verification) = code_verification.as_ref() {
-                        code_verification.update(cx, |code_verification, cx| {
-                            code_verification.set_status(status, cx)
-                        });
+                        let window_id = code_verification.window_id();
+                        cx.update_window(window_id, |cx| {
+                            code_verification.update(cx, |code_verification, cx| {
+                                code_verification.set_status(status, cx)
+                            });
 
-                        cx.platform().activate(true);
-                        cx.activate_window(code_verification.window_id());
+                            cx.platform().activate(true);
+                            cx.activate_window();
+                        });
                     }
                 }
                 _ => {
@@ -73,8 +80,7 @@ pub fn init(cx: &mut AppContext) {
 fn create_copilot_auth_window(
     cx: &mut AppContext,
     status: &Status,
-    code_verification: &mut Option<ViewHandle<CopilotCodeVerification>>,
-) {
+) -> ViewHandle<CopilotCodeVerification> {
     let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
     let window_options = WindowOptions {
         bounds: WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
@@ -88,7 +94,7 @@ fn create_copilot_auth_window(
     let (_, view) = cx.add_window(window_options, |_cx| {
         CopilotCodeVerification::new(status.clone())
     });
-    *code_verification = Some(view);
+    view
 }
 
 pub struct CopilotCodeVerification {
@@ -112,8 +118,8 @@ impl CopilotCodeVerification {
     fn render_device_code(
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let copied = cx
             .read_from_clipboard()
             .map(|item| item.text() == &data.user_code)
@@ -121,7 +127,7 @@ impl CopilotCodeVerification {
 
         let device_code_style = &style.auth.prompting.device_code;
 
-        MouseEventHandler::<Self>::new(0, cx, |state, _cx| {
+        MouseEventHandler::<Self, _>::new(0, cx, |state, _cx| {
             Flex::row()
                 .with_children([
                     Label::new(data.user_code.clone(), device_code_style.text.clone())
@@ -148,7 +154,7 @@ impl CopilotCodeVerification {
         })
         .on_click(gpui::platform::MouseButton::Left, {
             let user_code = data.user_code.clone();
-            move |_, cx| {
+            move |_, _, cx| {
                 cx.platform()
                     .write_to_clipboard(ClipboardItem::new(user_code.clone()));
                 cx.notify();
@@ -162,8 +168,10 @@ impl CopilotCodeVerification {
         connect_clicked: bool,
         data: &PromptUserDeviceFlow,
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
+        enum ConnectButton {}
+
         Flex::column()
             .with_children([
                 Flex::column()
@@ -205,7 +213,7 @@ impl CopilotCodeVerification {
                     .contained()
                     .with_style(style.auth.prompting.hint.container.clone())
                     .boxed(),
-                theme::ui::cta_button_with_click(
+                theme::ui::cta_button_with_click::<ConnectButton, _, _, _>(
                     if connect_clicked {
                         "Waiting for connection..."
                     } else {
@@ -216,7 +224,7 @@ impl CopilotCodeVerification {
                     cx,
                     {
                         let verification_uri = data.verification_uri.clone();
-                        move |_, cx| {
+                        move |_, _, cx| {
                             cx.platform().open_url(&verification_uri);
                             cx.dispatch_action(ClickedConnect)
                         }
@@ -227,10 +235,9 @@ impl CopilotCodeVerification {
             .align_children_center()
             .boxed()
     }
-    fn render_enabled_modal(
-        style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
-    ) -> ElementBox {
+    fn render_enabled_modal(style: &theme::Copilot, cx: &mut ViewContext<Self>) -> Element<Self> {
+        enum DoneButton {}
+
         let enabled_style = &style.auth.authorized;
         Flex::column()
             .with_children([
@@ -261,15 +268,12 @@ impl CopilotCodeVerification {
                     .contained()
                     .with_style(enabled_style.hint.container)
                     .boxed(),
-                theme::ui::cta_button_with_click(
+                theme::ui::cta_button_with_click::<DoneButton, _, _, _>(
                     "Done",
                     style.auth.content_width,
                     &style.auth.cta_button,
                     cx,
-                    |_, cx| {
-                        let window_id = cx.window_id();
-                        cx.remove_window(window_id)
-                    },
+                    |_, _, cx| cx.remove_window(),
                 )
                 .boxed(),
             ])
@@ -278,8 +282,8 @@ impl CopilotCodeVerification {
     }
     fn render_unauthorized_modal(
         style: &theme::Copilot,
-        cx: &mut gpui::RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let unauthorized_style = &style.auth.not_authorized;
 
         Flex::column()
@@ -322,14 +326,13 @@ impl CopilotCodeVerification {
                     .contained()
                     .with_style(unauthorized_style.warning.container)
                     .boxed(),
-                theme::ui::cta_button_with_click(
+                theme::ui::cta_button_with_click::<CopilotCodeVerification, _, _, _>(
                     "Subscribe on GitHub",
                     style.auth.content_width,
                     &style.auth.cta_button,
                     cx,
-                    |_, cx| {
-                        let window_id = cx.window_id();
-                        cx.remove_window(window_id);
+                    |_, _, cx| {
+                        cx.remove_window();
                         cx.platform().open_url(COPILOT_SIGN_UP_URL)
                     },
                 )
@@ -349,18 +352,20 @@ impl View for CopilotCodeVerification {
         "CopilotCodeVerification"
     }
 
-    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut gpui::ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.notify()
     }
 
-    fn focus_out(&mut self, _: gpui::AnyViewHandle, cx: &mut gpui::ViewContext<Self>) {
+    fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.notify()
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
+        enum ConnectModal {}
+
         let style = cx.global::<Settings>().theme.clone();
 
-        modal("Connect Copilot to Zed", &style.copilot.modal, cx, |cx| {
+        modal::<ConnectModal, _, _, _>("Connect Copilot to Zed", &style.copilot.modal, cx, |cx| {
             Flex::column()
                 .with_children([
                     theme::ui::icon(&style.copilot.auth.header).boxed(),

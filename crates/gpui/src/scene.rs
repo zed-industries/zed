@@ -236,6 +236,19 @@ impl SceneBuilder {
         self.scale_factor
     }
 
+    pub fn paint_stacking_context<F>(
+        &mut self,
+        clip_bounds: Option<RectF>,
+        z_index: Option<usize>,
+        f: F,
+    ) where
+        F: FnOnce(&mut Self),
+    {
+        self.push_stacking_context(clip_bounds, z_index);
+        f(self);
+        self.pop_stacking_context();
+    }
+
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>, z_index: Option<usize>) {
         let z_index = z_index.unwrap_or_else(|| self.active_stacking_context().z_index + 1);
         self.active_stacking_context_stack
@@ -247,6 +260,15 @@ impl SceneBuilder {
     pub fn pop_stacking_context(&mut self) {
         self.active_stacking_context_stack.pop();
         assert!(!self.active_stacking_context_stack.is_empty());
+    }
+
+    pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
+    where
+        F: FnOnce(&mut Self),
+    {
+        self.push_layer(clip_bounds);
+        f(self);
+        self.pop_layer();
     }
 
     pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {

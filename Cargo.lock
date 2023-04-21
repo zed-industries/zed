@@ -3371,6 +3371,7 @@ dependencies = [
  "project",
  "settings",
  "theme",
+ "util",
  "workspace",
 ]
 

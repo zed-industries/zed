@@ -9,8 +9,7 @@ use gpui::{
     geometry::vector::Vector2F,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Border, Element, ElementBox, RenderContext, SizeConstraint, ViewContext,
-    ViewHandle,
+    AppContext, Border, Drawable, Element, SizeConstraint, ViewContext, ViewHandle,
 };
 use settings::{DockAnchor, Settings};
 use theme::Theme;
@@ -315,8 +314,8 @@ impl Dock {
         &self,
         theme: &Theme,
         anchor: DockAnchor,
-        cx: &mut RenderContext<Workspace>,
-    ) -> Option<ElementBox> {
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Element<Workspace>> {
         let style = &theme.workspace.dock;
 
         self.position
@@ -351,7 +350,7 @@ impl Dock {
 
                     let resizable = Container::new(ChildView::new(&self.pane, cx).boxed())
                         .with_style(panel_style)
-                        .with_resize_handle::<DockResizeHandle, _>(
+                        .with_resize_handle::<DockResizeHandle>(
                             resize_side as usize,
                             resize_side,
                             4.,
@@ -363,32 +362,27 @@ impl Dock {
                         );
 
                     let size = resizable.current_size();
-                    let workspace = cx.handle();
-                    cx.defer(move |cx| {
-                        if let Some(workspace) = workspace.upgrade(cx) {
-                            workspace.update(cx, |workspace, _| {
-                                workspace.dock.panel_sizes.insert(anchor, size);
-                            })
-                        }
+                    cx.defer(move |workspace, _| {
+                        workspace.dock.panel_sizes.insert(anchor, size);
                     });
 
                     if anchor == DockAnchor::Right {
                         resizable
                             .constrained()
-                            .dynamically(|constraint, cx| {
+                            .dynamically(|constraint, _, cx| {
                                 SizeConstraint::new(
                                     Vector2F::new(20., constraint.min.y()),
-                                    Vector2F::new(cx.window_size.x() * 0.8, constraint.max.y()),
+                                    Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
                                 )
                             })
                             .boxed()
                     } else {
                         resizable
                             .constrained()
-                            .dynamically(|constraint, cx| {
+                            .dynamically(|constraint, _, cx| {
                                 SizeConstraint::new(
                                     Vector2F::new(constraint.min.x(), 50.),
-                                    Vector2F::new(constraint.max.x(), cx.window_size.y() * 0.8),
+                                    Vector2F::new(constraint.max.x(), cx.window_size().y() * 0.8),
                                 )
                             })
                             .boxed()
@@ -400,21 +394,21 @@ impl Dock {
                     Stack::new()
                         .with_child(
                             // Render wash under the dock which when clicked hides it
-                            MouseEventHandler::<ExpandedDockWash>::new(0, cx, |_, _| {
+                            MouseEventHandler::<ExpandedDockWash, _>::new(0, cx, |_, _| {
                                 Empty::new()
                                     .contained()
                                     .with_background_color(style.wash_color)
                                     .boxed()
                             })
                             .capture_all()
-                            .on_down(MouseButton::Left, |_, cx| {
+                            .on_down(MouseButton::Left, |_, _, cx| {
                                 cx.dispatch_action(HideDock);
                             })
                             .with_cursor_style(CursorStyle::Arrow)
                             .boxed(),
                         )
                         .with_child(
-                            MouseEventHandler::<ExpandedDockPane>::new(0, cx, |_state, cx| {
+                            MouseEventHandler::<ExpandedDockPane, _>::new(0, cx, |_state, cx| {
                                 ChildView::new(&self.pane, cx).boxed()
                             })
                             // Make sure all events directly under the dock pane
@@ -824,6 +818,8 @@ mod tests {
     }
 
     impl<'a> UpdateView for DockTestContext<'a> {
+        type Output<S> = S;
+
         fn update_view<T, S>(
             &mut self,
             handle: &ViewHandle<T>,

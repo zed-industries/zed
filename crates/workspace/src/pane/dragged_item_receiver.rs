@@ -5,7 +5,8 @@ use gpui::{
     geometry::{rect::RectF, vector::Vector2F},
     platform::MouseButton,
     scene::MouseUp,
-    AppContext, Element, ElementBox, EventContext, MouseState, Quad, RenderContext, WeakViewHandle,
+    AppContext, Drawable, Element, EventContext, MouseState, Quad, View, ViewContext,
+    WeakViewHandle,
 };
 use project::ProjectEntryId;
 use settings::Settings;
@@ -22,14 +23,14 @@ pub fn dragged_item_receiver<Tag, F>(
     drop_index: usize,
     allow_same_pane: bool,
     split_margin: Option<f32>,
-    cx: &mut RenderContext<Pane>,
+    cx: &mut ViewContext<Pane>,
     render_child: F,
-) -> MouseEventHandler<Tag>
+) -> MouseEventHandler<Tag, Pane>
 where
     Tag: 'static,
-    F: FnOnce(&mut MouseState, &mut RenderContext<Pane>) -> ElementBox,
+    F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> Element<Pane>,
 {
-    MouseEventHandler::<Tag>::above(region_id, cx, |state, cx| {
+    MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
         let drag_position = if state.hovered() {
@@ -48,7 +49,7 @@ where
         Stack::new()
             .with_child(render_child(state, cx))
             .with_children(drag_position.map(|drag_position| {
-                Canvas::new(move |bounds, _, cx| {
+                Canvas::new(move |scene, bounds, _, _, cx| {
                     if bounds.contains_point(drag_position) {
                         let overlay_region = split_margin
                             .and_then(|split_margin| {
@@ -58,8 +59,8 @@ where
                             .map(|(dir, margin)| dir.along_edge(bounds, margin))
                             .unwrap_or(bounds);
 
-                        cx.paint_stacking_context(None, None, |cx| {
-                            cx.scene.push_quad(Quad {
+                        scene.paint_stacking_context(None, None, |scene| {
+                            scene.push_quad(Quad {
                                 bounds: overlay_region,
                                 background: Some(overlay_color(cx)),
                                 border: Default::default(),
@@ -73,13 +74,13 @@ where
             .boxed()
     })
     .on_up(MouseButton::Left, {
-        let pane = cx.handle();
-        move |event, cx| {
+        move |event, _, cx| {
+            let pane = cx.weak_handle();
             handle_dropped_item(event, &pane, drop_index, allow_same_pane, split_margin, cx);
             cx.notify();
         }
     })
-    .on_move(|_, cx| {
+    .on_move(|_, _, cx| {
         let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
 
         if drag_and_drop
@@ -96,13 +97,13 @@ where
     })
 }
 
-pub fn handle_dropped_item(
+pub fn handle_dropped_item<V: View>(
     event: MouseUp,
     pane: &WeakViewHandle<Pane>,
     index: usize,
     allow_same_pane: bool,
     split_margin: Option<f32>,
-    cx: &mut EventContext,
+    cx: &mut EventContext<V>,
 ) {
     enum Action {
         Move(WeakViewHandle<Pane>, usize),
@@ -110,11 +111,11 @@ pub fn handle_dropped_item(
     }
     let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
     let action = if let Some((_, dragged_item)) =
-        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id)
+        drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id())
     {
         Action::Move(dragged_item.pane.clone(), dragged_item.item.id())
     } else if let Some((_, project_entry)) =
-        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id)
+        drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id())
     {
         Action::Open(*project_entry)
     } else {

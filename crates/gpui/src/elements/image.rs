@@ -5,8 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    presenter::MeasurementContext,
-    scene, Border, DebugContext, Element, ImageData, LayoutContext, PaintContext, SizeConstraint,
+    scene, Border, Drawable, ImageData, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};
@@ -56,14 +55,15 @@ impl Image {
     }
 }
 
-impl Element for Image {
+impl<V: View> Drawable<V> for Image {
     type LayoutState = Option<Arc<ImageData>>;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let data = match &self.source {
             ImageSource::Path(path) => match cx.asset_cache.png(path) {
@@ -90,13 +90,15 @@ impl Element for Image {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         _: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        _: &mut V,
+        _: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if let Some(data) = layout {
-            cx.scene.push_image(scene::Image {
+            scene.push_image(scene::Image {
                 bounds,
                 border: self.style.border,
                 corner_radius: self.style.corner_radius,
@@ -113,7 +115,8 @@ impl Element for Image {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -123,7 +126,8 @@ impl Element for Image {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "Image",

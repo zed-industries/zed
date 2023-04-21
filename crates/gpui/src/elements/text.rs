@@ -6,9 +6,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    presenter::MeasurementContext,
     text_layout::{Line, RunStyle, ShapedBoundary},
-    DebugContext, Element, FontCache, LayoutContext, PaintContext, SizeConstraint, TextLayoutCache,
+    Drawable, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -53,14 +52,15 @@ impl Text {
     }
 }
 
-impl Element for Text {
+impl<V: View> Drawable<V> for Text {
     type LayoutState = LayoutState;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
 
@@ -98,8 +98,8 @@ impl Element for Text {
         let shaped_lines = layout_highlighted_chunks(
             chunks,
             &self.style,
-            cx.text_layout_cache,
-            cx.font_cache,
+            cx.text_layout_cache(),
+            &cx.font_cache,
             usize::MAX,
             self.text.matches('\n').count() + 1,
         );
@@ -143,10 +143,12 @@ impl Element for Text {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();
@@ -163,6 +165,7 @@ impl Element for Text {
             if boundaries.intersects(visible_bounds) {
                 if self.soft_wrap {
                     line.paint_wrapped(
+                        scene,
                         origin,
                         visible_bounds,
                         layout.line_height,
@@ -170,7 +173,7 @@ impl Element for Text {
                         cx,
                     );
                 } else {
-                    line.paint(origin, visible_bounds, layout.line_height, cx);
+                    line.paint(scene, origin, visible_bounds, layout.line_height, cx);
                 }
             }
             origin.set_y(boundaries.max_y());
@@ -184,7 +187,8 @@ impl Element for Text {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -194,7 +198,8 @@ impl Element for Text {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Value {
         json!({
             "type": "Text",
@@ -208,9 +213,9 @@ impl Element for Text {
 /// Perform text layout on a series of highlighted chunks of text.
 pub fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
-    text_style: &'a TextStyle,
-    text_layout_cache: &'a TextLayoutCache,
-    font_cache: &'a Arc<FontCache>,
+    text_style: &TextStyle,
+    text_layout_cache: &TextLayoutCache,
+    font_cache: &Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
 ) -> Vec<Line> {
@@ -271,20 +276,23 @@ pub fn layout_highlighted_chunks<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::Empty, fonts, AppContext, ElementBox, Entity, RenderContext, View};
+    use crate::{elements::Empty, fonts, AppContext, Element, Entity, View, ViewContext};
 
     #[crate::test(self)]
     fn test_soft_wrapping_with_carriage_returns(cx: &mut AppContext) {
-        let (window_id, _) = cx.add_window(Default::default(), |_| TestView);
-        let mut presenter = cx.build_presenter(window_id, Default::default(), Default::default());
-        fonts::with_font_cache(cx.font_cache().clone(), || {
-            let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
-            let (_, state) = text.layout(
-                SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
-                &mut presenter.build_layout_context(Default::default(), false, cx),
-            );
-            assert_eq!(state.shaped_lines.len(), 2);
-            assert_eq!(state.wrap_boundaries.len(), 2);
+        cx.add_window(Default::default(), |cx| {
+            let mut view = TestView;
+            fonts::with_font_cache(cx.font_cache().clone(), || {
+                let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
+                let (_, state) = text.layout(
+                    SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
+                    &mut view,
+                    cx,
+                );
+                assert_eq!(state.shaped_lines.len(), 2);
+                assert_eq!(state.wrap_boundaries.len(), 2);
+            });
+            view
         });
     }
 
@@ -299,7 +307,7 @@ mod tests {
             "TestView"
         }
 
-        fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
             Empty::new().boxed()
         }
     }

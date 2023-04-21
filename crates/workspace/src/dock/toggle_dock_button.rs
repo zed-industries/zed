@@ -2,7 +2,7 @@ use gpui::{
     elements::{Empty, MouseEventHandler, Svg},
     platform::CursorStyle,
     platform::MouseButton,
-    Element, ElementBox, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
+    Drawable, Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 
@@ -34,7 +34,7 @@ impl View for ToggleDockButton {
         "Dock Toggle"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
         let workspace = self.workspace.upgrade(cx);
 
         if workspace.is_none() {
@@ -43,11 +43,11 @@ impl View for ToggleDockButton {
 
         let workspace = workspace.unwrap();
         let dock_position = workspace.read(cx).dock.position;
-        let dock_pane = workspace.read(cx.app).dock_pane().clone();
+        let dock_pane = workspace.read(cx).dock_pane().clone();
 
         let theme = cx.global::<Settings>().theme.clone();
 
-        let button = MouseEventHandler::<Self>::new(0, cx, {
+        let button = MouseEventHandler::<Self, _>::new(0, cx, {
             let theme = theme.clone();
             move |state, _| {
                 let style = theme
@@ -68,17 +68,17 @@ impl View for ToggleDockButton {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_up(MouseButton::Left, move |event, cx| {
-            let drop_index = dock_pane.read(cx.app).items_len() + 1;
+        .on_up(MouseButton::Left, move |event, _, cx| {
+            let drop_index = dock_pane.read(cx).items_len() + 1;
             handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
         });
 
         if dock_position.is_visible() {
             button
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(HideDock);
                 })
-                .with_tooltip::<Self, _>(
+                .with_tooltip::<Self>(
                     0,
                     "Hide Dock".into(),
                     Some(Box::new(HideDock)),
@@ -87,10 +87,10 @@ impl View for ToggleDockButton {
                 )
         } else {
             button
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(FocusDock);
                 })
-                .with_tooltip::<Self, _>(
+                .with_tooltip::<Self>(
                     0,
                     "Focus Dock".into(),
                     Some(Box::new(FocusDock)),

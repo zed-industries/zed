@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
-    ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -21,7 +21,7 @@ pub trait ToolbarItemView: View {
         current_location
     }
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut AppContext) {}
+    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
 }
 
 trait ToolbarItemViewHandle {
@@ -30,9 +30,9 @@ trait ToolbarItemViewHandle {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> ToolbarItemLocation;
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext);
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -59,7 +59,7 @@ impl View for Toolbar {
         "Toolbar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.toolbar;
 
         let mut primary_left_items = Vec::new();
@@ -171,9 +171,9 @@ fn nav_button<A: Action + Clone>(
     action: A,
     tooltip_action: A,
     action_name: &str,
-    cx: &mut RenderContext<Toolbar>,
-) -> ElementBox {
-    MouseEventHandler::<A>::new(0, cx, |state, _| {
+    cx: &mut ViewContext<Toolbar>,
+) -> Element<Toolbar> {
+    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state, false)
         } else {
@@ -197,10 +197,10 @@ fn nav_button<A: Action + Clone>(
     } else {
         CursorStyle::default()
     })
-    .on_click(MouseButton::Left, move |_, cx| {
+    .on_click(MouseButton::Left, move |_, _, cx| {
         cx.dispatch_action(action.clone())
     })
-    .with_tooltip::<A, _>(
+    .with_tooltip::<A>(
         0,
         action_name.to_string(),
         Some(Box::new(tooltip_action)),
@@ -266,7 +266,7 @@ impl Toolbar {
         }
     }
 
-    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
+    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut ViewContext<Self>) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.pane_focus_update(pane_focused, cx);
         }
@@ -295,14 +295,14 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         })
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| {
             this.pane_focus_update(pane_focused, cx);
             cx.notify();

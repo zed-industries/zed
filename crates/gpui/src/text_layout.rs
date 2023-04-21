@@ -7,7 +7,9 @@ use crate::{
     },
     platform,
     platform::FontSystem,
-    scene, PaintContext,
+    scene,
+    window::WindowContext,
+    SceneBuilder,
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -271,10 +273,11 @@ impl Line {
 
     pub fn paint(
         &self,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
-        cx: &mut PaintContext,
+        cx: &mut WindowContext,
     ) {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = vec2f(0., padding_top + self.layout.ascent);
@@ -331,7 +334,7 @@ impl Line {
                 }
 
                 if let Some((underline_origin, underline_style)) = finished_underline {
-                    cx.scene.push_underline(scene::Underline {
+                    scene.push_underline(scene::Underline {
                         origin: underline_origin,
                         width: glyph_origin.x() - underline_origin.x(),
                         thickness: underline_style.thickness.into(),
@@ -341,14 +344,14 @@ impl Line {
                 }
 
                 if glyph.is_emoji {
-                    cx.scene.push_image_glyph(scene::ImageGlyph {
+                    scene.push_image_glyph(scene::ImageGlyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
                         origin: glyph_origin,
                     });
                 } else {
-                    cx.scene.push_glyph(scene::Glyph {
+                    scene.push_glyph(scene::Glyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
@@ -361,7 +364,7 @@ impl Line {
 
         if let Some((underline_start, underline_style)) = underline.take() {
             let line_end_x = origin.x() + self.layout.width;
-            cx.scene.push_underline(scene::Underline {
+            scene.push_underline(scene::Underline {
                 origin: underline_start,
                 width: line_end_x - underline_start.x(),
                 color: underline_style.color.unwrap(),
@@ -373,11 +376,12 @@ impl Line {
 
     pub fn paint_wrapped(
         &self,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
         boundaries: impl IntoIterator<Item = ShapedBoundary>,
-        cx: &mut PaintContext,
+        cx: &mut WindowContext,
     ) {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
@@ -416,14 +420,14 @@ impl Line {
                 );
                 if glyph_bounds.intersects(visible_bounds) {
                     if glyph.is_emoji {
-                        cx.scene.push_image_glyph(scene::ImageGlyph {
+                        scene.push_image_glyph(scene::ImageGlyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,
                             origin: glyph_bounds.origin() + baseline_origin,
                         });
                     } else {
-                        cx.scene.push_glyph(scene::Glyph {
+                        scene.push_glyph(scene::Glyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,

@@ -2,7 +2,7 @@ use client::User;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, Element, ElementBox, RenderContext, View,
+    Action, Drawable, Element, View, ViewContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -16,8 +16,8 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
     body: Option<&'static str>,
     dismiss_action: A,
     buttons: Vec<(&'static str, Box<dyn Action>)>,
-    cx: &mut RenderContext<V>,
-) -> ElementBox {
+    cx: &mut ViewContext<V>,
+) -> Element<V> {
     let theme = cx.global::<Settings>().theme.clone();
     let theme = &theme.contact_notification;
 
@@ -51,7 +51,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     .boxed(),
                 )
                 .with_child(
-                    MouseEventHandler::<Dismiss>::new(user.id as usize, cx, |state, _| {
+                    MouseEventHandler::<Dismiss, V>::new(user.id as usize, cx, |state, _| {
                         let style = theme.dismiss_button.style_for(state, false);
                         Svg::new("icons/x_mark_8.svg")
                             .with_color(style.color)
@@ -67,7 +67,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .with_padding(Padding::uniform(5.))
-                    .on_click(MouseButton::Left, move |_, cx| {
+                    .on_click(MouseButton::Left, move |_, _, cx| {
                         cx.dispatch_any_action(dismiss_action.boxed_clone())
                     })
                     .aligned()
@@ -96,7 +96,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                 Flex::row()
                     .with_children(buttons.into_iter().enumerate().map(
                         |(ix, (message, action))| {
-                            MouseEventHandler::<Button>::new(ix, cx, |state, _| {
+                            MouseEventHandler::<Button, V>::new(ix, cx, |state, _| {
                                 let button = theme.button.style_for(state, false);
                                 Label::new(message, button.text.clone())
                                     .contained()
@@ -104,7 +104,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                                     .boxed()
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(MouseButton::Left, move |_, cx| {
+                            .on_click(MouseButton::Left, move |_, _, cx| {
                                 cx.dispatch_any_action(action.boxed_clone())
                             })
                             .boxed()

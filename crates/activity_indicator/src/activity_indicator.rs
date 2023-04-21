@@ -2,10 +2,10 @@ use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    actions,
+    actions, anyhow,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AppContext, Entity, ModelHandle, RenderContext, View, ViewContext, ViewHandle,
+    Action, AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
@@ -73,11 +73,12 @@ impl ActivityIndicator {
                                 status: event,
                             });
                             cx.notify();
-                        });
+                        })?;
                     } else {
                         break;
                     }
                 }
+                anyhow::Ok(())
             })
             .detach();
             cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -172,7 +173,7 @@ impl ActivityIndicator {
             .flatten()
     }
 
-    fn content_to_render(&mut self, cx: &mut RenderContext<Self>) -> Content {
+    fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Content {
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {
@@ -314,14 +315,14 @@ impl View for ActivityIndicator {
         "ActivityIndicator"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let Content {
             icon,
             message,
             action,
         } = self.content_to_render(cx);
 
-        let mut element = MouseEventHandler::<Self>::new(0, cx, |state, cx| {
+        let mut element = MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
             let theme = &cx
                 .global::<Settings>()
                 .theme
@@ -361,7 +362,7 @@ impl View for ActivityIndicator {
         if let Some(action) = action {
             element = element
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_any_action(action.boxed_clone())
                 });
         }

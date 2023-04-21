@@ -13,12 +13,12 @@ use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
 use gpui::{
     actions,
-    elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack, Text},
+    elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack},
     geometry::vector::Vector2F,
     impl_actions, impl_internal_actions,
     keymap_matcher::{KeymapContext, Keystroke},
     platform::KeyDownEvent,
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, Task, View, ViewContext,
+    AnyViewHandle, AppContext, Drawable, Element, Entity, ModelHandle, Task, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use project::{LocalWorktree, Project};
@@ -35,7 +35,7 @@ use terminal::{
 };
 use util::ResultExt;
 use workspace::{
-    item::{Item, ItemEvent},
+    item::{BreadcrumbText, Item, ItemEvent},
     notifications::NotifyResultExt,
     pane, register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
@@ -237,11 +237,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn should_show_cursor(
-        &self,
-        focused: bool,
-        cx: &mut gpui::RenderContext<'_, Self>,
-    ) -> bool {
+    pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
             || !self.blinking_on
@@ -284,7 +280,8 @@ impl TerminalView {
                 async move {
                     Timer::after(CURSOR_BLINK_INTERVAL).await;
                     if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
+                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                            .log_err();
                     }
                 }
             })
@@ -303,6 +300,7 @@ impl TerminalView {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                        .log_err();
                 }
             }
         })
@@ -389,19 +387,18 @@ impl View for TerminalView {
         "Terminal"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> Element<Self> {
         let terminal_handle = self.terminal.clone().downgrade();
 
         let self_id = cx.view_id();
         let focused = cx
-            .focused_view_id(cx.window_id())
+            .focused_view_id()
             .filter(|view_id| *view_id == self_id)
             .is_some();
 
         Stack::new()
             .with_child(
                 TerminalElement::new(
-                    cx.handle(),
                     terminal_handle,
                     focused,
                     self.should_show_cursor(focused, cx),
@@ -548,12 +545,12 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title().into())
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &gpui::AppContext,
-    ) -> ElementBox {
+    ) -> Element<T> {
         let title = self.terminal().read(cx).title();
 
         Flex::row()
@@ -615,12 +612,11 @@ impl Item for TerminalView {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
-        Some(vec![Text::new(
-            self.terminal().read(cx).breadcrumb_text.clone(),
-            theme.workspace.breadcrumbs.default.text.clone(),
-        )
-        .boxed()])
+    fn breadcrumbs(&self, _: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+        Some(vec![BreadcrumbText {
+            text: self.terminal().read(cx).breadcrumb_text.clone(),
+            highlights: None,
+        }])
     }
 
     fn serialized_item_kind() -> Option<&'static str> {

@@ -1,10 +1,7 @@
 use call::ActiveCall;
 use client::UserStore;
 use gpui::Action;
-use gpui::{
-    actions, elements::*, platform::MouseButton, Entity, ModelHandle, RenderContext, View,
-    ViewContext,
-};
+use gpui::{actions, elements::*, platform::MouseButton, Entity, ModelHandle, View, ViewContext};
 use settings::Settings;
 
 use crate::collab_titlebar_item::ToggleCollaboratorList;
@@ -21,7 +18,7 @@ enum Collaborator {
 actions!(collaborator_list_popover, [NoOp]);
 
 pub(crate) struct CollaboratorListPopover {
-    list_state: ListState,
+    list_state: ListState<Self>,
 }
 
 impl Entity for CollaboratorListPopover {
@@ -33,10 +30,10 @@ impl View for CollaboratorListPopover {
         "CollaboratorListPopover"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
-        MouseEventHandler::<Self>::new(0, cx, |_, _| {
+        MouseEventHandler::<Self, Self>::new(0, cx, |_, _| {
             List::new(self.list_state.clone())
                 .contained()
                 .with_style(theme.contacts_popover.container) //TODO: Change the name of this theme key
@@ -45,7 +42,7 @@ impl View for CollaboratorListPopover {
                 .with_height(theme.contacts_popover.height)
                 .boxed()
         })
-        .on_down_out(MouseButton::Left, move |_, cx| {
+        .on_down_out(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleCollaboratorList);
         })
         .boxed()
@@ -83,7 +80,6 @@ impl CollaboratorListPopover {
                 collaborators.len(),
                 Orientation::Top,
                 0.,
-                cx,
                 move |_, index, cx| match &collaborators[index] {
                     Collaborator::SelfUser { username } => render_collaborator_list_entry(
                         index,
@@ -120,8 +116,8 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
     icon: Svg,
     icon_action: IA,
     icon_tooltip: String,
-    cx: &mut RenderContext<CollaboratorListPopover>,
-) -> ElementBox {
+    cx: &mut ViewContext<CollaboratorListPopover>,
+) -> Element<CollaboratorListPopover> {
     enum Username {}
     enum UsernameTooltip {}
     enum Icon {}
@@ -131,19 +127,20 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
     let username_theme = theme.contact_list.contact_username.text.clone();
     let tooltip_theme = theme.tooltip.clone();
 
-    let username = MouseEventHandler::<Username>::new(index, cx, |_, _| {
-        Label::new(username.to_owned(), username_theme.clone()).boxed()
-    })
-    .on_click(MouseButton::Left, move |_, cx| {
-        if let Some(username_action) = username_action.clone() {
-            cx.dispatch_action(username_action);
-        }
-    });
+    let username =
+        MouseEventHandler::<Username, CollaboratorListPopover>::new(index, cx, |_, _| {
+            Label::new(username.to_owned(), username_theme.clone()).boxed()
+        })
+        .on_click(MouseButton::Left, move |_, _, cx| {
+            if let Some(username_action) = username_action.clone() {
+                cx.dispatch_action(username_action);
+            }
+        });
 
     Flex::row()
         .with_child(if let Some(username_tooltip) = username_tooltip {
             username
-                .with_tooltip::<UsernameTooltip, _>(
+                .with_tooltip::<UsernameTooltip>(
                     index,
                     username_tooltip,
                     None,
@@ -155,11 +152,11 @@ fn render_collaborator_list_entry<UA: Action + Clone, IA: Action + Clone>(
             username.boxed()
         })
         .with_child(
-            MouseEventHandler::<Icon>::new(index, cx, |_, _| icon.boxed())
-                .on_click(MouseButton::Left, move |_, cx| {
+            MouseEventHandler::<Icon, CollaboratorListPopover>::new(index, cx, |_, _| icon.boxed())
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(icon_action.clone())
                 })
-                .with_tooltip::<IconTooltip, _>(index, icon_tooltip, None, tooltip_theme, cx)
+                .with_tooltip::<IconTooltip>(index, icon_tooltip, None, tooltip_theme, cx)
                 .boxed(),
         )
         .boxed()

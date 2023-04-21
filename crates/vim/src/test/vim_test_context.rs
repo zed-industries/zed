@@ -16,26 +16,20 @@ pub struct VimTestContext<'a> {
 
 impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
+        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
         cx.update(|cx| {
+            cx.update_global(|settings: &mut Settings, _| {
+                settings.vim_mode = enabled;
+            });
             search::init(cx);
             crate::init(cx);
 
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
         });
 
-        let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
-
-        cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = enabled;
-            });
-        });
-
-        let window_id = cx.window_id;
-
         // Setup search toolbars and keypress hook
         cx.update_workspace(|workspace, cx| {
-            observe_keystrokes(window_id, cx);
+            observe_keystrokes(cx);
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
                     let buffer_search_bar = cx.add_view(BufferSearchBar::new);
@@ -82,7 +76,8 @@ impl<'a> VimTestContext<'a> {
     }
 
     pub fn set_state(&mut self, text: &str, mode: Mode) -> ContextHandle {
-        self.cx.update(|cx| {
+        let window_id = self.window_id;
+        self.update_window(window_id, |cx| {
             Vim::update(cx, |vim, cx| {
                 vim.switch_mode(mode, false, cx);
             })

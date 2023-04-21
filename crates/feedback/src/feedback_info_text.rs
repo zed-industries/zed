@@ -1,7 +1,7 @@
 use gpui::{
     elements::{Flex, Label, MouseEventHandler, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
-    Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
+    Drawable, Element, Entity, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
@@ -29,7 +29,7 @@ impl View for FeedbackInfoText {
         "FeedbackInfoText"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
 
         Flex::row()
@@ -43,7 +43,7 @@ impl View for FeedbackInfoText {
                 .boxed(),
             )
             .with_child(
-                MouseEventHandler::<OpenZedCommunityRepo>::new(0, cx, |state, _| {
+                MouseEventHandler::<OpenZedCommunityRepo, Self>::new(0, cx, |state, _| {
                     let contained_text = if state.hovered() {
                         &theme.feedback.link_text_hover
                     } else {
@@ -58,7 +58,7 @@ impl View for FeedbackInfoText {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(OpenZedCommunityRepo)
                 })
                 .boxed(),

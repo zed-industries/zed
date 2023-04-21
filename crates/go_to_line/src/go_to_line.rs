@@ -3,12 +3,12 @@ use std::sync::Arc;
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Axis, Entity,
-    RenderContext, View, ViewContext, ViewHandle,
+    View, ViewContext, ViewHandle,
 };
 use menu::{Cancel, Confirm};
 use settings::Settings;
 use text::{Bias, Point};
-use workspace::Workspace;
+use workspace::{Modal, Workspace};
 
 actions!(go_to_line, [Toggle]);
 
@@ -65,11 +65,7 @@ impl GoToLine {
             .active_item(cx)
             .and_then(|active_item| active_item.downcast::<Editor>())
         {
-            workspace.toggle_modal(cx, |_, cx| {
-                let view = cx.add_view(|cx| GoToLine::new(editor, cx));
-                cx.subscribe(&view, Self::on_event).detach();
-                view
-            });
+            workspace.toggle_modal(cx, |_, cx| cx.add_view(|cx| GoToLine::new(editor, cx)));
         }
     }
 
@@ -89,17 +85,6 @@ impl GoToLine {
             }
         });
         cx.emit(Event::Dismissed);
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => workspace.dismiss_modal(cx),
-        }
     }
 
     fn on_line_editor_event(
@@ -142,12 +127,14 @@ impl Entity for GoToLine {
 
     fn release(&mut self, cx: &mut AppContext) {
         let scroll_position = self.prev_scroll_position.take();
-        self.active_editor.update(cx, |editor, cx| {
-            editor.highlight_rows(None);
-            if let Some(scroll_position) = scroll_position {
-                editor.set_scroll_position(scroll_position, cx);
-            }
-        })
+        cx.update_window(self.active_editor.window_id(), |cx| {
+            self.active_editor.update(cx, |editor, cx| {
+                editor.highlight_rows(None);
+                if let Some(scroll_position) = scroll_position {
+                    editor.set_scroll_position(scroll_position, cx);
+                }
+            })
+        });
     }
 }
 
@@ -156,7 +143,7 @@ impl View for GoToLine {
         "GoToLine"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
@@ -190,5 +177,11 @@ impl View for GoToLine {
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         cx.focus(&self.line_editor);
+    }
+}
+
+impl Modal for GoToLine {
+    fn dismiss_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Dismissed)
     }
 }

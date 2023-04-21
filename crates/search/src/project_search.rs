@@ -12,9 +12,8 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, ElementBox, Entity, ModelContext, ModelHandle,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    Action, AnyViewHandle, AppContext, Element, Entity, ModelContext, ModelHandle, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
@@ -30,7 +29,7 @@ use std::{
 };
 use util::ResultExt as _;
 use workspace::{
-    item::{Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
@@ -179,7 +178,7 @@ impl View for ProjectSearchView {
         "ProjectSearchView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let model = &self.model.read(cx);
         if model.match_ranges.is_empty() {
             enum Status {}
@@ -192,7 +191,7 @@ impl View for ProjectSearchView {
             } else {
                 "No results"
             };
-            MouseEventHandler::<Status>::new(0, cx, |_, _| {
+            MouseEventHandler::<Status, _>::new(0, cx, |_, _| {
                 Label::new(text, theme.search.results_status.clone())
                     .aligned()
                     .contained()
@@ -200,7 +199,7 @@ impl View for ProjectSearchView {
                     .flex(1., true)
                     .boxed()
             })
-            .on_down(MouseButton::Left, |_, cx| {
+            .on_down(MouseButton::Left, |_, _, cx| {
                 cx.focus_parent_view();
             })
             .boxed()
@@ -250,12 +249,12 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> Element<T> {
         Flex::row()
             .with_child(
                 Svg::new("icons/magnifying_glass_12.svg")
@@ -370,7 +369,7 @@ impl Item for ProjectSearchView {
         }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         self.results_editor.breadcrumbs(theme, cx)
     }
 
@@ -752,8 +751,8 @@ impl ProjectSearchBar {
         &self,
         icon: &'static str,
         direction: Direction,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let action: Box<dyn Action>;
         let tooltip;
         match direction {
@@ -769,7 +768,7 @@ impl ProjectSearchBar {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         enum NavButton {}
-        MouseEventHandler::<NavButton>::new(direction as usize, cx, |state, cx| {
+        MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
             let style = &cx
                 .global::<Settings>()
                 .theme
@@ -783,10 +782,10 @@ impl ProjectSearchBar {
         })
         .on_click(MouseButton::Left, {
             let action = action.boxed_clone();
-            move |_, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<NavButton, _>(
+        .with_tooltip::<NavButton>(
             direction as usize,
             tooltip.to_string(),
             Some(action),
@@ -800,11 +799,11 @@ impl ProjectSearchBar {
         &self,
         icon: &'static str,
         option: SearchOption,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
-        MouseEventHandler::<Self>::new(option as usize, cx, |state, cx| {
+        MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
             let style = &cx
                 .global::<Settings>()
                 .theme
@@ -816,11 +815,11 @@ impl ProjectSearchBar {
                 .with_style(style.container)
                 .boxed()
         })
-        .on_click(MouseButton::Left, move |_, cx| {
+        .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_any_action(option.to_toggle_action())
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<Self, _>(
+        .with_tooltip::<Self>(
             option as usize,
             format!("Toggle {}", option.label()),
             Some(option.to_toggle_action()),
@@ -853,7 +852,7 @@ impl View for ProjectSearchBar {
         "ProjectSearchBar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
             let theme = cx.global::<Settings>().theme.clone();

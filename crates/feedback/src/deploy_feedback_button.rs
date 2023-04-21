@@ -1,7 +1,7 @@
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Entity, RenderContext, View, ViewContext,
+    Entity, View, ViewContext,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, StatusItemView};
@@ -27,12 +27,12 @@ impl View for DeployFeedbackButton {
         "DeployFeedbackButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let active = self.active;
         let theme = cx.global::<Settings>().theme.clone();
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, |state, _| {
+                MouseEventHandler::<Self, Self>::new(0, cx, |state, _| {
                     let style = &theme
                         .workspace
                         .status_bar
@@ -53,12 +53,12 @@ impl View for DeployFeedbackButton {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     if !active {
                         cx.dispatch_action(GiveFeedback)
                     }
                 })
-                .with_tooltip::<Self, _>(
+                .with_tooltip::<Self>(
                     0,
                     "Send Feedback".into(),
                     Some(Box::new(GiveFeedback)),

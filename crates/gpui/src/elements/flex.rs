@@ -2,9 +2,8 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    presenter::MeasurementContext,
-    Axis, DebugContext, Element, ElementBox, ElementStateHandle, LayoutContext, PaintContext,
-    RenderContext, SizeConstraint, Vector2FExt, View,
+    Axis, Drawable, Element, ElementStateHandle, SceneBuilder, SizeConstraint, Vector2FExt, View,
+    ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -18,14 +17,14 @@ struct ScrollState {
     scroll_position: Cell<f32>,
 }
 
-pub struct Flex {
+pub struct Flex<V: View> {
     axis: Axis,
-    children: Vec<ElementBox>,
+    children: Vec<Element<V>>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
     child_alignment: f32,
 }
 
-impl Flex {
+impl<V: View> Flex<V> {
     pub fn new(axis: Axis) -> Self {
         Self {
             axis,
@@ -52,15 +51,14 @@ impl Flex {
         self
     }
 
-    pub fn scrollable<Tag, V>(
+    pub fn scrollable<Tag>(
         mut self,
         element_id: usize,
         scroll_to: Option<usize>,
-        cx: &mut RenderContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self
     where
         Tag: 'static,
-        V: View,
     {
         let scroll_state = cx.default_element_state::<Tag, Rc<ScrollState>>(element_id);
         scroll_state.read(cx).scroll_to.set(scroll_to);
@@ -75,7 +73,8 @@ impl Flex {
         remaining_space: &mut f32,
         remaining_flex: &mut f32,
         cross_axis_max: &mut f32,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) {
         let cross_axis = self.axis.invert();
         for child in &mut self.children {
@@ -102,7 +101,7 @@ impl Flex {
                             vec2f(constraint.max.x(), child_max),
                         ),
                     };
-                    let child_size = child.layout(child_constraint, cx);
+                    let child_size = child.layout(child_constraint, view, cx);
                     *remaining_space -= child_size.along(self.axis);
                     *remaining_flex -= flex;
                     *cross_axis_max = cross_axis_max.max(child_size.along(cross_axis));
@@ -112,20 +111,21 @@ impl Flex {
     }
 }
 
-impl Extend<ElementBox> for Flex {
-    fn extend<T: IntoIterator<Item = ElementBox>>(&mut self, children: T) {
+impl<V: View> Extend<Element<V>> for Flex<V> {
+    fn extend<T: IntoIterator<Item = Element<V>>>(&mut self, children: T) {
         self.children.extend(children);
     }
 }
 
-impl Element for Flex {
+impl<V: View> Drawable<V> for Flex<V> {
     type LayoutState = f32;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
         let mut fixed_space = 0.0;
@@ -150,7 +150,7 @@ impl Element for Flex {
                         vec2f(constraint.max.x(), INFINITY),
                     ),
                 };
-                let size = child.layout(child_constraint, cx);
+                let size = child.layout(child_constraint, view, cx);
                 fixed_space += size.along(self.axis);
                 cross_axis_max = cross_axis_max.max(size.along(cross_axis));
             }
@@ -168,6 +168,7 @@ impl Element for Flex {
                 &mut remaining_space,
                 &mut remaining_flex,
                 &mut cross_axis_max,
+                view,
                 cx,
             );
             self.layout_flex_children(
@@ -176,6 +177,7 @@ impl Element for Flex {
                 &mut remaining_space,
                 &mut remaining_flex,
                 &mut cross_axis_max,
+                view,
                 cx,
             );
 
@@ -247,26 +249,28 @@ impl Element for Flex {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         remaining_space: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         let mut remaining_space = *remaining_space;
         let overflowing = remaining_space < 0.;
         if overflowing {
-            cx.scene.push_layer(Some(visible_bounds));
+            scene.push_layer(Some(visible_bounds));
         }
 
         if let Some(scroll_state) = &self.scroll_state {
-            cx.scene.push_mouse_region(
+            scene.push_mouse_region(
                 crate::MouseRegion::new::<Self>(scroll_state.1, 0, bounds)
                     .on_scroll({
                         let scroll_state = scroll_state.0.read(cx).clone();
                         let axis = self.axis;
-                        move |e, cx| {
+                        move |e, _: &mut V, cx| {
                             if remaining_space < 0. {
                                 let scroll_delta = e.delta.raw();
 
@@ -294,7 +298,7 @@ impl Element for Flex {
                             }
                         }
                     })
-                    .on_move(|_, _| { /* Capture move events */ }),
+                    .on_move(|_, _: &mut V, _| { /* Capture move events */ }),
             )
         }
 
@@ -343,7 +347,7 @@ impl Element for Flex {
                 aligned_child_origin
             };
 
-            child.paint(aligned_child_origin, visible_bounds, cx);
+            child.paint(scene, aligned_child_origin, visible_bounds, view, cx);
 
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
@@ -352,7 +356,7 @@ impl Element for Flex {
         }
 
         if overflowing {
-            cx.scene.pop_layer();
+            scene.pop_layer();
         }
     }
 
@@ -363,11 +367,12 @@ impl Element for Flex {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
         self.children
             .iter()
-            .find_map(|child| child.rect_for_text_range(range_utf16.clone(), cx))
+            .find_map(|child| child.rect_for_text_range(range_utf16.clone(), view, cx))
     }
 
     fn debug(
@@ -375,13 +380,14 @@ impl Element for Flex {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> json::Value {
         json!({
             "type": "Flex",
             "bounds": bounds.to_json(),
             "axis": self.axis.to_json(),
-            "children": self.children.iter().map(|child| child.debug(cx)).collect::<Vec<json::Value>>()
+            "children": self.children.iter().map(|child| child.debug(view, cx)).collect::<Vec<json::Value>>()
         })
     }
 }
@@ -391,13 +397,13 @@ struct FlexParentData {
     float: bool,
 }
 
-pub struct FlexItem {
+pub struct FlexItem<V: View> {
     metadata: FlexParentData,
-    child: ElementBox,
+    child: Element<V>,
 }
 
-impl FlexItem {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> FlexItem<V> {
+    pub fn new(child: Element<V>) -> Self {
         FlexItem {
             metadata: FlexParentData {
                 flex: None,
@@ -418,27 +424,31 @@ impl FlexItem {
     }
 }
 
-impl Element for FlexItem {
+impl<V: View> Drawable<V> for FlexItem<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, cx);
+        let size = self.child.layout(constraint, view, cx);
         (size, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), visible_bounds, cx)
+        self.child
+            .paint(scene, bounds.origin(), visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(
@@ -448,9 +458,10 @@ impl Element for FlexItem {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn metadata(&self) -> Option<&dyn Any> {
@@ -462,12 +473,13 @@ impl Element for FlexItem {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Value {
         json!({
             "type": "Flexible",
             "flex": self.metadata.flex,
-            "child": self.child.debug(cx)
+            "child": self.child.debug(view, cx)
         })
     }
 }

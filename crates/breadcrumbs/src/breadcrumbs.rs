@@ -1,6 +1,6 @@
 use gpui::{
-    elements::*, platform::MouseButton, AppContext, Entity, RenderContext, Subscription, View,
-    ViewContext, ViewHandle,
+    elements::*, platform::MouseButton, AppContext, Entity, Subscription, View, ViewContext,
+    ViewHandle,
 };
 use itertools::Itertools;
 use search::ProjectSearchView;
@@ -41,7 +41,7 @@ impl View for Breadcrumbs {
         "Breadcrumbs"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let active_item = match &self.active_item {
             Some(active_item) => active_item,
             None => return Empty::new().boxed(),
@@ -54,10 +54,22 @@ impl View for Breadcrumbs {
         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
             Some(breadcrumbs) => breadcrumbs,
             None => return Empty::new().boxed(),
-        };
+        }
+        .into_iter()
+        .map(|breadcrumb| {
+            let text = Text::new(
+                breadcrumb.text,
+                theme.workspace.breadcrumbs.default.text.clone(),
+            );
+            if let Some(highlights) = breadcrumb.highlights {
+                text.with_highlights(highlights).boxed()
+            } else {
+                text.boxed()
+            }
+        });
 
         let crumbs = Flex::row()
-            .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
+            .with_children(Itertools::intersperse_with(breadcrumbs, || {
                 Label::new(" 〉 ", style.default.text.clone()).boxed()
             }))
             .constrained()
@@ -72,14 +84,14 @@ impl View for Breadcrumbs {
                 .boxed();
         }
 
-        MouseEventHandler::<Breadcrumbs>::new(0, cx, |state, _| {
+        MouseEventHandler::<Breadcrumbs, Breadcrumbs>::new(0, cx, |state, _| {
             let style = style.style_for(state, false);
             crumbs.with_style(style.container).boxed()
         })
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(outline::Toggle);
         })
-        .with_tooltip::<Breadcrumbs, _>(
+        .with_tooltip::<Breadcrumbs>(
             0,
             "Show symbol outline".to_owned(),
             Some(Box::new(outline::Toggle)),
@@ -136,7 +148,7 @@ impl ToolbarItemView for Breadcrumbs {
         }
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut gpui::AppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
         self.pane_focused = pane_focused;
     }
 }

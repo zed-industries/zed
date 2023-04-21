@@ -1,49 +1,41 @@
 use client::{ContactRequestStatus, User, UserStore};
-use gpui::{
-    elements::*, AnyViewHandle, AppContext, Entity, ModelHandle, MouseState, RenderContext, Task,
-    View, ViewContext, ViewHandle,
-};
-use picker::{Picker, PickerDelegate};
+use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
+use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
 
 pub fn init(cx: &mut AppContext) {
-    Picker::<ContactFinder>::init(cx);
+    Picker::<ContactFinderDelegate>::init(cx);
 }
 
-pub struct ContactFinder {
-    picker: ViewHandle<Picker<Self>>,
+pub type ContactFinder = Picker<ContactFinderDelegate>;
+
+pub fn build_contact_finder(
+    user_store: ModelHandle<UserStore>,
+    cx: &mut ViewContext<ContactFinder>,
+) -> ContactFinder {
+    Picker::new(
+        ContactFinderDelegate {
+            user_store,
+            potential_contacts: Arc::from([]),
+            selected_index: 0,
+        },
+        cx,
+    )
+}
+
+pub struct ContactFinderDelegate {
     potential_contacts: Arc<[Arc<User>]>,
     user_store: ModelHandle<UserStore>,
     selected_index: usize,
 }
 
-pub enum Event {
-    Dismissed,
-}
-
-impl Entity for ContactFinder {
-    type Event = Event;
-}
-
-impl View for ContactFinder {
-    fn ui_name() -> &'static str {
-        "ContactFinder"
+impl PickerDelegate for ContactFinderDelegate {
+    fn placeholder_text(&self) -> Arc<str> {
+        "Search collaborator by username...".into()
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(&self.picker, cx).boxed()
-    }
-
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.picker);
-        }
-    }
-}
-
-impl PickerDelegate for ContactFinder {
     fn match_count(&self) -> usize {
         self.potential_contacts.len()
     }
@@ -52,22 +44,22 @@ impl PickerDelegate for ContactFinder {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let search_users = self
             .user_store
             .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|picker, mut cx| async move {
             async {
                 let potential_contacts = search_users.await?;
-                this.update(&mut cx, |this, cx| {
-                    this.potential_contacts = potential_contacts.into();
+                picker.update(&mut cx, |picker, cx| {
+                    picker.delegate_mut().potential_contacts = potential_contacts.into();
                     cx.notify();
-                });
+                })?;
                 anyhow::Ok(())
             }
             .log_err()
@@ -75,7 +67,7 @@ impl PickerDelegate for ContactFinder {
         })
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(user) = self.potential_contacts.get(self.selected_index) {
             let user_store = self.user_store.read(cx);
             match user_store.contact_request_status(user) {
@@ -94,8 +86,8 @@ impl PickerDelegate for ContactFinder {
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        cx.emit(PickerEvent::Dismiss);
     }
 
     fn render_match(
@@ -104,7 +96,7 @@ impl PickerDelegate for ContactFinder {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> ElementBox {
+    ) -> Element<Picker<Self>> {
         let theme = &cx.global::<Settings>().theme;
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);
@@ -162,30 +154,5 @@ impl PickerDelegate for ContactFinder {
             .constrained()
             .with_height(theme.contact_finder.row_height)
             .boxed()
-    }
-}
-
-impl ContactFinder {
-    pub fn new(user_store: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) -> Self {
-        let this = cx.weak_handle();
-        Self {
-            picker: cx.add_view(|cx| {
-                Picker::new("Search collaborator by username...", this, cx)
-                    .with_theme(|theme| theme.contact_finder.picker.clone())
-            }),
-            potential_contacts: Arc::from([]),
-            user_store,
-            selected_index: 0,
-        }
-    }
-
-    pub fn editor_text(&self, cx: &AppContext) -> String {
-        self.picker.read(cx).query(cx)
-    }
-
-    pub fn with_editor_text(self, editor_text: String, cx: &mut ViewContext<Self>) -> Self {
-        self.picker
-            .update(cx, |picker, cx| picker.set_query(editor_text, cx));
-        self
     }
 }

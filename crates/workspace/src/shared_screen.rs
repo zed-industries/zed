@@ -2,6 +2,7 @@ use crate::{
     item::{Item, ItemEvent},
     ItemNavHistory, WorkspaceId,
 };
+use anyhow::Result;
 use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
@@ -9,7 +10,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::MouseButton,
-    AppContext, Entity, RenderContext, Task, View, ViewContext,
+    AppContext, Entity, Task, View, ViewContext,
 };
 use settings::Settings;
 use smallvec::SmallVec;
@@ -28,7 +29,7 @@ pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
-    _maintain_frame: Task<()>,
+    _maintain_frame: Task<Result<()>>,
 }
 
 impl SharedScreen {
@@ -50,9 +51,10 @@ impl SharedScreen {
                     this.update(&mut cx, |this, cx| {
                         this.frame = Some(frame);
                         cx.notify();
-                    })
+                    })?;
                 }
-                this.update(&mut cx, |_, cx| cx.emit(Event::Close));
+                this.update(&mut cx, |_, cx| cx.emit(Event::Close))?;
+                Ok(())
             }),
         }
     }
@@ -67,19 +69,19 @@ impl View for SharedScreen {
         "SharedScreen"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum Focus {}
 
         let frame = self.frame.clone();
-        MouseEventHandler::<Focus>::new(0, cx, |_, cx| {
-            Canvas::new(move |bounds, _, cx| {
+        MouseEventHandler::<Focus, _>::new(0, cx, |_, cx| {
+            Canvas::new(move |scene, bounds, _, _, _| {
                 if let Some(frame) = frame.clone() {
                     let size = constrain_size_preserving_aspect_ratio(
                         bounds.size(),
                         vec2f(frame.width() as f32, frame.height() as f32),
                     );
                     let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-                    cx.scene.push_surface(gpui::platform::mac::Surface {
+                    scene.push_surface(gpui::platform::mac::Surface {
                         bounds: RectF::new(origin, size),
                         image_buffer: frame.image(),
                     });
@@ -89,7 +91,7 @@ impl View for SharedScreen {
             .with_style(cx.global::<Settings>().theme.shared_screen)
             .boxed()
         })
-        .on_down(MouseButton::Left, |_, cx| cx.focus_parent_view())
+        .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent_view())
         .boxed()
     }
 }
@@ -104,12 +106,12 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_content(
+    fn tab_content<V: View>(
         &self,
         _: Option<usize>,
         style: &theme::Tab,
         _: &AppContext,
-    ) -> gpui::ElementBox {
+    ) -> gpui::Element<V> {
         Flex::row()
             .with_child(
                 Svg::new("icons/disable_screen_sharing_12.svg")

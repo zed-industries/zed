@@ -53,46 +53,46 @@
 {"Key":"i"}
 {"Key":"s"}
 {"Get":{"state":"The quick brown? Fox Jumps!ˇ ","mode":"Normal"}}
-{"Put":{"state":"ˇThe quick brown   \nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
 {"Get":{"state":"ˇ The quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick ˇbrown   \nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick ˇbrown\nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
 {"Get":{"state":"ˇ The quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brownˇ   \nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brownˇ\nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
 {"Get":{"state":"ˇ The quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy doˇg. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy doˇg. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
 {"Get":{"state":"ˇ The quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dogˇ. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dogˇ. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
 {"Get":{"state":"ˇ The quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog.ˇ The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dog.ˇ The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog.ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog. ˇThe quick \nbrown fox jumps over\n"}}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe lazy dog.ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dog. ˇThe quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog.ˇ \n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog. The quick ˇ\nbrown fox jumps over\n"}}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe lazy dog.ˇ \n","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dog. The quick ˇ\nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"s"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dog.ˇ \n","mode":"Normal"}}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe lazy dog.ˇ \n","mode":"Normal"}}
 {"Put":{"state":"ˇThe quick brown.)]'\" Brown fox jumps. "}}
 {"Key":"d"}
 {"Key":"i"}
@@ -188,46 +188,46 @@
 {"Key":"a"}
 {"Key":"s"}
 {"Get":{"state":"The quick brown? Fox Jumpsˇ!","mode":"Normal"}}
-{"Put":{"state":"ˇThe quick brown   \nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
 {"Get":{"state":"ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick ˇbrown   \nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick ˇbrown\nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
 {"Get":{"state":"ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brownˇ   \nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brownˇ\nfox jumps over\nthe lazy dog. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
 {"Get":{"state":"ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy doˇg. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy doˇg. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
 {"Get":{"state":"ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dogˇ. The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dogˇ. The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
 {"Get":{"state":"ˇThe quick \nbrown fox jumps over\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog.ˇ The quick \nbrown fox jumps over\n"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dog.ˇ The quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dogˇ.\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog. ˇThe quick \nbrown fox jumps over\n"}}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe lazy dogˇ.\n","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dog. ˇThe quick \nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dogˇ.\n","mode":"Normal"}}
-{"Put":{"state":"The quick brown   \nfox jumps over\nthe lazy dog. The quick ˇ\nbrown fox jumps over\n"}}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe lazy dogˇ.\n","mode":"Normal"}}
+{"Put":{"state":"The quick brown\nfox jumps over\nthe lazy dog. The quick ˇ\nbrown fox jumps over\n"}}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"s"}
-{"Get":{"state":"The quick brown   \nfox jumps over\nthe lazy dogˇ.\n","mode":"Normal"}}
+{"Get":{"state":"The quick brown\nfox jumps over\nthe lazy dogˇ.\n","mode":"Normal"}}
 {"Put":{"state":"ˇThe quick brown.)]'\" Brown fox jumps. "}}
 {"Key":"d"}
 {"Key":"a"}

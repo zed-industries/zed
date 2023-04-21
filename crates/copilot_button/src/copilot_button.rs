@@ -6,8 +6,7 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Element, ElementBox, Entity, MouseState, RenderContext, Subscription, View,
-    ViewContext, ViewHandle,
+    AppContext, Drawable, Element, Entity, MouseState, Subscription, View, ViewContext, ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
 use workspace::{
@@ -156,7 +155,7 @@ impl View for CopilotButton {
         "CopilotButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let settings = cx.global::<Settings>();
 
         if !settings.features.copilot {
@@ -176,7 +175,7 @@ impl View for CopilotButton {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, {
+                MouseEventHandler::<Self, _>::new(0, cx, {
                     let theme = theme.clone();
                     let status = status.clone();
                     move |state, _cx| {
@@ -218,7 +217,7 @@ impl View for CopilotButton {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, {
                     let status = status.clone();
-                    move |_, cx| match status {
+                    move |_, _, cx| match status {
                         Status::Authorized => cx.dispatch_action(DeployCopilotMenu),
                         Status::Error(ref e) => cx.dispatch_action(workspace::Toast::new_action(
                             COPILOT_ERROR_TOAST_ID,
@@ -229,13 +228,7 @@ impl View for CopilotButton {
                         _ => cx.dispatch_action(DeployCopilotStartMenu),
                     }
                 })
-                .with_tooltip::<Self, _>(
-                    0,
-                    "GitHub Copilot".into(),
-                    None,
-                    theme.tooltip.clone(),
-                    cx,
-                )
+                .with_tooltip::<Self>(0, "GitHub Copilot".into(), None, theme.tooltip.clone(), cx)
                 .boxed(),
             )
             .with_child(

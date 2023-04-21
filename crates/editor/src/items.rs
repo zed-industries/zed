@@ -8,7 +8,7 @@ use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
     elements::*, geometry::vector::vec2f, AppContext, AsyncAppContext, Entity, ModelHandle,
-    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
@@ -28,7 +28,7 @@ use std::{
 };
 use text::Selection;
 use util::{ResultExt, TryFutureExt};
-use workspace::item::FollowableItemHandle;
+use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -80,7 +80,9 @@ impl FollowableItem for Editor {
                 })
             });
 
-            let editor = editor.unwrap_or_else(|| {
+            let editor = if let Some(editor) = editor {
+                editor
+            } else {
                 pane.update(&mut cx, |_, cx| {
                     let multibuffer = cx.add_model(|cx| {
                         let mut multibuffer;
@@ -121,8 +123,8 @@ impl FollowableItem for Editor {
                         editor.remote_id = Some(remote_id);
                         editor
                     })
-                })
-            });
+                })?
+            };
 
             update_editor_from_message(
                 editor.clone(),
@@ -367,7 +369,7 @@ async fn update_editor_from_message(
 
             multibuffer.remove_excerpts(removed_excerpt_ids, cx);
         });
-    });
+    })?;
 
     // Deserialize the editor state.
     let (selections, pending_selection, scroll_top_anchor) = this.update(cx, |editor, cx| {
@@ -384,7 +386,7 @@ async fn update_editor_from_message(
             .scroll_top_anchor
             .and_then(|anchor| deserialize_anchor(&buffer, anchor));
         anyhow::Ok((selections, pending_selection, scroll_top_anchor))
-    })?;
+    })??;
 
     // Wait until the buffer has received all of the operations referenced by
     // the editor's new state.
@@ -399,7 +401,7 @@ async fn update_editor_from_message(
                 cx,
             )
         })
-    })
+    })?
     .await?;
 
     // Update the editor's state.
@@ -416,7 +418,7 @@ async fn update_editor_from_message(
                 cx,
             );
         }
-    });
+    })?;
     Ok(())
 }
 
@@ -556,12 +558,12 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> Element<T> {
         Flex::row()
             .with_child(
                 Label::new(self.title(cx).to_string(), style.label.clone())
@@ -641,7 +643,7 @@ impl Item for Editor {
         self.report_event("save editor", cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
-        cx.as_mut().spawn(|mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             format.await?;
 
             if buffers.len() == 1 {
@@ -705,7 +707,7 @@ impl Item for Editor {
             let transaction = reload_buffers.log_err().await;
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
-            });
+            })?;
             buffer.update(&mut cx, |buffer, _| {
                 if let Some(transaction) = transaction {
                     if !buffer.is_singleton() {
@@ -762,7 +764,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
@@ -782,15 +784,13 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
-        let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
-        let mut breadcrumbs = vec![filename_label.boxed()];
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| {
-            Text::new(
-                symbol.text,
-                theme.workspace.breadcrumbs.default.text.clone(),
-            )
-            .with_highlights(symbol.highlight_ranges)
-            .boxed()
+        let mut breadcrumbs = vec![BreadcrumbText {
+            text: filename,
+            highlights: None,
+        }];
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+            text: symbol.text,
+            highlights: Some(symbol.highlight_ranges),
         }));
         Some(breadcrumbs)
     }
@@ -1113,7 +1113,7 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);

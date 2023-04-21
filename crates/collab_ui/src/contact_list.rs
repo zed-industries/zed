@@ -11,7 +11,7 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -159,7 +159,7 @@ pub enum Event {
 pub struct ContactList {
     entries: Vec<ContactEntry>,
     match_candidates: Vec<StringMatchCandidate>,
-    list_state: ListState,
+    list_state: ListState<Self>,
     project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
@@ -202,7 +202,7 @@ impl ContactList {
         })
         .detach();
 
-        let list_state = ListState::new(0, Orientation::Top, 1000., cx, move |this, ix, cx| {
+        let list_state = ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
             let theme = cx.global::<Settings>().theme.clone();
             let is_selected = this.selection == Some(ix);
             let current_project_id = this.project.read(cx).remote_id();
@@ -748,7 +748,7 @@ impl ContactList {
         is_pending: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-    ) -> ElementBox {
+    ) -> Element<Self> {
         Flex::row()
             .with_children(user.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
@@ -799,8 +799,8 @@ impl ContactList {
         is_last: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -819,7 +819,7 @@ impl ContactList {
             worktree_root_names.join(", ")
         };
 
-        MouseEventHandler::<JoinProject>::new(project_id as usize, cx, |mouse_state, _| {
+        MouseEventHandler::<JoinProject, Self>::new(project_id as usize, cx, |mouse_state, _| {
             let tree_branch = *tree_branch.style_for(mouse_state, is_selected);
             let row = theme.project_row.style_for(mouse_state, is_selected);
 
@@ -827,14 +827,14 @@ impl ContactList {
                 .with_child(
                     Stack::new()
                         .with_child(
-                            Canvas::new(move |bounds, _, cx| {
+                            Canvas::new(move |scene, bounds, _, _, _| {
                                 let start_x = bounds.min_x() + (bounds.width() / 2.)
                                     - (tree_branch.width / 2.);
                                 let end_x = bounds.max_x();
                                 let start_y = bounds.min_y();
                                 let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                                cx.scene.push_quad(gpui::Quad {
+                                scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
                                         vec2f(start_x, start_y),
                                         vec2f(
@@ -846,7 +846,7 @@ impl ContactList {
                                     border: gpui::Border::default(),
                                     corner_radius: 0.,
                                 });
-                                cx.scene.push_quad(gpui::Quad {
+                                scene.push_quad(gpui::Quad {
                                     bounds: RectF::from_points(
                                         vec2f(start_x, end_y),
                                         vec2f(end_x, end_y + tree_branch.width),
@@ -882,7 +882,7 @@ impl ContactList {
         } else {
             CursorStyle::Arrow
         })
-        .on_click(MouseButton::Left, move |_, cx| {
+        .on_click(MouseButton::Left, move |_, _, cx| {
             if !is_current {
                 cx.dispatch_global_action(JoinProject {
                     project_id,
@@ -898,8 +898,8 @@ impl ContactList {
         is_last: bool,
         is_selected: bool,
         theme: &theme::ContactList,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -913,7 +913,7 @@ impl ContactList {
         let baseline_offset =
             row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
-        MouseEventHandler::<OpenSharedScreen>::new(
+        MouseEventHandler::<OpenSharedScreen, Self>::new(
             peer_id.as_u64() as usize,
             cx,
             |mouse_state, _| {
@@ -924,7 +924,7 @@ impl ContactList {
                     .with_child(
                         Stack::new()
                             .with_child(
-                                Canvas::new(move |bounds, _, cx| {
+                                Canvas::new(move |scene, bounds, _, _, _| {
                                     let start_x = bounds.min_x() + (bounds.width() / 2.)
                                         - (tree_branch.width / 2.);
                                     let end_x = bounds.max_x();
@@ -932,7 +932,7 @@ impl ContactList {
                                     let end_y =
                                         bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-                                    cx.scene.push_quad(gpui::Quad {
+                                    scene.push_quad(gpui::Quad {
                                         bounds: RectF::from_points(
                                             vec2f(start_x, start_y),
                                             vec2f(
@@ -944,7 +944,7 @@ impl ContactList {
                                         border: gpui::Border::default(),
                                         corner_radius: 0.,
                                     });
-                                    cx.scene.push_quad(gpui::Quad {
+                                    scene.push_quad(gpui::Quad {
                                         bounds: RectF::from_points(
                                             vec2f(start_x, end_y),
                                             vec2f(end_x, end_y + tree_branch.width),
@@ -988,7 +988,7 @@ impl ContactList {
             },
         )
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, cx| {
+        .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(OpenSharedScreen { peer_id });
         })
         .boxed()
@@ -999,8 +999,8 @@ impl ContactList {
         theme: &theme::ContactList,
         is_selected: bool,
         is_collapsed: bool,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         enum Header {}
         enum LeaveCallContactList {}
 
@@ -1015,14 +1015,14 @@ impl ContactList {
         };
         let leave_call = if section == Section::ActiveCall {
             Some(
-                MouseEventHandler::<LeaveCallContactList>::new(0, cx, |state, _| {
+                MouseEventHandler::<LeaveCallContactList, Self>::new(0, cx, |state, _| {
                     let style = theme.leave_call.style_for(state, false);
                     Label::new("Leave Call", style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .boxed()
                 })
-                .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(LeaveCall))
+                .on_click(MouseButton::Left, |_, _, cx| cx.dispatch_action(LeaveCall))
                 .aligned()
                 .boxed(),
             )
@@ -1031,7 +1031,7 @@ impl ContactList {
         };
 
         let icon_size = theme.section_icon_size;
-        MouseEventHandler::<Header>::new(section as usize, cx, |_, _| {
+        MouseEventHandler::<Header, Self>::new(section as usize, cx, |_, _| {
             Flex::row()
                 .with_child(
                     Svg::new(if is_collapsed {
@@ -1065,7 +1065,7 @@ impl ContactList {
                 .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, cx| {
+        .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleExpanded(section))
         })
         .boxed()
@@ -1077,15 +1077,15 @@ impl ContactList {
         project: &ModelHandle<Project>,
         theme: &theme::ContactList,
         is_selected: bool,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
         let mut element =
-            MouseEventHandler::<Contact>::new(contact.user.id as usize, cx, |_, cx| {
+            MouseEventHandler::<Contact, Self>::new(contact.user.id as usize, cx, |_, cx| {
                 Flex::row()
                     .with_children(contact.user.avatar.clone().map(|avatar| {
                         let status_badge = if contact.online {
@@ -1128,7 +1128,7 @@ impl ContactList {
                         .boxed(),
                     )
                     .with_child(
-                        MouseEventHandler::<Cancel>::new(
+                        MouseEventHandler::<Cancel, Self>::new(
                             contact.user.id as usize,
                             cx,
                             |mouse_state, _| {
@@ -1142,7 +1142,7 @@ impl ContactList {
                         )
                         .with_padding(Padding::uniform(2.))
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, cx| {
+                        .on_click(MouseButton::Left, move |_, _, cx| {
                             cx.dispatch_action(RemoveContact {
                                 user_id,
                                 github_login: github_login.clone(),
@@ -1172,7 +1172,7 @@ impl ContactList {
                     )
                     .boxed()
             })
-            .on_click(MouseButton::Left, move |_, cx| {
+            .on_click(MouseButton::Left, move |_, _, cx| {
                 if online && !busy {
                     cx.dispatch_action(Call {
                         recipient_user_id: user_id,
@@ -1194,8 +1194,8 @@ impl ContactList {
         theme: &theme::ContactList,
         is_incoming: bool,
         is_selected: bool,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> Element<Self> {
         enum Decline {}
         enum Accept {}
         enum Cancel {}
@@ -1228,7 +1228,7 @@ impl ContactList {
 
         if is_incoming {
             row.add_children([
-                MouseEventHandler::<Decline>::new(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::<Decline, Self>::new(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -1239,7 +1239,7 @@ impl ContactList {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: false,
@@ -1248,7 +1248,7 @@ impl ContactList {
                 .contained()
                 .with_margin_right(button_spacing)
                 .boxed(),
-                MouseEventHandler::<Accept>::new(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::<Accept, Self>::new(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -1260,7 +1260,7 @@ impl ContactList {
                         .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(RespondToContactRequest {
                         user_id,
                         accept: true,
@@ -1270,7 +1270,7 @@ impl ContactList {
             ]);
         } else {
             row.add_child(
-                MouseEventHandler::<Cancel>::new(user.id as usize, cx, |mouse_state, _| {
+                MouseEventHandler::<Cancel, Self>::new(user.id as usize, cx, |mouse_state, _| {
                     let button_style = if is_contact_request_pending {
                         &theme.disabled_button
                     } else {
@@ -1283,7 +1283,7 @@ impl ContactList {
                 })
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(RemoveContact {
                         user_id,
                         github_login: github_login.clone(),
@@ -1331,7 +1331,7 @@ impl View for ContactList {
         cx
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum AddContact {}
         let theme = cx.global::<Settings>().theme.clone();
 
@@ -1346,7 +1346,7 @@ impl View for ContactList {
                             .boxed(),
                     )
                     .with_child(
-                        MouseEventHandler::<AddContact>::new(0, cx, |_, _| {
+                        MouseEventHandler::<AddContact, Self>::new(0, cx, |_, _| {
                             render_icon_button(
                                 &theme.contact_list.add_contact_button,
                                 "icons/user_plus_16.svg",
@@ -1354,10 +1354,10 @@ impl View for ContactList {
                             .boxed()
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, |_, cx| {
+                        .on_click(MouseButton::Left, |_, _, cx| {
                             cx.dispatch_action(contacts_popover::ToggleContactFinder)
                         })
-                        .with_tooltip::<AddContact, _>(
+                        .with_tooltip::<AddContact>(
                             0,
                             "Search for new contact".into(),
                             None,
@@ -1387,7 +1387,7 @@ impl View for ContactList {
     }
 }
 
-fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element {
+fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Drawable<ContactList> {
     Svg::new(svg_path)
         .with_color(style.color)
         .constrained()

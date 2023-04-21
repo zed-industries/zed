@@ -3,8 +3,8 @@ use editor::{Editor, GoToDiagnostic};
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    serde_json, AppContext, Entity, ModelHandle, RenderContext, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    serde_json, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
@@ -85,14 +85,14 @@ impl View for DiagnosticIndicator {
         "DiagnosticIndicator"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         enum Summary {}
         enum Message {}
 
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
-            MouseEventHandler::<Summary>::new(0, cx, |state, cx| {
+            MouseEventHandler::<Summary, _>::new(0, cx, |state, cx| {
                 let style = cx
                     .global::<Settings>()
                     .theme
@@ -164,8 +164,10 @@ impl View for DiagnosticIndicator {
                     .boxed()
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, cx| cx.dispatch_action(crate::Deploy))
-            .with_tooltip::<Summary, _>(
+            .on_click(MouseButton::Left, |_, _, cx| {
+                cx.dispatch_action(crate::Deploy)
+            })
+            .with_tooltip::<Summary>(
                 0,
                 "Project Diagnostics".to_string(),
                 Some(Box::new(crate::Deploy)),
@@ -190,7 +192,7 @@ impl View for DiagnosticIndicator {
         } else if let Some(diagnostic) = &self.current_diagnostic {
             let message_style = style.diagnostic_message.clone();
             element.add_child(
-                MouseEventHandler::<Message>::new(1, cx, |state, _| {
+                MouseEventHandler::<Message, _>::new(1, cx, |state, _| {
                     Label::new(
                         diagnostic.message.split('\n').next().unwrap().to_string(),
                         message_style.style_for(state, false).text.clone(),
@@ -201,7 +203,7 @@ impl View for DiagnosticIndicator {
                     .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(GoToDiagnostic)
                 })
                 .boxed(),

@@ -11,8 +11,7 @@ use editor::{
 };
 use gpui::{
     actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
-    AppContext, Entity, ModelHandle, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    AppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -90,7 +89,7 @@ impl View for ProjectDiagnosticsEditor {
         "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if self.path_states.is_empty() {
             let theme = &cx.global::<Settings>().theme.project_diagnostics;
             Label::new("No problems in workspace", theme.empty_message.clone())
@@ -223,7 +222,7 @@ impl ProjectDiagnosticsEditor {
                         .await?;
                     this.update(&mut cx, |this, cx| {
                         this.populate_excerpts(path, language_server_id, buffer, cx)
-                    })
+                    })?;
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }
@@ -531,12 +530,12 @@ impl ProjectDiagnosticsEditor {
 }
 
 impl Item for ProjectDiagnosticsEditor {
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         _detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> Element<T> {
         render_summary(
             &self.summary,
             &style.label.text,
@@ -726,11 +725,11 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     })
 }
 
-pub(crate) fn render_summary(
+pub(crate) fn render_summary<T: View>(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,
-) -> ElementBox {
+) -> Element<T> {
     if summary.error_count == 0 && summary.warning_count == 0 {
         Label::new("No problems", text_style.clone()).boxed()
     } else {
@@ -804,7 +803,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint,
     };
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, WindowContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -1479,10 +1478,8 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut AppContext) -> Vec<(u32, String)> {
-        let mut presenter = cx.build_presenter(editor.id(), 0., Default::default());
-        let mut cx = presenter.build_layout_context(Default::default(), false, cx);
-        cx.render(editor, |editor, cx| {
+    fn editor_blocks(editor: &ViewHandle<Editor>, cx: &mut WindowContext) -> Vec<(u32, String)> {
+        editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             snapshot
                 .blocks_in_range(0..snapshot.max_point().row())
@@ -1490,7 +1487,7 @@ mod tests {
                     let name = match block {
                         TransformBlock::Custom(block) => block
                             .render(&mut BlockContext {
-                                cx,
+                                view_context: cx,
                                 anchor_x: 0.,
                                 scroll_x: 0.,
                                 gutter_padding: 0.,

@@ -1,9 +1,14 @@
-use crate::{contact_finder::ContactFinder, contact_list::ContactList, ToggleContactsMenu};
+use crate::{
+    contact_finder::{build_contact_finder, ContactFinder},
+    contact_list::ContactList,
+    ToggleContactsMenu,
+};
 use client::UserStore;
 use gpui::{
-    actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, RenderContext,
-    View, ViewContext, ViewHandle,
+    actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, View,
+    ViewContext, ViewHandle,
 };
+use picker::PickerEvent;
 use project::Project;
 use settings::Settings;
 
@@ -50,19 +55,19 @@ impl ContactsPopover {
     fn toggle_contact_finder(&mut self, _: &ToggleContactFinder, cx: &mut ViewContext<Self>) {
         match &self.child {
             Child::ContactList(list) => self.show_contact_finder(list.read(cx).editor_text(cx), cx),
-            Child::ContactFinder(finder) => {
-                self.show_contact_list(finder.read(cx).editor_text(cx), cx)
-            }
+            Child::ContactFinder(finder) => self.show_contact_list(finder.read(cx).query(cx), cx),
         }
     }
 
     fn show_contact_finder(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
         let child = cx.add_view(|cx| {
-            ContactFinder::new(self.user_store.clone(), cx).with_editor_text(editor_text, cx)
+            let finder = build_contact_finder(self.user_store.clone(), cx);
+            finder.set_query(editor_text, cx);
+            finder
         });
         cx.focus(&child);
         self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
-            crate::contact_finder::Event::Dismissed => cx.emit(Event::Dismissed),
+            PickerEvent::Dismiss => cx.emit(Event::Dismissed),
         }));
         self.child = Child::ContactFinder(child);
         cx.notify();
@@ -91,14 +96,14 @@ impl View for ContactsPopover {
         "ContactsPopover"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = cx.global::<Settings>().theme.clone();
         let child = match &self.child {
             Child::ContactList(child) => ChildView::new(child, cx),
             Child::ContactFinder(child) => ChildView::new(child, cx),
         };
 
-        MouseEventHandler::<ContactsPopover>::new(0, cx, |_, _| {
+        MouseEventHandler::<ContactsPopover, Self>::new(0, cx, |_, _| {
             Flex::column()
                 .with_child(child.flex(1., true).boxed())
                 .contained()
@@ -108,7 +113,7 @@ impl View for ContactsPopover {
                 .with_height(theme.contacts_popover.height)
                 .boxed()
         })
-        .on_down_out(MouseButton::Left, move |_, cx| {
+        .on_down_out(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleContactsMenu);
         })
         .boxed()

@@ -80,8 +80,24 @@ mod tests {
         watch_files, watched_json::watch_settings_file, EditorSettings, Settings, SoftWrap,
     };
     use fs::FakeFs;
-    use gpui::{actions, Action};
+    use gpui::{actions, elements::*, Action, Entity, View, ViewContext, WindowContext};
     use theme::ThemeRegistry;
+
+    struct TestView;
+
+    impl Entity for TestView {
+        type Event = ();
+    }
+
+    impl View for TestView {
+        fn ui_name() -> &'static str {
+            "TestView"
+        }
+
+        fn render(&mut self, _: &mut ViewContext<Self>) -> Element<Self> {
+            Empty::new().boxed()
+        }
+    }
 
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
@@ -148,8 +164,10 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
+        let (window_id, _view) = cx.add_window(|_| TestView);
+
         // Test loading the keymap base at all
-        cx.update(|cx| {
+        cx.read_window(window_id, |cx| {
             assert_key_bindings_for(
                 cx,
                 vec![("backspace", &A), ("k", &ActivatePreviousPane)],
@@ -177,7 +195,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        cx.update(|cx| {
+        cx.read_window(window_id, |cx| {
             assert_key_bindings_for(
                 cx,
                 vec![("backspace", &B), ("k", &ActivatePreviousPane)],
@@ -201,7 +219,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        cx.update(|cx| {
+        cx.read_window(window_id, |cx| {
             assert_key_bindings_for(
                 cx,
                 vec![("backspace", &B), ("[", &ActivatePrevItem)],
@@ -211,14 +229,14 @@ mod tests {
     }
 
     fn assert_key_bindings_for<'a>(
-        cx: &mut AppContext,
+        cx: &WindowContext,
         actions: Vec<(&'static str, &'a dyn Action)>,
         line: u32,
     ) {
         for (key, action) in actions {
             // assert that...
             assert!(
-                cx.available_actions(0, 0).any(|(_, bound_action, b)| {
+                cx.available_actions(0).any(|(_, bound_action, b)| {
                     // action names match...
                     bound_action.name() == action.name()
                     && bound_action.namespace() == action.namespace()

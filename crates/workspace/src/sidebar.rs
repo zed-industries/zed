@@ -1,7 +1,7 @@
 use crate::StatusItemView;
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
-    AppContext, Entity, RenderContext, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WindowContext,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -21,8 +21,8 @@ pub trait SidebarItem: View {
 
 pub trait SidebarItemHandle {
     fn id(&self) -> usize;
-    fn should_show_badge(&self, cx: &AppContext) -> bool;
-    fn is_focused(&self, cx: &AppContext) -> bool;
+    fn should_show_badge(&self, cx: &WindowContext) -> bool;
+    fn is_focused(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
 
@@ -34,11 +34,11 @@ where
         self.id()
     }
 
-    fn should_show_badge(&self, cx: &AppContext) -> bool {
+    fn should_show_badge(&self, cx: &WindowContext) -> bool {
         self.read(cx).should_show_badge(cx)
     }
 
-    fn is_focused(&self, cx: &AppContext) -> bool {
+    fn is_focused(&self, cx: &WindowContext) -> bool {
         ViewHandle::is_focused(self, cx) || self.read(cx).contains_focused_view(cx)
     }
 
@@ -188,14 +188,14 @@ impl View for Sidebar {
         "Sidebar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.sidebar;
             ChildView::new(active_item.as_any(), cx)
                 .contained()
                 .with_style(style.container)
-                .with_resize_handle::<ResizeHandleTag, _>(
+                .with_resize_handle::<ResizeHandleTag>(
                     self.sidebar_side as usize,
                     self.sidebar_side.to_resizable_side(),
                     4.,
@@ -225,7 +225,7 @@ impl View for SidebarButtons {
         "SidebarToggleButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> Element<Self> {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.sidebar_buttons;
@@ -254,7 +254,7 @@ impl View for SidebarButtons {
                         sidebar_side,
                         item_index: ix,
                     };
-                    MouseEventHandler::<Self>::new(ix, cx, |state, cx| {
+                    MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
                         Stack::new()
@@ -283,9 +283,9 @@ impl View for SidebarButtons {
                     .with_cursor_style(CursorStyle::PointingHand)
                     .on_click(MouseButton::Left, {
                         let action = action.clone();
-                        move |_, cx| cx.dispatch_action(action.clone())
+                        move |_, _, cx| cx.dispatch_action(action.clone())
                     })
-                    .with_tooltip::<Self, _>(
+                    .with_tooltip::<Self>(
                         ix,
                         tooltip,
                         Some(Box::new(action)),

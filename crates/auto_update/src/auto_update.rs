@@ -113,7 +113,7 @@ pub fn notify_of_any_new_update(
                         .read(cx)
                         .set_should_show_update_notification(false, cx)
                         .detach_and_log_err(cx);
-                });
+                })?;
             }
         }
         anyhow::Ok(())

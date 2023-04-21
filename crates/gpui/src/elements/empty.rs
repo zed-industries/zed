@@ -6,10 +6,9 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    presenter::MeasurementContext,
-    DebugContext,
+    SceneBuilder, View, ViewContext,
 };
-use crate::{Element, LayoutContext, PaintContext, SizeConstraint};
+use crate::{Drawable, SizeConstraint};
 
 #[derive(Default)]
 pub struct Empty {
@@ -27,14 +26,15 @@ impl Empty {
     }
 }
 
-impl Element for Empty {
+impl<V: View> Drawable<V> for Empty {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        _: &mut LayoutContext,
+        _: &mut V,
+        _: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() && !self.collapsed {
             constraint.max.x()
@@ -52,10 +52,12 @@ impl Element for Empty {
 
     fn paint(
         &mut self,
+        _: &mut SceneBuilder,
         _: RectF,
         _: RectF,
         _: &mut Self::LayoutState,
-        _: &mut PaintContext,
+        _: &mut V,
+        _: &mut ViewContext<V>,
     ) -> Self::PaintState {
     }
 
@@ -66,7 +68,8 @@ impl Element for Empty {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -76,7 +79,8 @@ impl Element for Empty {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "Empty",

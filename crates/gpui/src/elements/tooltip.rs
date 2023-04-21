@@ -1,14 +1,12 @@
 use super::{
-    ContainerStyle, Element, ElementBox, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
+    ContainerStyle, Drawable, Element, Flex, KeystrokeLabel, MouseEventHandler, Overlay,
     OverlayFitMode, ParentElement, Text,
 };
 use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    presenter::MeasurementContext,
-    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, RenderContext, SizeConstraint,
-    Task, View,
+    Action, Axis, ElementStateHandle, SceneBuilder, SizeConstraint, Task, View, ViewContext,
 };
 use serde::Deserialize;
 use std::{
@@ -17,12 +15,13 @@ use std::{
     rc::Rc,
     time::Duration,
 };
+use util::ResultExt;
 
 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 
-pub struct Tooltip {
-    child: ElementBox,
-    tooltip: Option<ElementBox>,
+pub struct Tooltip<V: View> {
+    child: Element<V>,
+    tooltip: Option<Element<V>>,
     _state: ElementStateHandle<Rc<TooltipState>>,
 }
 
@@ -50,24 +49,23 @@ pub struct KeystrokeStyle {
     text: TextStyle,
 }
 
-impl Tooltip {
+impl<V: View> Tooltip<V> {
     pub fn new<Tag: 'static, T: View>(
         id: usize,
         text: String,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
-        child: ElementBox,
-        cx: &mut RenderContext<T>,
+        child: Element<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self {
         struct ElementState<Tag>(Tag);
         struct MouseEventHandlerState<Tag>(Tag);
-        let focused_view_id = cx.focused_view_id(cx.window_id);
+        let focused_view_id = cx.focused_view_id();
 
         let state_handle = cx.default_element_state::<ElementState<Tag>, Rc<TooltipState>>(id);
         let state = state_handle.read(cx).clone();
         let tooltip = if state.visible.get() {
             let mut collapsed_tooltip = Self::render_tooltip(
-                cx.window_id,
                 focused_view_id,
                 text.clone(),
                 style.clone(),
@@ -77,12 +75,12 @@ impl Tooltip {
             .boxed();
             Some(
                 Overlay::new(
-                    Self::render_tooltip(cx.window_id, focused_view_id, text, style, action, false)
+                    Self::render_tooltip(focused_view_id, text, style, action, false)
                         .constrained()
-                        .dynamically(move |constraint, cx| {
+                        .dynamically(move |constraint, view, cx| {
                             SizeConstraint::strict_along(
                                 Axis::Vertical,
-                                collapsed_tooltip.layout(constraint, cx).y(),
+                                collapsed_tooltip.layout(constraint, view, cx).y(),
                             )
                         })
                         .boxed(),
@@ -94,32 +92,31 @@ impl Tooltip {
         } else {
             None
         };
-        let child = MouseEventHandler::<MouseEventHandlerState<Tag>>::new(id, cx, |_, _| child)
-            .on_hover(move |e, cx| {
+        let child = MouseEventHandler::<MouseEventHandlerState<Tag>, _>::new(id, cx, |_, _| child)
+            .on_hover(move |e, _, cx| {
                 let position = e.position;
-                let window_id = cx.window_id();
-                if let Some(view_id) = cx.view_id() {
-                    if e.started {
-                        if !state.visible.get() {
-                            state.position.set(position);
+                if e.started {
+                    if !state.visible.get() {
+                        state.position.set(position);
 
-                            let mut debounce = state.debounce.borrow_mut();
-                            if debounce.is_none() {
-                                *debounce = Some(cx.spawn({
-                                    let state = state.clone();
-                                    |mut cx| async move {
-                                        cx.background().timer(DEBOUNCE_TIMEOUT).await;
-                                        state.visible.set(true);
-                                        cx.update(|cx| cx.notify_view(window_id, view_id));
+                        let mut debounce = state.debounce.borrow_mut();
+                        if debounce.is_none() {
+                            *debounce = Some(cx.spawn_weak({
+                                let state = state.clone();
+                                |view, mut cx| async move {
+                                    cx.background().timer(DEBOUNCE_TIMEOUT).await;
+                                    state.visible.set(true);
+                                    if let Some(view) = view.upgrade(&cx) {
+                                        view.update(&mut cx, |_, cx| cx.notify()).log_err();
                                     }
-                                }));
-                            }
+                                }
+                            }));
                         }
-                    } else {
-                        state.visible.set(false);
-                        state.debounce.take();
-                        cx.notify();
                     }
+                } else {
+                    state.visible.set(false);
+                    state.debounce.take();
+                    cx.notify();
                 }
             })
             .boxed();
@@ -131,13 +128,12 @@ impl Tooltip {
     }
 
     pub fn render_tooltip(
-        window_id: usize,
         focused_view_id: Option<usize>,
         text: String,
         style: TooltipStyle,
         action: Option<Box<dyn Action>>,
         measure: bool,
-    ) -> impl Element {
+    ) -> impl Drawable<V> {
         Flex::row()
             .with_child({
                 let text = if let Some(max_text_width) = style.max_text_width {
@@ -156,7 +152,6 @@ impl Tooltip {
             })
             .with_children(action.and_then(|action| {
                 let keystroke_label = KeystrokeLabel::new(
-                    window_id,
                     focused_view_id?,
                     action,
                     style.keystroke.container,
@@ -173,32 +168,40 @@ impl Tooltip {
     }
 }
 
-impl Element for Tooltip {
+impl<V: View> Drawable<V> for Tooltip<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, cx);
+        let size = self.child.layout(constraint, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
-            tooltip.layout(SizeConstraint::new(Vector2F::zero(), cx.window_size), cx);
+            tooltip.layout(
+                SizeConstraint::new(Vector2F::zero(), cx.window_size()),
+                view,
+                cx,
+            );
         }
         (size, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) {
-        self.child.paint(bounds.origin(), visible_bounds, cx);
+        self.child
+            .paint(scene, bounds.origin(), visible_bounds, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
-            tooltip.paint(bounds.origin(), visible_bounds, cx);
+            tooltip.paint(scene, bounds.origin(), visible_bounds, view, cx);
         }
     }
 
@@ -209,9 +212,10 @@ impl Element for Tooltip {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range, cx)
+        self.child.rect_for_text_range(range, view, cx)
     }
 
     fn debug(
@@ -219,11 +223,12 @@ impl Element for Tooltip {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &crate::DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
-            "child": self.child.debug(cx),
-            "tooltip": self.tooltip.as_ref().map(|t| t.debug(cx)),
+            "child": self.child.debug(view, cx),
+            "tooltip": self.tooltip.as_ref().map(|t| t.debug(view, cx)),
         })
     }
 }

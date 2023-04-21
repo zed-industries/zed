@@ -5,7 +5,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    Axis, Border, ModelHandle, RenderContext, ViewHandle,
+    Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -70,8 +70,8 @@ impl PaneGroup {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Workspace>,
+    ) -> Element<Workspace> {
         self.root.render(
             project,
             theme,
@@ -131,8 +131,8 @@ impl Member {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Workspace>,
+    ) -> Element<Workspace> {
         enum FollowIntoExternalProject {}
 
         match self {
@@ -176,7 +176,7 @@ impl Member {
                                 let leader_user = leader.user.clone();
                                 let leader_user_id = leader.user.id;
                                 Some(
-                                    MouseEventHandler::<FollowIntoExternalProject>::new(
+                                    MouseEventHandler::<FollowIntoExternalProject, _>::new(
                                         pane.id(),
                                         cx,
                                         |_, _| {
@@ -199,7 +199,7 @@ impl Member {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(MouseButton::Left, move |_, cx| {
+                                    .on_click(MouseButton::Left, move |_, _, cx| {
                                         cx.dispatch_action(JoinProject {
                                             project_id: leader_project_id,
                                             follow_user_id: leader_user_id,
@@ -366,8 +366,8 @@ impl PaneAxis {
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Workspace>,
+    ) -> Element<Workspace> {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {

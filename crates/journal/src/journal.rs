@@ -7,7 +7,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::TryFutureExt as _;
 use workspace::AppState;
 
 actions!(journal, [NewJournalEntry]);
@@ -44,40 +43,37 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
         Ok::<_, std::io::Error>((journal_dir, entry_path))
     });
 
-    cx.spawn(|mut cx| {
-        async move {
-            let (journal_dir, entry_path) = create_entry.await?;
-            let (workspace, _) = cx
-                .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))
-                .await;
+    cx.spawn(|mut cx| async move {
+        let (journal_dir, entry_path) = create_entry.await?;
+        let (workspace, _) = cx
+            .update(|cx| workspace::open_paths(&[journal_dir], &app_state, None, cx))
+            .await?;
 
-            let opened = workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![entry_path], true, cx)
-                })
-                .await;
+        let opened = workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.open_paths(vec![entry_path], true, cx)
+            })?
+            .await;
 
-            if let Some(Some(Ok(item))) = opened.first() {
-                if let Some(editor) = item.downcast::<Editor>() {
-                    editor.update(&mut cx, |editor, cx| {
-                        let len = editor.buffer().read(cx).len(cx);
-                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                            s.select_ranges([len..len])
-                        });
-                        if len > 0 {
-                            editor.insert("\n\n", cx);
-                        }
-                        editor.insert(&entry_heading, cx);
-                        editor.insert("\n\n", cx);
+        if let Some(Some(Ok(item))) = opened.first() {
+            if let Some(editor) = item.downcast::<Editor>() {
+                editor.update(&mut cx, |editor, cx| {
+                    let len = editor.buffer().read(cx).len(cx);
+                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                        s.select_ranges([len..len])
                     });
-                }
+                    if len > 0 {
+                        editor.insert("\n\n", cx);
+                    }
+                    editor.insert(&entry_heading, cx);
+                    editor.insert("\n\n", cx);
+                })?;
             }
-
-            anyhow::Ok(())
         }
-        .log_err()
+
+        anyhow::Ok(())
     })
-    .detach();
+    .detach_and_log_err(cx);
 }
 
 fn journal_dir(settings: &Settings) -> Option<PathBuf> {

@@ -63,7 +63,7 @@ pub trait Platform: Send + Sync {
     ) -> Box<dyn Window>;
     fn main_window_id(&self) -> Option<usize>;
 
-    fn add_status_item(&self) -> Box<dyn Window>;
+    fn add_status_item(&self, id: usize) -> Box<dyn Window>;
 
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;

@@ -1470,7 +1470,8 @@ async fn test_host_disconnect(
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
+    let (window_id_b, workspace_b) =
+        cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
@@ -1479,12 +1480,9 @@ async fn test_host_disconnect(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    cx_b.read(|cx| {
-        assert_eq!(
-            cx.focused_view_id(workspace_b.window_id()),
-            Some(editor_b.id())
-        );
-    });
+    assert!(cx_b
+        .read_window(window_id_b, |cx| editor_b.is_focused(cx))
+        .unwrap());
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
@@ -1498,8 +1496,8 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-    cx_b.read(|cx| {
-        assert_eq!(cx.focused_view_id(workspace_b.window_id()), None);
+    cx_b.read_window(window_id_b, |cx| {
+        assert_eq!(cx.focused_view_id(), None);
     });
     assert!(!cx_b.is_window_edited(workspace_b.window_id()));
 
@@ -6228,7 +6226,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
@@ -6238,7 +6237,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b2.id());
@@ -6248,7 +6248,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_forward(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());

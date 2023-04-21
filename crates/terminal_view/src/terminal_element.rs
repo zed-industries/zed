@@ -10,8 +10,8 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    Element, ElementBox, EventContext, FontCache, ModelContext, MouseRegion, PaintContext, Quad,
-    SizeConstraint, TextLayoutCache, WeakModelHandle, WeakViewHandle,
+    Drawable, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
+    SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -45,7 +45,7 @@ pub struct LayoutState {
     size: TerminalSize,
     mode: TermMode,
     display_offset: usize,
-    hyperlink_tooltip: Option<ElementBox>,
+    hyperlink_tooltip: Option<Element<TerminalView>>,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -84,10 +84,12 @@ impl LayoutCell {
 
     fn paint(
         &self,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
         layout: &LayoutState,
         visible_bounds: RectF,
-        cx: &mut PaintContext,
+        _view: &mut TerminalView,
+        cx: &mut ViewContext<TerminalView>,
     ) {
         let pos = {
             let point = self.point;
@@ -98,7 +100,7 @@ impl LayoutCell {
         };
 
         self.text
-            .paint(pos, visible_bounds, layout.size.line_height, cx);
+            .paint(scene, pos, visible_bounds, layout.size.line_height, cx);
     }
 }
 
@@ -126,7 +128,14 @@ impl LayoutRect {
         }
     }
 
-    fn paint(&self, origin: Vector2F, layout: &LayoutState, cx: &mut PaintContext) {
+    fn paint(
+        &self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        layout: &LayoutState,
+        _view: &mut TerminalView,
+        _cx: &mut ViewContext<TerminalView>,
+    ) {
         let position = {
             let point = self.point;
             vec2f(
@@ -139,7 +148,7 @@ impl LayoutRect {
             layout.size.line_height,
         );
 
-        cx.scene.push_quad(Quad {
+        scene.push_quad(Quad {
             bounds: RectF::new(position, size),
             background: Some(self.color),
             border: Default::default(),
@@ -152,20 +161,17 @@ impl LayoutRect {
 ///We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: WeakModelHandle<Terminal>,
-    view: WeakViewHandle<TerminalView>,
     focused: bool,
     cursor_visible: bool,
 }
 
 impl TerminalElement {
     pub fn new(
-        view: WeakViewHandle<TerminalView>,
         terminal: WeakModelHandle<Terminal>,
         focused: bool,
         cursor_visible: bool,
     ) -> TerminalElement {
         TerminalElement {
-            view,
             terminal,
             focused,
             cursor_visible,
@@ -361,11 +367,11 @@ impl TerminalElement {
         connection: WeakModelHandle<Terminal>,
         origin: Vector2F,
         f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(E, &mut EventContext) {
-        move |event, cx| {
+    ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
+        move |event, _: &mut TerminalView, cx| {
             cx.focus_parent_view();
-            if let Some(conn_handle) = connection.upgrade(cx.app) {
-                conn_handle.update(cx.app, |terminal, cx| {
+            if let Some(conn_handle) = connection.upgrade(cx) {
+                conn_handle.update(cx, |terminal, cx| {
                     f(terminal, origin, event, cx);
 
                     cx.notify();
@@ -376,15 +382,15 @@ impl TerminalElement {
 
     fn attach_mouse_handlers(
         &self,
+        scene: &mut SceneBuilder,
         origin: Vector2F,
-        view_id: usize,
         visible_bounds: RectF,
         mode: TermMode,
-        cx: &mut PaintContext,
+        cx: &mut ViewContext<TerminalView>,
     ) {
         let connection = self.terminal;
 
-        let mut region = MouseRegion::new::<Self>(view_id, 0, visible_bounds);
+        let mut region = MouseRegion::new::<Self>(cx.view_id(), 0, visible_bounds);
 
         // Terminal Emulator controlled behavior:
         region = region
@@ -400,10 +406,10 @@ impl TerminalElement {
                 ),
             )
             // Update drag selections
-            .on_drag(MouseButton::Left, move |event, cx| {
+            .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
                 if cx.is_parent_view_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, cx| {
+                    if let Some(conn_handle) = connection.upgrade(cx) {
+                        conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_drag(event, origin);
                             cx.notify();
                         })
@@ -422,9 +428,9 @@ impl TerminalElement {
                 ),
             )
             // Context menu
-            .on_click(MouseButton::Right, move |e, cx| {
-                let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx.app) {
-                    conn_handle.update(cx.app, |terminal, _cx| terminal.mouse_mode(e.shift))
+            .on_click(MouseButton::Right, move |e, _: &mut TerminalView, cx| {
+                let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx) {
+                    conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(e.shift))
                 } else {
                     // If we can't get the model handle, probably can't deploy the context menu
                     true
@@ -435,20 +441,19 @@ impl TerminalElement {
                     });
                 }
             })
-            .on_move(move |event, cx| {
+            .on_move(move |event, _: &mut TerminalView, cx| {
                 if cx.is_parent_view_focused() {
-                    if let Some(conn_handle) = connection.upgrade(cx.app) {
-                        conn_handle.update(cx.app, |terminal, cx| {
+                    if let Some(conn_handle) = connection.upgrade(cx) {
+                        conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_move(&event, origin);
                             cx.notify();
                         })
                     }
                 }
             })
-            .on_scroll(move |event, cx| {
-                // cx.focus_parent_view();
-                if let Some(conn_handle) = connection.upgrade(cx.app) {
-                    conn_handle.update(cx.app, |terminal, cx| {
+            .on_scroll(move |event, _: &mut TerminalView, cx| {
+                if let Some(conn_handle) = connection.upgrade(cx) {
+                    conn_handle.update(cx, |terminal, cx| {
                         terminal.scroll_wheel(event, origin);
                         cx.notify();
                     })
@@ -501,7 +506,7 @@ impl TerminalElement {
                 )
         }
 
-        cx.scene.push_mouse_region(region);
+        scene.push_mouse_region(region);
     }
 
     ///Configures a text style from the current settings.
@@ -546,14 +551,15 @@ impl TerminalElement {
     }
 }
 
-impl Element for TerminalElement {
+impl Drawable<TerminalView> for TerminalElement {
     type LayoutState = LayoutState;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        cx: &mut gpui::LayoutContext,
+        view: &mut TerminalView,
+        cx: &mut ViewContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();
@@ -581,34 +587,31 @@ impl Element for TerminalElement {
         let background_color = terminal_theme.background;
         let terminal_handle = self.terminal.upgrade(cx).unwrap();
 
-        let last_hovered_hyperlink = terminal_handle.update(cx.app, |terminal, cx| {
+        let last_hovered_hyperlink = terminal_handle.update(cx, |terminal, cx| {
             terminal.set_size(dimensions);
             terminal.try_sync(cx);
             terminal.last_content.last_hovered_hyperlink.clone()
         });
 
-        let view_handle = self.view.clone();
-        let hyperlink_tooltip = last_hovered_hyperlink.and_then(|(uri, _, id)| {
-            // last_mouse.and_then(|_last_mouse| {
-            view_handle.upgrade(cx).map(|handle| {
-                let mut tooltip = cx.render(&handle, |_, cx| {
-                    Overlay::new(
-                        Empty::new()
-                            .contained()
-                            .constrained()
-                            .with_width(dimensions.width())
-                            .with_height(dimensions.height())
-                            .with_tooltip::<TerminalElement, _>(id, uri, None, tooltip_style, cx)
-                            .boxed(),
-                    )
-                    .with_position_mode(gpui::elements::OverlayPositionMode::Local)
-                    .boxed()
-                });
+        let hyperlink_tooltip = last_hovered_hyperlink.map(|(uri, _, id)| {
+            let mut tooltip = Overlay::new(
+                Empty::new()
+                    .contained()
+                    .constrained()
+                    .with_width(dimensions.width())
+                    .with_height(dimensions.height())
+                    .with_tooltip::<TerminalElement>(id, uri, None, tooltip_style, cx)
+                    .boxed(),
+            )
+            .with_position_mode(gpui::elements::OverlayPositionMode::Local)
+            .boxed();
 
-                tooltip.layout(SizeConstraint::new(Vector2F::zero(), cx.window_size), cx);
-                tooltip
-            })
-            // })
+            tooltip.layout(
+                SizeConstraint::new(Vector2F::zero(), cx.window_size()),
+                view,
+                cx,
+            );
+            tooltip
         });
 
         let TerminalContent {
@@ -637,7 +640,7 @@ impl Element for TerminalElement {
             cells,
             &text_style,
             &terminal_theme,
-            cx.text_layout_cache,
+            cx.text_layout_cache(),
             cx.font_cache(),
             last_hovered_hyperlink
                 .as_ref()
@@ -659,7 +662,7 @@ impl Element for TerminalElement {
                     terminal_theme.foreground
                 };
 
-                cx.text_layout_cache.layout_str(
+                cx.text_layout_cache().layout_str(
                     &str_trxt,
                     text_style.font_size,
                     &[(
@@ -717,23 +720,25 @@ impl Element for TerminalElement {
 
     fn paint(
         &mut self,
-        bounds: gpui::geometry::rect::RectF,
-        visible_bounds: gpui::geometry::rect::RectF,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
+        view: &mut TerminalView,
+        cx: &mut ViewContext<TerminalView>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
-        cx.paint_layer(clip_bounds, |cx| {
+        scene.paint_layer(clip_bounds, |scene| {
             let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(origin, self.view.id(), visible_bounds, layout.mode, cx);
+            self.attach_mouse_handlers(scene, origin, visible_bounds, layout.mode, cx);
 
-            cx.scene.push_cursor_region(gpui::CursorRegion {
+            scene.push_cursor_region(gpui::CursorRegion {
                 bounds,
                 style: if layout.hyperlink_tooltip.is_some() {
                     CursorStyle::PointingHand
@@ -742,9 +747,9 @@ impl Element for TerminalElement {
                 },
             });
 
-            cx.paint_layer(clip_bounds, |cx| {
+            scene.paint_layer(clip_bounds, |scene| {
                 //Start with a background color
-                cx.scene.push_quad(Quad {
+                scene.push_quad(Quad {
                     bounds: RectF::new(bounds.origin(), bounds.size()),
                     background: Some(layout.background_color),
                     border: Default::default(),
@@ -752,12 +757,12 @@ impl Element for TerminalElement {
                 });
 
                 for rect in &layout.rects {
-                    rect.paint(origin, layout, cx)
+                    rect.paint(scene, origin, layout, view, cx)
                 }
             });
 
             //Draw Highlighted Backgrounds
-            cx.paint_layer(clip_bounds, |cx| {
+            scene.paint_layer(clip_bounds, |scene| {
                 for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
                 {
                     if let Some((start_y, highlighted_range_lines)) =
@@ -771,29 +776,29 @@ impl Element for TerminalElement {
                             //Copied from editor. TODO: move to theme or something
                             corner_radius: 0.15 * layout.size.line_height,
                         };
-                        hr.paint(bounds, cx.scene);
+                        hr.paint(bounds, scene);
                     }
                 }
             });
 
             //Draw the text cells
-            cx.paint_layer(clip_bounds, |cx| {
+            scene.paint_layer(clip_bounds, |scene| {
                 for cell in &layout.cells {
-                    cell.paint(origin, layout, visible_bounds, cx);
+                    cell.paint(scene, origin, layout, visible_bounds, view, cx);
                 }
             });
 
             //Draw cursor
             if self.cursor_visible {
                 if let Some(cursor) = &layout.cursor {
-                    cx.paint_layer(clip_bounds, |cx| {
-                        cursor.paint(origin, cx);
+                    scene.paint_layer(clip_bounds, |scene| {
+                        cursor.paint(scene, origin, cx);
                     })
                 }
             }
 
             if let Some(element) = &mut layout.hyperlink_tooltip {
-                element.paint(origin, visible_bounds, cx)
+                element.paint(scene, origin, visible_bounds, view, cx)
             }
         });
     }
@@ -804,10 +809,11 @@ impl Element for TerminalElement {
 
     fn debug(
         &self,
-        _bounds: gpui::geometry::rect::RectF,
-        _layout: &Self::LayoutState,
-        _paint: &Self::PaintState,
-        _cx: &gpui::DebugContext,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &TerminalView,
+        _: &gpui::ViewContext<TerminalView>,
     ) -> gpui::serde_json::Value {
         json!({
             "type": "TerminalElement",
@@ -821,7 +827,8 @@ impl Element for TerminalElement {
         _: RectF,
         layout: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &gpui::MeasurementContext,
+        _: &TerminalView,
+        _: &gpui::ViewContext<TerminalView>,
     ) -> Option<RectF> {
         // Use the same origin that's passed to `Cursor::paint` in the paint
         // method bove.

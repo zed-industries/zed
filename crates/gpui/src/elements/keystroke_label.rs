@@ -2,7 +2,7 @@ use crate::{
     elements::*,
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
-    Action, ElementBox, LayoutContext, PaintContext, SizeConstraint,
+    Action, Element, SizeConstraint,
 };
 use serde_json::json;
 
@@ -12,20 +12,17 @@ pub struct KeystrokeLabel {
     action: Box<dyn Action>,
     container_style: ContainerStyle,
     text_style: TextStyle,
-    window_id: usize,
     view_id: usize,
 }
 
 impl KeystrokeLabel {
     pub fn new(
-        window_id: usize,
         view_id: usize,
         action: Box<dyn Action>,
         container_style: ContainerStyle,
         text_style: TextStyle,
     ) -> Self {
         Self {
-            window_id,
             view_id,
             action,
             container_style,
@@ -34,18 +31,18 @@ impl KeystrokeLabel {
     }
 }
 
-impl Element for KeystrokeLabel {
-    type LayoutState = ElementBox;
+impl<V: View> Drawable<V> for KeystrokeLabel {
+    type LayoutState = Element<V>;
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
-    ) -> (Vector2F, ElementBox) {
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, Element<V>) {
         let mut element = if let Some(keystrokes) =
-            cx.app
-                .keystrokes_for_action(self.window_id, self.view_id, self.action.as_ref())
+            cx.keystrokes_for_action(self.view_id, self.action.as_ref())
         {
             Flex::row()
                 .with_children(keystrokes.iter().map(|keystroke| {
@@ -59,18 +56,20 @@ impl Element for KeystrokeLabel {
             Empty::new().collapsed().boxed()
         };
 
-        let size = element.layout(constraint, cx);
+        let size = element.layout(constraint, view, cx);
         (size, element)
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
-        element: &mut ElementBox,
-        cx: &mut PaintContext,
+        element: &mut Element<V>,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) {
-        element.paint(bounds.origin(), visible_bounds, cx);
+        element.paint(scene, bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(
@@ -80,7 +79,8 @@ impl Element for KeystrokeLabel {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -88,14 +88,15 @@ impl Element for KeystrokeLabel {
     fn debug(
         &self,
         _: RectF,
-        element: &ElementBox,
+        element: &Element<V>,
         _: &(),
-        cx: &crate::DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "KeystrokeLabel",
             "action": self.action.name(),
-            "child": element.debug(cx)
+            "child": element.debug(view, cx)
         })
     }
 }

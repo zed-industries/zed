@@ -10,14 +10,14 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseDown, MouseDownOut, MouseDrag, MouseHover,
         MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    DebugContext, Element, ElementBox, EventContext, LayoutContext, MeasurementContext,
-    MouseRegion, MouseState, PaintContext, RenderContext, SizeConstraint, View,
+    Drawable, Element, EventContext, MouseRegion, MouseState, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 use serde_json::json;
 use std::{marker::PhantomData, ops::Range};
 
-pub struct MouseEventHandler<Tag: 'static> {
-    child: ElementBox,
+pub struct MouseEventHandler<Tag: 'static, V: View> {
+    child: Element<V>,
     region_id: usize,
     cursor_style: Option<CursorStyle>,
     handlers: HandlerSet,
@@ -31,11 +31,11 @@ pub struct MouseEventHandler<Tag: 'static> {
 
 /// Element which provides a render_child callback with a MouseState and paints a mouse
 /// region under (or above) it for easy mouse event handling.
-impl<Tag> MouseEventHandler<Tag> {
-    pub fn new<V, F>(region_id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
+impl<Tag, V: View> MouseEventHandler<Tag, V> {
+    pub fn new<F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
     where
         V: View,
-        F: FnOnce(&mut MouseState, &mut RenderContext<V>) -> ElementBox,
+        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> Element<V>,
     {
         let mut mouse_state = cx.mouse_state::<Tag>(region_id);
         let child = render_child(&mut mouse_state, cx);
@@ -58,10 +58,10 @@ impl<Tag> MouseEventHandler<Tag> {
     /// Modifies the MouseEventHandler to render the MouseRegion above the child element. Useful
     /// for drag and drop handling and similar events which should be captured before the child
     /// gets the opportunity
-    pub fn above<V, F>(region_id: usize, cx: &mut RenderContext<V>, render_child: F) -> Self
+    pub fn above<F>(region_id: usize, cx: &mut ViewContext<V>, render_child: F) -> Self
     where
         V: View,
-        F: FnOnce(&mut MouseState, &mut RenderContext<V>) -> ElementBox,
+        F: FnOnce(&mut MouseState, &mut ViewContext<V>) -> Element<V>,
     {
         let mut handler = Self::new(region_id, cx, render_child);
         handler.above = true;
@@ -78,14 +78,17 @@ impl<Tag> MouseEventHandler<Tag> {
         self
     }
 
-    pub fn on_move(mut self, handler: impl Fn(MouseMove, &mut EventContext) + 'static) -> Self {
+    pub fn on_move(
+        mut self,
+        handler: impl Fn(MouseMove, &mut V, &mut EventContext<V>) + 'static,
+    ) -> Self {
         self.handlers = self.handlers.on_move(handler);
         self
     }
 
     pub fn on_move_out(
         mut self,
-        handler: impl Fn(MouseMoveOut, &mut EventContext) + 'static,
+        handler: impl Fn(MouseMoveOut, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_move_out(handler);
         self
@@ -94,7 +97,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseDown, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDown, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down(button, handler);
         self
@@ -103,7 +106,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseUp, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUp, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up(button, handler);
         self
@@ -112,7 +115,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_click(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseClick, &mut EventContext) + 'static,
+        handler: impl Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_click(button, handler);
         self
@@ -121,7 +124,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseDownOut, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDownOut, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_down_out(button, handler);
         self
@@ -130,7 +133,7 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseUpOut, &mut EventContext) + 'static,
+        handler: impl Fn(MouseUpOut, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_up_out(button, handler);
         self
@@ -139,20 +142,23 @@ impl<Tag> MouseEventHandler<Tag> {
     pub fn on_drag(
         mut self,
         button: MouseButton,
-        handler: impl Fn(MouseDrag, &mut EventContext) + 'static,
+        handler: impl Fn(MouseDrag, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_drag(button, handler);
         self
     }
 
-    pub fn on_hover(mut self, handler: impl Fn(MouseHover, &mut EventContext) + 'static) -> Self {
+    pub fn on_hover(
+        mut self,
+        handler: impl Fn(MouseHover, &mut V, &mut EventContext<V>) + 'static,
+    ) -> Self {
         self.handlers = self.handlers.on_hover(handler);
         self
     }
 
     pub fn on_scroll(
         mut self,
-        handler: impl Fn(MouseScrollWheel, &mut EventContext) + 'static,
+        handler: impl Fn(MouseScrollWheel, &mut V, &mut EventContext<V>) + 'static,
     ) -> Self {
         self.handlers = self.handlers.on_scroll(handler);
         self
@@ -176,19 +182,25 @@ impl<Tag> MouseEventHandler<Tag> {
         .round_out()
     }
 
-    fn paint_regions(&self, bounds: RectF, visible_bounds: RectF, cx: &mut PaintContext) {
+    fn paint_regions(
+        &self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        cx: &mut ViewContext<V>,
+    ) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         let hit_bounds = self.hit_bounds(visible_bounds);
 
         if let Some(style) = self.cursor_style {
-            cx.scene.push_cursor_region(CursorRegion {
+            scene.push_cursor_region(CursorRegion {
                 bounds: hit_bounds,
                 style,
             });
         }
-        cx.scene.push_mouse_region(
+        scene.push_mouse_region(
             MouseRegion::from_handlers::<Tag>(
-                cx.current_view_id(),
+                cx.view_id(),
                 self.region_id,
                 hit_bounds,
                 self.handlers.clone(),
@@ -200,34 +212,39 @@ impl<Tag> MouseEventHandler<Tag> {
     }
 }
 
-impl<Tag> Element for MouseEventHandler<Tag> {
+impl<Tag, V: View> Drawable<V> for MouseEventHandler<Tag, V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        (self.child.layout(constraint, cx), ())
+        (self.child.layout(constraint, view, cx), ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if self.above {
-            self.child.paint(bounds.origin(), visible_bounds, cx);
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx);
 
-            cx.paint_layer(None, |cx| {
-                self.paint_regions(bounds, visible_bounds, cx);
+            scene.paint_layer(None, |scene| {
+                self.paint_regions(scene, bounds, visible_bounds, cx);
             });
         } else {
-            self.paint_regions(bounds, visible_bounds, cx);
-            self.child.paint(bounds.origin(), visible_bounds, cx);
+            self.paint_regions(scene, bounds, visible_bounds, cx);
+            self.child
+                .paint(scene, bounds.origin(), visible_bounds, view, cx);
         }
     }
 
@@ -238,9 +255,10 @@ impl<Tag> Element for MouseEventHandler<Tag> {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -248,11 +266,12 @@ impl<Tag> Element for MouseEventHandler<Tag> {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value {
         json!({
             "type": "MouseEventHandler",
-            "child": self.child.debug(cx),
+            "child": self.child.debug(view, cx),
         })
     }
 }

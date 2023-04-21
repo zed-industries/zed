@@ -2,20 +2,18 @@ use std::ops::Range;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json,
-    presenter::MeasurementContext,
-    DebugContext, Element, ElementBox, LayoutContext, PaintContext, SizeConstraint,
+    json, Drawable, Element, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde_json::json;
 
-pub struct Expanded {
-    child: ElementBox,
+pub struct Expanded<V: View> {
+    child: Element<V>,
     full_width: bool,
     full_height: bool,
 }
 
-impl Expanded {
-    pub fn new(child: ElementBox) -> Self {
+impl<V: View> Expanded<V> {
+    pub fn new(child: Element<V>) -> Self {
         Self {
             child,
             full_width: true,
@@ -36,14 +34,15 @@ impl Expanded {
     }
 }
 
-impl Element for Expanded {
+impl<V: View> Drawable<V> for Expanded<V> {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         mut constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if self.full_width {
             constraint.min.set_x(constraint.max.x());
@@ -51,18 +50,21 @@ impl Element for Expanded {
         if self.full_height {
             constraint.min.set_y(constraint.max.y());
         }
-        let size = self.child.layout(constraint, cx);
+        let size = self.child.layout(constraint, view, cx);
         (size, ())
     }
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), visible_bounds, cx);
+        self.child
+            .paint(scene, bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(
@@ -72,9 +74,10 @@ impl Element for Expanded {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.child.rect_for_text_range(range_utf16, cx)
+        self.child.rect_for_text_range(range_utf16, view, cx)
     }
 
     fn debug(
@@ -82,13 +85,14 @@ impl Element for Expanded {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> json::Value {
         json!({
             "type": "Expanded",
             "full_width": self.full_width,
             "full_height": self.full_height,
-            "child": self.child.debug(cx)
+            "child": self.child.debug(view, cx)
         })
     }
 }

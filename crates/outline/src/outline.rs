@@ -4,25 +4,51 @@ use editor::{
 };
 use fuzzy::StringMatch;
 use gpui::{
-    actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Entity,
-    MouseState, RenderContext, Task, View, ViewContext, ViewHandle,
+    actions, elements::*, geometry::vector::Vector2F, AppContext, MouseState, Task, ViewContext,
+    ViewHandle, WindowContext,
 };
 use language::Outline;
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
-use std::cmp::{self, Reverse};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
 use workspace::Workspace;
 
 actions!(outline, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(OutlineView::toggle);
-    Picker::<OutlineView>::init(cx);
+    cx.add_action(toggle);
+    OutlineView::init(cx);
 }
 
-struct OutlineView {
-    picker: ViewHandle<Picker<Self>>,
+fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+    if let Some(editor) = workspace
+        .active_item(cx)
+        .and_then(|item| item.downcast::<Editor>())
+    {
+        let outline = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .outline(Some(cx.global::<Settings>().theme.editor.syntax.as_ref()));
+        if let Some(outline) = outline {
+            workspace.toggle_modal(cx, |_, cx| {
+                cx.add_view(|cx| {
+                    OutlineView::new(OutlineViewDelegate::new(outline, editor, cx), cx)
+                        .with_max_size(800., 1200.)
+                })
+            });
+        }
+    }
+}
+
+type OutlineView = Picker<OutlineViewDelegate>;
+
+struct OutlineViewDelegate {
     active_editor: ViewHandle<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
@@ -31,45 +57,13 @@ struct OutlineView {
     last_query: String,
 }
 
-pub enum Event {
-    Dismissed,
-}
-
-impl Entity for OutlineView {
-    type Event = Event;
-
-    fn release(&mut self, cx: &mut AppContext) {
-        self.restore_active_editor(cx);
-    }
-}
-
-impl View for OutlineView {
-    fn ui_name() -> &'static str {
-        "OutlineView"
-    }
-
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(&self.picker, cx).boxed()
-    }
-
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.picker);
-        }
-    }
-}
-
-impl OutlineView {
+impl OutlineViewDelegate {
     fn new(
         outline: Outline<Anchor>,
         editor: ViewHandle<Editor>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<OutlineView>,
     ) -> Self {
-        let handle = cx.weak_handle();
         Self {
-            picker: cx.add_view(|cx| {
-                Picker::new("Search buffer symbols...", handle, cx).with_max_size(800., 1200.)
-            }),
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
@@ -79,28 +73,7 @@ impl OutlineView {
         }
     }
 
-    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        if let Some(editor) = workspace
-            .active_item(cx)
-            .and_then(|item| item.downcast::<Editor>())
-        {
-            let outline = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .outline(Some(cx.global::<Settings>().theme.editor.syntax.as_ref()));
-            if let Some(outline) = outline {
-                workspace.toggle_modal(cx, |_, cx| {
-                    let view = cx.add_view(|cx| OutlineView::new(outline, editor, cx));
-                    cx.subscribe(&view, Self::on_event).detach();
-                    view
-                });
-            }
-        }
-    }
-
-    fn restore_active_editor(&mut self, cx: &mut AppContext) {
+    fn restore_active_editor(&mut self, cx: &mut WindowContext) {
         self.active_editor.update(cx, |editor, cx| {
             editor.highlight_rows(None);
             if let Some(scroll_position) = self.prev_scroll_position {
@@ -109,7 +82,7 @@ impl OutlineView {
         })
     }
 
-    fn set_selected_index(&mut self, ix: usize, navigate: bool, cx: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, ix: usize, navigate: bool, cx: &mut ViewContext<OutlineView>) {
         self.selected_match_index = ix;
         if navigate && !self.matches.is_empty() {
             let selected_match = &self.matches[self.selected_match_index];
@@ -125,22 +98,14 @@ impl OutlineView {
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
-        cx.notify();
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => workspace.dismiss_modal(cx),
-        }
     }
 }
 
-impl PickerDelegate for OutlineView {
+impl PickerDelegate for OutlineViewDelegate {
+    fn placeholder_text(&self) -> Arc<str> {
+        "Search buffer symbols...".into()
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -149,7 +114,7 @@ impl PickerDelegate for OutlineView {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<OutlineView>) {
         self.set_selected_index(ix, true, cx);
     }
 
@@ -157,7 +122,7 @@ impl PickerDelegate for OutlineView {
         true
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> Task<()> {
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<OutlineView>) -> Task<()> {
         let selected_index;
         if query.is_empty() {
             self.restore_active_editor(cx);
@@ -213,7 +178,7 @@ impl PickerDelegate for OutlineView {
         Task::ready(())
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, cx: &mut ViewContext<OutlineView>) {
         self.prev_scroll_position.take();
         self.active_editor.update(cx, |active_editor, cx| {
             if let Some(rows) = active_editor.highlighted_rows() {
@@ -224,12 +189,11 @@ impl PickerDelegate for OutlineView {
                 });
             }
         });
-        cx.emit(Event::Dismissed);
+        cx.emit(PickerEvent::Dismiss);
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<OutlineView>) {
         self.restore_active_editor(cx);
-        cx.emit(Event::Dismissed);
     }
 
     fn render_match(
@@ -238,7 +202,7 @@ impl PickerDelegate for OutlineView {
         mouse_state: &mut MouseState,
         selected: bool,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> Element<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = settings.theme.picker.item.style_for(mouse_state, selected);

@@ -7,12 +7,14 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    Axis, DebugContext, Element, ElementBox, MeasurementContext, PaintContext,
+    Axis, Drawable, Element, SceneBuilder, ViewContext,
 };
+
+use crate::CollabTitlebarItem;
 
 pub(crate) struct FacePile {
     overlap: f32,
-    faces: Vec<ElementBox>,
+    faces: Vec<Element<CollabTitlebarItem>>,
 }
 
 impl FacePile {
@@ -24,20 +26,21 @@ impl FacePile {
     }
 }
 
-impl Element for FacePile {
+impl Drawable<CollabTitlebarItem> for FacePile {
     type LayoutState = ();
     type PaintState = ();
 
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        cx: &mut gpui::LayoutContext,
+        view: &mut CollabTitlebarItem,
+        cx: &mut ViewContext<CollabTitlebarItem>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 
         let mut width = 0.;
         for face in &mut self.faces {
-            width += face.layout(constraint, cx).x();
+            width += face.layout(constraint, view, cx).x();
         }
         width -= self.overlap * self.faces.len().saturating_sub(1) as f32;
 
@@ -46,10 +49,12 @@ impl Element for FacePile {
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut CollabTitlebarItem,
+        cx: &mut ViewContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -59,8 +64,8 @@ impl Element for FacePile {
         for face in self.faces.iter_mut().rev() {
             let size = face.size();
             origin_x -= size.x();
-            cx.paint_layer(None, |cx| {
-                face.paint(vec2f(origin_x, origin_y), visible_bounds, cx);
+            scene.paint_layer(None, |scene| {
+                face.paint(scene, vec2f(origin_x, origin_y), visible_bounds, view, cx);
             });
             origin_x += self.overlap;
         }
@@ -75,7 +80,8 @@ impl Element for FacePile {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &CollabTitlebarItem,
+        _: &ViewContext<CollabTitlebarItem>,
     ) -> Option<RectF> {
         None
     }
@@ -85,7 +91,8 @@ impl Element for FacePile {
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &CollabTitlebarItem,
+        _: &ViewContext<CollabTitlebarItem>,
     ) -> serde_json::Value {
         json!({
             "type": "FacePile",
@@ -94,8 +101,8 @@ impl Element for FacePile {
     }
 }
 
-impl Extend<ElementBox> for FacePile {
-    fn extend<T: IntoIterator<Item = ElementBox>>(&mut self, children: T) {
+impl Extend<Element<CollabTitlebarItem>> for FacePile {
+    fn extend<T: IntoIterator<Item = Element<CollabTitlebarItem>>>(&mut self, children: T) {
         self.faces.extend(children);
     }
 }

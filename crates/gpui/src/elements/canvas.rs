@@ -1,8 +1,9 @@
-use super::Element;
+use std::marker::PhantomData;
+
+use super::Drawable;
 use crate::{
     json::{self, json},
-    presenter::MeasurementContext,
-    DebugContext, PaintContext,
+    SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use pathfinder_geometry::{
@@ -10,20 +11,21 @@ use pathfinder_geometry::{
     vector::{vec2f, Vector2F},
 };
 
-pub struct Canvas<F>(F);
+pub struct Canvas<V, F>(F, PhantomData<V>);
 
-impl<F> Canvas<F>
+impl<V, F> Canvas<V, F>
 where
-    F: FnMut(RectF, RectF, &mut PaintContext),
+    V: View,
+    F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     pub fn new(f: F) -> Self {
-        Self(f)
+        Self(f, PhantomData)
     }
 }
 
-impl<F> Element for Canvas<F>
+impl<V: View, F> Drawable<V> for Canvas<V, F>
 where
-    F: FnMut(RectF, RectF, &mut PaintContext),
+    F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     type LayoutState = ();
     type PaintState = ();
@@ -31,7 +33,8 @@ where
     fn layout(
         &mut self,
         constraint: crate::SizeConstraint,
-        _: &mut crate::LayoutContext,
+        _: &mut V,
+        _: &mut crate::ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() {
             constraint.max.x()
@@ -48,12 +51,14 @@ where
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        self.0(bounds, visible_bounds, cx)
+        self.0(scene, bounds, visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(
@@ -63,7 +68,8 @@ where
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &MeasurementContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> Option<RectF> {
         None
     }
@@ -73,7 +79,8 @@ where
         bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &DebugContext,
+        _: &V,
+        _: &ViewContext<V>,
     ) -> json::Value {
         json!({"type": "Canvas", "bounds": bounds.to_json()})
     }

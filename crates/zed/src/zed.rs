@@ -105,7 +105,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
                 .titlebar_item()
                 .and_then(|item| item.downcast::<CollabTitlebarItem>())
             {
-                cx.as_mut().defer(move |cx| {
+                cx.defer(move |_, cx| {
                     item.update(cx, |item, cx| {
                         item.toggle_contacts_popover(&Default::default(), cx);
                     });
@@ -247,10 +247,10 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
                                 cx,
                             );
                         })
-                    })
-                    .await;
+                    })?
+                    .await
             })
-            .detach();
+            .detach_and_log_err(cx);
         }
     });
     cx.add_action(
@@ -333,8 +333,7 @@ pub fn initialize_workspace(
 
     auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 
-    let window_id = cx.window_id();
-    vim::observe_keystrokes(window_id, cx);
+    vim::observe_keystrokes(cx);
 
     cx.on_window_should_close(|workspace, cx| {
         if let Some(task) = workspace.close(&Default::default(), cx) {
@@ -380,17 +379,18 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx
-                .prompt(
-                    workspace.window_id(),
-                    PromptLevel::Info,
-                    "Are you sure you want to restart?",
-                    &["Restart", "Cancel"],
-                )
-                .next()
-                .await;
-            if answer != Some(0) {
-                return Ok(());
+            let answer = cx.prompt(
+                workspace.window_id(),
+                PromptLevel::Info,
+                "Are you sure you want to restart?",
+                &["Restart", "Cancel"],
+            );
+
+            if let Some(mut answer) = answer {
+                let answer = answer.next().await;
+                if answer != Some(0) {
+                    return Ok(());
+                }
             }
         }
 
@@ -399,7 +399,7 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
             if !workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.prepare_to_close(true, cx)
-                })
+                })?
                 .await?
             {
                 return Ok(());
@@ -424,17 +424,18 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx
-                .prompt(
-                    workspace.window_id(),
-                    PromptLevel::Info,
-                    "Are you sure you want to quit?",
-                    &["Quit", "Cancel"],
-                )
-                .next()
-                .await;
-            if answer != Some(0) {
-                return Ok(());
+            let answer = cx.prompt(
+                workspace.window_id(),
+                PromptLevel::Info,
+                "Are you sure you want to quit?",
+                &["Quit", "Cancel"],
+            );
+
+            if let Some(mut answer) = answer {
+                let answer = answer.next().await;
+                if answer != Some(0) {
+                    return Ok(());
+                }
             }
         }
 
@@ -443,7 +444,7 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
             if !workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.prepare_to_close(true, cx)
-                })
+                })?
                 .await?
             {
                 return Ok(());
@@ -480,8 +481,8 @@ fn open_config_file(
                 workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 })
-            })
-            .await
+            })?
+            .await?
             .await;
         Ok::<_, anyhow::Error>(())
     })
@@ -520,25 +521,25 @@ fn open_log_file(
                         .flat_map(|line| [line, "\n"])
                         .collect::<String>();
 
-                    workspace.update(&mut cx, |workspace, cx| {
-                        let project = workspace.project().clone();
-                        let buffer = project
-                            .update(cx, |project, cx| project.create_buffer("", None, cx))
-                            .expect("creating buffers on a local workspace always succeeds");
-                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            let project = workspace.project().clone();
+                            let buffer = project
+                                .update(cx, |project, cx| project.create_buffer("", None, cx))
+                                .expect("creating buffers on a local workspace always succeeds");
+                            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
 
-                        let buffer = cx.add_model(|cx| {
-                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
-                        });
-                        workspace.add_item(
-                            Box::new(
-                                cx.add_view(|cx| {
+                            let buffer = cx.add_model(|cx| {
+                                MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                            });
+                            workspace.add_item(
+                                Box::new(cx.add_view(|cx| {
                                     Editor::for_multibuffer(buffer, Some(project), cx)
-                                }),
-                            ),
-                            cx,
-                        );
-                    });
+                                })),
+                                cx,
+                            );
+                        })
+                        .log_err();
                 }
             })
             .detach();
@@ -600,7 +601,7 @@ fn open_telemetry_log_file(
                     Box::new(cx.add_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
                     cx,
                 );
-            });
+            }).log_err()?;
 
             Some(())
         })
@@ -641,10 +642,10 @@ fn open_bundled_file(
                         cx,
                     );
                 })
-            })
-            .await;
+            })?
+            .await
     })
-    .detach();
+    .detach_and_log_err(cx);
 }
 
 #[cfg(test)]
@@ -705,14 +706,16 @@ mod tests {
                 cx,
             )
         })
-        .await;
+        .await
+        .unwrap();
         assert_eq!(cx.window_ids().len(), 1);
 
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx
-            .root_view(cx.window_ids()[0])
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
             .unwrap()
             .downcast::<Workspace>()
             .unwrap();
@@ -730,7 +733,8 @@ mod tests {
                 cx,
             )
         })
-        .await;
+        .await
+        .unwrap();
         assert_eq!(cx.window_ids().len(), 2);
 
         // Replace existing windows
@@ -743,15 +747,16 @@ mod tests {
                 cx,
             )
         })
-        .await;
+        .await
+        .unwrap();
         assert_eq!(cx.window_ids().len(), 2);
         let workspace_1 = cx
-            .root_view(window_id)
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
             .unwrap()
             .clone()
             .downcast::<Workspace>()
             .unwrap();
-        workspace_1.read_with(cx, |workspace, cx| {
+        workspace_1.update(cx, |workspace, cx| {
             assert_eq!(
                 workspace
                     .worktrees(cx)
@@ -774,14 +779,14 @@ mod tests {
             .await;
 
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(cx.window_ids().len(), 1);
 
         // When opening the workspace, the window is not in a edited state.
         let workspace = cx
-            .root_view(cx.window_ids()[0])
+            .read_window(cx.window_ids()[0], |cx| cx.root_view().clone())
             .unwrap()
-            .clone()
             .downcast::<Workspace>()
             .unwrap();
         let editor = workspace.read_with(cx, |workspace, cx| {
@@ -817,7 +822,8 @@ mod tests {
 
         // Opening the buffer again doesn't impact the window's edited state.
         cx.update(|cx| open_paths(&[PathBuf::from("/root/a")], &app_state, None, cx))
-            .await;
+            .await
+            .unwrap();
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -851,11 +857,11 @@ mod tests {
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx
-            .root_view(window_id)
+            .read_window(window_id, |cx| cx.root_view().clone())
             .unwrap()
-            .clone()
             .downcast::<Workspace>()
             .unwrap();
+
         let editor = workspace.update(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -1019,12 +1025,11 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Open a file within an existing worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/dir1/a.txt".into()], true, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             assert_eq!(
                 workspace
@@ -1043,12 +1048,11 @@ mod tests {
         });
 
         // Open a file outside of any existing worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/dir2/b.txt".into()], true, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
@@ -1079,12 +1083,11 @@ mod tests {
         });
 
         // Ensure opening a directory and one of its children only adds one worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/dir3".into(), "/dir3/c.txt".into()], true, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
@@ -1115,12 +1118,11 @@ mod tests {
         });
 
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec!["/d.txt".into()], false, cx)
             })
-        })
-        .await;
+            .await;
         cx.read(|cx| {
             let worktree_roots = workspace
                 .read(cx)
@@ -1178,19 +1180,18 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Open a file within an existing worktree.
-        cx.update(|cx| {
-            workspace.update(cx, |view, cx| {
+        workspace
+            .update(cx, |view, cx| {
                 view.open_paths(vec![PathBuf::from("/root/a.txt")], true, cx)
             })
-        })
-        .await;
+            .await;
         let editor = cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             let item = pane.active_item().unwrap();
             item.downcast::<Editor>().unwrap()
         });
 
-        cx.update(|cx| editor.update(cx, |editor, cx| editor.handle_input("x", cx)));
+        editor.update(cx, |editor, cx| editor.handle_input("x", cx));
         app_state
             .fs
             .as_fake()
@@ -1487,7 +1488,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1495,7 +1497,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1503,7 +1506,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0), 0.)
@@ -1511,7 +1515,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1520,7 +1525,8 @@ mod tests {
         // Go back one more time and ensure we don't navigate past the first item in the history.
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1528,7 +1534,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0), 0.)
@@ -1536,7 +1543,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file2.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1554,7 +1562,8 @@ mod tests {
             .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1562,7 +1571,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(16, 0), 12.5)
@@ -1570,7 +1580,8 @@ mod tests {
 
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1592,14 +1603,16 @@ mod tests {
             .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(10, 0), 0.)
         );
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file3.clone(), DisplayPoint::new(0, 0), 0.)
@@ -1642,14 +1655,16 @@ mod tests {
         });
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(2, 0), 0.)
         );
         workspace
             .update(cx, |w, cx| Pane::go_back(w, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(
             active_location(&workspace, cx),
             (file1.clone(), DisplayPoint::new(3, 0), 0.)
@@ -1763,61 +1778,84 @@ mod tests {
 
         // Reopen all the closed items, ensuring they are reopened in the same order
         // in which they were closed.
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace
+            .update(cx, Pane::reopen_closed_item)
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace
+            .update(cx, Pane::reopen_closed_item)
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace
+            .update(cx, Pane::reopen_closed_item)
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace
+            .update(cx, Pane::reopen_closed_item)
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening past the last closed item is a no-op.
-        workspace.update(cx, Pane::reopen_closed_item).await;
+        workspace
+            .update(cx, Pane::reopen_closed_item)
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening closed items doesn't interfere with navigation history.
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         workspace
             .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
-            .await;
+            .await
+            .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         fn active_path(

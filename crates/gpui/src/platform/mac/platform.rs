@@ -601,7 +601,7 @@ impl platform::Platform for MacPlatform {
         Window::main_window_id()
     }
 
-    fn add_status_item(&self) -> Box<dyn platform::Window> {
+    fn add_status_item(&self, _id: usize) -> Box<dyn platform::Window> {
         Box::new(StatusItem::add(self.fonts()))
     }
 

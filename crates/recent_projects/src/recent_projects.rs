@@ -3,14 +3,15 @@ mod highlighted_workspace_location;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
-    elements::{ChildView, Flex, ParentElement},
-    AnyViewHandle, AppContext, Element, ElementBox, Entity, RenderContext, Task, View, ViewContext,
-    ViewHandle,
+    anyhow::Result,
+    elements::{Flex, ParentElement},
+    AppContext, Drawable, Element, Task, ViewContext,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
+use std::sync::Arc;
 use workspace::{
     notifications::simple_message_notification::MessageNotification, OpenPaths, Workspace,
     WorkspaceLocation, WORKSPACE_DB,
@@ -19,101 +20,70 @@ use workspace::{
 actions!(projects, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(RecentProjectsView::toggle);
-    Picker::<RecentProjectsView>::init(cx);
+    cx.add_async_action(toggle);
+    RecentProjects::init(cx);
 }
 
-struct RecentProjectsView {
-    picker: ViewHandle<Picker<Self>>,
+fn toggle(
+    _: &mut Workspace,
+    _: &OpenRecent,
+    cx: &mut ViewContext<Workspace>,
+) -> Option<Task<Result<()>>> {
+    Some(cx.spawn(|workspace, mut cx| async move {
+        let workspace_locations: Vec<_> = cx
+            .background()
+            .spawn(async {
+                WORKSPACE_DB
+                    .recent_workspaces_on_disk()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(_, location)| location)
+                    .collect()
+            })
+            .await;
+
+        workspace.update(&mut cx, |workspace, cx| {
+            if !workspace_locations.is_empty() {
+                workspace.toggle_modal(cx, |_, cx| {
+                    cx.add_view(|cx| {
+                        RecentProjects::new(RecentProjectsDelegate::new(workspace_locations), cx)
+                            .with_max_size(800., 1200.)
+                    })
+                });
+            } else {
+                workspace.show_notification(0, cx, |cx| {
+                    cx.add_view(|_| MessageNotification::new_message("No recent projects to open."))
+                })
+            }
+        })?;
+        Ok(())
+    }))
+}
+
+type RecentProjects = Picker<RecentProjectsDelegate>;
+
+struct RecentProjectsDelegate {
     workspace_locations: Vec<WorkspaceLocation>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
 }
 
-impl RecentProjectsView {
-    fn new(workspace_locations: Vec<WorkspaceLocation>, cx: &mut ViewContext<Self>) -> Self {
-        let handle = cx.weak_handle();
+impl RecentProjectsDelegate {
+    fn new(workspace_locations: Vec<WorkspaceLocation>) -> Self {
         Self {
-            picker: cx.add_view(|cx| {
-                Picker::new("Recent Projects...", handle, cx).with_max_size(800., 1200.)
-            }),
             workspace_locations,
             selected_match_index: 0,
             matches: Default::default(),
         }
     }
-
-    fn toggle(_: &mut Workspace, _: &OpenRecent, cx: &mut ViewContext<Workspace>) {
-        cx.spawn(|workspace, mut cx| async move {
-            let workspace_locations: Vec<_> = cx
-                .background()
-                .spawn(async {
-                    WORKSPACE_DB
-                        .recent_workspaces_on_disk()
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|(_, location)| location)
-                        .collect()
-                })
-                .await;
-
-            workspace.update(&mut cx, |workspace, cx| {
-                if !workspace_locations.is_empty() {
-                    workspace.toggle_modal(cx, |_, cx| {
-                        let view = cx.add_view(|cx| Self::new(workspace_locations, cx));
-                        cx.subscribe(&view, Self::on_event).detach();
-                        view
-                    });
-                } else {
-                    workspace.show_notification(0, cx, |cx| {
-                        cx.add_view(|_| {
-                            MessageNotification::new_message("No recent projects to open.")
-                        })
-                    })
-                }
-            });
-        })
-        .detach();
-    }
-
-    fn on_event(
-        workspace: &mut Workspace,
-        _: ViewHandle<Self>,
-        event: &Event,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        match event {
-            Event::Dismissed => workspace.dismiss_modal(cx),
-        }
-    }
 }
 
-pub enum Event {
-    Dismissed,
-}
-
-impl Entity for RecentProjectsView {
-    type Event = Event;
-}
-
-impl View for RecentProjectsView {
-    fn ui_name() -> &'static str {
-        "RecentProjectsView"
+impl PickerDelegate for RecentProjectsDelegate {
+    fn placeholder_text(&self) -> Arc<str> {
+        "Recent Projects...".into()
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(&self.picker, cx).boxed()
-    }
-
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if cx.is_self_focused() {
-            cx.focus(&self.picker);
-        }
-    }
-}
-
-impl PickerDelegate for RecentProjectsView {
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -122,11 +92,15 @@ impl PickerDelegate for RecentProjectsView {
         self.selected_match_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<RecentProjects>) {
         self.selected_match_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) -> gpui::Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        cx: &mut ViewContext<RecentProjects>,
+    ) -> gpui::Task<()> {
         let query = query.trim_start();
         let smart_case = query.chars().any(|c| c.is_uppercase());
         let candidates = self
@@ -164,19 +138,17 @@ impl PickerDelegate for RecentProjectsView {
         Task::ready(())
     }
 
-    fn confirm(&mut self, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, cx: &mut ViewContext<RecentProjects>) {
         if let Some(selected_match) = &self.matches.get(self.selected_index()) {
             let workspace_location = &self.workspace_locations[selected_match.candidate_id];
             cx.dispatch_action(OpenPaths {
                 paths: workspace_location.paths().as_ref().clone(),
             });
-            cx.emit(Event::Dismissed);
+            cx.emit(PickerEvent::Dismiss);
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Dismissed);
-    }
+    fn dismissed(&mut self, _cx: &mut ViewContext<RecentProjects>) {}
 
     fn render_match(
         &self,
@@ -184,7 +156,7 @@ impl PickerDelegate for RecentProjectsView {
         mouse_state: &mut gpui::MouseState,
         selected: bool,
         cx: &gpui::AppContext,
-    ) -> ElementBox {
+    ) -> Element<Picker<Self>> {
         let settings = cx.global::<Settings>();
         let string_match = &self.matches[ix];
         let style = settings.theme.picker.item.style_for(mouse_state, selected);
