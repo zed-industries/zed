@@ -38,10 +38,6 @@ half_width=$(($width / 2))
 height=$(echo "$resolution" | jq -Rr 'match("(\\d+) x (\\d+)").captures[1].string')
 y=0
 
-echo "Width: $width"
-echo "Half-width: $half_width"
-echo "Height: $height"
-
 position_1=0,${y}
 position_2=${half_width},${y}
 
