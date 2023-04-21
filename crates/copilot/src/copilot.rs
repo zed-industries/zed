@@ -48,8 +48,8 @@ pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut 
 
     cx.observe(&copilot, |handle, cx| {
         let status = handle.read(cx).status();
-        cx.update_global::<collections::CommandPaletteFilter, _, _>(
-            move |filter, _cx| match status {
+        cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
+            match status {
                 Status::Disabled => {
                     filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
                     filter.filtered_namespaces.insert(COPILOT_AUTH_NAMESPACE);
@@ -62,8 +62,8 @@ pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut 
                     filter.filtered_namespaces.insert(COPILOT_NAMESPACE);
                     filter.filtered_namespaces.remove(COPILOT_AUTH_NAMESPACE);
                 }
-            },
-        );
+            }
+        });
     })
     .detach();
 
