@@ -3613,6 +3613,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp_log"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "futures 0.3.25",
+ "gpui",
+ "language",
+ "lsp",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "mach"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8571,6 +8591,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "lsp_log",
  "node_runtime",
  "num_cpus",
  "outline",

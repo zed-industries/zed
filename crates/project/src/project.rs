@@ -185,6 +185,8 @@ pub struct Collaborator {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
+    LanguageServerAdded(LanguageServerId),
+    LanguageServerRemoved(LanguageServerId),
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
@@ -1869,7 +1871,7 @@ impl Project {
                 let next_snapshot = buffer.text_snapshot();
 
                 let language_servers: Vec<_> = self
-                    .language_servers_iter_for_buffer(buffer, cx)
+                    .language_servers_for_buffer(buffer, cx)
                     .map(|i| i.1.clone())
                     .collect();
 
@@ -6279,7 +6281,25 @@ impl Project {
         }
     }
 
-    pub fn language_servers_iter_for_buffer(
+    pub fn language_servers(
+        &self,
+    ) -> impl '_ + Iterator<Item = (LanguageServerId, LanguageServerName, WorktreeId)> {
+        self.language_server_ids
+            .iter()
+            .map(|((worktree_id, server_name), server_id)| {
+                (*server_id, server_name.clone(), *worktree_id)
+            })
+    }
+
+    pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
+        if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
+            Some(server.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn language_servers_for_buffer(
         &self,
         buffer: &Buffer,
         cx: &AppContext,
@@ -6299,20 +6319,12 @@ impl Project {
             })
     }
 
-    fn language_servers_for_buffer(
-        &self,
-        buffer: &Buffer,
-        cx: &AppContext,
-    ) -> Vec<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_iter_for_buffer(buffer, cx).collect()
-    }
-
     fn primary_language_servers_for_buffer(
         &self,
         buffer: &Buffer,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_iter_for_buffer(buffer, cx).next()
+        self.language_servers_for_buffer(buffer, cx).next()
     }
 
     fn language_server_for_buffer(
@@ -6321,7 +6333,7 @@ impl Project {
         server_id: LanguageServerId,
         cx: &AppContext,
     ) -> Option<(&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> {
-        self.language_servers_iter_for_buffer(buffer, cx)
+        self.language_servers_for_buffer(buffer, cx)
             .find(|(_, s)| s.server_id() == server_id)
     }
 

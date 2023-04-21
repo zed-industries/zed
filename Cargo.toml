@@ -35,6 +35,7 @@ members = [
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
+    "crates/lsp_log",
     "crates/media",
     "crates/menu",
     "crates/node_runtime",
