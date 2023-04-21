@@ -16,6 +16,7 @@ use smol::{
     process::{self, Child},
 };
 use std::{
+    fmt,
     future::Future,
     io::Write,
     path::PathBuf,
@@ -35,7 +36,7 @@ type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppCon
 type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 
 pub struct LanguageServer {
-    server_id: usize,
+    server_id: LanguageServerId,
     next_id: AtomicUsize,
     outbound_tx: channel::Sender<Vec<u8>>,
     name: String,
@@ -50,6 +51,10 @@ pub struct LanguageServer {
     root_path: PathBuf,
     _server: Option<Child>,
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct LanguageServerId(pub usize);
 
 pub struct Subscription {
     method: &'static str,
@@ -107,7 +112,7 @@ struct Error {
 
 impl LanguageServer {
     pub fn new<T: AsRef<std::ffi::OsStr>>(
-        server_id: usize,
+        server_id: LanguageServerId,
         binary_path: &Path,
         arguments: &[T],
         root_path: &Path,
@@ -158,7 +163,7 @@ impl LanguageServer {
     }
 
     fn new_internal<Stdin, Stdout, F>(
-        server_id: usize,
+        server_id: LanguageServerId,
         stdin: Stdin,
         stdout: Stdout,
         server: Option<Child>,
@@ -581,7 +586,7 @@ impl LanguageServer {
         &self.capabilities
     }
 
-    pub fn server_id(&self) -> usize {
+    pub fn server_id(&self) -> LanguageServerId {
         self.server_id
     }
 
@@ -685,6 +690,12 @@ impl Subscription {
     }
 }
 
+impl fmt::Display for LanguageServerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl Drop for Subscription {
     fn drop(&mut self) {
         self.notification_handlers.lock().remove(self.method);
@@ -720,7 +731,7 @@ impl LanguageServer {
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
         let server = Self::new_internal(
-            0,
+            LanguageServerId(0),
             stdin_writer,
             stdout_reader,
             None,
@@ -731,7 +742,7 @@ impl LanguageServer {
         );
         let fake = FakeLanguageServer {
             server: Arc::new(Self::new_internal(
-                0,
+                LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
                 None,

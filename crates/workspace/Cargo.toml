@@ -47,7 +47,7 @@ postage = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }
 indoc = "1.0.4"
 uuid = { version = "1.1.2", features = ["v4"] }
 

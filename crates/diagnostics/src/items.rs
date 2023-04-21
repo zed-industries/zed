@@ -7,6 +7,7 @@ use gpui::{
     WeakViewHandle,
 };
 use language::Diagnostic;
+use lsp::LanguageServerId;
 use project::Project;
 use settings::Settings;
 use workspace::{item::ItemHandle, StatusItemView};
@@ -15,7 +16,7 @@ pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
     active_editor: Option<WeakViewHandle<Editor>>,
     current_diagnostic: Option<Diagnostic>,
-    in_progress_checks: HashSet<usize>,
+    in_progress_checks: HashSet<LanguageServerId>,
     _observe_active_editor: Option<Subscription>,
 }
 

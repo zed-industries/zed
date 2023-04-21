@@ -577,7 +577,7 @@ impl Drawable<TerminalView> for TerminalElement {
         let selection_color = settings.theme.editor.selection.selection;
         let match_color = settings.theme.search.match_background;
         let dimensions = {
-            let line_height = font_cache.line_height(text_style.font_size);
+            let line_height = text_style.font_size * settings.terminal_line_height();
             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
             TerminalSize::new(line_height, cell_width, constraint.max)
         };

@@ -2764,6 +2764,15 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
+    pub fn language_indent_size_at<T: ToOffset>(
+        &self,
+        position: T,
+        cx: &AppContext,
+    ) -> Option<IndentSize> {
+        let (buffer_snapshot, offset) = self.point_to_buffer_offset(position)?;
+        Some(buffer_snapshot.language_indent_size_at(offset, cx))
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.is_dirty
     }
@@ -2791,7 +2800,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         T: 'a + ToOffset,
-        O: 'a + text::FromAnchor,
+        O: 'a + text::FromAnchor + Ord,
     {
         self.as_singleton()
             .into_iter()

@@ -24,55 +24,57 @@ struct OpenGithub;
 const COPILOT_SIGN_UP_URL: &'static str = "https://github.com/features/copilot";
 
 pub fn init(cx: &mut AppContext) {
-    let copilot = Copilot::global(cx).unwrap();
+    if let Some(copilot) = Copilot::global(cx) {
+        let mut code_verification: Option<ViewHandle<CopilotCodeVerification>> = None;
+        cx.observe(&copilot, move |copilot, cx| {
+            let status = copilot.read(cx).status();
 
-    let mut code_verification: Option<ViewHandle<CopilotCodeVerification>> = None;
-    cx.observe(&copilot, move |copilot, cx| {
-        let status = copilot.read(cx).status();
-
-        match &status {
-            crate::Status::SigningIn { prompt } => {
-                if let Some(code_verification) = code_verification.as_mut() {
-                    if cx.has_window(code_verification.window_id()) {
-                        cx.update_window(code_verification.window_id(), |cx| {
-                            code_verification.update(cx, |code_verification_view, cx| {
-                                code_verification_view.set_status(status, cx);
+            match &status {
+                crate::Status::SigningIn { prompt } => {
+                    if let Some(code_verification_handle) = code_verification.as_mut() {
+                        let window_id = code_verification_handle.window_id();
+                        if cx.has_window(window_id) {
+                            cx.update_window(window_id, |cx| {
+                                code_verification_handle.update(cx, |code_verification, cx| {
+                                    code_verification.set_status(status, cx)
+                                });
                                 cx.activate_window();
                             });
-                        });
-                    } else {
-                        *code_verification = create_copilot_auth_window(cx, &status);
+                        } else {
+                            code_verification = Some(create_copilot_auth_window(cx, &status));
+                        }
+                    } else if let Some(_prompt) = prompt {
+                        code_verification = Some(create_copilot_auth_window(cx, &status));
                     }
-                } else if let Some(_prompt) = prompt {
-                    code_verification = Some(create_copilot_auth_window(cx, &status));
                 }
-            }
-            Status::Authorized | Status::Unauthorized => {
-                if let Some(code_verification) = code_verification.as_ref() {
-                    cx.update_window(code_verification.window_id(), |cx| {
-                        code_verification.update(cx, |code_verification, cx| {
-                            code_verification.set_status(status, cx);
+                Status::Authorized | Status::Unauthorized => {
+                    if let Some(code_verification) = code_verification.as_ref() {
+                        let window_id = code_verification.window_id();
+                        cx.update_window(window_id, |cx| {
+                            code_verification.update(cx, |code_verification, cx| {
+                                code_verification.set_status(status, cx)
+                            });
+
+                            cx.platform().activate(true);
                             cx.activate_window();
                         });
-
-                        cx.platform().activate(true);
-                    });
+                    }
+                }
+                _ => {
+                    if let Some(code_verification) = code_verification.take() {
+                        cx.remove_window(code_verification.window_id());
+                    }
                 }
             }
-            _ => {
-                if let Some(code_verification) = code_verification.take() {
-                    cx.remove_window(code_verification.window_id());
-                }
-            }
-        }
-    })
-    .detach();
+        })
+        .detach();
 
-    cx.add_action(
-        |code_verification: &mut CopilotCodeVerification, _: &ClickedConnect, _| {
-            code_verification.connect_clicked = true;
-        },
-    );
+        cx.add_action(
+            |code_verification: &mut CopilotCodeVerification, _: &ClickedConnect, _| {
+                code_verification.connect_clicked = true;
+            },
+        );
+    }
 }
 
 fn create_copilot_auth_window(
