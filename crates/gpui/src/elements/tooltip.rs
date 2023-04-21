@@ -15,6 +15,7 @@ use std::{
     rc::Rc,
     time::Duration,
 };
+use util::ResultExt;
 
 const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -94,20 +95,20 @@ impl<V: View> Tooltip<V> {
         let child = MouseEventHandler::<MouseEventHandlerState<Tag>, _>::new(id, cx, |_, _| child)
             .on_hover(move |e, _, cx| {
                 let position = e.position;
-                let window_id = cx.window_id();
-                let view_id = cx.view_id();
                 if e.started {
                     if !state.visible.get() {
                         state.position.set(position);
 
                         let mut debounce = state.debounce.borrow_mut();
                         if debounce.is_none() {
-                            *debounce = Some(cx.spawn({
+                            *debounce = Some(cx.spawn_weak({
                                 let state = state.clone();
-                                |_, mut cx| async move {
+                                |view, mut cx| async move {
                                     cx.background().timer(DEBOUNCE_TIMEOUT).await;
                                     state.visible.set(true);
-                                    cx.update(|cx| cx.notify_view(window_id, view_id));
+                                    if let Some(view) = view.upgrade(&cx) {
+                                        view.update(&mut cx, |_, cx| cx.notify()).log_err();
+                                    }
                                 }
                             }));
                         }

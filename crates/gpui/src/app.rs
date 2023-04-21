@@ -1112,21 +1112,21 @@ impl AppContext {
         })
     }
 
-    pub(crate) fn notify_model(&mut self, model_id: usize) {
+    fn notify_model(&mut self, model_id: usize) {
         if self.pending_notifications.insert(model_id) {
             self.pending_effects
                 .push_back(Effect::ModelNotification { model_id });
         }
     }
 
-    pub(crate) fn notify_view(&mut self, window_id: usize, view_id: usize) {
+    fn notify_view(&mut self, window_id: usize, view_id: usize) {
         if self.pending_notifications.insert(view_id) {
             self.pending_effects
                 .push_back(Effect::ViewNotification { window_id, view_id });
         }
     }
 
-    pub(crate) fn notify_global(&mut self, type_id: TypeId) {
+    fn notify_global(&mut self, type_id: TypeId) {
         if self.pending_global_notifications.insert(type_id) {
             self.pending_effects
                 .push_back(Effect::GlobalNotification { type_id });
