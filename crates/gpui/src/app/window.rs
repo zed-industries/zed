@@ -15,9 +15,9 @@ use crate::{
     util::post_inc,
     Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle,
     AppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
-    MouseRegionId, ParentId, ReadModel, ReadView, SceneBuilder, Subscription, UpdateModel,
-    UpdateView, UpgradeModelHandle, UpgradeViewHandle, View, ViewContext, ViewHandle,
-    WeakModelHandle, WeakViewHandle, WindowInvalidation,
+    MouseRegionId, ParentId, ReadModel, SceneBuilder, Subscription, UpdateModel, UpdateView,
+    UpgradeModelHandle, UpgradeViewHandle, View, ViewContext, ViewHandle, WeakModelHandle,
+    WeakViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -146,12 +146,6 @@ impl UpdateModel for WindowContext<'_> {
         update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> R,
     ) -> R {
         self.app_context.update_model(handle, update)
-    }
-}
-
-impl ReadView for WindowContext<'_> {
-    fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
-        self.app_context.read_view(handle)
     }
 }
 
