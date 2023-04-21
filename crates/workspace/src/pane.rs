@@ -2110,11 +2110,9 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
-        let task = workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx).unwrap()
+        workspace.update(cx, |workspace, cx| {
+            assert!(Pane::close_active_item(workspace, &CloseActiveItem, cx).is_none())
         });
-
-        assert!(task.await.is_ok())
     }
 
     #[gpui::test]
