@@ -209,7 +209,6 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
-        dbg!("push_operator", &operator);
         self.state.operator_stack.push(operator);
         self.sync_vim_settings(cx);
     }
@@ -249,7 +248,6 @@ impl Vim {
     }
 
     fn active_editor_input_ignored(text: Arc<str>, cx: &mut WindowContext) {
-        dbg!(&text);
         if text.is_empty() {
             return;
         }
