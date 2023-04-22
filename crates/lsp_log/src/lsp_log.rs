@@ -123,7 +123,7 @@ impl LogStore {
             hash_map::Entry::Occupied(entry) => entry.into_mut(),
             hash_map::Entry::Vacant(entry) => entry.insert(LogStoreProject {
                 servers: HashMap::default(),
-                _subscription: cx.observe_release(&project, move |this, _, cx| {
+                _subscription: cx.observe_release(&project, move |this, _, _| {
                     this.projects.remove(&weak_project);
                 }),
             }),
@@ -161,7 +161,7 @@ impl LogStore {
         &mut self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
+        _: &mut ModelContext<Self>,
     ) {
         let project = project.downgrade();
         if let Some(store) = self.projects.get_mut(&project) {
@@ -333,6 +333,8 @@ impl View for LspLogToolbarItemView {
             }
         });
 
+        enum Menu {}
+
         Stack::new()
             .with_child(Self::render_language_server_menu_header(
                 current_server,
@@ -343,26 +345,32 @@ impl View for LspLogToolbarItemView {
             .with_children(if self.menu_open {
                 Some(
                     Overlay::new(
-                        Flex::column()
-                            .with_children(language_servers.into_iter().filter_map(
-                                |(id, name, worktree_id, logging_enabled)| {
-                                    Self::render_language_server_menu_item(
-                                        id,
-                                        name,
-                                        worktree_id,
-                                        logging_enabled,
-                                        Some(id) == current_server_id,
-                                        &self.project,
-                                        &theme,
-                                        cx,
-                                    )
-                                },
-                            ))
-                            .contained()
-                            .with_style(theme.contacts_popover.container)
-                            .constrained()
-                            .with_width(400.)
-                            .with_height(400.),
+                        MouseEventHandler::<Menu, _>::new(0, cx, move |_, cx| {
+                            Flex::column()
+                                .with_children(language_servers.into_iter().filter_map(
+                                    |(id, name, worktree_id, logging_enabled)| {
+                                        Self::render_language_server_menu_item(
+                                            id,
+                                            name,
+                                            worktree_id,
+                                            logging_enabled,
+                                            Some(id) == current_server_id,
+                                            &self.project,
+                                            &theme,
+                                            cx,
+                                        )
+                                    },
+                                ))
+                                .contained()
+                                .with_style(theme.context_menu.container)
+                                .constrained()
+                                .with_width(400.)
+                                .with_height(400.)
+                        })
+                        .on_down_out(MouseButton::Left, |_, this, cx| {
+                            this.menu_open = false;
+                            cx.notify()
+                        }),
                     )
                     .with_fit_mode(OverlayFitMode::SwitchAnchor)
                     .with_anchor_corner(AnchorCorner::TopLeft)
@@ -406,10 +414,10 @@ impl LspLogToolbarItemView {
                 log_view.toggle_logging_for_server(id, enabled, cx);
                 if !enabled && Some(id) == log_view.current_server_id {
                     log_view.current_server_id = None;
+                    log_view.editor = None;
                     cx.notify();
                 }
             });
-            self.menu_open = false;
         }
         cx.notify();
     }
@@ -440,7 +448,15 @@ impl LspLogToolbarItemView {
                     Some(format!("{} - ({})", server_name.0, worktree.root_name()).into())
                 })
                 .unwrap_or_else(|| "No server selected".into());
-            Label::new(label, theme.context_menu.item.default.label.clone())
+            Label::new(
+                label,
+                theme
+                    .context_menu
+                    .item
+                    .style_for(state, false)
+                    .label
+                    .clone(),
+            )
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, view, cx| {
@@ -481,7 +497,8 @@ impl LspLogToolbarItemView {
                             this.toggle_logging_for_server(id, enabled, cx);
                         },
                     ))
-                    .with_child(Label::new(label, item_style.label.clone()))
+                    .with_child(Label::new(label, item_style.label.clone()).aligned().left())
+                    .align_children_center()
                     .contained()
                     .with_style(item_style.container)
             })
