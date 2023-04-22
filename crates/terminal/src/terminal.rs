@@ -7,7 +7,7 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
-    index::{Column, Direction as AlacDirection, Line, Point, Side},
+    index::{Column, Direction as AlacDirection, Line, Point},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
