@@ -7,7 +7,7 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
-    index::{Column, Direction as AlacDirection, Line, Point},
+    index::{Column, Direction as AlacDirection, Line, Point, Side},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
@@ -1028,7 +1028,7 @@ impl Terminal {
             );
 
             // Use .opposite so that selection is inclusive of the cell clicked.
-            let side = mouse_side(position, self.last_content.size).opposite();
+            let side = mouse_side(position, self.last_content.size);
 
             let selection_type = match e.click_count {
                 0 => return, //This is a release
