@@ -31,6 +31,7 @@ use mappings::mouse::{
 };
 
 use procinfo::LocalProcessInfo;
+use serde::{Deserialize, Serialize};
 use settings::{AlternateScroll, Settings, Shell, TerminalBlink};
 use util::truncate_and_trailoff;
 
@@ -113,7 +114,7 @@ impl EventListener for ZedListener {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct TerminalSize {
     pub cell_width: f32,
     pub line_height: f32,
@@ -441,7 +442,7 @@ impl TerminalBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IndexedCell {
     pub point: Point,
     pub cell: Cell,
@@ -664,6 +665,7 @@ impl Terminal {
                         self.last_content.size,
                         term.grid().display_offset(),
                     );
+
                     let side = mouse_side(*position, self.last_content.size);
 
                     selection.update(point, side);
@@ -1024,6 +1026,8 @@ impl Terminal {
                 self.last_content.size,
                 self.last_content.display_offset,
             );
+
+            // Use .opposite so that selection is inclusive of the cell clicked.
             let side = mouse_side(position, self.last_content.size);
 
             let selection_type = match e.click_count {
@@ -1074,7 +1078,7 @@ impl Terminal {
 
             //Hyperlinks
             if self.selection_phase == SelectionPhase::Ended {
-                let mouse_cell_index = content_index_for_mouse(position, &self.last_content);
+                let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.platform().open_url(link.uri());
                 } else {
@@ -1254,17 +1258,16 @@ fn all_search_matches<'a, T>(
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
 }
 
-fn content_index_for_mouse<'a>(pos: Vector2F, content: &'a TerminalContent) -> usize {
-    let col = min(
-        (pos.x() / content.size.cell_width()) as usize,
-        content.size.columns() - 1,
-    ) as usize;
-    let line = min(
-        (pos.y() / content.size.line_height()) as usize,
-        content.size.screen_lines() - 1,
-    ) as usize;
+fn content_index_for_mouse(pos: Vector2F, size: &TerminalSize) -> usize {
+    let col = (pos.x() / size.cell_width()).round() as usize;
 
-    line * content.size.columns() + col
+    let clamped_col = min(col, size.columns() - 1);
+
+    let row = (pos.y() / size.line_height()).round() as usize;
+
+    let clamped_row = min(row, size.screen_lines() - 1);
+
+    clamped_row * size.columns() + clamped_col
 }
 
 #[cfg(test)]
@@ -1274,17 +1277,19 @@ mod tests {
         term::cell::Cell,
     };
     use gpui::geometry::vector::vec2f;
-    use rand::{rngs::ThreadRng, thread_rng, Rng};
+    use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{content_index_for_mouse, IndexedCell, TerminalContent, TerminalSize};
 
     #[test]
-    fn test_mouse_to_cell() {
+    fn test_mouse_to_cell_test() {
         let mut rng = thread_rng();
+        const ITERATIONS: usize = 10;
+        const PRECISION: usize = 1000;
 
-        for _ in 0..10 {
-            let viewport_cells = rng.gen_range(5..50);
-            let cell_size = rng.gen_range(5.0..20.0);
+        for _ in 0..ITERATIONS {
+            let viewport_cells = rng.gen_range(15..20);
+            let cell_size = rng.gen_range(5 * PRECISION..20 * PRECISION) as f32 / PRECISION as f32;
 
             let size = crate::TerminalSize {
                 cell_width: cell_size,
@@ -1293,26 +1298,27 @@ mod tests {
                 width: cell_size * (viewport_cells as f32),
             };
 
-            let (content, cells) = create_terminal_content(size, &mut rng);
+            let cells = get_cells(size, &mut rng);
+            let content = convert_cells_to_content(size, &cells);
 
-            for i in 0..(viewport_cells - 1) {
-                let i = i as usize;
-                for j in 0..(viewport_cells - 1) {
-                    let j = j as usize;
-                    let min_row = i as f32 * cell_size;
-                    let max_row = (i + 1) as f32 * cell_size;
-                    let min_col = j as f32 * cell_size;
-                    let max_col = (j + 1) as f32 * cell_size;
+            for row in 0..(viewport_cells - 1) {
+                let row = row as usize;
+                for col in 0..(viewport_cells - 1) {
+                    let col = col as usize;
+
+                    let row_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
+                    let col_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
 
                     let mouse_pos = vec2f(
-                        rng.gen_range(min_row..max_row),
-                        rng.gen_range(min_col..max_col),
+                        col as f32 * cell_size + col_offset,
+                        row as f32 * cell_size + row_offset,
                     );
 
-                    assert_eq!(
-                        content.cells[content_index_for_mouse(mouse_pos, &content)].c,
-                        cells[j][i]
-                    );
+                    let content_index = content_index_for_mouse(mouse_pos, &content.size);
+                    let mouse_cell = content.cells[content_index].c;
+                    let real_cell = cells[row][col];
+
+                    assert_eq!(mouse_cell, real_cell);
                 }
             }
         }
@@ -1329,29 +1335,40 @@ mod tests {
             width: 100.,
         };
 
-        let (content, cells) = create_terminal_content(size, &mut rng);
+        let cells = get_cells(size, &mut rng);
+        let content = convert_cells_to_content(size, &cells);
 
         assert_eq!(
-            content.cells[content_index_for_mouse(vec2f(-10., -10.), &content)].c,
+            content.cells[content_index_for_mouse(vec2f(-10., -10.), &content.size)].c,
             cells[0][0]
         );
         assert_eq!(
-            content.cells[content_index_for_mouse(vec2f(1000., 1000.), &content)].c,
+            content.cells[content_index_for_mouse(vec2f(1000., 1000.), &content.size)].c,
             cells[9][9]
         );
     }
 
-    fn create_terminal_content(
-        size: TerminalSize,
-        rng: &mut ThreadRng,
-    ) -> (TerminalContent, Vec<Vec<char>>) {
-        let mut ic = Vec::new();
+    fn get_cells(size: TerminalSize, rng: &mut ThreadRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for row in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..((size.height() / size.line_height()) as usize) {
             let mut row_vec = Vec::new();
-            for col in 0..((size.width() / size.cell_width()) as usize) {
-                let cell_char = rng.gen();
+            for _ in 0..((size.width() / size.cell_width()) as usize) {
+                let cell_char = rng.sample(Alphanumeric) as char;
+                row_vec.push(cell_char)
+            }
+            cells.push(row_vec)
+        }
+
+        cells
+    }
+
+    fn convert_cells_to_content(size: TerminalSize, cells: &Vec<Vec<char>>) -> TerminalContent {
+        let mut ic = Vec::new();
+
+        for row in 0..cells.len() {
+            for col in 0..cells[row].len() {
+                let cell_char = cells[row][col];
                 ic.push(IndexedCell {
                     point: Point::new(Line(row as i32), Column(col)),
                     cell: Cell {
@@ -1359,18 +1376,13 @@ mod tests {
                         ..Default::default()
                     },
                 });
-                row_vec.push(cell_char)
             }
-            cells.push(row_vec)
         }
 
-        (
-            TerminalContent {
-                cells: ic,
-                size,
-                ..Default::default()
-            },
-            cells,
-        )
+        TerminalContent {
+            cells: ic,
+            size,
+            ..Default::default()
+        }
     }
 }

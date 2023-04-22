@@ -46,6 +46,7 @@ pub struct LayoutState {
     mode: TermMode,
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement<TerminalView>>,
+    gutter: f32,
 }
 
 ///Helper struct for converting data between alacritty's cursor points, and displayed cursor points
@@ -572,10 +573,14 @@ impl Element<TerminalView> for TerminalElement {
         let text_style = TerminalElement::make_text_style(font_cache, settings);
         let selection_color = settings.theme.editor.selection.selection;
         let match_color = settings.theme.search.match_background;
+        let gutter;
         let dimensions = {
             let line_height = text_style.font_size * settings.terminal_line_height();
             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
-            TerminalSize::new(line_height, cell_width, constraint.max)
+            gutter = cell_width;
+
+            let size = constraint.max - vec2f(gutter, 0.);
+            TerminalSize::new(line_height, cell_width, size)
         };
 
         let search_matches = if let Some(terminal_model) = self.terminal.upgrade(cx) {
@@ -713,6 +718,7 @@ impl Element<TerminalView> for TerminalElement {
                 mode: *mode,
                 display_offset: *display_offset,
                 hyperlink_tooltip,
+                gutter,
             },
         )
     }
@@ -732,7 +738,7 @@ impl Element<TerminalView> for TerminalElement {
         let clip_bounds = Some(visible_bounds);
 
         scene.paint_layer(clip_bounds, |scene| {
-            let origin = bounds.origin() + vec2f(layout.size.cell_width, 0.);
+            let origin = bounds.origin() + vec2f(layout.gutter, 0.);
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
             self.attach_mouse_handlers(scene, origin, visible_bounds, layout.mode, cx);
