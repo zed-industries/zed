@@ -665,6 +665,7 @@ impl Terminal {
                         self.last_content.size,
                         term.grid().display_offset(),
                     );
+
                     let side = mouse_side(*position, self.last_content.size);
 
                     selection.update(point, side);
@@ -1025,7 +1026,9 @@ impl Terminal {
                 self.last_content.size,
                 self.last_content.display_offset,
             );
-            let side = mouse_side(position, self.last_content.size);
+
+            // Use .opposite so that selection is inclusive of the cell clicked.
+            let side = mouse_side(position, self.last_content.size).opposite();
 
             let selection_type = match e.click_count {
                 0 => return, //This is a release
