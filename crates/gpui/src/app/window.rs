@@ -13,10 +13,9 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AppContext,
-    BorrowAppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
-    MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateModel, UpdateView,
-    UpgradeModelHandle, View, ViewContext, ViewHandle, WeakModelHandle, WindowInvalidation,
+    Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, Effect, Element, Entity, Handle,
+    ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription,
+    UpdateModel, UpdateView, View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -173,23 +172,6 @@ impl UpdateView for WindowContext<'_> {
             )
         })
         .expect("view is already on the stack")
-    }
-}
-
-impl UpgradeModelHandle for WindowContext<'_> {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        self.app_context.upgrade_model_handle(handle)
-    }
-
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.app_context.model_handle_is_upgradable(handle)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.app_context.upgrade_any_model_handle(handle)
     }
 }
 
