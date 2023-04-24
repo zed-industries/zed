@@ -14,8 +14,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, Effect, Element, Entity, Handle,
-    ModelContext, ModelHandle, MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription,
-    UpdateModel, UpdateView, View, ViewContext, ViewHandle, WindowInvalidation,
+    MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateView, View,
+    ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -138,16 +138,6 @@ impl BorrowAppContext for WindowContext<'_> {
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
         self.app_context.update(f)
-    }
-}
-
-impl UpdateModel for WindowContext<'_> {
-    fn update_model<T: Entity, R>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> R,
-    ) -> R {
-        self.app_context.update_model(handle, update)
     }
 }
 

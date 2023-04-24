@@ -23,8 +23,8 @@ use crate::{
     platform,
     platform::{Event, InputHandler, KeyDownEvent, Platform},
     Action, AnyViewHandle, AppContext, BorrowAppContext, Entity, FontCache, Handle, ModelContext,
-    ModelHandle, ReadViewWith, Subscription, Task, UpdateModel, UpdateView, View, ViewContext,
-    ViewHandle, WeakHandle, WindowContext,
+    ModelHandle, ReadViewWith, Subscription, Task, UpdateView, View, ViewContext, ViewHandle,
+    WeakHandle, WindowContext,
 };
 use collections::BTreeMap;
 
@@ -388,16 +388,6 @@ impl BorrowAppContext for TestAppContext {
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
         self.cx.borrow_mut().update(f)
-    }
-}
-
-impl UpdateModel for TestAppContext {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O {
-        self.cx.borrow_mut().update_model(handle, update)
     }
 }
 
