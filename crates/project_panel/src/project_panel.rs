@@ -892,17 +892,6 @@ impl ProjectPanel {
 
         self.visible_entries.clear();
         for worktree in project.visible_worktrees(cx) {
-            let git_branches = if let Some(local_snapshot) =
-                worktree.read(cx).as_local().map(|local| local.snapshot())
-            {
-                local_snapshot
-                    .git_repo_entries()
-                    .iter()
-                    .filter_map(|entry| entry.branch().map(|branch| (entry.content_path(), branch)))
-                    .collect()
-            } else {
-                vec![]
-            };
             let snapshot = worktree.read(cx).snapshot();
             let worktree_id = snapshot.id();
 
