@@ -59,14 +59,13 @@ pub struct LanguageServer {
 pub struct LanguageServerId(pub usize);
 
 pub enum Subscription {
-    Detached,
     Notification {
         method: &'static str,
-        notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+        notification_handlers: Option<Arc<Mutex<HashMap<&'static str, NotificationHandler>>>>,
     },
     Io {
         id: usize,
-        io_handlers: Weak<Mutex<HashMap<usize, IoHandler>>>,
+        io_handlers: Option<Weak<Mutex<HashMap<usize, IoHandler>>>>,
     },
 }
 
@@ -501,7 +500,7 @@ impl LanguageServer {
         self.io_handlers.lock().insert(id, Box::new(f));
         Subscription::Io {
             id,
-            io_handlers: Arc::downgrade(&self.io_handlers),
+            io_handlers: Some(Arc::downgrade(&self.io_handlers)),
         }
     }
 
@@ -533,7 +532,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: self.notification_handlers.clone(),
+            notification_handlers: Some(self.notification_handlers.clone()),
         }
     }
 
@@ -615,7 +614,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: self.notification_handlers.clone(),
+            notification_handlers: Some(self.notification_handlers.clone()),
         }
     }
 
@@ -726,8 +725,14 @@ impl Drop for LanguageServer {
 }
 
 impl Subscription {
-    pub fn detach(mut self) {
-        *(&mut self) = Self::Detached;
+    pub fn detach(&mut self) {
+        match self {
+            Subscription::Notification {
+                notification_handlers,
+                ..
+            } => *notification_handlers = None,
+            Subscription::Io { io_handlers, .. } => *io_handlers = None,
+        }
     }
 }
 
@@ -740,15 +745,16 @@ impl fmt::Display for LanguageServerId {
 impl Drop for Subscription {
     fn drop(&mut self) {
         match self {
-            Subscription::Detached => {}
             Subscription::Notification {
                 method,
                 notification_handlers,
             } => {
-                notification_handlers.lock().remove(method);
+                if let Some(handlers) = notification_handlers {
+                    handlers.lock().remove(method);
+                }
             }
             Subscription::Io { id, io_handlers } => {
-                if let Some(io_handlers) = io_handlers.upgrade() {
+                if let Some(io_handlers) = io_handlers.as_ref().and_then(|h| h.upgrade()) {
                     io_handlers.lock().remove(id);
                 }
             }
