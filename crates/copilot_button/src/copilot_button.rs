@@ -273,7 +273,7 @@ impl CopilotButton {
 
         menu_options.push(ContextMenuItem::item("Sign In", InitiateSignIn));
         menu_options.push(ContextMenuItem::item(
-            "Disable Copilot Integration",
+            "Disable Copilot",
             HideCopilot,
         ));
 
