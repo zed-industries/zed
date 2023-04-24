@@ -13,11 +13,10 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    AccessAppContext, Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle,
-    AnyWeakViewHandle, AppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle,
-    MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateModel, UpdateView,
-    UpgradeModelHandle, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
-    WindowInvalidation,
+    Action, AnyModelHandle, AnyView, AnyViewHandle, AnyWeakModelHandle, AppContext,
+    BorrowAppContext, Effect, Element, Entity, Handle, ModelContext, ModelHandle, MouseRegion,
+    MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateModel, UpdateView,
+    UpgradeModelHandle, View, ViewContext, ViewHandle, WeakModelHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -133,9 +132,9 @@ impl DerefMut for WindowContext<'_> {
     }
 }
 
-impl AccessAppContext for WindowContext<'_> {
-    fn read<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        self.app_context.read(f)
+impl BorrowAppContext for WindowContext<'_> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.app_context.read_with(f)
     }
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
@@ -191,16 +190,6 @@ impl UpgradeModelHandle for WindowContext<'_> {
 
     fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
         self.app_context.upgrade_any_model_handle(handle)
-    }
-}
-
-impl UpgradeViewHandle for WindowContext<'_> {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.app_context.upgrade_view_handle(handle)
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.app_context.upgrade_any_view_handle(handle)
     }
 }
 
