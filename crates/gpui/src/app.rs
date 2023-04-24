@@ -126,14 +126,6 @@ pub trait BorrowAppContext {
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T;
 }
 
-pub trait ReadModelWith {
-    fn read_model_with<E: Entity, T>(
-        &self,
-        handle: &ModelHandle<E>,
-        read: &mut dyn FnMut(&E, &AppContext) -> T,
-    ) -> T;
-}
-
 pub trait UpdateModel {
     fn update_model<T: Entity, O>(
         &mut self,
@@ -411,18 +403,6 @@ impl UpdateModel for AsyncAppContext {
         update: &mut dyn FnMut(&mut E, &mut ModelContext<E>) -> O,
     ) -> O {
         self.0.borrow_mut().update_model(handle, update)
-    }
-}
-
-impl ReadModelWith for AsyncAppContext {
-    fn read_model_with<E: Entity, T>(
-        &self,
-        handle: &ModelHandle<E>,
-        read: &mut dyn FnMut(&E, &AppContext) -> T,
-    ) -> T {
-        let cx = self.0.borrow();
-        let cx = &*cx;
-        read(handle.read(cx), cx)
     }
 }
 
@@ -3609,14 +3589,10 @@ impl<T: Entity> ModelHandle<T> {
 
     pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
     where
-        C: ReadModelWith,
+        C: BorrowAppContext,
         F: FnOnce(&T, &AppContext) -> S,
     {
-        let mut read = Some(read);
-        cx.read_model_with(self, &mut |model, cx| {
-            let read = read.take().unwrap();
-            read(model, cx)
-        })
+        cx.read_with(|cx| read(self.read(cx), cx))
     }
 
     pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
