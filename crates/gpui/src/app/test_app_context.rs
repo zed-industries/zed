@@ -22,8 +22,8 @@ use crate::{
     keymap_matcher::Keystroke,
     platform,
     platform::{Event, InputHandler, KeyDownEvent, Platform},
-    Action, AnyViewHandle, AppContext, Entity, FontCache, Handle, ModelContext, ModelHandle,
-    ReadModelWith, ReadViewWith, Subscription, Task, UpdateModel, UpdateView, View, ViewContext,
+    Action, AnyViewHandle, AppContext, BorrowAppContext, Entity, FontCache, Handle, ModelContext,
+    ModelHandle, ReadViewWith, Subscription, Task, UpdateModel, UpdateView, View, ViewContext,
     ViewHandle, WeakHandle, WindowContext,
 };
 use collections::BTreeMap;
@@ -381,6 +381,16 @@ impl TestAppContext {
     }
 }
 
+impl BorrowAppContext for TestAppContext {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.cx.borrow().read_with(f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        self.cx.borrow_mut().update(f)
+    }
+}
+
 impl UpdateModel for TestAppContext {
     fn update_model<T: Entity, O>(
         &mut self,
@@ -388,18 +398,6 @@ impl UpdateModel for TestAppContext {
         update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
     ) -> O {
         self.cx.borrow_mut().update_model(handle, update)
-    }
-}
-
-impl ReadModelWith for TestAppContext {
-    fn read_model_with<E: Entity, T>(
-        &self,
-        handle: &ModelHandle<E>,
-        read: &mut dyn FnMut(&E, &AppContext) -> T,
-    ) -> T {
-        let cx = self.cx.borrow();
-        let cx = &*cx;
-        read(handle.read(cx), cx)
     }
 }
 
