@@ -126,6 +126,17 @@ pub struct GitRepositoryEntry {
     // Path to the actual .git folder.
     // Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) git_dir_path: Arc<Path>,
+    pub(crate) branch: Option<Arc<str>>,
+}
+
+impl GitRepositoryEntry {
+    pub fn branch(&self) -> Option<Arc<str>> {
+        self.branch.clone()
+    }
+
+    pub fn content_path(&self) -> Arc<Path> {
+        self.content_path.clone()
+    }
 }
 
 impl std::fmt::Debug for GitRepositoryEntry {
@@ -1597,6 +1608,7 @@ impl LocalSnapshot {
                 .binary_search_by_key(&&content_path, |repo| &repo.content_path)
             {
                 if let Some(repo) = fs.open_repo(abs_path.as_path()) {
+                    let branch = repo.lock().get_branch_name().map(Into::into);
                     self.git_repositories.insert(
                         ix,
                         GitRepositoryEntry {
@@ -1604,6 +1616,7 @@ impl LocalSnapshot {
                             scan_id: 0,
                             content_path,
                             git_dir_path: parent_path,
+                            branch,
                         },
                     );
                 }
@@ -2603,7 +2616,9 @@ impl BackgroundScanner {
 
                     let scan_id = snapshot.scan_id;
                     if let Some(repo) = snapshot.repo_with_dot_git_containing(&path) {
-                        repo.repo.lock().reload_index();
+                        let repo_lock = repo.repo.lock();
+                        repo_lock.reload_index();
+                        repo.branch = repo_lock.get_branch_name().map(Into::into);
                         repo.scan_id = scan_id;
                     }
 
@@ -3428,6 +3443,7 @@ mod tests {
                 scan_id,
                 content_path: git_dir_path.as_ref().parent().unwrap().into(),
                 git_dir_path: git_dir_path.as_ref().into(),
+                branch: Some("main".into()),
             }
         }
 
