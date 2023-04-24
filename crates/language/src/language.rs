@@ -54,6 +54,7 @@ use futures::channel::mpsc;
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
+pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use tree_sitter::{Parser, Tree};
 
@@ -262,6 +263,8 @@ pub struct LanguageConfig {
     pub name: Arc<str>,
     pub path_suffixes: Vec<String>,
     pub brackets: BracketPairConfig,
+    #[serde(default, deserialize_with = "deserialize_regex")]
+    pub first_line_pattern: Option<Regex>,
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -334,6 +337,7 @@ impl Default for LanguageConfig {
             path_suffixes: Default::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
+            first_line_pattern: Default::default(),
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
@@ -411,7 +415,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) adapter: Option<Arc<CachedLspAdapter>>,
+    pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
@@ -489,7 +493,7 @@ struct AvailableLanguage {
     path: &'static str,
     config: LanguageConfig,
     grammar: tree_sitter::Language,
-    lsp_adapter: Option<Arc<dyn LspAdapter>>,
+    lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     get_queries: fn(&str) -> LanguageQueries,
 }
 
@@ -510,6 +514,7 @@ pub struct LanguageRegistry {
 }
 
 struct LanguageRegistryState {
+    next_language_server_id: usize,
     languages: Vec<Arc<Language>>,
     available_languages: Vec<AvailableLanguage>,
     next_available_language_id: AvailableLanguageId,
@@ -519,11 +524,17 @@ struct LanguageRegistryState {
     version: usize,
 }
 
+pub struct PendingLanguageServer {
+    pub server_id: LanguageServerId,
+    pub task: Task<Result<lsp::LanguageServer>>,
+}
+
 impl LanguageRegistry {
     pub fn new(login_shell_env_loaded: Task<()>) -> Self {
         let (lsp_binary_statuses_tx, lsp_binary_statuses_rx) = async_broadcast::broadcast(16);
         Self {
             state: RwLock::new(LanguageRegistryState {
+                next_language_server_id: 0,
                 languages: vec![PLAIN_TEXT.clone()],
                 available_languages: Default::default(),
                 next_available_language_id: 0,
@@ -555,7 +566,7 @@ impl LanguageRegistry {
         path: &'static str,
         config: LanguageConfig,
         grammar: tree_sitter::Language,
-        lsp_adapter: Option<Arc<dyn LspAdapter>>,
+        lsp_adapters: Vec<Arc<dyn LspAdapter>>,
         get_queries: fn(&str) -> LanguageQueries,
     ) {
         let state = &mut *self.state.write();
@@ -564,7 +575,7 @@ impl LanguageRegistry {
             path,
             config,
             grammar,
-            lsp_adapter,
+            lsp_adapters,
             get_queries,
         });
     }
@@ -587,12 +598,13 @@ impl LanguageRegistry {
             state
                 .available_languages
                 .iter()
-                .filter_map(|l| l.lsp_adapter.clone())
+                .flat_map(|l| l.lsp_adapters.clone())
                 .chain(
                     state
                         .languages
                         .iter()
-                        .filter_map(|l| l.adapter.as_ref().map(|a| a.adapter.clone())),
+                        .flat_map(|language| &language.adapters)
+                        .map(|adapter| adapter.adapter.clone()),
                 )
                 .collect::<Vec<_>>()
         };
@@ -660,19 +672,30 @@ impl LanguageRegistry {
         })
     }
 
-    pub fn language_for_path(
+    pub fn language_for_file(
         self: &Arc<Self>,
         path: impl AsRef<Path>,
+        content: Option<&Rope>,
     ) -> UnwrapFuture<oneshot::Receiver<Result<Arc<Language>>>> {
         let path = path.as_ref();
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension().and_then(|name| name.to_str());
         let path_suffixes = [extension, filename];
         self.get_or_load_language(|config| {
-            config
+            let path_matches = config
                 .path_suffixes
                 .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())))
+                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
+                false,
+                |(content, pattern)| {
+                    let end = content.clip_point(Point::new(0, 256), Bias::Left);
+                    let end = content.point_to_offset(end);
+                    let text = content.chunks_in_range(0..end).collect::<String>();
+                    pattern.is_match(&text)
+                },
+            );
+            path_matches || content_matches
         })
     }
 
@@ -707,7 +730,7 @@ impl LanguageRegistry {
                                 let queries = (language.get_queries)(&language.path);
                                 let language =
                                     Language::new(language.config, Some(language.grammar))
-                                        .with_lsp_adapter(language.lsp_adapter)
+                                        .with_lsp_adapters(language.lsp_adapters)
                                         .await;
                                 let name = language.name();
                                 match language.with_queries(queries) {
@@ -762,16 +785,15 @@ impl LanguageRegistry {
 
     pub fn start_language_server(
         self: &Arc<Self>,
-        server_id: usize,
         language: Arc<Language>,
+        adapter: Arc<CachedLspAdapter>,
         root_path: Arc<Path>,
         http_client: Arc<dyn HttpClient>,
         cx: &mut AppContext,
-    ) -> Option<Task<Result<lsp::LanguageServer>>> {
+    ) -> Option<PendingLanguageServer> {
         #[cfg(any(test, feature = "test-support"))]
         if language.fake_adapter.is_some() {
-            let language = language;
-            return Some(cx.spawn(|cx| async move {
+            let task = cx.spawn(|cx| async move {
                 let (servers_tx, fake_adapter) = language.fake_adapter.as_ref().unwrap();
                 let (server, mut fake_server) = lsp::LanguageServer::fake(
                     fake_adapter.name.to_string(),
@@ -796,7 +818,10 @@ impl LanguageRegistry {
                     })
                     .detach();
                 Ok(server)
-            }));
+            });
+
+            let server_id = self.state.write().next_language_server_id();
+            return Some(PendingLanguageServer { server_id, task });
         }
 
         let download_dir = self
@@ -806,11 +831,16 @@ impl LanguageRegistry {
             .log_err()?;
 
         let this = self.clone();
-        let adapter = language.adapter.clone()?;
+        let language = language.clone();
+        let http_client = http_client.clone();
+        let download_dir = download_dir.clone();
+        let root_path = root_path.clone();
+        let adapter = adapter.clone();
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
+        let server_id = self.state.write().next_language_server_id();
 
-        Some(cx.spawn(|cx| async move {
+        let task = cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
 
             let mut lock = this.lsp_binary_paths.lock();
@@ -842,7 +872,9 @@ impl LanguageRegistry {
             )?;
 
             Ok(server)
-        }))
+        });
+
+        Some(PendingLanguageServer { server_id, task })
     }
 
     pub fn language_server_binary_statuses(
@@ -853,6 +885,10 @@ impl LanguageRegistry {
 }
 
 impl LanguageRegistryState {
+    fn next_language_server_id(&mut self) -> LanguageServerId {
+        LanguageServerId(post_inc(&mut self.next_language_server_id))
+    }
+
     fn add(&mut self, language: Arc<Language>) {
         if let Some(theme) = self.theme.as_ref() {
             language.set_theme(&theme.editor.syntax);
@@ -960,15 +996,15 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            adapter: None,
+            adapters: Vec::new(),
 
             #[cfg(any(test, feature = "test-support"))]
             fake_adapter: None,
         }
     }
 
-    pub fn lsp_adapter(&self) -> Option<Arc<CachedLspAdapter>> {
-        self.adapter.clone()
+    pub fn lsp_adapters(&self) -> &[Arc<CachedLspAdapter>] {
+        &self.adapters
     }
 
     pub fn id(&self) -> Option<usize> {
@@ -1195,9 +1231,9 @@ impl Language {
         Arc::get_mut(self.grammar.as_mut().unwrap()).unwrap()
     }
 
-    pub async fn with_lsp_adapter(mut self, lsp_adapter: Option<Arc<dyn LspAdapter>>) -> Self {
-        if let Some(adapter) = lsp_adapter {
-            self.adapter = Some(CachedLspAdapter::new(adapter).await);
+    pub async fn with_lsp_adapters(mut self, lsp_adapters: Vec<Arc<dyn LspAdapter>>) -> Self {
+        for adapter in lsp_adapters {
+            self.adapters.push(CachedLspAdapter::new(adapter).await);
         }
         self
     }
@@ -1210,7 +1246,7 @@ impl Language {
         let (servers_tx, servers_rx) = mpsc::unbounded();
         self.fake_adapter = Some((servers_tx, fake_lsp_adapter.clone()));
         let adapter = CachedLspAdapter::new(Arc::new(fake_lsp_adapter)).await;
-        self.adapter = Some(adapter);
+        self.adapters = vec![adapter];
         servers_rx
     }
 
@@ -1219,28 +1255,31 @@ impl Language {
     }
 
     pub async fn disk_based_diagnostic_sources(&self) -> &[String] {
-        match self.adapter.as_ref() {
+        match self.adapters.first().as_ref() {
             Some(adapter) => &adapter.disk_based_diagnostic_sources,
             None => &[],
         }
     }
 
     pub async fn disk_based_diagnostics_progress_token(&self) -> Option<&str> {
-        if let Some(adapter) = self.adapter.as_ref() {
-            adapter.disk_based_diagnostics_progress_token.as_deref()
-        } else {
-            None
+        for adapter in &self.adapters {
+            let token = adapter.disk_based_diagnostics_progress_token.as_deref();
+            if token.is_some() {
+                return token;
+            }
         }
+
+        None
     }
 
     pub async fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.adapter.as_ref() {
-            processor.process_diagnostics(diagnostics).await;
+        for adapter in &self.adapters {
+            adapter.process_diagnostics(diagnostics).await;
         }
     }
 
     pub async fn process_completion(self: &Arc<Self>, completion: &mut lsp::CompletionItem) {
-        if let Some(adapter) = self.adapter.as_ref() {
+        for adapter in &self.adapters {
             adapter.process_completion(completion).await;
         }
     }
@@ -1249,7 +1288,8 @@ impl Language {
         self: &Arc<Self>,
         completion: &lsp::CompletionItem,
     ) -> Option<CodeLabel> {
-        self.adapter
+        self.adapters
+            .first()
             .as_ref()?
             .label_for_completion(completion, self)
             .await
@@ -1260,7 +1300,8 @@ impl Language {
         name: &str,
         kind: lsp::SymbolKind,
     ) -> Option<CodeLabel> {
-        self.adapter
+        self.adapters
+            .first()
             .as_ref()?
             .label_for_symbol(name, kind, self)
             .await
@@ -1528,9 +1569,45 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use gpui::TestAppContext;
 
-    use super::*;
+    #[gpui::test(iterations = 10)]
+    async fn test_first_line_pattern(cx: &mut TestAppContext) {
+        let mut languages = LanguageRegistry::test();
+        languages.set_executor(cx.background());
+        let languages = Arc::new(languages);
+        languages.register(
+            "/javascript",
+            LanguageConfig {
+                name: "JavaScript".into(),
+                path_suffixes: vec!["js".into()],
+                first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+                ..Default::default()
+            },
+            tree_sitter_javascript::language(),
+            vec![],
+            |_| Default::default(),
+        );
+
+        languages
+            .language_for_file("the/script", None)
+            .await
+            .unwrap_err();
+        languages
+            .language_for_file("the/script", Some(&"nothing".into()))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            languages
+                .language_for_file("the/script", Some(&"#!/bin/env node".into()))
+                .await
+                .unwrap()
+                .name()
+                .as_ref(),
+            "JavaScript"
+        );
+    }
 
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
@@ -1545,7 +1622,7 @@ mod tests {
                 ..Default::default()
             },
             tree_sitter_json::language(),
-            None,
+            vec![],
             |_| Default::default(),
         );
         languages.register(
@@ -1556,7 +1633,7 @@ mod tests {
                 ..Default::default()
             },
             tree_sitter_rust::language(),
-            None,
+            vec![],
             |_| Default::default(),
         );
         assert_eq!(

@@ -14,6 +14,7 @@
       "cmd-pagedown": "editor::MovePageDown",
       "cmd-pageup": "editor::MovePageUp",
       "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",
+      "cmd-alt-enter": "editor::NewlineAbove",
       "shift-enter": "editor::NewlineBelow",
       "cmd--": "editor::Fold",
       "cmd-=": "editor::UnfoldLines",

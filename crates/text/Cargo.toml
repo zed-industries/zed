@@ -24,7 +24,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 parking_lot = "0.11"
 postage = { workspace = true }
 rand = { version = "0.8.3", optional = true }
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }
 util = { path = "../util" }
 regex = "1.5"
 

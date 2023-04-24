@@ -5,7 +5,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    Axis, Border, ModelHandle, RenderContext, ViewHandle,
+    Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -70,8 +70,8 @@ impl PaneGroup {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Workspace>,
+    ) -> AnyElement<Workspace> {
         self.root.render(
             project,
             theme,
@@ -131,8 +131,8 @@ impl Member {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Workspace>,
+    ) -> AnyElement<Workspace> {
         enum FollowIntoExternalProject {}
 
         match self {
@@ -165,7 +165,7 @@ impl Member {
                     Border::default()
                 };
 
-                let prompt = if let Some((_, leader)) = leader {
+                let leader_status_box = if let Some((_, leader)) = leader {
                     match leader.location {
                         ParticipantLocation::SharedProject {
                             project_id: leader_project_id,
@@ -176,7 +176,7 @@ impl Member {
                                 let leader_user = leader.user.clone();
                                 let leader_user_id = leader.user.id;
                                 Some(
-                                    MouseEventHandler::<FollowIntoExternalProject>::new(
+                                    MouseEventHandler::<FollowIntoExternalProject, _>::new(
                                         pane.id(),
                                         cx,
                                         |_, _| {
@@ -195,11 +195,10 @@ impl Member {
                                             .with_style(
                                                 theme.workspace.external_location_message.container,
                                             )
-                                            .boxed()
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(MouseButton::Left, move |_, cx| {
+                                    .on_click(MouseButton::Left, move |_, _, cx| {
                                         cx.dispatch_action(JoinProject {
                                             project_id: leader_project_id,
                                             follow_user_id: leader_user_id,
@@ -208,7 +207,7 @@ impl Member {
                                     .aligned()
                                     .bottom()
                                     .right()
-                                    .boxed(),
+                                    .into_any(),
                                 )
                             }
                         }
@@ -225,7 +224,7 @@ impl Member {
                             .aligned()
                             .bottom()
                             .right()
-                            .boxed(),
+                            .into_any(),
                         ),
                         ParticipantLocation::External => Some(
                             Label::new(
@@ -240,7 +239,7 @@ impl Member {
                             .aligned()
                             .bottom()
                             .right()
-                            .boxed(),
+                            .into_any(),
                         ),
                     }
                 } else {
@@ -248,14 +247,9 @@ impl Member {
                 };
 
                 Stack::new()
-                    .with_child(
-                        ChildView::new(pane, cx)
-                            .contained()
-                            .with_border(border)
-                            .boxed(),
-                    )
-                    .with_children(prompt)
-                    .boxed()
+                    .with_child(ChildView::new(pane, cx).contained().with_border(border))
+                    .with_children(leader_status_box)
+                    .into_any()
             }
             Member::Axis(axis) => axis.render(
                 project,
@@ -366,8 +360,8 @@ impl PaneAxis {
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
-        cx: &mut RenderContext<Workspace>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Workspace>,
+    ) -> AnyElement<Workspace> {
         let last_member_ix = self.members.len() - 1;
         Flex::new(self.axis)
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
@@ -388,12 +382,12 @@ impl PaneAxis {
                         Axis::Vertical => border.bottom = true,
                         Axis::Horizontal => border.right = true,
                     }
-                    member = Container::new(member).with_border(border).boxed();
+                    member = member.contained().with_border(border).into_any();
                 }
 
-                FlexItem::new(member).flex(flex, true).boxed()
+                FlexItem::new(member).flex(flex, true)
             }))
-            .boxed()
+            .into_any()
     }
 }
 

@@ -6,15 +6,15 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ConstrainedBox, ContainerStyle, Empty, Flex, Label,
-        MouseEventHandler, ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
+        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle, RenderContext, Task, View,
-    ViewContext, ViewHandle,
+    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
+    ViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -498,7 +498,7 @@ impl ProjectPanel {
             this.update(&mut cx, |this, cx| {
                 this.edit_state.take();
                 cx.notify();
-            });
+            })?;
 
             let new_entry = new_entry?;
             this.update(&mut cx, |this, cx| {
@@ -519,7 +519,7 @@ impl ProjectPanel {
                     );
                 }
                 cx.notify();
-            });
+            })?;
             Ok(())
         }))
     }
@@ -655,7 +655,7 @@ impl ProjectPanel {
                 this.project
                     .update(cx, |project, cx| project.delete_entry(entry_id, cx))
                     .ok_or_else(|| anyhow!("no such entry"))
-            })?
+            })??
             .await
         }))
     }
@@ -1015,8 +1015,8 @@ impl ProjectPanel {
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
-        cx: &mut RenderContext<ProjectPanel>,
-        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut RenderContext<ProjectPanel>),
+        cx: &mut ViewContext<ProjectPanel>,
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut ViewContext<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries) in &self.visible_entries {
@@ -1097,32 +1097,28 @@ impl ProjectPanel {
         padding: f32,
         row_container_style: ContainerStyle,
         style: &ProjectPanelEntry,
-        cx: &mut RenderContext<V>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<V>,
+    ) -> AnyElement<V> {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
         Flex::row()
             .with_child(
-                ConstrainedBox::new(if kind == EntryKind::Dir {
+                if kind == EntryKind::Dir {
                     if details.is_expanded {
-                        Svg::new("icons/chevron_down_8.svg")
-                            .with_color(style.icon_color)
-                            .boxed()
+                        Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
                     } else {
-                        Svg::new("icons/chevron_right_8.svg")
-                            .with_color(style.icon_color)
-                            .boxed()
+                        Svg::new("icons/chevron_right_8.svg").with_color(style.icon_color)
                     }
+                    .constrained()
                 } else {
-                    Empty::new().boxed()
-                })
+                    Empty::new().constrained()
+                }
                 .with_max_width(style.icon_size)
                 .with_max_height(style.icon_size)
                 .aligned()
                 .constrained()
-                .with_width(style.icon_size)
-                .boxed(),
+                .with_width(style.icon_size),
             )
             .with_child(if show_editor && editor.is_some() {
                 ChildView::new(editor.as_ref().unwrap(), cx)
@@ -1131,21 +1127,21 @@ impl ProjectPanel {
                     .aligned()
                     .left()
                     .flex(1.0, true)
-                    .boxed()
+                    .into_any()
             } else {
                 Label::new(details.filename.clone(), style.text.clone())
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
                     .left()
-                    .boxed()
+                    .into_any()
             })
             .constrained()
             .with_height(style.height)
             .contained()
             .with_style(row_container_style)
             .with_padding_left(padding)
-            .boxed()
+            .into_any_named("project panel entry visual element")
     }
 
     fn render_entry(
@@ -1154,9 +1150,8 @@ impl ProjectPanel {
         editor: &ViewHandle<Editor>,
         dragged_entry_destination: &mut Option<Arc<Path>>,
         theme: &theme::ProjectPanel,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
-        let this = cx.handle();
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let kind = details.kind;
         let path = details.path.clone();
         let padding = theme.container.padding.left + details.depth as f32 * theme.indent_width;
@@ -1171,7 +1166,7 @@ impl ProjectPanel {
 
         let show_editor = details.is_editing && !details.is_processing;
 
-        MouseEventHandler::<Self>::new(entry_id.to_usize(), cx, |state, cx| {
+        MouseEventHandler::<Self, _>::new(entry_id.to_usize(), cx, |state, cx| {
             let mut style = entry_style.style_for(state, details.is_selected).clone();
 
             if cx
@@ -1201,7 +1196,7 @@ impl ProjectPanel {
                 cx,
             )
         })
-        .on_click(MouseButton::Left, move |e, cx| {
+        .on_click(MouseButton::Left, move |e, _, cx| {
             if !show_editor {
                 if kind == EntryKind::Dir {
                     cx.dispatch_action(ToggleExpanded(entry_id))
@@ -1213,13 +1208,13 @@ impl ProjectPanel {
                 }
             }
         })
-        .on_down(MouseButton::Right, move |e, cx| {
+        .on_down(MouseButton::Right, move |e, _, cx| {
             cx.dispatch_action(DeployContextMenu {
                 entry_id,
                 position: e.position,
             })
         })
-        .on_up(MouseButton::Left, move |_, cx| {
+        .on_up(MouseButton::Left, move |_, _, cx| {
             if let Some((_, dragged_entry)) = cx
                 .global::<DragAndDrop<Workspace>>()
                 .currently_dragged::<ProjectEntryId>(cx.window_id())
@@ -1231,27 +1226,23 @@ impl ProjectPanel {
                 });
             }
         })
-        .on_move(move |_, cx| {
+        .on_move(move |_, this, cx| {
             if cx
                 .global::<DragAndDrop<Workspace>>()
                 .currently_dragged::<ProjectEntryId>(cx.window_id())
                 .is_some()
             {
-                if let Some(this) = this.upgrade(cx.app) {
-                    this.update(cx.app, |this, _| {
-                        this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
-                            path.parent().map(|parent| Arc::from(parent))
-                        } else {
-                            Some(path.clone())
-                        };
-                    })
-                }
+                this.dragged_entry_destination = if matches!(kind, EntryKind::File(_)) {
+                    path.parent().map(|parent| Arc::from(parent))
+                } else {
+                    Some(path.clone())
+                };
             }
         })
         .as_draggable(entry_id, {
             let row_container_style = theme.dragged_entry.container;
 
-            move |_, cx: &mut RenderContext<Workspace>| {
+            move |_, cx: &mut ViewContext<Workspace>| {
                 let theme = cx.global::<Settings>().theme.clone();
                 Self::render_entry_visual_element(
                     &details,
@@ -1264,7 +1255,7 @@ impl ProjectPanel {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .boxed()
+        .into_any_named("project panel entry")
     }
 }
 
@@ -1273,7 +1264,7 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
         enum ProjectPanel {}
         let theme = &cx.global::<Settings>().theme.project_panel;
         let mut container_style = theme.container;
@@ -1285,7 +1276,7 @@ impl View for ProjectPanel {
         if has_worktree {
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ProjectPanel>::new(0, cx, |_, cx| {
+                    MouseEventHandler::<ProjectPanel, _>::new(0, cx, |_, cx| {
                         UniformList::new(
                             self.list.clone(),
                             self.visible_entries
@@ -1315,9 +1306,8 @@ impl View for ProjectPanel {
                         .contained()
                         .with_style(container_style)
                         .expanded()
-                        .boxed()
                     })
-                    .on_down(MouseButton::Right, move |e, cx| {
+                    .on_down(MouseButton::Right, move |e, _, cx| {
                         // When deploying the context menu anywhere below the last project entry,
                         // act as if the user clicked the root of the last worktree.
                         if let Some(entry_id) = last_worktree_root_id {
@@ -1326,15 +1316,14 @@ impl View for ProjectPanel {
                                 position: e.position,
                             })
                         }
-                    })
-                    .boxed(),
+                    }),
                 )
-                .with_child(ChildView::new(&self.context_menu, cx).boxed())
-                .boxed()
+                .with_child(ChildView::new(&self.context_menu, cx))
+                .into_any_named("project panel")
         } else {
             Flex::column()
                 .with_child(
-                    MouseEventHandler::<Self>::new(2, cx, {
+                    MouseEventHandler::<Self, _>::new(2, cx, {
                         let button_style = theme.open_project_button.clone();
                         let context_menu_item_style =
                             cx.global::<Settings>().theme.context_menu.item.clone();
@@ -1350,18 +1339,16 @@ impl View for ProjectPanel {
                                 Box::new(workspace::Open),
                                 cx,
                             )
-                            .boxed()
                         }
                     })
-                    .on_click(MouseButton::Left, move |_, cx| {
+                    .on_click(MouseButton::Left, move |_, _, cx| {
                         cx.dispatch_action(workspace::Open)
                     })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .boxed(),
+                    .with_cursor_style(CursorStyle::PointingHand),
                 )
                 .contained()
                 .with_style(container_style)
-                .boxed()
+                .into_any_named("empty project panel")
         }
     }
 
@@ -1549,7 +1536,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
 
         select_path(&panel, "root1", cx);
@@ -1571,7 +1558,10 @@ mod tests {
         // Add a file with the root folder selected. The filename editor is placed
         // before the first file in the root folder.
         panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        assert!(panel.read_with(cx, |panel, cx| panel.filename_editor.is_focused(cx)));
+        cx.read_window(window_id, |cx| {
+            let panel = panel.read(cx);
+            assert!(panel.filename_editor.is_focused(cx));
+        });
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -1943,7 +1933,8 @@ mod tests {
         let mut result = Vec::new();
         let mut project_entries = HashSet::new();
         let mut has_editor = false;
-        cx.render(panel, |panel, cx| {
+
+        panel.update(cx, |panel, cx| {
             panel.for_each_visible_entry(range, cx, |project_entry, details, _| {
                 if details.is_editing {
                     assert!(!has_editor, "duplicate editor entry");

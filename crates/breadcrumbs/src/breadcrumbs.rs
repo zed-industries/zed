@@ -1,6 +1,6 @@
 use gpui::{
-    elements::*, platform::MouseButton, AppContext, Entity, RenderContext, Subscription, View,
-    ViewContext, ViewHandle,
+    elements::*, platform::MouseButton, AppContext, Entity, Subscription, View, ViewContext,
+    ViewHandle,
 };
 use itertools::Itertools;
 use search::ProjectSearchView;
@@ -41,10 +41,10 @@ impl View for Breadcrumbs {
         "Breadcrumbs"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let active_item = match &self.active_item {
             Some(active_item) => active_item,
-            None => return Empty::new().boxed(),
+            None => return Empty::new().into_any(),
         };
         let not_editor = active_item.downcast::<editor::Editor>().is_none();
 
@@ -53,12 +53,21 @@ impl View for Breadcrumbs {
 
         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
             Some(breadcrumbs) => breadcrumbs,
-            None => return Empty::new().boxed(),
-        };
+            None => return Empty::new().into_any(),
+        }
+        .into_iter()
+        .map(|breadcrumb| {
+            Text::new(
+                breadcrumb.text,
+                theme.workspace.breadcrumbs.default.text.clone(),
+            )
+            .with_highlights(breadcrumb.highlights.unwrap_or_default())
+            .into_any()
+        });
 
         let crumbs = Flex::row()
-            .with_children(Itertools::intersperse_with(breadcrumbs.into_iter(), || {
-                Label::new(" 〉 ", style.default.text.clone()).boxed()
+            .with_children(Itertools::intersperse_with(breadcrumbs, || {
+                Label::new(" 〉 ", style.default.text.clone()).into_any()
             }))
             .constrained()
             .with_height(theme.workspace.breadcrumb_height)
@@ -69,17 +78,17 @@ impl View for Breadcrumbs {
                 .with_style(style.default.container)
                 .aligned()
                 .left()
-                .boxed();
+                .into_any();
         }
 
-        MouseEventHandler::<Breadcrumbs>::new(0, cx, |state, _| {
+        MouseEventHandler::<Breadcrumbs, Breadcrumbs>::new(0, cx, |state, _| {
             let style = style.style_for(state, false);
-            crumbs.with_style(style.container).boxed()
+            crumbs.with_style(style.container)
         })
-        .on_click(MouseButton::Left, |_, cx| {
+        .on_click(MouseButton::Left, |_, _, cx| {
             cx.dispatch_action(outline::Toggle);
         })
-        .with_tooltip::<Breadcrumbs, _>(
+        .with_tooltip::<Breadcrumbs>(
             0,
             "Show symbol outline".to_owned(),
             Some(Box::new(outline::Toggle)),
@@ -88,7 +97,7 @@ impl View for Breadcrumbs {
         )
         .aligned()
         .left()
-        .boxed()
+        .into_any()
     }
 }
 
@@ -136,7 +145,7 @@ impl ToolbarItemView for Breadcrumbs {
         }
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut gpui::AppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
         self.pane_focused = pane_focused;
     }
 }

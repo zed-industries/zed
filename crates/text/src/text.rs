@@ -1331,15 +1331,15 @@ impl Buffer {
         }
     }
 
-    pub fn wait_for_anchors<'a>(
+    pub fn wait_for_anchors(
         &mut self,
-        anchors: impl IntoIterator<Item = &'a Anchor>,
+        anchors: impl IntoIterator<Item = Anchor>,
     ) -> impl 'static + Future<Output = Result<()>> {
         let mut futures = Vec::new();
         for anchor in anchors {
             if !self.version.observed(anchor.timestamp)
-                && *anchor != Anchor::MAX
-                && *anchor != Anchor::MIN
+                && anchor != Anchor::MAX
+                && anchor != Anchor::MIN
             {
                 let (tx, rx) = oneshot::channel();
                 self.edit_id_resolvers

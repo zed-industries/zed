@@ -3,11 +3,11 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
-    elements::*, geometry::vector::vec2f, AppContext, Entity, ModelHandle, RenderContext,
+    elements::*, geometry::vector::vec2f, AppContext, AsyncAppContext, Entity, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
@@ -28,7 +28,7 @@ use std::{
 };
 use text::Selection;
 use util::{ResultExt, TryFutureExt};
-use workspace::item::FollowableItemHandle;
+use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -72,15 +72,17 @@ impl FollowableItem for Editor {
             let editor = pane.read_with(&cx, |pane, cx| {
                 let mut editors = pane.items_of_type::<Self>();
                 editors.find(|editor| {
-                    editor.remote_id(&client, cx) == Some(remote_id)
-                        || state.singleton
-                            && buffers.len() == 1
-                            && editor.read(cx).buffer.read(cx).as_singleton().as_ref()
-                                == Some(&buffers[0])
+                    let ids_match = editor.remote_id(&client, cx) == Some(remote_id);
+                    let singleton_buffer_matches = state.singleton
+                        && buffers.first()
+                            == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
+                    ids_match || singleton_buffer_matches
                 })
             });
 
-            let editor = editor.unwrap_or_else(|| {
+            let editor = if let Some(editor) = editor {
+                editor
+            } else {
                 pane.update(&mut cx, |_, cx| {
                     let multibuffer = cx.add_model(|cx| {
                         let mut multibuffer;
@@ -115,46 +117,29 @@ impl FollowableItem for Editor {
                         multibuffer
                     });
 
-                    cx.add_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), cx))
-                })
-            });
-
-            editor.update(&mut cx, |editor, cx| {
-                editor.remote_id = Some(remote_id);
-                let buffer = editor.buffer.read(cx).read(cx);
-                let selections = state
-                    .selections
-                    .into_iter()
-                    .map(|selection| {
-                        deserialize_selection(&buffer, selection)
-                            .ok_or_else(|| anyhow!("invalid selection"))
+                    cx.add_view(|cx| {
+                        let mut editor =
+                            Editor::for_multibuffer(multibuffer, Some(project.clone()), cx);
+                        editor.remote_id = Some(remote_id);
+                        editor
                     })
-                    .collect::<Result<Vec<_>>>()?;
-                let pending_selection = state
-                    .pending_selection
-                    .map(|selection| deserialize_selection(&buffer, selection))
-                    .flatten();
-                let scroll_top_anchor = state
-                    .scroll_top_anchor
-                    .and_then(|anchor| deserialize_anchor(&buffer, anchor));
-                drop(buffer);
+                })?
+            };
 
-                if !selections.is_empty() || pending_selection.is_some() {
-                    editor.set_selections_from_remote(selections, pending_selection, cx);
-                }
-
-                if let Some(scroll_top_anchor) = scroll_top_anchor {
-                    editor.set_scroll_anchor_remote(
-                        ScrollAnchor {
-                            top_anchor: scroll_top_anchor,
-                            offset: vec2f(state.scroll_x, state.scroll_y),
-                        },
-                        cx,
-                    );
-                }
-
-                anyhow::Ok(())
-            })?;
+            update_editor_from_message(
+                editor.clone(),
+                project,
+                proto::update_view::Editor {
+                    selections: state.selections,
+                    pending_selection: state.pending_selection,
+                    scroll_top_anchor: state.scroll_top_anchor,
+                    scroll_x: state.scroll_x,
+                    scroll_y: state.scroll_y,
+                    ..Default::default()
+                },
+                &mut cx,
+            )
+            .await?;
 
             Ok(editor)
         }))
@@ -299,96 +284,9 @@ impl FollowableItem for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let update_view::Variant::Editor(message) = message;
-        let multibuffer = self.buffer.read(cx);
-        let multibuffer = multibuffer.read(cx);
-
-        let buffer_ids = message
-            .inserted_excerpts
-            .iter()
-            .filter_map(|insertion| Some(insertion.excerpt.as_ref()?.buffer_id))
-            .collect::<HashSet<_>>();
-
-        let mut removals = message
-            .deleted_excerpts
-            .into_iter()
-            .map(ExcerptId::from_proto)
-            .collect::<Vec<_>>();
-        removals.sort_by(|a, b| a.cmp(&b, &multibuffer));
-
-        let selections = message
-            .selections
-            .into_iter()
-            .filter_map(|selection| deserialize_selection(&multibuffer, selection))
-            .collect::<Vec<_>>();
-        let pending_selection = message
-            .pending_selection
-            .and_then(|selection| deserialize_selection(&multibuffer, selection));
-
-        let scroll_top_anchor = message
-            .scroll_top_anchor
-            .and_then(|anchor| deserialize_anchor(&multibuffer, anchor));
-        drop(multibuffer);
-
-        let buffers = project.update(cx, |project, cx| {
-            buffer_ids
-                .into_iter()
-                .map(|id| project.open_buffer_by_id(id, cx))
-                .collect::<Vec<_>>()
-        });
-
         let project = project.clone();
         cx.spawn(|this, mut cx| async move {
-            let _buffers = try_join_all(buffers).await?;
-            this.update(&mut cx, |this, cx| {
-                this.buffer.update(cx, |multibuffer, cx| {
-                    let mut insertions = message.inserted_excerpts.into_iter().peekable();
-                    while let Some(insertion) = insertions.next() {
-                        let Some(excerpt) = insertion.excerpt else { continue };
-                        let Some(previous_excerpt_id) = insertion.previous_excerpt_id else { continue };
-                        let buffer_id = excerpt.buffer_id;
-                        let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else { continue };
-
-                        let adjacent_excerpts = iter::from_fn(|| {
-                            let insertion = insertions.peek()?;
-                            if insertion.previous_excerpt_id.is_none()
-                                && insertion.excerpt.as_ref()?.buffer_id == buffer_id
-                            {
-                                insertions.next()?.excerpt
-                            } else {
-                                None
-                            }
-                        });
-
-                        multibuffer.insert_excerpts_with_ids_after(
-                            ExcerptId::from_proto(previous_excerpt_id),
-                            buffer,
-                            [excerpt]
-                                .into_iter()
-                                .chain(adjacent_excerpts)
-                                .filter_map(|excerpt| {
-                                    Some((
-                                        ExcerptId::from_proto(excerpt.id),
-                                        deserialize_excerpt_range(excerpt)?,
-                                    ))
-                                }),
-                            cx,
-                        );
-                    }
-
-                    multibuffer.remove_excerpts(removals, cx);
-                });
-
-                if !selections.is_empty() || pending_selection.is_some() {
-                    this.set_selections_from_remote(selections, pending_selection, cx);
-                    this.request_autoscroll_remotely(Autoscroll::newest(), cx);
-                } else if let Some(anchor) = scroll_top_anchor {
-                    this.set_scroll_anchor_remote(ScrollAnchor {
-                        top_anchor: anchor,
-                        offset: vec2f(message.scroll_x, message.scroll_y)
-                    }, cx);
-                }
-            });
-            Ok(())
+            update_editor_from_message(this, project, message, &mut cx).await
         })
     }
 
@@ -400,6 +298,128 @@ impl FollowableItem for Editor {
             _ => false,
         }
     }
+}
+
+async fn update_editor_from_message(
+    this: ViewHandle<Editor>,
+    project: ModelHandle<Project>,
+    message: proto::update_view::Editor,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
+    // Open all of the buffers of which excerpts were added to the editor.
+    let inserted_excerpt_buffer_ids = message
+        .inserted_excerpts
+        .iter()
+        .filter_map(|insertion| Some(insertion.excerpt.as_ref()?.buffer_id))
+        .collect::<HashSet<_>>();
+    let inserted_excerpt_buffers = project.update(cx, |project, cx| {
+        inserted_excerpt_buffer_ids
+            .into_iter()
+            .map(|id| project.open_buffer_by_id(id, cx))
+            .collect::<Vec<_>>()
+    });
+    let _inserted_excerpt_buffers = try_join_all(inserted_excerpt_buffers).await?;
+
+    // Update the editor's excerpts.
+    this.update(cx, |editor, cx| {
+        editor.buffer.update(cx, |multibuffer, cx| {
+            let mut removed_excerpt_ids = message
+                .deleted_excerpts
+                .into_iter()
+                .map(ExcerptId::from_proto)
+                .collect::<Vec<_>>();
+            removed_excerpt_ids.sort_by({
+                let multibuffer = multibuffer.read(cx);
+                move |a, b| a.cmp(&b, &multibuffer)
+            });
+
+            let mut insertions = message.inserted_excerpts.into_iter().peekable();
+            while let Some(insertion) = insertions.next() {
+                let Some(excerpt) = insertion.excerpt else { continue };
+                let Some(previous_excerpt_id) = insertion.previous_excerpt_id else { continue };
+                let buffer_id = excerpt.buffer_id;
+                let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else { continue };
+
+                let adjacent_excerpts = iter::from_fn(|| {
+                    let insertion = insertions.peek()?;
+                    if insertion.previous_excerpt_id.is_none()
+                        && insertion.excerpt.as_ref()?.buffer_id == buffer_id
+                    {
+                        insertions.next()?.excerpt
+                    } else {
+                        None
+                    }
+                });
+
+                multibuffer.insert_excerpts_with_ids_after(
+                    ExcerptId::from_proto(previous_excerpt_id),
+                    buffer,
+                    [excerpt]
+                        .into_iter()
+                        .chain(adjacent_excerpts)
+                        .filter_map(|excerpt| {
+                            Some((
+                                ExcerptId::from_proto(excerpt.id),
+                                deserialize_excerpt_range(excerpt)?,
+                            ))
+                        }),
+                    cx,
+                );
+            }
+
+            multibuffer.remove_excerpts(removed_excerpt_ids, cx);
+        });
+    })?;
+
+    // Deserialize the editor state.
+    let (selections, pending_selection, scroll_top_anchor) = this.update(cx, |editor, cx| {
+        let buffer = editor.buffer.read(cx).read(cx);
+        let selections = message
+            .selections
+            .into_iter()
+            .filter_map(|selection| deserialize_selection(&buffer, selection))
+            .collect::<Vec<_>>();
+        let pending_selection = message
+            .pending_selection
+            .and_then(|selection| deserialize_selection(&buffer, selection));
+        let scroll_top_anchor = message
+            .scroll_top_anchor
+            .and_then(|anchor| deserialize_anchor(&buffer, anchor));
+        anyhow::Ok((selections, pending_selection, scroll_top_anchor))
+    })??;
+
+    // Wait until the buffer has received all of the operations referenced by
+    // the editor's new state.
+    this.update(cx, |editor, cx| {
+        editor.buffer.update(cx, |buffer, cx| {
+            buffer.wait_for_anchors(
+                selections
+                    .iter()
+                    .chain(pending_selection.as_ref())
+                    .flat_map(|selection| [selection.start, selection.end])
+                    .chain(scroll_top_anchor),
+                cx,
+            )
+        })
+    })?
+    .await?;
+
+    // Update the editor's state.
+    this.update(cx, |editor, cx| {
+        if !selections.is_empty() || pending_selection.is_some() {
+            editor.set_selections_from_remote(selections, pending_selection, cx);
+            editor.request_autoscroll_remotely(Autoscroll::newest(), cx);
+        } else if let Some(scroll_top_anchor) = scroll_top_anchor {
+            editor.set_scroll_anchor_remote(
+                ScrollAnchor {
+                    top_anchor: scroll_top_anchor,
+                    offset: vec2f(message.scroll_x, message.scroll_y),
+                },
+                cx,
+            );
+        }
+    })?;
+    Ok(())
 }
 
 fn serialize_excerpt(
@@ -538,18 +558,14 @@ impl Item for Editor {
         }
     }
 
-    fn tab_content(
+    fn tab_content<T: View>(
         &self,
         detail: Option<usize>,
         style: &theme::Tab,
         cx: &AppContext,
-    ) -> ElementBox {
+    ) -> AnyElement<T> {
         Flex::row()
-            .with_child(
-                Label::new(self.title(cx).to_string(), style.label.clone())
-                    .aligned()
-                    .boxed(),
-            )
+            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).aligned())
             .with_children(detail.and_then(|detail| {
                 let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                 let description = path.to_string_lossy();
@@ -560,11 +576,10 @@ impl Item for Editor {
                     )
                     .contained()
                     .with_style(style.description.container)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
                 )
             }))
-            .boxed()
+            .into_any()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {
@@ -623,7 +638,7 @@ impl Item for Editor {
         self.report_event("save editor", cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
-        cx.as_mut().spawn(|mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             format.await?;
 
             if buffers.len() == 1 {
@@ -687,7 +702,7 @@ impl Item for Editor {
             let transaction = reload_buffers.log_err().await;
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
-            });
+            })?;
             buffer.update(&mut cx, |buffer, _| {
                 if let Some(transaction) = transaction {
                     if !buffer.is_singleton() {
@@ -744,7 +759,7 @@ impl Item for Editor {
         ToolbarItemLocation::PrimaryLeft { flex: None }
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<ElementBox>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
@@ -764,15 +779,13 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
-        let filename_label = Label::new(filename, theme.workspace.breadcrumbs.default.text.clone());
-        let mut breadcrumbs = vec![filename_label.boxed()];
-        breadcrumbs.extend(symbols.into_iter().map(|symbol| {
-            Text::new(
-                symbol.text,
-                theme.workspace.breadcrumbs.default.text.clone(),
-            )
-            .with_highlights(symbol.highlight_ranges)
-            .boxed()
+        let mut breadcrumbs = vec![BreadcrumbText {
+            text: filename,
+            highlights: None,
+        }];
+        breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
+            text: symbol.text,
+            highlights: Some(symbol.highlight_ranges),
         }));
         Some(breadcrumbs)
     }
@@ -1095,16 +1108,16 @@ impl View for CursorPosition {
         "CursorPosition"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
             let mut text = format!("{},{}", position.row + 1, position.column + 1);
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }
-            Label::new(text, theme.cursor_position.clone()).boxed()
+            Label::new(text, theme.cursor_position.clone()).into_any()
         } else {
-            Empty::new().boxed()
+            Empty::new().into_any()
         }
     }
 }

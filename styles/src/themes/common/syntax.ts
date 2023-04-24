@@ -183,6 +183,7 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
         },
         predictive: {
             color: color.predictive,
+            italic: true,
         },
         emphasis: {
             color: color.emphasis,

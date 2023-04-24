@@ -174,23 +174,60 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             }
         }
     } else {
+        // Pass to the test function the number of app contexts that it needs,
+        // based on its parameter list.
+        let mut cx_vars = proc_macro2::TokenStream::new();
+        let mut cx_teardowns = proc_macro2::TokenStream::new();
         let mut inner_fn_args = proc_macro2::TokenStream::new();
-        for arg in inner_fn.sig.inputs.iter() {
+        for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
                 if let Type::Path(ty) = &*arg.ty {
                     let last_segment = ty.path.segments.last();
 
                     if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
                         inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                        continue;
                     }
-                } else {
-                    inner_fn_args.extend(quote!(cx,));
+                } else if let Type::Reference(ty) = &*arg.ty {
+                    if let Type::Path(ty) = &*ty.elem {
+                        let last_segment = ty.path.segments.last();
+                        match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                            Some("AppContext") => {
+                                inner_fn_args.extend(quote!(cx,));
+                                continue;
+                            }
+                            Some("TestAppContext") => {
+                                let first_entity_id = ix * 100_000;
+                                let cx_varname = format_ident!("cx_{}", ix);
+                                cx_vars.extend(quote!(
+                                    let mut #cx_varname = #namespace::TestAppContext::new(
+                                        foreground_platform.clone(),
+                                        cx.platform().clone(),
+                                        deterministic.build_foreground(#ix),
+                                        deterministic.build_background(),
+                                        cx.font_cache().clone(),
+                                        cx.leak_detector(),
+                                        #first_entity_id,
+                                        stringify!(#outer_fn_name).to_string(),
+                                    );
+                                ));
+                                cx_teardowns.extend(quote!(
+                                    #cx_varname.update(|cx| cx.remove_all_windows());
+                                    deterministic.run_until_parked();
+                                    #cx_varname.update(|cx| cx.clear_globals());
+                                ));
+                                inner_fn_args.extend(quote!(&mut #cx_varname,));
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                 }
-            } else {
-                return TokenStream::from(
-                    syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
-                );
             }
+
+            return TokenStream::from(
+                syn::Error::new_spanned(arg, "invalid argument").into_compile_error(),
+            );
         }
 
         parse_quote! {
@@ -203,7 +240,11 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #starting_seed as u64,
                     #max_retries,
                     #detect_nondeterminism,
-                    &mut |cx, _, _, seed| #inner_fn_name(#inner_fn_args),
+                    &mut |cx, foreground_platform, deterministic, seed| {
+                        #cx_vars
+                        #inner_fn_name(#inner_fn_args);
+                        #cx_teardowns
+                    },
                     #on_failure_fn_name,
                     stringify!(#outer_fn_name).to_string(),
                 );

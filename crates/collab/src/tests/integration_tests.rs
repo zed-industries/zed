@@ -6,8 +6,9 @@ use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::HashSet;
 use editor::{
-    ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo,
-    Rename, ToOffset, ToggleCodeActions, Undo,
+    test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
+    ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions,
+    Undo,
 };
 use fs::{FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
@@ -15,11 +16,13 @@ use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, ModelHandle, TestAppContext,
     ViewHandle,
 };
+use indoc::indoc;
 use language::{
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
+use lsp::LanguageServerId;
 use project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
@@ -1467,7 +1470,8 @@ async fn test_host_disconnect(
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let (_, workspace_b) = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
+    let (window_id_b, workspace_b) =
+        cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "b.txt"), None, true, cx)
@@ -1476,12 +1480,9 @@ async fn test_host_disconnect(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
-    cx_b.read(|cx| {
-        assert_eq!(
-            cx.focused_view_id(workspace_b.window_id()),
-            Some(editor_b.id())
-        );
-    });
+    assert!(cx_b
+        .read_window(window_id_b, |cx| editor_b.is_focused(cx))
+        .unwrap());
     editor_b.update(cx_b, |editor, cx| editor.insert("X", cx));
     assert!(cx_b.is_window_edited(workspace_b.window_id()));
 
@@ -1495,8 +1496,8 @@ async fn test_host_disconnect(
     assert!(worktree_a.read_with(cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
-    cx_b.read(|cx| {
-        assert_eq!(cx.focused_view_id(workspace_b.window_id()), None);
+    cx_b.read_window(window_id_b, |cx| {
+        assert_eq!(cx.focused_view_id(), None);
     });
     assert!(!cx_b.is_window_edited(workspace_b.window_id()));
 
@@ -3042,6 +3043,104 @@ async fn test_editing_while_guest_opens_buffer(
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), text));
 }
 
+#[gpui::test]
+async fn test_newline_above_or_below_does_not_move_guest_cursor(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree("/dir", json!({ "a.txt": "Some text\n" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+    // Open a buffer as client A
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+    let (_, window_a) = cx_a.add_window(|_| EmptyView);
+    let editor_a = cx_a.add_view(&window_a, |cx| {
+        Editor::for_buffer(buffer_a, Some(project_a), cx)
+    });
+    let mut editor_cx_a = EditorTestContext {
+        cx: cx_a,
+        window_id: window_a.id(),
+        editor: editor_a,
+    };
+
+    // Open a buffer as client B
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .await
+        .unwrap();
+    let (_, window_b) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(&window_b, |cx| {
+        Editor::for_buffer(buffer_b, Some(project_b), cx)
+    });
+    let mut editor_cx_b = EditorTestContext {
+        cx: cx_b,
+        window_id: window_b.id(),
+        editor: editor_b,
+    };
+
+    // Test newline above
+    editor_cx_a.set_selections_state(indoc! {"
+        Some textˇ
+    "});
+    editor_cx_b.set_selections_state(indoc! {"
+        Some textˇ
+    "});
+    editor_cx_a.update_editor(|editor, cx| editor.newline_above(&editor::NewlineAbove, cx));
+    deterministic.run_until_parked();
+    editor_cx_a.assert_editor_state(indoc! {"
+        ˇ
+        Some text
+    "});
+    editor_cx_b.assert_editor_state(indoc! {"
+
+        Some textˇ
+    "});
+
+    // Test newline below
+    editor_cx_a.set_selections_state(indoc! {"
+
+        Some textˇ
+    "});
+    editor_cx_b.set_selections_state(indoc! {"
+
+        Some textˇ
+    "});
+    editor_cx_a.update_editor(|editor, cx| editor.newline_below(&editor::NewlineBelow, cx));
+    deterministic.run_until_parked();
+    editor_cx_a.assert_editor_state(indoc! {"
+
+        Some text
+        ˇ
+    "});
+    editor_cx_b.assert_editor_state(indoc! {"
+
+        Some textˇ
+
+    "});
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_leaving_worktree_while_opening_buffer(
     deterministic: Arc<Deterministic>,
@@ -3377,6 +3476,7 @@ async fn test_collaborating_with_diagnostics(
                     worktree_id,
                     path: Arc::from(Path::new("a.rs")),
                 },
+                LanguageServerId(0),
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 0,
@@ -3412,6 +3512,7 @@ async fn test_collaborating_with_diagnostics(
                 worktree_id,
                 path: Arc::from(Path::new("a.rs")),
             },
+            LanguageServerId(0),
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
@@ -3452,10 +3553,10 @@ async fn test_collaborating_with_diagnostics(
                     worktree_id,
                     path: Arc::from(Path::new("a.rs")),
                 },
+                LanguageServerId(0),
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 1,
-                    ..Default::default()
                 },
             )]
         );
@@ -3468,10 +3569,10 @@ async fn test_collaborating_with_diagnostics(
                     worktree_id,
                     path: Arc::from(Path::new("a.rs")),
                 },
+                LanguageServerId(0),
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 1,
-                    ..Default::default()
                 },
             )]
         );
@@ -5862,10 +5963,17 @@ async fn test_basic_following(
 
     // Client A updates their selections in those editors
     editor_a1.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([0..1]))
+        editor.handle_input("a", cx);
+        editor.handle_input("b", cx);
+        editor.handle_input("c", cx);
+        editor.select_left(&Default::default(), cx);
+        assert_eq!(editor.selections.ranges(cx), vec![3..2]);
     });
     editor_a2.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([2..3]))
+        editor.handle_input("d", cx);
+        editor.handle_input("e", cx);
+        editor.select_left(&Default::default(), cx);
+        assert_eq!(editor.selections.ranges(cx), vec![2..1]);
     });
 
     // When client B starts following client A, all visible view states are replicated to client B.
@@ -5877,6 +5985,27 @@ async fn test_basic_following(
         })
         .await
         .unwrap();
+
+    cx_c.foreground().run_until_parked();
+    let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+    });
+    assert_eq!(
+        cx_b.read(|cx| editor_b2.project_path(cx)),
+        Some((worktree_id, "2.txt").into())
+    );
+    assert_eq!(
+        editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        vec![2..1]
+    );
+    assert_eq!(
+        editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
+        vec![3..2]
+    );
 
     cx_c.foreground().run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
@@ -6033,26 +6162,6 @@ async fn test_basic_following(
         });
     }
 
-    let editor_b2 = workspace_b.read_with(cx_b, |workspace, cx| {
-        workspace
-            .active_item(cx)
-            .unwrap()
-            .downcast::<Editor>()
-            .unwrap()
-    });
-    assert_eq!(
-        cx_b.read(|cx| editor_b2.project_path(cx)),
-        Some((worktree_id, "2.txt").into())
-    );
-    assert_eq!(
-        editor_b2.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![2..3]
-    );
-    assert_eq!(
-        editor_b1.read_with(cx_b, |editor, cx| editor.selections.ranges(cx)),
-        vec![0..1]
-    );
-
     // When client A activates a different editor, client B does so as well.
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.activate_item(&editor_a1, cx)
@@ -6117,7 +6226,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());
@@ -6127,7 +6237,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_back(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b2.id());
@@ -6137,7 +6248,8 @@ async fn test_basic_following(
         .update(cx_a, |workspace, cx| {
             workspace::Pane::go_forward(workspace, None, cx)
         })
-        .await;
+        .await
+        .unwrap();
     deterministic.run_until_parked();
     workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(workspace.active_item(cx).unwrap().id(), editor_b1.id());

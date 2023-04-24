@@ -3,7 +3,7 @@ use std::path::Path;
 use fuzzy::StringMatch;
 use gpui::{
     elements::{Label, LabelStyle},
-    Element, ElementBox,
+    AnyElement, Element, View,
 };
 use workspace::WorkspaceLocation;
 
@@ -42,10 +42,10 @@ impl HighlightedText {
         }
     }
 
-    pub fn render(self, style: impl Into<LabelStyle>) -> ElementBox {
+    pub fn render<V: View>(self, style: impl Into<LabelStyle>) -> AnyElement<V> {
         Label::new(self.text, style)
             .with_highlights(self.highlight_positions)
-            .boxed()
+            .into_any()
     }
 }
 

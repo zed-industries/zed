@@ -261,7 +261,7 @@ pub fn show_link_definition(
                             hide_link_definition(this, cx);
                         }
                     }
-                })
+                })?;
             }
 
             Ok::<_, anyhow::Error>(())

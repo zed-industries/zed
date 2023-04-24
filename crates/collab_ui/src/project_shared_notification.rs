@@ -6,7 +6,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
-    AppContext, Entity, RenderContext, View, ViewContext,
+    AppContext, Entity, View, ViewContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -94,24 +94,21 @@ impl ProjectSharedNotification {
     }
 
     fn join(&mut self, _: &JoinProject, cx: &mut ViewContext<Self>) {
-        let window_id = cx.window_id();
-        cx.remove_window(window_id);
+        cx.remove_window();
         cx.propagate_action();
     }
 
     fn dismiss(&mut self, _: &DismissProject, cx: &mut ViewContext<Self>) {
-        let window_id = cx.window_id();
-        cx.remove_window(window_id);
+        cx.remove_window();
     }
 
-    fn render_owner(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_owner(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme.project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
                     .with_style(theme.owner_avatar)
                     .aligned()
-                    .boxed()
             }))
             .with_child(
                 Flex::column()
@@ -121,8 +118,7 @@ impl ProjectSharedNotification {
                             theme.owner_username.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.owner_username.container)
-                        .boxed(),
+                        .with_style(theme.owner_username.container),
                     )
                     .with_child(
                         Label::new(
@@ -137,8 +133,7 @@ impl ProjectSharedNotification {
                             theme.message.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.message.container)
-                        .boxed(),
+                        .with_style(theme.message.container),
                     )
                     .with_children(if self.worktree_root_names.is_empty() {
                         None
@@ -149,22 +144,20 @@ impl ProjectSharedNotification {
                                 theme.worktree_roots.text.clone(),
                             )
                             .contained()
-                            .with_style(theme.worktree_roots.container)
-                            .boxed(),
+                            .with_style(theme.worktree_roots.container),
                         )
                     })
                     .contained()
                     .with_style(theme.owner_metadata)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
             )
             .contained()
             .with_style(theme.owner_container)
             .flex(1., true)
-            .boxed()
+            .into_any()
     }
 
-    fn render_buttons(&self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_buttons(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum Open {}
         enum Dismiss {}
 
@@ -173,39 +166,35 @@ impl ProjectSharedNotification {
 
         Flex::column()
             .with_child(
-                MouseEventHandler::<Open>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Open, Self>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
                     Label::new("Open", theme.open_button.text.clone())
                         .aligned()
                         .contained()
                         .with_style(theme.open_button.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(JoinProject {
                         project_id,
                         follow_user_id: owner_user_id,
                     });
                 })
-                .flex(1., true)
-                .boxed(),
+                .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Dismiss>::new(0, cx, |_, cx| {
+                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, cx| {
                     let theme = &cx.global::<Settings>().theme.project_shared_notification;
                     Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()
                         .contained()
                         .with_style(theme.dismiss_button.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(DismissProject);
                 })
-                .flex(1., true)
-                .boxed(),
+                .flex(1., true),
             )
             .constrained()
             .with_width(
@@ -214,7 +203,7 @@ impl ProjectSharedNotification {
                     .project_shared_notification
                     .button_width,
             )
-            .boxed()
+            .into_any()
     }
 }
 
@@ -227,7 +216,7 @@ impl View for ProjectSharedNotification {
         "ProjectSharedNotification"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> gpui::ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::AnyElement<Self> {
         let background = cx
             .global::<Settings>()
             .theme
@@ -239,6 +228,6 @@ impl View for ProjectSharedNotification {
             .contained()
             .with_background_color(background)
             .expanded()
-            .boxed()
+            .into_any()
     }
 }

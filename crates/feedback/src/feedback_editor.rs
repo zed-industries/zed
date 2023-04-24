@@ -13,8 +13,8 @@ use gpui::{
     actions,
     elements::{ChildView, Flex, Label, ParentElement, Svg},
     platform::PromptLevel,
-    serde_json, AnyViewHandle, AppContext, Element, ElementBox, Entity, ModelHandle, RenderContext,
-    Task, View, ViewContext, ViewHandle,
+    serde_json, AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View,
+    ViewContext, ViewHandle,
 };
 use isahc::Request;
 use language::Buffer;
@@ -134,24 +134,21 @@ impl FeedbackEditor {
             if answer == Some(0) {
                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
                     Ok(_) => {
-                        cx.update(|cx| {
-                            this.update(cx, |_, cx| {
-                                cx.dispatch_action(workspace::CloseActiveItem);
-                            })
-                        });
+                        this.update(&mut cx, |_, cx| {
+                            cx.dispatch_action(workspace::CloseActiveItem);
+                        })
+                        .log_err();
                     }
                     Err(error) => {
                         log::error!("{}", error);
-
-                        cx.update(|cx| {
-                            this.update(cx, |_, cx| {
-                                cx.prompt(
-                                    PromptLevel::Critical,
-                                    FEEDBACK_SUBMISSION_ERROR_TEXT,
-                                    &["OK"],
-                                );
-                            })
-                        });
+                        this.update(&mut cx, |_, cx| {
+                            cx.prompt(
+                                PromptLevel::Critical,
+                                FEEDBACK_SUBMISSION_ERROR_TEXT,
+                                &["OK"],
+                            );
+                        })
+                        .log_err();
                     }
                 }
             }
@@ -221,10 +218,10 @@ impl FeedbackEditor {
                             .add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
                         workspace.add_item(Box::new(feedback_editor), cx);
                     })
-                })
-                .await;
+                })?
+                .await
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 }
 
@@ -233,8 +230,8 @@ impl View for FeedbackEditor {
         "FeedbackEditor"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(&self.editor, cx).boxed()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        ChildView::new(&self.editor, cx).into_any()
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -253,7 +250,12 @@ impl Item for FeedbackEditor {
         Some("Send Feedback".into())
     }
 
-    fn tab_content(&self, _: Option<usize>, style: &theme::Tab, _: &AppContext) -> ElementBox {
+    fn tab_content<T: View>(
+        &self,
+        _: Option<usize>,
+        style: &theme::Tab,
+        _: &AppContext,
+    ) -> AnyElement<T> {
         Flex::row()
             .with_child(
                 Svg::new("icons/feedback_16.svg")
@@ -262,16 +264,14 @@ impl Item for FeedbackEditor {
                     .with_width(style.type_icon_width)
                     .aligned()
                     .contained()
-                    .with_margin_right(style.spacing)
-                    .boxed(),
+                    .with_margin_right(style.spacing),
             )
             .with_child(
                 Label::new("Send Feedback", style.label.clone())
                     .aligned()
-                    .contained()
-                    .boxed(),
+                    .contained(),
             )
-            .boxed()
+            .into_any()
     }
 
     fn for_each_project_item(&self, cx: &AppContext, f: &mut dyn FnMut(usize, &dyn project::Item)) {

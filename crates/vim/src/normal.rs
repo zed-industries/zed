@@ -16,7 +16,7 @@ use editor::{
     scroll::{autoscroll::Autoscroll, scroll_amount::ScrollAmount},
     Anchor, Bias, ClipboardSelection, DisplayPoint, Editor,
 };
-use gpui::{actions, impl_actions, AppContext, ViewContext};
+use gpui::{actions, impl_actions, AppContext, ViewContext, WindowContext};
 use language::{AutoindentMode, Point, SelectionGoal};
 use log::error;
 use serde::Deserialize;
@@ -94,7 +94,7 @@ pub fn normal_motion(
     motion: Motion,
     operator: Option<Operator>,
     times: usize,
-    cx: &mut AppContext,
+    cx: &mut WindowContext,
 ) {
     Vim::update(cx, |vim, cx| {
         match operator {
@@ -110,7 +110,7 @@ pub fn normal_motion(
     });
 }
 
-pub fn normal_object(object: Object, cx: &mut AppContext) {
+pub fn normal_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         match vim.state.operator_stack.pop() {
             Some(Operator::Object { around }) => match vim.state.operator_stack.pop() {
@@ -129,7 +129,7 @@ pub fn normal_object(object: Object, cx: &mut AppContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut AppContext) {
+fn move_cursor(vim: &mut Vim, motion: Motion, times: usize, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -251,7 +251,7 @@ fn paste(_: &mut Workspace, _: &Paste, cx: &mut ViewContext<Workspace>) {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                if let Some(item) = cx.as_mut().read_from_clipboard() {
+                if let Some(item) = cx.read_from_clipboard() {
                     let mut clipboard_text = Cow::Borrowed(item.text());
                     if let Some(mut clipboard_selections) =
                         item.metadata::<Vec<ClipboardSelection>>()
@@ -424,7 +424,7 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
     }
 }
 
-pub(crate) fn normal_replace(text: Arc<str>, cx: &mut AppContext) {
+pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -570,18 +570,18 @@ mod test {
 
         cx.assert_all(indoc! {"
                 The ˇquick
-                
+
                 brown fox jumps
                 overˇ the lazy doˇg"})
             .await;
         cx.assert(indoc! {"
             The quiˇck
-            
+
             brown"})
             .await;
         cx.assert(indoc! {"
             The quiˇck
-            
+
             "})
             .await;
     }
@@ -611,16 +611,16 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await.binding(["e"]);
         cx.assert_all(indoc! {"
             Thˇe quicˇkˇ-browˇn
-            
-            
+
+
             fox_jumpˇs oveˇr
             thˇe"})
             .await;
         let mut cx = cx.binding(["shift-e"]);
         cx.assert_all(indoc! {"
             Thˇe quicˇkˇ-browˇn
-            
-            
+
+
             fox_jumpˇs oveˇr
             thˇe"})
             .await;
@@ -669,7 +669,7 @@ mod test {
             ["g", "g"],
             indoc! {"
                 The qˇuick
-            
+
                 brown fox jumps
                 over ˇthe laˇzy dog"},
         )
@@ -677,8 +677,8 @@ mod test {
         cx.assert_binding_matches(
             ["g", "g"],
             indoc! {"
-                
-            
+
+
                 brown fox jumps
                 over the laˇzy dog"},
         )
@@ -687,7 +687,7 @@ mod test {
             ["2", "g", "g"],
             indoc! {"
                 ˇ
-                
+
                 brown fox jumps
                 over the lazydog"},
         )
@@ -701,7 +701,7 @@ mod test {
             ["shift-g"],
             indoc! {"
                 The qˇuick
-                
+
                 brown fox jumps
                 over ˇthe laˇzy dog"},
         )
@@ -709,8 +709,8 @@ mod test {
         cx.assert_binding_matches(
             ["shift-g"],
             indoc! {"
-                
-                
+
+
                 brown fox jumps
                 over the laˇzy dog"},
         )
@@ -719,7 +719,7 @@ mod test {
             ["2", "shift-g"],
             indoc! {"
                 ˇ
-                
+
                 brown fox jumps
                 over the lazydog"},
         )
@@ -999,7 +999,7 @@ mod test {
             let test_case = indoc! {"
                 ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
                 ˇ    ˇbˇaaˇa ˇbˇbˇb
-                ˇ   
+                ˇ
                 ˇb
             "};
 
@@ -1017,9 +1017,10 @@ mod test {
         let test_case = indoc! {"
             ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
             ˇ    ˇbˇaaˇa ˇbˇbˇb
-            ˇ   
+            ˇ•••
             ˇb
-            "};
+            "
+        };
 
         for count in 1..=3 {
             cx.assert_binding_matches_all([&count.to_string(), "shift-f", "b"], test_case)

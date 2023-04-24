@@ -131,16 +131,21 @@ impl SerializedPaneGroup {
                 ))
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
-                let pane = workspace.update(cx, |workspace, cx| workspace.add_pane(cx));
+                let pane = workspace
+                    .update(cx, |workspace, cx| workspace.add_pane(cx))
+                    .log_err()?;
                 let active = serialized_pane.active;
                 serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
-                    .await;
+                    .await
+                    .log_err()?;
 
                 if pane.read_with(cx, |pane, _| pane.items_len() != 0) {
                     Some((Member::Pane(pane.clone()), active.then(|| pane)))
                 } else {
-                    workspace.update(cx, |workspace, cx| workspace.remove_pane(pane, cx));
+                    workspace
+                        .update(cx, |workspace, cx| workspace.remove_pane(pane, cx))
+                        .log_err()?;
                     None
                 }
             }
@@ -166,7 +171,7 @@ impl SerializedPane {
         workspace_id: WorkspaceId,
         workspace: &ViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
-    ) {
+    ) -> Result<()> {
         let mut active_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
@@ -186,14 +191,14 @@ impl SerializedPane {
                             item.kind
                         )))
                     }
-                })
+                })?
                 .await
                 .log_err();
 
             if let Some(item_handle) = item_handle {
                 workspace.update(cx, |workspace, cx| {
                     Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);
-                })
+                })?;
             }
 
             if item.active {
@@ -204,8 +209,10 @@ impl SerializedPane {
         if let Some(active_item_index) = active_item_index {
             pane_handle.update(cx, |pane, cx| {
                 pane.activate_item(active_item_index, false, false, cx);
-            })
+            })?;
         }
+
+        anyhow::Ok(())
     }
 }
 

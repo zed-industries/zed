@@ -16,7 +16,7 @@ use gpui::{
     impl_internal_actions,
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, ModelHandle, RenderContext, Subscription, View, ViewContext,
+    AppContext, Entity, ImageData, ModelHandle, SceneBuilder, Subscription, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
@@ -68,11 +68,11 @@ impl View for CollabTitlebarItem {
         "CollabTitlebarItem"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let workspace = if let Some(workspace) = self.workspace.upgrade(cx) {
             workspace
         } else {
-            return Empty::new().boxed();
+            return Empty::new().into_any();
         };
 
         let project = workspace.read(cx).project().read(cx);
@@ -97,8 +97,7 @@ impl View for CollabTitlebarItem {
                 .contained()
                 .with_margin_right(theme.workspace.titlebar.item_spacing)
                 .aligned()
-                .left()
-                .boxed(),
+                .left(),
         );
 
         let user = workspace.read(cx).user_store().read(cx).current_user();
@@ -128,9 +127,9 @@ impl View for CollabTitlebarItem {
         }
 
         Stack::new()
-            .with_child(left_container.boxed())
-            .with_child(right_container.aligned().right().boxed())
-            .boxed()
+            .with_child(left_container)
+            .with_child(right_container.aligned().right())
+            .into_any()
     }
 }
 
@@ -294,13 +293,13 @@ impl CollabTitlebarItem {
                                     Color::transparent_black(),
                                 )
                             }))
-                            .with_child(
-                                Label::new(user.github_login.clone(), item_style.label.clone())
-                                    .boxed(),
-                            )
+                            .with_child(Label::new(
+                                user.github_login.clone(),
+                                item_style.label.clone(),
+                            ))
                             .contained()
                             .with_style(item_style.container)
-                            .boxed()
+                            .into_any()
                     })),
                     ContextMenuItem::item("Sign out", SignOut),
                     ContextMenuItem::item("Send Feedback", feedback::feedback_editor::GiveFeedback),
@@ -325,8 +324,8 @@ impl CollabTitlebarItem {
     fn render_toggle_contacts_button(
         &self,
         theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
 
         let badge = if self
@@ -345,14 +344,13 @@ impl CollabTitlebarItem {
                     .contained()
                     .with_margin_left(titlebar.toggle_contacts_button.default.icon_width)
                     .with_margin_top(titlebar.toggle_contacts_button.default.icon_width)
-                    .aligned()
-                    .boxed(),
+                    .aligned(),
             )
         };
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<ToggleContactsMenu>::new(0, cx, |state, _| {
+                MouseEventHandler::<ToggleContactsMenu, Self>::new(0, cx, |state, _| {
                     let style = titlebar
                         .toggle_contacts_button
                         .style_for(state, self.contacts_popover.is_some());
@@ -366,32 +364,30 @@ impl CollabTitlebarItem {
                         .with_height(style.button_width)
                         .contained()
                         .with_style(style.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(ToggleContactsMenu);
                 })
-                .with_tooltip::<ToggleContactsMenu, _>(
+                .with_tooltip::<ToggleContactsMenu>(
                     0,
                     "Show contacts menu".into(),
                     Some(Box::new(ToggleContactsMenu)),
                     theme.tooltip.clone(),
                     cx,
-                )
-                .boxed(),
+                ),
             )
             .with_children(badge)
             .with_children(self.render_contacts_popover_host(titlebar, cx))
-            .boxed()
+            .into_any()
     }
 
     fn render_toggle_screen_sharing_button(
         &self,
         theme: &Theme,
         room: &ModelHandle<Room>,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
@@ -403,7 +399,7 @@ impl CollabTitlebarItem {
         }
 
         let titlebar = &theme.workspace.titlebar;
-        MouseEventHandler::<ToggleScreenSharing>::new(0, cx, |state, _| {
+        MouseEventHandler::<ToggleScreenSharing, Self>::new(0, cx, |state, _| {
             let style = titlebar.call_control.style_for(state, false);
             Svg::new(icon)
                 .with_color(style.color)
@@ -415,13 +411,12 @@ impl CollabTitlebarItem {
                 .with_height(style.button_width)
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, cx| {
+        .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(ToggleScreenSharing);
         })
-        .with_tooltip::<ToggleScreenSharing, _>(
+        .with_tooltip::<ToggleScreenSharing>(
             0,
             tooltip.into(),
             Some(Box::new(ToggleScreenSharing)),
@@ -429,15 +424,15 @@ impl CollabTitlebarItem {
             cx,
         )
         .aligned()
-        .boxed()
+        .into_any()
     }
 
     fn render_in_call_share_unshare_button(
         &self,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
         let project = workspace.read(cx).project();
         if project.read(cx).is_remote() {
             return None;
@@ -457,44 +452,46 @@ impl CollabTitlebarItem {
         Some(
             Stack::new()
                 .with_child(
-                    MouseEventHandler::<ShareUnshare>::new(0, cx, |state, _| {
+                    MouseEventHandler::<ShareUnshare, Self>::new(0, cx, |state, _| {
                         //TODO: Ensure this button has consistant width for both text variations
                         let style = titlebar.share_button.style_for(state, false);
                         Label::new(label, style.text.clone())
                             .contained()
                             .with_style(style.container)
-                            .boxed()
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, cx| {
+                    .on_click(MouseButton::Left, move |_, _, cx| {
                         if is_shared {
                             cx.dispatch_action(UnshareProject);
                         } else {
                             cx.dispatch_action(ShareProject);
                         }
                     })
-                    .with_tooltip::<ShareUnshare, _>(
+                    .with_tooltip::<ShareUnshare>(
                         0,
                         tooltip.to_owned(),
                         None,
                         theme.tooltip.clone(),
                         cx,
-                    )
-                    .boxed(),
+                    ),
                 )
                 .aligned()
                 .contained()
                 .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .boxed(),
+                .into_any(),
         )
     }
 
-    fn render_user_menu_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_user_menu_button(
+        &self,
+        theme: &Theme,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<ToggleUserMenu>::new(0, cx, |state, _| {
+                MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
                     let style = titlebar.call_control.style_for(state, false);
                     Svg::new("icons/ellipsis_14.svg")
                         .with_color(style.color)
@@ -506,13 +503,12 @@ impl CollabTitlebarItem {
                         .with_height(style.button_width)
                         .contained()
                         .with_style(style.container)
-                        .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(ToggleUserMenu);
                 })
-                .with_tooltip::<ToggleUserMenu, _>(
+                .with_tooltip::<ToggleUserMenu>(
                     0,
                     "Toggle user menu".to_owned(),
                     Some(Box::new(ToggleUserMenu)),
@@ -520,49 +516,46 @@ impl CollabTitlebarItem {
                     cx,
                 )
                 .contained()
-                .with_margin_left(theme.workspace.titlebar.item_spacing)
-                .boxed(),
+                .with_margin_left(theme.workspace.titlebar.item_spacing),
             )
             .with_child(
                 ChildView::new(&self.user_menu, cx)
                     .aligned()
                     .bottom()
-                    .right()
-                    .boxed(),
+                    .right(),
             )
-            .boxed()
+            .into_any()
     }
 
-    fn render_sign_in_button(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
-        MouseEventHandler::<SignIn>::new(0, cx, |state, _| {
+        MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
             let style = titlebar.sign_in_prompt.style_for(state, false);
             Label::new("Sign In", style.text.clone())
                 .contained()
                 .with_style(style.container)
-                .boxed()
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, cx| {
+        .on_click(MouseButton::Left, move |_, _, cx| {
             cx.dispatch_action(SignIn);
         })
-        .boxed()
+        .into_any()
     }
 
     fn render_contacts_popover_host<'a>(
         &'a self,
         _theme: &'a theme::Titlebar,
-        cx: &'a RenderContext<Self>,
-    ) -> Option<ElementBox> {
+        cx: &'a ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
         self.contacts_popover.as_ref().map(|popover| {
-            Overlay::new(ChildView::new(popover, cx).boxed())
+            Overlay::new(ChildView::new(popover, cx))
                 .with_fit_mode(OverlayFitMode::SwitchAnchor)
                 .with_anchor_corner(AnchorCorner::TopRight)
                 .with_z_index(999)
                 .aligned()
                 .bottom()
                 .right()
-                .boxed()
+                .into_any()
         })
     }
 
@@ -571,8 +564,8 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
         room: &ModelHandle<Room>,
-        cx: &mut RenderContext<Self>,
-    ) -> Vec<ElementBox> {
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<Container<Self>> {
         let mut participants = room
             .read(cx)
             .remote_participants()
@@ -600,8 +593,7 @@ impl CollabTitlebarItem {
                         theme,
                         cx,
                     ))
-                    .with_margin_right(theme.workspace.titlebar.face_pile_spacing)
-                    .boxed(),
+                    .with_margin_right(theme.workspace.titlebar.face_pile_spacing),
                 )
             })
             .collect()
@@ -613,8 +605,8 @@ impl CollabTitlebarItem {
         theme: &Theme,
         user: &Arc<User>,
         peer_id: PeerId,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let replica_id = workspace.read(cx).project().read(cx).replica_id();
         Container::new(self.render_face_pile(
             user,
@@ -626,7 +618,7 @@ impl CollabTitlebarItem {
             cx,
         ))
         .with_margin_right(theme.workspace.titlebar.item_spacing)
-        .boxed()
+        .into_any()
     }
 
     fn render_face_pile(
@@ -637,8 +629,8 @@ impl CollabTitlebarItem {
         location: Option<ParticipantLocation>,
         workspace: &ViewHandle<Workspace>,
         theme: &Theme,
-        cx: &mut RenderContext<Self>,
-    ) -> ElementBox {
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
         let project_id = workspace.read(cx).project().read(cx).remote_id();
         let room = ActiveCall::global(cx).read(cx).room();
         let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
@@ -730,7 +722,7 @@ impl CollabTitlebarItem {
                     }
                 }
 
-                container.boxed()
+                container
             }))
             .with_children((|| {
                 let replica_id = replica_id?;
@@ -741,56 +733,56 @@ impl CollabTitlebarItem {
                         .with_width(theme.workspace.titlebar.avatar_ribbon.width)
                         .with_height(theme.workspace.titlebar.avatar_ribbon.height)
                         .aligned()
-                        .bottom()
-                        .boxed(),
+                        .bottom(),
                 )
             })())
-            .boxed();
+            .into_any();
 
         if let Some(location) = location {
             if let Some(replica_id) = replica_id {
-                content =
-                    MouseEventHandler::<ToggleFollow>::new(replica_id.into(), cx, move |_, _| {
-                        content
-                    })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, cx| {
-                        cx.dispatch_action(ToggleFollow(peer_id))
-                    })
-                    .with_tooltip::<ToggleFollow, _>(
-                        peer_id.as_u64() as usize,
-                        if is_being_followed {
-                            format!("Unfollow {}", user.github_login)
-                        } else {
-                            format!("Follow {}", user.github_login)
-                        },
-                        Some(Box::new(FollowNextCollaborator)),
-                        theme.tooltip.clone(),
-                        cx,
-                    )
-                    .boxed();
+                content = MouseEventHandler::<ToggleFollow, Self>::new(
+                    replica_id.into(),
+                    cx,
+                    move |_, _| content,
+                )
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, _, cx| {
+                    cx.dispatch_action(ToggleFollow(peer_id))
+                })
+                .with_tooltip::<ToggleFollow>(
+                    peer_id.as_u64() as usize,
+                    if is_being_followed {
+                        format!("Unfollow {}", user.github_login)
+                    } else {
+                        format!("Follow {}", user.github_login)
+                    },
+                    Some(Box::new(FollowNextCollaborator)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any();
             } else if let ParticipantLocation::SharedProject { project_id } = location {
                 let user_id = user.id;
-                content = MouseEventHandler::<JoinProject>::new(
+                content = MouseEventHandler::<JoinProject, Self>::new(
                     peer_id.as_u64() as usize,
                     cx,
                     move |_, _| content,
                 )
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     cx.dispatch_action(JoinProject {
                         project_id,
                         follow_user_id: user_id,
                     })
                 })
-                .with_tooltip::<JoinProject, _>(
+                .with_tooltip::<JoinProject>(
                     peer_id.as_u64() as usize,
                     format!("Follow {} into external project", user.github_login),
                     Some(Box::new(FollowNextCollaborator)),
                     theme.tooltip.clone(),
                     cx,
                 )
-                .boxed();
+                .into_any();
             }
         }
         content
@@ -800,7 +792,7 @@ impl CollabTitlebarItem {
         workspace: &ViewHandle<Workspace>,
         location: Option<ParticipantLocation>,
         mut style: AvatarStyle,
-        cx: &RenderContext<Self>,
+        cx: &ViewContext<Self>,
     ) -> AvatarStyle {
         if let Some(location) = location {
             if let ParticipantLocation::SharedProject { project_id } = location {
@@ -815,11 +807,11 @@ impl CollabTitlebarItem {
         style
     }
 
-    fn render_face(
+    fn render_face<V: View>(
         avatar: Arc<ImageData>,
         avatar_style: AvatarStyle,
         background_color: Color,
-    ) -> ElementBox {
+    ) -> AnyElement<V> {
         Image::from_data(avatar)
             .with_style(avatar_style.image)
             .aligned()
@@ -830,14 +822,14 @@ impl CollabTitlebarItem {
             .with_width(avatar_style.outer_width)
             .with_height(avatar_style.outer_width)
             .aligned()
-            .boxed()
+            .into_any()
     }
 
     fn render_connection_status(
         &self,
         status: &client::Status,
-        cx: &mut RenderContext<Self>,
-    ) -> Option<ElementBox> {
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
         enum ConnectionStatusButton {}
 
         let theme = &cx.global::<Settings>().theme.clone();
@@ -847,23 +839,17 @@ impl CollabTitlebarItem {
             | client::Status::Reauthenticating { .. }
             | client::Status::Reconnecting { .. }
             | client::Status::ReconnectionError { .. } => Some(
-                Container::new(
-                    Align::new(
-                        ConstrainedBox::new(
-                            Svg::new("icons/cloud_slash_12.svg")
-                                .with_color(theme.workspace.titlebar.offline_icon.color)
-                                .boxed(),
-                        )
-                        .with_width(theme.workspace.titlebar.offline_icon.width)
-                        .boxed(),
-                    )
-                    .boxed(),
-                )
-                .with_style(theme.workspace.titlebar.offline_icon.container)
-                .boxed(),
+                Svg::new("icons/cloud_slash_12.svg")
+                    .with_color(theme.workspace.titlebar.offline_icon.color)
+                    .constrained()
+                    .with_width(theme.workspace.titlebar.offline_icon.width)
+                    .aligned()
+                    .contained()
+                    .with_style(theme.workspace.titlebar.offline_icon.container)
+                    .into_any(),
             ),
             client::Status::UpgradeRequired => Some(
-                MouseEventHandler::<ConnectionStatusButton>::new(0, cx, |_, _| {
+                MouseEventHandler::<ConnectionStatusButton, Self>::new(0, cx, |_, _| {
                     Label::new(
                         "Please update Zed to collaborate",
                         theme.workspace.titlebar.outdated_warning.text.clone(),
@@ -871,13 +857,12 @@ impl CollabTitlebarItem {
                     .contained()
                     .with_style(theme.workspace.titlebar.outdated_warning.container)
                     .aligned()
-                    .boxed()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, cx| {
+                .on_click(MouseButton::Left, |_, _, cx| {
                     cx.dispatch_action(auto_update::Check);
                 })
-                .boxed(),
+                .into_any(),
             ),
             _ => None,
         }
@@ -894,7 +879,7 @@ impl AvatarRibbon {
     }
 }
 
-impl Element for AvatarRibbon {
+impl Element<CollabTitlebarItem> for AvatarRibbon {
     type LayoutState = ();
 
     type PaintState = ();
@@ -902,17 +887,20 @@ impl Element for AvatarRibbon {
     fn layout(
         &mut self,
         constraint: gpui::SizeConstraint,
-        _: &mut gpui::LayoutContext,
+        _: &mut CollabTitlebarItem,
+        _: &mut ViewContext<CollabTitlebarItem>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }
 
     fn paint(
         &mut self,
-        bounds: gpui::geometry::rect::RectF,
-        _: gpui::geometry::rect::RectF,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        _: RectF,
         _: &mut Self::LayoutState,
-        cx: &mut gpui::PaintContext,
+        _: &mut CollabTitlebarItem,
+        _: &mut ViewContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let mut path = PathBuilder::new();
         path.reset(bounds.lower_left());
@@ -923,7 +911,7 @@ impl Element for AvatarRibbon {
         path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
         path.curve_to(bounds.lower_right(), bounds.upper_right());
         path.line_to(bounds.lower_left());
-        cx.scene.push_path(path.build(self.color, None));
+        scene.push_path(path.build(self.color, None));
     }
 
     fn rect_for_text_range(
@@ -933,17 +921,19 @@ impl Element for AvatarRibbon {
         _: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &gpui::MeasurementContext,
+        _: &CollabTitlebarItem,
+        _: &ViewContext<CollabTitlebarItem>,
     ) -> Option<RectF> {
         None
     }
 
     fn debug(
         &self,
-        bounds: gpui::geometry::rect::RectF,
+        bounds: RectF,
         _: &Self::LayoutState,
         _: &Self::PaintState,
-        _: &gpui::DebugContext,
+        _: &CollabTitlebarItem,
+        _: &ViewContext<CollabTitlebarItem>,
     ) -> gpui::json::Value {
         json::json!({
             "type": "AvatarRibbon",

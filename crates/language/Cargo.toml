@@ -50,7 +50,7 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 similar = "1.3"
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }
 smol = "1.2"
 tree-sitter = "0.20"
 tree-sitter-rust = { version = "*", optional = true }

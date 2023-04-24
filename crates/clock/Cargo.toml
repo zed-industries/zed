@@ -9,4 +9,4 @@ path = "src/clock.rs"
 doctest = false
 
 [dependencies]
-smallvec = { version = "1.6", features = ["union"] }
+smallvec = { workspace = true }

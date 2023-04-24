@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
-    ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyElement, AnyViewHandle,
+    AppContext, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -21,7 +21,7 @@ pub trait ToolbarItemView: View {
         current_location
     }
 
-    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut AppContext) {}
+    fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
 }
 
 trait ToolbarItemViewHandle {
@@ -30,9 +30,9 @@ trait ToolbarItemViewHandle {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> ToolbarItemLocation;
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext);
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -59,7 +59,7 @@ impl View for Toolbar {
         "Toolbar"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme.workspace.toolbar;
 
         let mut primary_left_items = Vec::new();
@@ -77,9 +77,9 @@ impl View for Toolbar {
                         .contained()
                         .with_margin_right(spacing);
                     if let Some((flex, expanded)) = flex {
-                        primary_left_items.push(left_item.flex(flex, expanded).boxed());
+                        primary_left_items.push(left_item.flex(flex, expanded).into_any());
                     } else {
-                        primary_left_items.push(left_item.boxed());
+                        primary_left_items.push(left_item.into_any());
                     }
                 }
 
@@ -90,9 +90,9 @@ impl View for Toolbar {
                         .with_margin_left(spacing)
                         .flex_float();
                     if let Some((flex, expanded)) = flex {
-                        primary_right_items.push(right_item.flex(flex, expanded).boxed());
+                        primary_right_items.push(right_item.flex(flex, expanded).into_any());
                     } else {
-                        primary_right_items.push(right_item.boxed());
+                        primary_right_items.push(right_item.into_any());
                     }
                 }
 
@@ -101,7 +101,7 @@ impl View for Toolbar {
                         ChildView::new(item.as_any(), cx)
                             .constrained()
                             .with_height(theme.height)
-                            .boxed(),
+                            .into_any(),
                     );
                 }
             }
@@ -151,13 +151,12 @@ impl View for Toolbar {
                     .with_children(primary_left_items)
                     .with_children(primary_right_items)
                     .constrained()
-                    .with_height(height)
-                    .boxed(),
+                    .with_height(height),
             )
             .with_children(secondary_item)
             .contained()
             .with_style(container_style)
-            .boxed()
+            .into_any_named("toolbar")
     }
 }
 
@@ -171,9 +170,9 @@ fn nav_button<A: Action + Clone>(
     action: A,
     tooltip_action: A,
     action_name: &str,
-    cx: &mut RenderContext<Toolbar>,
-) -> ElementBox {
-    MouseEventHandler::<A>::new(0, cx, |state, _| {
+    cx: &mut ViewContext<Toolbar>,
+) -> AnyElement<Toolbar> {
+    MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
             style.style_for(state, false)
         } else {
@@ -190,17 +189,16 @@ fn nav_button<A: Action + Clone>(
             .with_width(style.button_width)
             .with_height(style.button_width)
             .aligned()
-            .boxed()
     })
     .with_cursor_style(if enabled {
         CursorStyle::PointingHand
     } else {
         CursorStyle::default()
     })
-    .on_click(MouseButton::Left, move |_, cx| {
+    .on_click(MouseButton::Left, move |_, _, cx| {
         cx.dispatch_action(action.clone())
     })
-    .with_tooltip::<A, _>(
+    .with_tooltip::<A>(
         0,
         action_name.to_string(),
         Some(Box::new(tooltip_action)),
@@ -209,7 +207,7 @@ fn nav_button<A: Action + Clone>(
     )
     .contained()
     .with_margin_right(spacing)
-    .boxed()
+    .into_any_named("nav button")
 }
 
 impl Toolbar {
@@ -266,7 +264,7 @@ impl Toolbar {
         }
     }
 
-    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
+    pub fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut ViewContext<Self>) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.pane_focus_update(pane_focused, cx);
         }
@@ -295,14 +293,14 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut AppContext,
+        cx: &mut WindowContext,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         })
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut AppContext) {
+    fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| {
             this.pane_focus_update(pane_focused, cx);
             cx.notify();

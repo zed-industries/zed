@@ -25,59 +25,47 @@ pub use self::{
     keystroke_label::*, label::*, list::*, mouse_event_handler::*, overlay::*, resizable::*,
     stack::*, svg::*, text::*, tooltip::*, uniform_list::*,
 };
+pub use crate::window::ChildView;
+
 use self::{clipped::Clipped, expanded::Expanded};
-pub use crate::presenter::ChildView;
 use crate::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json,
-    presenter::MeasurementContext,
-    Action, DebugContext, EventContext, LayoutContext, PaintContext, RenderContext, SizeConstraint,
-    View,
+    json, Action, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle, WindowContext,
 };
+use anyhow::{anyhow, Result};
 use core::panic;
 use json::ToJson;
 use std::{
     any::Any,
     borrow::Cow,
-    cell::RefCell,
+    marker::PhantomData,
     mem,
     ops::{Deref, DerefMut, Range},
-    rc::Rc,
 };
+use util::ResultExt;
 
-trait AnyElement {
-    fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F;
-    fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext);
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        cx: &MeasurementContext,
-    ) -> Option<RectF>;
-    fn debug(&self, cx: &DebugContext) -> serde_json::Value;
-
-    fn size(&self) -> Vector2F;
-    fn metadata(&self) -> Option<&dyn Any>;
-}
-
-pub trait Element {
+pub trait Element<V: View>: 'static {
     type LayoutState;
     type PaintState;
 
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        cx: &mut LayoutContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState);
 
     fn paint(
         &mut self,
+        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
-        cx: &mut PaintContext,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState;
 
     fn rect_for_text_range(
@@ -87,7 +75,8 @@ pub trait Element {
         visible_bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF>;
 
     fn metadata(&self) -> Option<&dyn Any> {
@@ -99,105 +88,116 @@ pub trait Element {
         bounds: RectF,
         layout: &Self::LayoutState,
         paint: &Self::PaintState,
-        cx: &DebugContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> serde_json::Value;
 
-    fn boxed(self) -> ElementBox
+    fn into_any(self) -> AnyElement<V>
     where
         Self: 'static + Sized,
     {
-        ElementBox(ElementRc {
+        AnyElement {
+            state: Box::new(ElementState::Init { element: self }),
             name: None,
-            element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
-        })
+        }
     }
 
-    fn named(self, name: impl Into<Cow<'static, str>>) -> ElementBox
+    fn into_any_named(self, name: impl Into<Cow<'static, str>>) -> AnyElement<V>
     where
         Self: 'static + Sized,
     {
-        ElementBox(ElementRc {
+        AnyElement {
+            state: Box::new(ElementState::Init { element: self }),
             name: Some(name.into()),
-            element: Rc::new(RefCell::new(Lifecycle::Init { element: self })),
-        })
+        }
     }
 
-    fn constrained(self) -> ConstrainedBox
+    fn into_root_element(self, cx: &ViewContext<V>) -> RootElement<V>
     where
         Self: 'static + Sized,
     {
-        ConstrainedBox::new(self.boxed())
+        RootElement {
+            element: self.into_any(),
+            view: cx.handle().downgrade(),
+        }
     }
 
-    fn aligned(self) -> Align
+    fn constrained(self) -> ConstrainedBox<V>
     where
         Self: 'static + Sized,
     {
-        Align::new(self.boxed())
+        ConstrainedBox::new(self.into_any())
     }
 
-    fn clipped(self) -> Clipped
+    fn aligned(self) -> Align<V>
     where
         Self: 'static + Sized,
     {
-        Clipped::new(self.boxed())
+        Align::new(self.into_any())
     }
 
-    fn contained(self) -> Container
+    fn clipped(self) -> Clipped<V>
     where
         Self: 'static + Sized,
     {
-        Container::new(self.boxed())
+        Clipped::new(self.into_any())
     }
 
-    fn expanded(self) -> Expanded
+    fn contained(self) -> Container<V>
     where
         Self: 'static + Sized,
     {
-        Expanded::new(self.boxed())
+        Container::new(self.into_any())
     }
 
-    fn flex(self, flex: f32, expanded: bool) -> FlexItem
+    fn expanded(self) -> Expanded<V>
     where
         Self: 'static + Sized,
     {
-        FlexItem::new(self.boxed()).flex(flex, expanded)
+        Expanded::new(self.into_any())
     }
 
-    fn flex_float(self) -> FlexItem
+    fn flex(self, flex: f32, expanded: bool) -> FlexItem<V>
     where
         Self: 'static + Sized,
     {
-        FlexItem::new(self.boxed()).float()
+        FlexItem::new(self.into_any()).flex(flex, expanded)
     }
 
-    fn with_tooltip<Tag: 'static, T: View>(
+    fn flex_float(self) -> FlexItem<V>
+    where
+        Self: 'static + Sized,
+    {
+        FlexItem::new(self.into_any()).float()
+    }
+
+    fn with_tooltip<Tag: 'static>(
         self,
         id: usize,
         text: String,
         action: Option<Box<dyn Action>>,
         style: TooltipStyle,
-        cx: &mut RenderContext<T>,
-    ) -> Tooltip
+        cx: &mut ViewContext<V>,
+    ) -> Tooltip<V>
     where
         Self: 'static + Sized,
     {
-        Tooltip::new::<Tag, T>(id, text, action, style, self.boxed(), cx)
+        Tooltip::new::<Tag, V>(id, text, action, style, self.into_any(), cx)
     }
 
-    fn with_resize_handle<Tag: 'static, T: View>(
+    fn with_resize_handle<Tag: 'static>(
         self,
         element_id: usize,
         side: Side,
         handle_size: f32,
         initial_size: f32,
-        cx: &mut RenderContext<T>,
-    ) -> Resizable
+        cx: &mut ViewContext<V>,
+    ) -> Resizable<V>
     where
         Self: 'static + Sized,
     {
-        Resizable::new::<Tag, T>(
-            self.boxed(),
+        Resizable::new::<Tag, V>(
+            self.into_any(),
             element_id,
             side,
             handle_size,
@@ -207,49 +207,77 @@ pub trait Element {
     }
 }
 
-pub enum Lifecycle<T: Element> {
+trait AnyElementState<V: View> {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Vector2F;
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    );
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF>;
+
+    fn debug(&self, view: &V, cx: &ViewContext<V>) -> serde_json::Value;
+
+    fn size(&self) -> Vector2F;
+
+    fn metadata(&self) -> Option<&dyn Any>;
+}
+
+enum ElementState<V: View, E: Element<V>> {
     Empty,
     Init {
-        element: T,
+        element: E,
     },
     PostLayout {
-        element: T,
+        element: E,
         constraint: SizeConstraint,
         size: Vector2F,
-        layout: T::LayoutState,
+        layout: E::LayoutState,
     },
     PostPaint {
-        element: T,
+        element: E,
         constraint: SizeConstraint,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: T::LayoutState,
-        paint: T::PaintState,
+        layout: E::LayoutState,
+        paint: E::PaintState,
     },
 }
 
-pub struct ElementBox(ElementRc);
-
-#[derive(Clone)]
-pub struct ElementRc {
-    name: Option<Cow<'static, str>>,
-    element: Rc<RefCell<dyn AnyElement>>,
-}
-
-impl<T: Element> AnyElement for Lifecycle<T> {
-    fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
+impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Vector2F {
         let result;
         *self = match mem::take(self) {
-            Lifecycle::Empty => unreachable!(),
-            Lifecycle::Init { mut element }
-            | Lifecycle::PostLayout { mut element, .. }
-            | Lifecycle::PostPaint { mut element, .. } => {
-                let (size, layout) = element.layout(constraint, cx);
+            ElementState::Empty => unreachable!(),
+            ElementState::Init { mut element }
+            | ElementState::PostLayout { mut element, .. }
+            | ElementState::PostPaint { mut element, .. } => {
+                let (size, layout) = element.layout(constraint, view, cx);
                 debug_assert!(size.x().is_finite());
                 debug_assert!(size.y().is_finite());
 
                 result = size;
-                Lifecycle::PostLayout {
+                ElementState::PostLayout {
                     element,
                     constraint,
                     size,
@@ -260,17 +288,24 @@ impl<T: Element> AnyElement for Lifecycle<T> {
         result
     }
 
-    fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
         *self = match mem::take(self) {
-            Lifecycle::PostLayout {
+            ElementState::PostLayout {
                 mut element,
                 constraint,
                 size,
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
-                Lifecycle::PostPaint {
+                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
+                ElementState::PostPaint {
                     element,
                     constraint,
                     bounds,
@@ -279,7 +314,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     paint,
                 }
             }
-            Lifecycle::PostPaint {
+            ElementState::PostPaint {
                 mut element,
                 constraint,
                 bounds,
@@ -287,8 +322,8 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(bounds, visible_bounds, &mut layout, cx);
-                Lifecycle::PostPaint {
+                let paint = element.paint(scene, bounds, visible_bounds, &mut layout, view, cx);
+                ElementState::PostPaint {
                     element,
                     constraint,
                     bounds,
@@ -297,8 +332,8 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                     paint,
                 }
             }
-            Lifecycle::Empty => panic!("invalid element lifecycle state"),
-            Lifecycle::Init { .. } => {
+            ElementState::Empty => panic!("invalid element lifecycle state"),
+            ElementState::Init { .. } => {
                 panic!("invalid element lifecycle state, paint called before layout")
             }
         }
@@ -307,9 +342,10 @@ impl<T: Element> AnyElement for Lifecycle<T> {
     fn rect_for_text_range(
         &self,
         range_utf16: Range<usize>,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        if let Lifecycle::PostPaint {
+        if let ElementState::PostPaint {
             element,
             bounds,
             visible_bounds,
@@ -318,7 +354,15 @@ impl<T: Element> AnyElement for Lifecycle<T> {
             ..
         } = self
         {
-            element.rect_for_text_range(range_utf16, *bounds, *visible_bounds, layout, paint, cx)
+            element.rect_for_text_range(
+                range_utf16,
+                *bounds,
+                *visible_bounds,
+                layout,
+                paint,
+                view,
+                cx,
+            )
         } else {
             None
         }
@@ -326,24 +370,26 @@ impl<T: Element> AnyElement for Lifecycle<T> {
 
     fn size(&self) -> Vector2F {
         match self {
-            Lifecycle::Empty | Lifecycle::Init { .. } => panic!("invalid element lifecycle state"),
-            Lifecycle::PostLayout { size, .. } => *size,
-            Lifecycle::PostPaint { bounds, .. } => bounds.size(),
+            ElementState::Empty | ElementState::Init { .. } => {
+                panic!("invalid element lifecycle state")
+            }
+            ElementState::PostLayout { size, .. } => *size,
+            ElementState::PostPaint { bounds, .. } => bounds.size(),
         }
     }
 
     fn metadata(&self) -> Option<&dyn Any> {
         match self {
-            Lifecycle::Empty => unreachable!(),
-            Lifecycle::Init { element }
-            | Lifecycle::PostLayout { element, .. }
-            | Lifecycle::PostPaint { element, .. } => element.metadata(),
+            ElementState::Empty => unreachable!(),
+            ElementState::Init { element }
+            | ElementState::PostLayout { element, .. }
+            | ElementState::PostPaint { element, .. } => element.metadata(),
         }
     }
 
-    fn debug(&self, cx: &DebugContext) -> serde_json::Value {
+    fn debug(&self, view: &V, cx: &ViewContext<V>) -> serde_json::Value {
         match self {
-            Lifecycle::PostPaint {
+            ElementState::PostPaint {
                 element,
                 constraint,
                 bounds,
@@ -351,7 +397,7 @@ impl<T: Element> AnyElement for Lifecycle<T> {
                 layout,
                 paint,
             } => {
-                let mut value = element.debug(*bounds, layout, paint, cx);
+                let mut value = element.debug(*bounds, layout, paint, view, cx);
                 if let json::Value::Object(map) = &mut value {
                     let mut new_map: crate::json::Map<String, serde_json::Value> =
                         Default::default();
@@ -373,72 +419,63 @@ impl<T: Element> AnyElement for Lifecycle<T> {
     }
 }
 
-impl<T: Element> Default for Lifecycle<T> {
+impl<V: View, E: Element<V>> Default for ElementState<V, E> {
     fn default() -> Self {
         Self::Empty
     }
 }
 
-impl ElementBox {
+pub struct AnyElement<V: View> {
+    state: Box<dyn AnyElementState<V>>,
+    name: Option<Cow<'static, str>>,
+}
+
+impl<V: View> AnyElement<V> {
     pub fn name(&self) -> Option<&str> {
-        self.0.name.as_deref()
+        self.name.as_deref()
     }
 
     pub fn metadata<T: 'static>(&self) -> Option<&T> {
-        let element = unsafe { &*self.0.element.as_ptr() };
-        element.metadata().and_then(|m| m.downcast_ref())
-    }
-}
-
-impl Clone for ElementBox {
-    fn clone(&self) -> Self {
-        ElementBox(self.0.clone())
-    }
-}
-
-impl From<ElementBox> for ElementRc {
-    fn from(val: ElementBox) -> Self {
-        val.0
-    }
-}
-
-impl Deref for ElementBox {
-    type Target = ElementRc;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ElementBox {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl ElementRc {
-    pub fn layout(&mut self, constraint: SizeConstraint, cx: &mut LayoutContext) -> Vector2F {
-        self.element.borrow_mut().layout(constraint, cx)
+        self.state
+            .metadata()
+            .and_then(|data| data.downcast_ref::<T>())
     }
 
-    pub fn paint(&mut self, origin: Vector2F, visible_bounds: RectF, cx: &mut PaintContext) {
-        self.element.borrow_mut().paint(origin, visible_bounds, cx);
+    pub fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Vector2F {
+        self.state.layout(constraint, view, cx)
+    }
+
+    pub fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        self.state.paint(scene, origin, visible_bounds, view, cx);
     }
 
     pub fn rect_for_text_range(
         &self,
         range_utf16: Range<usize>,
-        cx: &MeasurementContext,
+        view: &V,
+        cx: &ViewContext<V>,
     ) -> Option<RectF> {
-        self.element.borrow().rect_for_text_range(range_utf16, cx)
+        self.state.rect_for_text_range(range_utf16, view, cx)
     }
 
     pub fn size(&self) -> Vector2F {
-        self.element.borrow().size()
+        self.state.size()
     }
 
-    pub fn debug(&self, cx: &DebugContext) -> json::Value {
-        let mut value = self.element.borrow().debug(cx);
+    pub fn debug(&self, view: &V, cx: &ViewContext<V>) -> json::Value {
+        let mut value = self.state.debug(view, cx);
 
         if let Some(name) = &self.name {
             if let json::Value::Object(map) = &mut value {
@@ -457,31 +494,307 @@ impl ElementRc {
         T: 'static,
         F: FnOnce(Option<&T>) -> R,
     {
-        let element = self.element.borrow();
-        f(element.metadata().and_then(|m| m.downcast_ref()))
+        f(self.state.metadata().and_then(|m| m.downcast_ref()))
     }
 }
 
-pub trait ParentElement<'a>: Extend<ElementBox> + Sized {
-    fn add_children(&mut self, children: impl IntoIterator<Item = ElementBox>) {
-        self.extend(children);
+impl<V: View> Element<V> for AnyElement<V> {
+    type LayoutState = ();
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, Self::LayoutState) {
+        let size = self.layout(constraint, view, cx);
+        (size, ())
     }
 
-    fn add_child(&mut self, child: ElementBox) {
-        self.add_children(Some(child));
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        _: &mut Self::LayoutState,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> Self::PaintState {
+        self.paint(scene, bounds.origin(), visible_bounds, view, cx);
     }
 
-    fn with_children(mut self, children: impl IntoIterator<Item = ElementBox>) -> Self {
-        self.add_children(children);
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        self.rect_for_text_range(range_utf16, view, cx)
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        self.debug(view, cx)
+    }
+
+    fn into_any(self) -> AnyElement<V>
+    where
+        Self: Sized,
+    {
+        self
+    }
+}
+
+pub struct RootElement<V: View> {
+    element: AnyElement<V>,
+    view: WeakViewHandle<V>,
+}
+
+impl<V: View> RootElement<V> {
+    pub fn new(element: AnyElement<V>, view: WeakViewHandle<V>) -> Self {
+        Self { element, view }
+    }
+}
+
+pub trait Component<V: View>: 'static {
+    fn render(&self, view: &mut V, cx: &mut ViewContext<V>) -> AnyElement<V>;
+}
+
+pub struct ComponentHost<V: View, C: Component<V>> {
+    component: C,
+    view_type: PhantomData<V>,
+}
+
+impl<V: View, C: Component<V>> Deref for ComponentHost<V, C> {
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        &self.component
+    }
+}
+
+impl<V: View, C: Component<V>> DerefMut for ComponentHost<V, C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.component
+    }
+}
+
+impl<V: View, C: Component<V>> Element<V> for ComponentHost<V, C> {
+    type LayoutState = AnyElement<V>;
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, AnyElement<V>) {
+        let mut element = self.component.render(view, cx);
+        let size = element.layout(constraint, view, cx);
+        (size, element)
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        element: &mut AnyElement<V>,
+        view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        element.paint(scene, bounds.origin(), visible_bounds, view, cx);
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _: RectF,
+        _: RectF,
+        element: &AnyElement<V>,
+        _: &(),
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        element.rect_for_text_range(range_utf16, view, cx)
+    }
+
+    fn debug(
+        &self,
+        _: RectF,
+        element: &AnyElement<V>,
+        _: &(),
+        view: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        element.debug(view, cx)
+    }
+}
+
+pub trait AnyRootElement {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F>;
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        cx: &mut WindowContext,
+    ) -> Result<()>;
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &WindowContext,
+    ) -> Result<Option<RectF>>;
+    fn debug(&self, cx: &WindowContext) -> Result<serde_json::Value>;
+    fn name(&self) -> Option<&str>;
+}
+
+impl<V: View> AnyRootElement for RootElement<V> {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F> {
+        let view = self
+            .view
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
+        view.update(cx, |view, cx| Ok(self.element.layout(constraint, view, cx)))
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        origin: Vector2F,
+        visible_bounds: RectF,
+        cx: &mut WindowContext,
+    ) -> Result<()> {
+        let view = self
+            .view
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("paint called on a root element for a dropped view"))?;
+
+        view.update(cx, |view, cx| {
+            self.element.paint(scene, origin, visible_bounds, view, cx);
+            Ok(())
+        })
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        cx: &WindowContext,
+    ) -> Result<Option<RectF>> {
+        let view = self.view.upgrade(cx).ok_or_else(|| {
+            anyhow!("rect_for_text_range called on a root element for a dropped view")
+        })?;
+        let view = view.read(cx);
+        let view_context = ViewContext::immutable(cx, self.view.id());
+        Ok(self
+            .element
+            .rect_for_text_range(range_utf16, view, &view_context))
+    }
+
+    fn debug(&self, cx: &WindowContext) -> Result<serde_json::Value> {
+        let view = self
+            .view
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("debug called on a root element for a dropped view"))?;
+        let view = view.read(cx);
+        let view_context = ViewContext::immutable(cx, self.view.id());
+        Ok(self.element.debug(view, &view_context))
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.element.name()
+    }
+}
+
+impl<V: View, R: View> Element<V> for RootElement<R> {
+    type LayoutState = ();
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        _view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> (Vector2F, ()) {
+        let size = AnyRootElement::layout(self, constraint, cx)
+            .log_err()
+            .unwrap_or_else(|| Vector2F::zero());
+        (size, ())
+    }
+
+    fn paint(
+        &mut self,
+        scene: &mut SceneBuilder,
+        bounds: RectF,
+        visible_bounds: RectF,
+        _layout: &mut Self::LayoutState,
+        _view: &mut V,
+        cx: &mut ViewContext<V>,
+    ) {
+        AnyRootElement::paint(self, scene, bounds.origin(), visible_bounds, cx).log_err();
+    }
+
+    fn rect_for_text_range(
+        &self,
+        range_utf16: Range<usize>,
+        _bounds: RectF,
+        _visible_bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        _view: &V,
+        cx: &ViewContext<V>,
+    ) -> Option<RectF> {
+        AnyRootElement::rect_for_text_range(self, range_utf16, cx)
+            .log_err()
+            .flatten()
+    }
+
+    fn debug(
+        &self,
+        _bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        _view: &V,
+        cx: &ViewContext<V>,
+    ) -> serde_json::Value {
+        AnyRootElement::debug(self, cx)
+            .log_err()
+            .unwrap_or_default()
+    }
+}
+
+pub trait ParentElement<'a, V: View>: Extend<AnyElement<V>> + Sized {
+    fn add_children<E: Element<V>>(&mut self, children: impl IntoIterator<Item = E>) {
+        self.extend(children.into_iter().map(|child| child.into_any()));
+    }
+
+    fn add_child<D: Element<V>>(&mut self, child: D) {
+        self.extend(Some(child.into_any()));
+    }
+
+    fn with_children<D: Element<V>>(mut self, children: impl IntoIterator<Item = D>) -> Self {
+        self.extend(children.into_iter().map(|child| child.into_any()));
         self
     }
 
-    fn with_child(self, child: ElementBox) -> Self {
-        self.with_children(Some(child))
+    fn with_child<D: Element<V>>(mut self, child: D) -> Self {
+        self.extend(Some(child.into_any()));
+        self
     }
 }
 
-impl<'a, T> ParentElement<'a> for T where T: Extend<ElementBox> {}
+impl<'a, V: View, T> ParentElement<'a, V> for T where T: Extend<AnyElement<V>> {}
 
 pub fn constrain_size_preserving_aspect_ratio(max_size: Vector2F, size: Vector2F) -> Vector2F {
     if max_size.x().is_infinite() && max_size.y().is_infinite() {

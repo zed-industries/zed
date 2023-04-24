@@ -3,8 +3,8 @@ use gpui::{
     elements::*,
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AppContext, Element, ElementBox, Entity, RenderContext, View, ViewContext, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    AnyElement, AppContext, Element, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
+    WeakViewHandle,
 };
 use settings::Settings;
 use std::any::TypeId;
@@ -42,14 +42,14 @@ impl View for TerminalButton {
         "TerminalButton"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let workspace = self.workspace.upgrade(cx);
         let project = match workspace {
             Some(workspace) => workspace.read(cx).project().read(cx),
-            None => return Empty::new().boxed(),
+            None => return Empty::new().into_any(),
         };
 
-        let focused_view = cx.focused_view_id(cx.window_id());
+        let focused_view = cx.focused_view_id();
         let active = focused_view
             .map(|view_id| {
                 cx.view_type_id(cx.window_id(), view_id) == Some(TypeId::of::<TerminalView>())
@@ -62,7 +62,7 @@ impl View for TerminalButton {
 
         Stack::new()
             .with_child(
-                MouseEventHandler::<Self>::new(0, cx, {
+                MouseEventHandler::<Self, _>::new(0, cx, {
                     let theme = theme.clone();
                     move |state, _cx| {
                         let style = theme
@@ -79,24 +79,22 @@ impl View for TerminalButton {
                                     .constrained()
                                     .with_width(style.icon_size)
                                     .aligned()
-                                    .named("terminals-icon"),
+                                    .into_any_named("terminals-icon"),
                             )
                             .with_children(has_terminals.then(|| {
                                 Label::new(terminal_count.to_string(), style.label.text.clone())
                                     .contained()
                                     .with_style(style.label.container)
                                     .aligned()
-                                    .boxed()
                             }))
                             .constrained()
                             .with_height(style.icon_size)
                             .contained()
                             .with_style(style.container)
-                            .boxed()
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, cx| {
+                .on_click(MouseButton::Left, move |_, _, cx| {
                     if has_terminals {
                         cx.dispatch_action(DeployTerminalMenu);
                     } else {
@@ -105,23 +103,16 @@ impl View for TerminalButton {
                         }
                     };
                 })
-                .with_tooltip::<Self, _>(
+                .with_tooltip::<Self>(
                     0,
                     "Show Terminal".into(),
                     Some(Box::new(FocusDock)),
                     theme.tooltip.clone(),
                     cx,
-                )
-                .boxed(),
+                ),
             )
-            .with_child(
-                ChildView::new(&self.popup_menu, cx)
-                    .aligned()
-                    .top()
-                    .right()
-                    .boxed(),
-            )
-            .boxed()
+            .with_child(ChildView::new(&self.popup_menu, cx).aligned().top().right())
+            .into_any_named("terminal button")
     }
 }
 
