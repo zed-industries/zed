@@ -15,7 +15,7 @@ rope = { path = "../rope" }
 util = { path = "../util" }
 anyhow = "1.0.57"
 async-trait = "0.1"
-futures = "0.3"
+futures = { workspace = true }
 tempfile = "3"
 fsevent = { path = "../fsevent" }
 lazy_static = "1.4.0"

@@ -27,7 +27,7 @@ base64 = "0.13"
 clap = { version = "3.1", features = ["derive"], optional = true }
 dashmap = "5.4"
 envy = "0.4.2"
-futures = "0.3"
+futures = { workspace = true }
 hyper = "0.14"
 lazy_static = "1.4"
 lipsum = { version = "0.8", optional = true }

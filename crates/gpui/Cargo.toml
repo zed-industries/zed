@@ -25,7 +25,7 @@ ctor = "0.1"
 dhat = { version = "0.3", optional = true }
 env_logger = { version = "0.9", optional = true }
 etagere = "0.2"
-futures = "0.3"
+futures = { workspace = true }
 image = "0.23"
 itertools = "0.10"
 lazy_static = "1.4.0"

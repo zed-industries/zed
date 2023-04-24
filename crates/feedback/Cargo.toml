@@ -16,7 +16,7 @@ client = { path = "../client" }
 editor = { path = "../editor" }
 language = { path = "../language" }
 log = "0.4"
-futures = "0.3"
+futures = { workspace = true }
 gpui = { path = "../gpui" }
 human_bytes = "0.4.1"
 isahc = "1.7"

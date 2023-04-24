@@ -33,7 +33,7 @@ util = { path = "../util" }
 
 anyhow = "1.0.38"
 async-broadcast = "0.4"
-futures = "0.3"
+futures = { workspace = true }
 postage = { workspace = true }
 
 [dev-dependencies]
