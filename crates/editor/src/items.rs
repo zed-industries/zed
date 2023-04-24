@@ -78,7 +78,7 @@ impl FollowableItem for Editor {
                             == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
                     ids_match || singleton_buffer_matches
                 })
-            });
+            })?;
 
             let editor = if let Some(editor) = editor {
                 editor

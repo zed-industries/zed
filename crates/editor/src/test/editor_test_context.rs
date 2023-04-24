@@ -57,7 +57,7 @@ impl<'a> EditorTestContext<'a> {
 
     pub fn editor<F, T>(&self, read: F) -> T
     where
-        F: FnOnce(&Editor, &AppContext) -> T,
+        F: FnOnce(&Editor, &ViewContext<Editor>) -> T,
     {
         self.editor.read_with(self.cx, read)
     }

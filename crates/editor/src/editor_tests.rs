@@ -5673,8 +5673,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     assert_eq!(
-        follower_1.read_with(cx, Editor::text),
-        leader.read_with(cx, Editor::text)
+        follower_1.read_with(cx, |editor, cx| editor.text(cx)),
+        leader.read_with(cx, |editor, cx| editor.text(cx))
     );
     update_message.borrow_mut().take();
 
@@ -5697,8 +5697,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     assert_eq!(
-        follower_2.read_with(cx, Editor::text),
-        leader.read_with(cx, Editor::text)
+        follower_2.read_with(cx, |editor, cx| editor.text(cx)),
+        leader.read_with(cx, |editor, cx| editor.text(cx))
     );
 
     // Remove some excerpts.
@@ -5725,8 +5725,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
         .unwrap();
     update_message.borrow_mut().take();
     assert_eq!(
-        follower_1.read_with(cx, Editor::text),
-        leader.read_with(cx, Editor::text)
+        follower_1.read_with(cx, |editor, cx| editor.text(cx)),
+        leader.read_with(cx, |editor, cx| editor.text(cx))
     );
 }
 
