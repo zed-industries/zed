@@ -1,3 +1,18 @@
+use crate::{
+    executor,
+    geometry::vector::Vector2F,
+    keymap_matcher::Keystroke,
+    platform,
+    platform::{Event, InputHandler, KeyDownEvent, Platform},
+    Action, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache,
+    Handle, ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakHandle, WindowContext,
+};
+use collections::BTreeMap;
+use futures::Future;
+use itertools::Itertools;
+use parking_lot::{Mutex, RwLock};
+use smol::stream::StreamExt;
 use std::{
     any::Any,
     cell::RefCell,
@@ -10,23 +25,6 @@ use std::{
     },
     time::Duration,
 };
-
-use futures::Future;
-use itertools::Itertools;
-use parking_lot::{Mutex, RwLock};
-use smol::stream::StreamExt;
-
-use crate::{
-    executor,
-    geometry::vector::Vector2F,
-    keymap_matcher::Keystroke,
-    platform,
-    platform::{Event, InputHandler, KeyDownEvent, Platform},
-    Action, AnyViewHandle, AppContext, BorrowAppContext, Entity, FontCache, Handle, ModelContext,
-    ModelHandle, ReadViewWith, Subscription, Task, UpdateView, View, ViewContext, ViewHandle,
-    WeakHandle, WindowContext,
-};
-use collections::BTreeMap;
 
 use super::{
     ref_counts::LeakDetector, window_input_handler::WindowInputHandler, AsyncAppContext, RefCounts,
@@ -391,36 +389,21 @@ impl BorrowAppContext for TestAppContext {
     }
 }
 
-impl UpdateView for TestAppContext {
-    type Output<S> = S;
+impl BorrowWindowContext for TestAppContext {
+    type ReturnValue<T> = T;
 
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        self.cx
+            .borrow()
+            .read_window(window_id, f)
+            .expect("window was closed")
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
         self.cx
             .borrow_mut()
-            .update_window(handle.window_id, |cx| cx.update_view(handle, update))
-            .unwrap()
-    }
-}
-
-impl ReadViewWith for TestAppContext {
-    fn read_view_with<V, T>(
-        &self,
-        handle: &ViewHandle<V>,
-        read: &mut dyn FnMut(&V, &AppContext) -> T,
-    ) -> T
-    where
-        V: View,
-    {
-        let cx = self.cx.borrow();
-        let cx = &*cx;
-        read(handle.read(cx), cx)
+            .update_window(window_id, f)
+            .expect("window was closed")
     }
 }
 

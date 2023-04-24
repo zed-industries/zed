@@ -2736,7 +2736,7 @@ impl Editor {
         title: String,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx));
+        let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx))?;
 
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
         entries.sort_unstable_by_key(|(buffer, _)| {
@@ -2753,7 +2753,7 @@ impl Editor {
                         .buffer()
                         .read(cx)
                         .excerpt_containing(editor.selections.newest_anchor().head(), cx)
-                });
+                })?;
                 if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
                         let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
@@ -5835,7 +5835,7 @@ impl Editor {
                     buffer_highlights
                         .next()
                         .map(|highlight| highlight.start.text_anchor..highlight.end.text_anchor)
-                })
+                })?
             };
             if let Some(rename_range) = rename_range {
                 let rename_buffer_range = rename_range.to_offset(&snapshot);

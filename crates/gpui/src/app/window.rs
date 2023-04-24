@@ -13,9 +13,9 @@ use crate::{
     },
     text_layout::TextLayoutCache,
     util::post_inc,
-    Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, Effect, Element, Entity, Handle,
-    MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription, UpdateView, View,
-    ViewContext, ViewHandle, WindowInvalidation,
+    Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
+    Element, Entity, Handle, MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription,
+    View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -141,27 +141,23 @@ impl BorrowAppContext for WindowContext<'_> {
     }
 }
 
-impl UpdateView for WindowContext<'_> {
-    type Output<S> = S;
+impl BorrowWindowContext for WindowContext<'_> {
+    type ReturnValue<T> = T;
 
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
-        self.update_any_view(handle.view_id, |view, cx| {
-            let mut cx = ViewContext::mutable(cx, handle.view_id);
-            update(
-                view.as_any_mut()
-                    .downcast_mut()
-                    .expect("downcast is type safe"),
-                &mut cx,
-            )
-        })
-        .expect("view is already on the stack")
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        if self.window_id == window_id {
+            f(self)
+        } else {
+            panic!("read_with called with id of window that does not belong to this context")
+        }
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        if self.window_id == window_id {
+            f(self)
+        } else {
+            panic!("update called with id of window that does not belong to this context")
+        }
     }
 }
 
@@ -223,6 +219,26 @@ impl<'a> WindowContext<'a> {
         let result = f(view.as_mut(), self);
         self.views.insert((window_id, view_id), view);
         Some(result)
+    }
+
+    pub(crate) fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
+    where
+        T: View,
+    {
+        self.update_any_view(handle.view_id, |view, cx| {
+            let mut cx = ViewContext::mutable(cx, handle.view_id);
+            update(
+                view.as_any_mut()
+                    .downcast_mut()
+                    .expect("downcast is type safe"),
+                &mut cx,
+            )
+        })
+        .expect("view is already on the stack")
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut WindowContext)) {

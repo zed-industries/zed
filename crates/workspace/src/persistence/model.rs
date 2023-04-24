@@ -140,7 +140,10 @@ impl SerializedPaneGroup {
                     .await
                     .log_err()?;
 
-                if pane.read_with(cx, |pane, _| pane.items_len() != 0) {
+                if pane
+                    .read_with(cx, |pane, _| pane.items_len() != 0)
+                    .log_err()?
+                {
                     Some((Member::Pane(pane.clone()), active.then(|| pane)))
                 } else {
                     workspace

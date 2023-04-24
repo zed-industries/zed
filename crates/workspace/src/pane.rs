@@ -981,7 +981,7 @@ impl Pane {
                 // was started.
                 let (item_ix, mut project_item_ids) = pane.read_with(&cx, |pane, cx| {
                     (pane.index_for_item(&*item), item.project_item_model_ids(cx))
-                });
+                })?;
                 let item_ix = if let Some(ix) = item_ix {
                     ix
                 } else {
@@ -1001,7 +1001,7 @@ impl Pane {
                             project_item_ids.retain(|id| !other_project_item_ids.contains(id));
                         }
                     }
-                });
+                })?;
                 let should_save = project_item_ids
                     .iter()
                     .any(|id| saved_project_items_ids.insert(*id));

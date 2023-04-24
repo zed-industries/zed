@@ -126,26 +126,19 @@ pub trait BorrowAppContext {
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T;
 }
 
-pub trait ReadViewWith {
-    fn read_view_with<V, T>(
+pub trait BorrowWindowContext {
+    type ReturnValue<T>;
+
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(
         &self,
-        handle: &ViewHandle<V>,
-        read: &mut dyn FnMut(&V, &AppContext) -> T,
-    ) -> T
-    where
-        V: View;
-}
-
-pub trait UpdateView {
-    type Output<S>;
-
-    fn update_view<T, S>(
+        window_id: usize,
+        f: F,
+    ) -> Self::ReturnValue<T>;
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> Self::Output<S>
-    where
-        T: View;
+        window_id: usize,
+        f: F,
+    ) -> Self::ReturnValue<T>;
 }
 
 #[derive(Clone)]
@@ -388,36 +381,25 @@ impl BorrowAppContext for AsyncAppContext {
     }
 }
 
-impl UpdateView for AsyncAppContext {
-    type Output<S> = Result<S>;
+impl BorrowWindowContext for AsyncAppContext {
+    type ReturnValue<T> = Result<T>;
 
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> Result<S>
-    where
-        T: View,
-    {
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> Result<T> {
         self.0
-            .borrow_mut()
-            .update_window(handle.window_id, |cx| cx.update_view(handle, update))
+            .borrow()
+            .read_window(window_id, f)
             .ok_or_else(|| anyhow!("window was closed"))
     }
-}
 
-impl ReadViewWith for AsyncAppContext {
-    fn read_view_with<V, T>(
-        &self,
-        handle: &ViewHandle<V>,
-        read: &mut dyn FnMut(&V, &AppContext) -> T,
-    ) -> T
-    where
-        V: View,
-    {
-        let cx = self.0.borrow();
-        let cx = &*cx;
-        read(handle.read(cx), cx)
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        f: F,
+    ) -> Result<T> {
+        self.0
+            .borrow_mut()
+            .update_window(window_id, f)
+            .ok_or_else(|| anyhow!("window was closed"))
     }
 }
 
@@ -3349,26 +3331,23 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
 
 impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
     fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        self.window_context.read_with(f)
+        BorrowAppContext::read_with(&*self.window_context, f)
     }
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        self.window_context.update(f)
+        BorrowAppContext::update(&mut *self.window_context, f)
     }
 }
 
-impl<V: View> UpdateView for ViewContext<'_, '_, V> {
-    type Output<S> = S;
+impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
+    type ReturnValue<T> = T;
 
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
-        self.window_context.update_view(handle, update)
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.window_context, window_id, f)
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.window_context, window_id, f)
     }
 }
 
@@ -3406,26 +3385,23 @@ impl<V: View> DerefMut for EventContext<'_, '_, '_, V> {
 
 impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
     fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        self.view_context.read_with(f)
+        BorrowAppContext::read_with(&*self.view_context, f)
     }
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        self.view_context.update(f)
+        BorrowAppContext::update(&mut *self.view_context, f)
     }
 }
 
-impl<V: View> UpdateView for EventContext<'_, '_, '_, V> {
-    type Output<S> = S;
+impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
+    type ReturnValue<T> = T;
 
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
-        self.view_context.update_view(handle, update)
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.view_context, window_id, f)
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.view_context, window_id, f)
     }
 }
 
@@ -3756,27 +3732,29 @@ impl<T: View> ViewHandle<T> {
         cx.read_view(self)
     }
 
-    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> C::ReturnValue<S>
     where
-        C: ReadViewWith,
-        F: FnOnce(&T, &AppContext) -> S,
+        C: BorrowWindowContext,
+        F: FnOnce(&T, &ViewContext<T>) -> S,
     {
-        let mut read = Some(read);
-        cx.read_view_with(self, &mut |view, cx| {
-            let read = read.take().unwrap();
-            read(view, cx)
+        cx.read_with(self.window_id, |cx| {
+            let cx = ViewContext::immutable(cx, self.view_id);
+            read(cx.read_view(self), &cx)
         })
     }
 
-    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::Output<S>
+    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::ReturnValue<S>
     where
-        C: UpdateView,
+        C: BorrowWindowContext,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         let mut update = Some(update);
-        cx.update_view(self, &mut |view, cx| {
-            let update = update.take().unwrap();
-            update(view, cx)
+
+        cx.update(self.window_id, |cx| {
+            cx.update_view(self, &mut |view, cx| {
+                let update = update.take().unwrap();
+                update(view, cx)
+            })
         })
     }
 
