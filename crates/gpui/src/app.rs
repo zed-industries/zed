@@ -126,14 +126,6 @@ pub trait BorrowAppContext {
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T;
 }
 
-pub trait UpdateModel {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O;
-}
-
 pub trait ReadViewWith {
     fn read_view_with<V, T>(
         &self,
@@ -393,16 +385,6 @@ impl BorrowAppContext for AsyncAppContext {
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
         self.0.borrow_mut().update(f)
-    }
-}
-
-impl UpdateModel for AsyncAppContext {
-    fn update_model<E: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<E>,
-        update: &mut dyn FnMut(&mut E, &mut ModelContext<E>) -> O,
-    ) -> O {
-        self.0.borrow_mut().update_model(handle, update)
     }
 }
 
@@ -1240,6 +1222,29 @@ impl AppContext {
                 .expect("downcast is type safe")
         } else {
             panic!("circular model reference");
+        }
+    }
+
+    fn update_model<T: Entity, V>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
+    ) -> V {
+        if let Some(mut model) = self.models.remove(&handle.model_id) {
+            self.update(|this| {
+                let mut cx = ModelContext::new(this, handle.model_id);
+                let result = update(
+                    model
+                        .as_any_mut()
+                        .downcast_mut()
+                        .expect("downcast is type safe"),
+                    &mut cx,
+                );
+                this.models.insert(handle.model_id, model);
+                result
+            })
+        } else {
+            panic!("circular model update");
         }
     }
 
@@ -2102,31 +2107,6 @@ impl BorrowAppContext for AppContext {
     }
 }
 
-impl UpdateModel for AppContext {
-    fn update_model<T: Entity, V>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
-    ) -> V {
-        if let Some(mut model) = self.models.remove(&handle.model_id) {
-            self.update(|this| {
-                let mut cx = ModelContext::new(this, handle.model_id);
-                let result = update(
-                    model
-                        .as_any_mut()
-                        .downcast_mut()
-                        .expect("downcast is type safe"),
-                    &mut cx,
-                );
-                this.models.insert(handle.model_id, model);
-                result
-            })
-        } else {
-            panic!("circular model update");
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum ParentId {
     View(usize),
@@ -2822,16 +2802,6 @@ impl<M> BorrowAppContext for ModelContext<'_, M> {
     }
 }
 
-impl<M> UpdateModel for ModelContext<'_, M> {
-    fn update_model<T: Entity, V>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
-    ) -> V {
-        self.app.update_model(handle, update)
-    }
-}
-
 impl<M> Deref for ModelContext<'_, M> {
     type Target = AppContext;
 
@@ -3387,16 +3357,6 @@ impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
     }
 }
 
-impl<V: View> UpdateModel for ViewContext<'_, '_, V> {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O {
-        self.window_context.update_model(handle, update)
-    }
-}
-
 impl<V: View> UpdateView for ViewContext<'_, '_, V> {
     type Output<S> = S;
 
@@ -3451,16 +3411,6 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
         self.view_context.update(f)
-    }
-}
-
-impl<V: View> UpdateModel for EventContext<'_, '_, '_, V> {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O {
-        self.view_context.update_model(handle, update)
     }
 }
 
@@ -3597,13 +3547,15 @@ impl<T: Entity> ModelHandle<T> {
 
     pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
     where
-        C: UpdateModel,
+        C: BorrowAppContext,
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
         let mut update = Some(update);
-        cx.update_model(self, &mut |model, cx| {
-            let update = update.take().unwrap();
-            update(model, cx)
+        cx.update(|cx| {
+            cx.update_model(self, &mut |model, cx| {
+                let update = update.take().unwrap();
+                update(model, cx)
+            })
         })
     }
 }
