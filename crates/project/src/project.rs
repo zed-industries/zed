@@ -92,7 +92,7 @@ pub trait Item {
 pub struct Project {
     worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntryId>,
-    buffer_changes_tx: mpsc::UnboundedSender<BufferMessage>,
+    buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<usize, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), usize>,
@@ -131,10 +131,15 @@ pub struct Project {
     terminals: Terminals,
 }
 
-enum BufferMessage {
+/// Message ordered with respect to buffer operations
+enum BufferOrderedMessage {
     Operation {
         buffer_id: u64,
         operation: proto::Operation,
+    },
+    LanguageServerUpdate {
+        language_server_id: usize,
+        message: proto::update_language_server::Variant,
     },
     Resync,
 }
@@ -436,11 +441,11 @@ impl Project {
     ) -> ModelHandle<Self> {
         cx.add_model(|cx: &mut ModelContext<Self>| {
             let (tx, rx) = mpsc::unbounded();
-            cx.spawn_weak(|this, cx| Self::send_buffer_messages(this, rx, cx))
+            cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             Self {
                 worktrees: Default::default(),
-                buffer_changes_tx: tx,
+                buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
@@ -504,11 +509,11 @@ impl Project {
             }
 
             let (tx, rx) = mpsc::unbounded();
-            cx.spawn_weak(|this, cx| Self::send_buffer_messages(this, rx, cx))
+            cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
             let mut this = Self {
                 worktrees: Vec::new(),
-                buffer_changes_tx: tx,
+                buffer_ordered_messages_tx: tx,
                 loading_buffers_by_path: Default::default(),
                 opened_buffer: watch::channel(),
                 shared_buffers: Default::default(),
@@ -1152,8 +1157,8 @@ impl Project {
                 )
             })
             .collect();
-        self.buffer_changes_tx
-            .unbounded_send(BufferMessage::Resync)
+        self.buffer_ordered_messages_tx
+            .unbounded_send(BufferOrderedMessage::Resync)
             .unwrap();
         cx.notify();
         Ok(())
@@ -1731,23 +1736,49 @@ impl Project {
         });
     }
 
-    async fn send_buffer_messages(
+    async fn send_buffer_ordered_messages(
         this: WeakModelHandle<Self>,
-        rx: UnboundedReceiver<BufferMessage>,
+        rx: UnboundedReceiver<BufferOrderedMessage>,
         mut cx: AsyncAppContext,
     ) -> Option<()> {
         const MAX_BATCH_SIZE: usize = 128;
 
-        let mut needs_resync_with_host = false;
         let mut operations_by_buffer_id = HashMap::default();
+        async fn flush_operations(
+            this: &ModelHandle<Project>,
+            operations_by_buffer_id: &mut HashMap<u64, Vec<proto::Operation>>,
+            needs_resync_with_host: &mut bool,
+            is_local: bool,
+            cx: &AsyncAppContext,
+        ) {
+            for (buffer_id, operations) in operations_by_buffer_id.drain() {
+                let request = this.read_with(cx, |this, _| {
+                    let project_id = this.remote_id()?;
+                    Some(this.client.request(proto::UpdateBuffer {
+                        buffer_id,
+                        project_id,
+                        operations,
+                    }))
+                });
+                if let Some(request) = request {
+                    if request.await.is_err() && !is_local {
+                        *needs_resync_with_host = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut needs_resync_with_host = false;
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
+
         while let Some(changes) = changes.next().await {
             let this = this.upgrade(&mut cx)?;
             let is_local = this.read_with(&cx, |this, _| this.is_local());
 
             for change in changes {
                 match change {
-                    BufferMessage::Operation {
+                    BufferOrderedMessage::Operation {
                         buffer_id,
                         operation,
                     } => {
@@ -1760,7 +1791,8 @@ impl Project {
                             .or_insert(Vec::new())
                             .push(operation);
                     }
-                    BufferMessage::Resync => {
+
+                    BufferOrderedMessage::Resync => {
                         operations_by_buffer_id.clear();
                         if this
                             .update(&mut cx, |this, cx| this.synchronize_remote_buffers(cx))
@@ -1770,25 +1802,43 @@ impl Project {
                             needs_resync_with_host = false;
                         }
                     }
-                }
-            }
 
-            for (buffer_id, operations) in operations_by_buffer_id.drain() {
-                let request = this.read_with(&cx, |this, _| {
-                    let project_id = this.remote_id()?;
-                    Some(this.client.request(proto::UpdateBuffer {
-                        buffer_id,
-                        project_id,
-                        operations,
-                    }))
-                });
-                if let Some(request) = request {
-                    if request.await.is_err() && !is_local {
-                        needs_resync_with_host = true;
-                        break;
+                    BufferOrderedMessage::LanguageServerUpdate {
+                        language_server_id,
+                        message,
+                    } => {
+                        flush_operations(
+                            &this,
+                            &mut operations_by_buffer_id,
+                            &mut needs_resync_with_host,
+                            is_local,
+                            &cx,
+                        )
+                        .await;
+
+                        this.read_with(&cx, |this, _| {
+                            if let Some(project_id) = this.remote_id() {
+                                this.client
+                                    .send(proto::UpdateLanguageServer {
+                                        project_id,
+                                        language_server_id: language_server_id as u64,
+                                        variant: Some(message),
+                                    })
+                                    .log_err();
+                            }
+                        });
                     }
                 }
             }
+
+            flush_operations(
+                &this,
+                &mut operations_by_buffer_id,
+                &mut needs_resync_with_host,
+                is_local,
+                &cx,
+            )
+            .await;
         }
 
         None
@@ -1802,8 +1852,8 @@ impl Project {
     ) -> Option<()> {
         match event {
             BufferEvent::Operation(operation) => {
-                self.buffer_changes_tx
-                    .unbounded_send(BufferMessage::Operation {
+                self.buffer_ordered_messages_tx
+                    .unbounded_send(BufferOrderedMessage::Operation {
                         buffer_id: buffer.read(cx).remote_id(),
                         operation: language::proto::serialize_operation(operation),
                     })
@@ -1894,14 +1944,19 @@ impl Project {
                         let task = cx.spawn_weak(|this, mut cx| async move {
                             cx.background().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
                             if let Some(this) = this.upgrade(&cx) {
-                                this.update(&mut cx, |this, cx | {
-                                    this.disk_based_diagnostics_finished(language_server_id, cx);
-                                    this.broadcast_language_server_update(
+                                this.update(&mut cx, |this, cx| {
+                                    this.disk_based_diagnostics_finished(
                                         language_server_id,
-                                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                                            proto::LspDiskBasedDiagnosticsUpdated {},
-                                        ),
+                                        cx,
                                     );
+                                    this.buffer_ordered_messages_tx
+                                        .unbounded_send(
+                                            BufferOrderedMessage::LanguageServerUpdate {
+                                                language_server_id,
+                                                message:proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(Default::default())
+                                            },
+                                        )
+                                        .ok();
                                 });
                             }
                         });
@@ -2540,12 +2595,12 @@ impl Project {
                 if is_disk_based_diagnostics_progress {
                     language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(server_id, cx);
-                    self.broadcast_language_server_update(
-                        server_id,
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
-                            proto::LspDiskBasedDiagnosticsUpdating {},
-                        ),
-                    );
+                    self.buffer_ordered_messages_tx
+                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(Default::default())
+                        })
+                        .ok();
                 } else {
                     self.on_lsp_work_start(
                         server_id,
@@ -2557,14 +2612,18 @@ impl Project {
                         },
                         cx,
                     );
-                    self.broadcast_language_server_update(
-                        server_id,
-                        proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
-                            token,
-                            message: report.message,
-                            percentage: report.percentage.map(|p| p as u32),
-                        }),
-                    );
+                    self.buffer_ordered_messages_tx
+                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            message: proto::update_language_server::Variant::WorkStart(
+                                proto::LspWorkStart {
+                                    token,
+                                    message: report.message,
+                                    percentage: report.percentage.map(|p| p as u32),
+                                },
+                            ),
+                        })
+                        .ok();
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
@@ -2579,16 +2638,18 @@ impl Project {
                         },
                         cx,
                     );
-                    self.broadcast_language_server_update(
-                        server_id,
-                        proto::update_language_server::Variant::WorkProgress(
-                            proto::LspWorkProgress {
-                                token,
-                                message: report.message,
-                                percentage: report.percentage.map(|p| p as u32),
-                            },
-                        ),
-                    );
+                    self.buffer_ordered_messages_tx
+                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            message: proto::update_language_server::Variant::WorkProgress(
+                                proto::LspWorkProgress {
+                                    token,
+                                    message: report.message,
+                                    percentage: report.percentage.map(|p| p as u32),
+                                },
+                            ),
+                        })
+                        .ok();
                 }
             }
             lsp::WorkDoneProgress::End(_) => {
@@ -2597,20 +2658,25 @@ impl Project {
                 if is_disk_based_diagnostics_progress {
                     language_server_status.has_pending_diagnostic_updates = false;
                     self.disk_based_diagnostics_finished(server_id, cx);
-                    self.broadcast_language_server_update(
-                        server_id,
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                            proto::LspDiskBasedDiagnosticsUpdated {},
-                        ),
-                    );
+                    self.buffer_ordered_messages_tx
+                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            message:
+                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                                    Default::default(),
+                                ),
+                        })
+                        .ok();
                 } else {
                     self.on_lsp_work_end(server_id, token.clone(), cx);
-                    self.broadcast_language_server_update(
-                        server_id,
-                        proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
-                            token,
-                        }),
-                    );
+                    self.buffer_ordered_messages_tx
+                        .unbounded_send(BufferOrderedMessage::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            message: proto::update_language_server::Variant::WorkEnd(
+                                proto::LspWorkEnd { token },
+                            ),
+                        })
+                        .ok();
                 }
             }
         }
@@ -2717,22 +2783,6 @@ impl Project {
             failed_change: None,
             failure_reason: None,
         })
-    }
-
-    fn broadcast_language_server_update(
-        &self,
-        language_server_id: usize,
-        event: proto::update_language_server::Variant,
-    ) {
-        if let Some(project_id) = self.remote_id() {
-            self.client
-                .send(proto::UpdateLanguageServer {
-                    project_id,
-                    language_server_id: language_server_id as u64,
-                    variant: Some(event),
-                })
-                .log_err();
-        }
     }
 
     pub fn language_server_statuses(
@@ -4743,8 +4793,8 @@ impl Project {
             if is_host {
                 this.opened_buffers
                     .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
-                this.buffer_changes_tx
-                    .unbounded_send(BufferMessage::Resync)
+                this.buffer_ordered_messages_tx
+                    .unbounded_send(BufferOrderedMessage::Resync)
                     .unwrap();
             }
 
