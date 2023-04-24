@@ -272,10 +272,7 @@ impl CopilotButton {
         let mut menu_options = Vec::with_capacity(2);
 
         menu_options.push(ContextMenuItem::item("Sign In", InitiateSignIn));
-        menu_options.push(ContextMenuItem::item(
-            "Disable Copilot",
-            HideCopilot,
-        ));
+        menu_options.push(ContextMenuItem::item("Disable Copilot", HideCopilot));
 
         self.popup_menu.update(cx, |menu, cx| {
             menu.show(
