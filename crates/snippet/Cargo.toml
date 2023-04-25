@@ -9,5 +9,5 @@ path = "src/snippet.rs"
 doctest = false
 
 [dependencies]
-anyhow = "1.0"
-smallvec = { workspace = true }
+anyhow.workspace = true
+smallvec.workspace = true

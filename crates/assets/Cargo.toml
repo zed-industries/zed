@@ -10,6 +10,5 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
-anyhow = "1.0.38"
+anyhow.workspace = true
 rust-embed = { version = "6.3", features = ["include-exclude"] }
-

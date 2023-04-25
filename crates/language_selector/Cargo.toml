@@ -19,4 +19,4 @@ theme = { path = "../theme" }
 settings = { path = "../settings" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-anyhow = "1.0"
+anyhow.workspace = true
