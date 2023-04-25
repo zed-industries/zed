@@ -177,7 +177,14 @@ impl<'a> Hash for CacheKeyRef<'a> {
 #[derive(Default, Debug, Clone)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    style_runs: SmallVec<[(u32, Color, Underline); 32]>,
+    style_runs: SmallVec<[StyleRun; 32]>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StyleRun {
+    len: u32,
+    color: Color,
+    underline: Underline,
 }
 
 #[derive(Default, Debug)]
@@ -208,7 +215,11 @@ impl Line {
     fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
         let mut style_runs = SmallVec::new();
         for (len, style) in runs {
-            style_runs.push((*len as u32, style.color, style.underline));
+            style_runs.push(StyleRun {
+                len: *len as u32,
+                color: style.color,
+                underline: style.underline,
+            });
         }
         Self { layout, style_runs }
     }
@@ -301,28 +312,30 @@ impl Line {
 
                 let mut finished_underline = None;
                 if glyph.index >= run_end {
-                    if let Some((run_len, run_color, run_underline)) = style_runs.next() {
+                    if let Some(style_run) = style_runs.next() {
                         if let Some((_, underline_style)) = underline {
-                            if *run_underline != underline_style {
+                            if style_run.underline != underline_style {
                                 finished_underline = underline.take();
                             }
                         }
-                        if run_underline.thickness.into_inner() > 0. {
+                        if style_run.underline.thickness.into_inner() > 0. {
                             underline.get_or_insert((
                                 vec2f(
                                     glyph_origin.x(),
                                     origin.y() + baseline_offset.y() + 0.618 * self.layout.descent,
                                 ),
                                 Underline {
-                                    color: Some(run_underline.color.unwrap_or(*run_color)),
-                                    thickness: run_underline.thickness,
-                                    squiggly: run_underline.squiggly,
+                                    color: Some(
+                                        style_run.underline.color.unwrap_or(style_run.color),
+                                    ),
+                                    thickness: style_run.underline.thickness,
+                                    squiggly: style_run.underline.squiggly,
                                 },
                             ));
                         }
 
-                        run_end += *run_len as usize;
-                        color = *run_color;
+                        run_end += style_run.len as usize;
+                        color = style_run.color;
                     } else {
                         run_end = self.layout.len;
                         finished_underline = underline.take();
@@ -405,8 +418,8 @@ impl Line {
 
                 if glyph.index >= color_end {
                     if let Some(next_run) = color_runs.next() {
-                        color_end += next_run.0 as usize;
-                        color = next_run.1;
+                        color_end += next_run.len as usize;
+                        color = next_run.color;
                     } else {
                         color_end = self.layout.len;
                         color = Color::black();
