@@ -11,21 +11,21 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
-anyhow = "1.0.38"
+anyhow.workspace = true
 client = { path = "../client" }
 editor = { path = "../editor" }
 language = { path = "../language" }
-log = "0.4"
-futures = { workspace = true }
+log.workspace = true
+futures.workspace = true
 gpui = { path = "../gpui" }
 human_bytes = "0.4.1"
 isahc = "1.7"
-lazy_static = "1.4.0"
-postage = { workspace = true }
+lazy_static.workspace = true
+postage.workspace = true
 project = { path = "../project" }
 search = { path = "../search" }
-serde = { workspace = true }
-serde_derive = { workspace = true }
+serde.workspace = true
+serde_derive.workspace = true
 settings = { path = "../settings" }
 sysinfo = "0.27.1"
 theme = { path = "../theme" }

@@ -72,13 +72,27 @@ default-members = ["crates/zed"]
 resolver = "2"
 
 [workspace.dependencies]
+anyhow = { version = "1.0.57" }
+async-trait = { version = "0.1" }
+ctor = { version = "0.1" }
+env_logger = { version = "0.9" }
+futures = { version = "0.3" }
+lazy_static = { version = "1.4.0" }
+log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+ordered-float = { version = "2.1.1" }
+parking_lot = { version = "0.11.1" }
+postage = { version = "0.5", features = ["futures-traits"] }
+rand = { version = "0.8.5" }
+regex = { version = "1.5" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-rand = { version = "0.8" }
-postage = { version = "0.5", features = ["futures-traits"] }
 smallvec = { version = "1.6", features = ["union"] }
-futures = { version = "0.3" }
+smol = { version = "1.2" }
+tempdir = { version = "0.3.7" }
+thiserror = { version = "1.0.29" }
+time = { version = "0.3", features = ["serde", "serde-well-known"] }
+unindent = { version = "0.1.7" }
 
 [patch.crates-io]
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14" }

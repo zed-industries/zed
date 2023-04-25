@@ -24,7 +24,7 @@ workspace = { path = "../workspace" }
 gpui = { path = "../gpui", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
-serde_json = { workspace = true }
+serde_json.workspace = true
 workspace = { path = "../workspace", features = ["test-support"] }
-ctor = "0.1"
-env_logger = "0.9"
+ctor.workspace = true
+env_logger.workspace = true

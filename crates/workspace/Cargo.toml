@@ -35,20 +35,19 @@ settings = { path = "../settings" }
 terminal = { path = "../terminal" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+
 async-recursion = "1.0.0"
 bincode = "1.2.1"
-anyhow = "1.0.38"
-futures = { workspace = true }
-lazy_static = "1.4"
-env_logger = "0.9.1"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
-parking_lot = "0.11.1"
-postage = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
-serde_json = { workspace = true }
-smallvec = { workspace = true }
-indoc = "1.0.4"
+anyhow.workspace = true
+futures.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+postage.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+smallvec.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
 
 [dev-dependencies]
@@ -59,3 +58,6 @@ project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
 db = { path = "../db", features = ["test-support"] }
+
+indoc = "1.0.4"
+env_logger.workspace = true

@@ -9,13 +9,13 @@ path = "src/rope.rs"
 
 [dependencies]
 bromberg_sl2 = { git = "https://github.com/zed-industries/bromberg_sl2", rev = "950bc5482c216c395049ae33ae4501e08975f17f" }
-smallvec = { workspace = true }
+smallvec.workspace = true
 sum_tree = { path = "../sum_tree" }
 arrayvec = "0.7.1"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+log.workspace = true
 util = { path = "../util" }
 
 [dev-dependencies]
-rand = "0.8.3"
+rand.workspace = true
 util = { path = "../util", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"]  }

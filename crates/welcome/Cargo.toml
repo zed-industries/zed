@@ -11,8 +11,8 @@ path = "src/welcome.rs"
 test-support = []
 
 [dependencies]
-anyhow = "1.0.38"
-log = "0.4"
+anyhow.workspace = true
+log.workspace = true
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
