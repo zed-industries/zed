@@ -16,4 +16,4 @@ settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 project = { path = "../project" }
 
-smallvec = { workspace = true }
+smallvec.workspace = true

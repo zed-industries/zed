@@ -2784,9 +2784,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
             workspace.show_notification_once(0, cx, |cx| {
                 cx.add_view(|_| {
                     MessageNotification::new(
-                        indoc::indoc! {"
-                            Failed to load any database file :(
-                        "},
+                        "Failed to load any database file.",
                         OsOpen::new("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
                         "Click to let us know about this error"
                     )
@@ -2800,11 +2798,7 @@ fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAp
                         let backup_path = backup_path.to_string_lossy();
                         MessageNotification::new(
                             format!(
-                                indoc::indoc! {"
-                                Database file was corrupted :(
-                                Old database backed up to:
-                                {}
-                                "},
+                                "Database file was corrupted. Old database backed up to {}",
                                 backup_path
                             ),
                             OsOpen::new(backup_path.to_string()),
