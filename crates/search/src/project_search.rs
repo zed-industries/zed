@@ -85,6 +85,7 @@ pub struct ProjectSearchView {
     query_contains_error: bool,
     active_match_index: Option<usize>,
     search_id: usize,
+    query_editor_was_focused: bool,
 }
 
 pub struct ProjectSearchBar {
@@ -218,7 +219,11 @@ impl View for ProjectSearchView {
         });
 
         if cx.is_self_focused() {
-            self.focus_query_editor(cx);
+            if self.query_editor_was_focused {
+                cx.focus(&self.query_editor);
+            } else {
+                cx.focus(&self.results_editor);
+            }
         }
     }
 }
@@ -448,6 +453,7 @@ impl ProjectSearchView {
             regex,
             query_contains_error: false,
             active_match_index: None,
+            query_editor_was_focused: false,
         };
         this.model_changed(cx);
         this
@@ -549,10 +555,11 @@ impl ProjectSearchView {
         }
     }
 
-    fn focus_query_editor(&self, cx: &mut ViewContext<Self>) {
+    fn focus_query_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.select_all(&SelectAll, cx);
         });
+        self.query_editor_was_focused = true;
         cx.focus(&self.query_editor);
     }
 
@@ -561,11 +568,12 @@ impl ProjectSearchView {
             .update(cx, |query_editor, cx| query_editor.set_text(query, cx));
     }
 
-    fn focus_results_editor(&self, cx: &mut ViewContext<Self>) {
+    fn focus_results_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             let cursor = query_editor.selections.newest_anchor().head();
             query_editor.change_selections(None, cx, |s| s.select_ranges([cursor.clone()..cursor]));
         });
+        self.query_editor_was_focused = false;
         cx.focus(&self.results_editor);
     }
 
