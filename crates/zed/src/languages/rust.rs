@@ -133,7 +133,8 @@ impl LspAdapter for RustLspAdapter {
                 });
             }
             Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
-                if completion.detail.is_some() =>
+                if completion.detail.is_some()
+                    && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
             {
                 let detail = completion.detail.as_ref().unwrap();
                 let name = &completion.label;
