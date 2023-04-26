@@ -4086,10 +4086,10 @@ impl<V: View> WeakViewHandle<V> {
 
     pub fn read_with<T>(
         &self,
-        cx: &impl BorrowAppContext,
+        cx: &AsyncAppContext,
         read: impl FnOnce(&V, &ViewContext<V>) -> T,
     ) -> Result<T> {
-        cx.read_with(|cx| {
+        cx.read(|cx| {
             let handle = cx
                 .upgrade_view_handle(self)
                 .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
@@ -4100,7 +4100,7 @@ impl<V: View> WeakViewHandle<V> {
 
     pub fn update<T>(
         &self,
-        cx: &mut impl BorrowAppContext,
+        cx: &mut AsyncAppContext,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
     ) -> Result<T> {
         cx.update(|cx| {
