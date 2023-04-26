@@ -187,6 +187,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([position..position])
                 });
+                active_editor.highlight_rows(None);
             }
         });
         cx.emit(PickerEvent::Dismiss);
