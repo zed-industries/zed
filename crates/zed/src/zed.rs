@@ -374,7 +374,14 @@ pub fn build_window_options(
 fn restart(_: &Restart, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+        .filter_map(|window_id| {
+            Some(
+                cx.root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()?
+                    .downgrade(),
+            )
+        })
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -419,7 +426,14 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+        .filter_map(|window_id| {
+            Some(
+                cx.root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()?
+                    .downgrade(),
+            )
+        })
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -503,49 +517,49 @@ fn open_log_file(
 
     workspace
         .with_local_workspace(&app_state.clone(), cx, move |_, cx| {
-            cx.spawn_weak(|workspace, mut cx| async move {
+            cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) = futures::join!(
                     app_state.fs.load(&paths::OLD_LOG),
                     app_state.fs.load(&paths::LOG)
                 );
 
-                if let Some(workspace) = workspace.upgrade(&cx) {
-                    let mut lines = VecDeque::with_capacity(MAX_LINES);
-                    for line in old_log
-                        .iter()
-                        .flat_map(|log| log.lines())
-                        .chain(new_log.iter().flat_map(|log| log.lines()))
-                    {
-                        if lines.len() == MAX_LINES {
-                            lines.pop_front();
-                        }
-                        lines.push_back(line);
+                let mut lines = VecDeque::with_capacity(MAX_LINES);
+                for line in old_log
+                    .iter()
+                    .flat_map(|log| log.lines())
+                    .chain(new_log.iter().flat_map(|log| log.lines()))
+                {
+                    if lines.len() == MAX_LINES {
+                        lines.pop_front();
                     }
-                    let log = lines
-                        .into_iter()
-                        .flat_map(|line| [line, "\n"])
-                        .collect::<String>();
-
-                    workspace
-                        .update(&mut cx, |workspace, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project
-                                .update(cx, |project, cx| project.create_buffer("", None, cx))
-                                .expect("creating buffers on a local workspace always succeeds");
-                            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
-
-                            let buffer = cx.add_model(|cx| {
-                                MultiBuffer::singleton(buffer, cx).with_title("Log".into())
-                            });
-                            workspace.add_item(
-                                Box::new(cx.add_view(|cx| {
-                                    Editor::for_multibuffer(buffer, Some(project), cx)
-                                })),
-                                cx,
-                            );
-                        })
-                        .log_err();
+                    lines.push_back(line);
                 }
+                let log = lines
+                    .into_iter()
+                    .flat_map(|line| [line, "\n"])
+                    .collect::<String>();
+
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", None, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+
+                        let buffer = cx.add_model(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        });
+                        workspace.add_item(
+                            Box::new(
+                                cx.add_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project), cx)
+                                }),
+                            ),
+                            cx,
+                        );
+                    })
+                    .log_err();
             })
             .detach();
         })
@@ -558,9 +572,7 @@ fn open_telemetry_log_file(
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
-        cx.spawn_weak(|workspace, mut cx| async move {
-            let workspace = workspace.upgrade(&cx)?;
-
+        cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
                 let path = app_state.client.telemetry_log_file_path()?;
                 app_state.fs.load(&path).await.log_err()

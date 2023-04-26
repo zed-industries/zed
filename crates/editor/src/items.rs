@@ -3,7 +3,7 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
@@ -67,6 +67,7 @@ impl FollowableItem for Editor {
                 .collect::<Vec<_>>()
         });
 
+        let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
             let mut buffers = futures::future::try_join_all(buffers).await?;
             let editor = pane.read_with(&cx, |pane, cx| {
@@ -127,7 +128,7 @@ impl FollowableItem for Editor {
             };
 
             update_editor_from_message(
-                editor.clone(),
+                editor.downgrade(),
                 project,
                 proto::update_view::Editor {
                     selections: state.selections,
@@ -301,7 +302,7 @@ impl FollowableItem for Editor {
 }
 
 async fn update_editor_from_message(
-    this: ViewHandle<Editor>,
+    this: WeakViewHandle<Editor>,
     project: ModelHandle<Project>,
     message: proto::update_view::Editor,
     cx: &mut AsyncAppContext,
@@ -863,7 +864,9 @@ impl Item for Editor {
                     let buffer = project_item
                         .downcast::<Buffer>()
                         .context("Project item at stored path was not a buffer")?;
-
+                    let pane = pane
+                        .upgrade(&cx)
+                        .ok_or_else(|| anyhow!("pane was dropped"))?;
                     Ok(cx.update(|cx| {
                         cx.add_view(&pane, |cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);

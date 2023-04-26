@@ -674,13 +674,15 @@ async fn handle_cli_connection(
                             let wait = async move {
                                 if paths.is_empty() {
                                     let (done_tx, done_rx) = oneshot::channel();
-                                    let _subscription = cx.update(|cx| {
-                                        cx.observe_release(&workspace, move |_, _| {
-                                            let _ = done_tx.send(());
-                                        })
-                                    });
-                                    drop(workspace);
-                                    let _ = done_rx.await;
+                                    if let Some(workspace) = workspace.upgrade(&cx) {
+                                        let _subscription = cx.update(|cx| {
+                                            cx.observe_release(&workspace, move |_, _| {
+                                                let _ = done_tx.send(());
+                                            })
+                                        });
+                                        drop(workspace);
+                                        let _ = done_rx.await;
+                                    }
                                 } else {
                                     let _ =
                                         futures::future::try_join_all(item_release_futures).await;

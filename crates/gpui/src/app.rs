@@ -127,18 +127,8 @@ pub trait BorrowAppContext {
 }
 
 pub trait BorrowWindowContext {
-    type ReturnValue<T>;
-
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(
-        &self,
-        window_id: usize,
-        f: F,
-    ) -> Self::ReturnValue<T>;
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        f: F,
-    ) -> Self::ReturnValue<T>;
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T;
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T;
 }
 
 #[derive(Clone)]
@@ -378,28 +368,6 @@ impl BorrowAppContext for AsyncAppContext {
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
         self.0.borrow_mut().update(f)
-    }
-}
-
-impl BorrowWindowContext for AsyncAppContext {
-    type ReturnValue<T> = Result<T>;
-
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> Result<T> {
-        self.0
-            .borrow()
-            .read_window(window_id, f)
-            .ok_or_else(|| anyhow!("window was closed"))
-    }
-
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        f: F,
-    ) -> Result<T> {
-        self.0
-            .borrow_mut()
-            .update_window(window_id, f)
-            .ok_or_else(|| anyhow!("window was closed"))
     }
 }
 
@@ -3262,26 +3230,16 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
 
     pub fn spawn_labeled<F, Fut, S>(&mut self, task_label: &'static str, f: F) -> Task<S>
     where
-        F: FnOnce(ViewHandle<V>, AsyncAppContext) -> Fut,
+        F: FnOnce(WeakViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
-        let handle = self.handle();
+        let handle = self.weak_handle();
         self.window_context
             .spawn_labeled(task_label, |cx| f(handle, cx))
     }
 
     pub fn spawn<F, Fut, S>(&mut self, f: F) -> Task<S>
-    where
-        F: FnOnce(ViewHandle<V>, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = S>,
-        S: 'static,
-    {
-        let handle = self.handle();
-        self.window_context.spawn(|cx| f(handle, cx))
-    }
-
-    pub fn spawn_weak<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
         F: FnOnce(WeakViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
@@ -3340,8 +3298,6 @@ impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
 }
 
 impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
-    type ReturnValue<T> = T;
-
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.window_context, window_id, f)
     }
@@ -3394,8 +3350,6 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
 }
 
 impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
-    type ReturnValue<T> = T;
-
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.view_context, window_id, f)
     }
@@ -3732,7 +3686,7 @@ impl<T: View> ViewHandle<T> {
         cx.read_view(self)
     }
 
-    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> C::ReturnValue<S>
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
     where
         C: BorrowWindowContext,
         F: FnOnce(&T, &ViewContext<T>) -> S,
@@ -3743,7 +3697,7 @@ impl<T: View> ViewHandle<T> {
         })
     }
 
-    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::ReturnValue<S>
+    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
     where
         C: BorrowWindowContext,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
@@ -4094,15 +4048,31 @@ impl<V: View> WeakViewHandle<V> {
         cx.read_with(|cx| cx.upgrade_view_handle(self))
     }
 
+    pub fn read_with<T>(
+        &self,
+        cx: &AsyncAppContext,
+        read: impl FnOnce(&V, &ViewContext<V>) -> T,
+    ) -> Result<T> {
+        cx.read(|cx| {
+            let handle = cx
+                .upgrade_view_handle(self)
+                .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
+            cx.read_window(self.window_id, |cx| handle.read_with(cx, read))
+                .ok_or_else(|| anyhow!("window was removed"))
+        })
+    }
+
     pub fn update<T>(
         &self,
-        cx: &mut impl BorrowAppContext,
+        cx: &mut AsyncAppContext,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
-    ) -> Option<T> {
+    ) -> Result<T> {
         cx.update(|cx| {
-            let handle = cx.upgrade_view_handle(self)?;
-
+            let handle = cx
+                .upgrade_view_handle(self)
+                .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
             cx.update_window(self.window_id, |cx| handle.update(cx, update))
+                .ok_or_else(|| anyhow!("window was removed"))
         })
     }
 }
@@ -4150,8 +4120,23 @@ impl AnyWeakViewHandle {
         self.view_id
     }
 
+    fn is<T: 'static>(&self) -> bool {
+        TypeId::of::<T>() == self.view_type
+    }
+
     pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<AnyViewHandle> {
         cx.read_with(|cx| cx.upgrade_any_view_handle(self))
+    }
+
+    pub fn downcast<T: View>(self) -> Option<WeakViewHandle<T>> {
+        if self.is::<T>() {
+            Some(WeakViewHandle {
+                any_handle: self,
+                view_type: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 }
 

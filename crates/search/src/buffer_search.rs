@@ -196,12 +196,12 @@ impl ToolbarItemView for BufferSearchBar {
         if let Some(searchable_item_handle) =
             item.and_then(|item| item.to_searchable_item_handle(cx))
         {
-            let handle = cx.weak_handle();
+            let this = cx.weak_handle();
             self.active_searchable_item_subscription =
                 Some(searchable_item_handle.subscribe_to_search_events(
                     cx,
                     Box::new(move |search_event, cx| {
-                        if let Some(this) = handle.upgrade(cx) {
+                        if let Some(this) = this.upgrade(cx) {
                             this.update(cx, |this, cx| {
                                 this.on_active_searchable_item_event(search_event, cx)
                             });
@@ -582,36 +582,33 @@ impl BufferSearchBar {
                 let matches = active_searchable_item.find_matches(query, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
-                self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
+                self.pending_search = Some(cx.spawn(|this, mut cx| async move {
                     let matches = matches.await;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| {
-                            if let Some(active_searchable_item) = WeakSearchableItemHandle::upgrade(
-                                active_searchable_item.as_ref(),
-                                cx,
-                            ) {
-                                this.seachable_items_with_matches
-                                    .insert(active_searchable_item.downgrade(), matches);
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(active_searchable_item) =
+                            WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
+                        {
+                            this.seachable_items_with_matches
+                                .insert(active_searchable_item.downgrade(), matches);
 
-                                this.update_match_index(cx);
-                                if !this.dismissed {
-                                    let matches = this
-                                        .seachable_items_with_matches
-                                        .get(&active_searchable_item.downgrade())
-                                        .unwrap();
-                                    active_searchable_item.update_matches(matches, cx);
-                                    if select_closest_match {
-                                        if let Some(match_ix) = this.active_match_index {
-                                            active_searchable_item
-                                                .activate_match(match_ix, matches, cx);
-                                        }
+                            this.update_match_index(cx);
+                            if !this.dismissed {
+                                let matches = this
+                                    .seachable_items_with_matches
+                                    .get(&active_searchable_item.downgrade())
+                                    .unwrap();
+                                active_searchable_item.update_matches(matches, cx);
+                                if select_closest_match {
+                                    if let Some(match_ix) = this.active_match_index {
+                                        active_searchable_item
+                                            .activate_match(match_ix, matches, cx);
                                     }
                                 }
-                                cx.notify();
                             }
-                        })
-                        .log_err();
-                    }
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
                 }));
             }
         }

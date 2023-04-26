@@ -102,7 +102,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             let language = self.language_registry.language_for_name(language_name);
             let project = self.project.downgrade();
             let buffer = self.buffer.downgrade();
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn(|_, mut cx| async move {
                 let language = language.await?;
                 let project = project
                     .upgrade(&cx)
@@ -138,7 +138,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background().clone();
         let candidates = self.candidates.clone();
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -162,17 +162,15 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 .await
             };
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    let delegate = this.delegate_mut();
-                    delegate.matches = matches;
-                    delegate.selected_index = delegate
-                        .selected_index
-                        .min(delegate.matches.len().saturating_sub(1));
-                    cx.notify();
-                })
-                .log_err();
-            }
+            this.update(&mut cx, |this, cx| {
+                let delegate = this.delegate_mut();
+                delegate.matches = matches;
+                delegate.selected_index = delegate
+                    .selected_index
+                    .min(delegate.matches.len().saturating_sub(1));
+                cx.notify();
+            })
+            .log_err();
         })
     }
 

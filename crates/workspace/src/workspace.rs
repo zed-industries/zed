@@ -314,7 +314,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 Some(workspace.prepare_to_close(false, cx))
             };
 
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let window_id_to_replace = if let Some(close_task) = close_task {
                     if !close_task.await? {
                         return Ok(());
@@ -588,7 +588,7 @@ impl DelayedDebouncedEditAction {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn_weak(|workspace, mut cx| async move {
+        self.task = Some(cx.spawn(|workspace, mut cx| async move {
             let mut timer = cx.background().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -599,13 +599,11 @@ impl DelayedDebouncedEditAction {
                     _ = timer => {}
             }
 
-            if let Some(workspace) = workspace.upgrade(&cx) {
-                if let Some(result) = workspace
-                    .update(&mut cx, |workspace, cx| (f)(workspace, cx))
-                    .log_err()
-                {
-                    result.await.log_err();
-                }
+            if let Some(result) = workspace
+                .update(&mut cx, |workspace, cx| (f)(workspace, cx))
+                .log_err()
+            {
+                result.await.log_err();
             }
         }));
     }
@@ -733,16 +731,14 @@ impl Workspace {
         let client = project.read(cx).client();
         let mut current_user = user_store.read(cx).watch_current_user();
         let mut connection_status = client.status();
-        let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
+        let _observe_current_user = cx.spawn(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
             let mut stream =
                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
 
             while stream.recv().await.is_some() {
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |_, cx| cx.notify())?;
-                }
+                this.update(&mut cx, |_, cx| cx.notify())?;
             }
             anyhow::Ok(())
         });
@@ -752,10 +748,9 @@ impl Workspace {
         // that each asynchronous operation can be run in order.
         let (leader_updates_tx, mut leader_updates_rx) =
             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
-        let _apply_leader_updates = cx.spawn_weak(|this, mut cx| async move {
+        let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
             while let Some((leader_id, update)) = leader_updates_rx.next().await {
-                let Some(this) = this.upgrade(&cx) else { break };
-                Self::process_leader_update(this, leader_id, update, &mut cx)
+                Self::process_leader_update(&this, leader_id, update, &mut cx)
                     .await
                     .log_err();
             }
@@ -869,7 +864,7 @@ impl Workspace {
         requesting_window_id: Option<usize>,
         cx: &mut AppContext,
     ) -> Task<(
-        ViewHandle<Workspace>,
+        WeakViewHandle<Workspace>,
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )> {
         let project_handle = Project::local(
@@ -987,6 +982,7 @@ impl Workspace {
                     .1
                 });
 
+            let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
 
             // Call open path for each of the project paths
@@ -1129,7 +1125,7 @@ impl Workspace {
     ) -> Option<Task<Result<()>>> {
         let window_id = cx.window_id();
         let prepare = self.prepare_to_close(false, cx);
-        Some(cx.spawn_weak(|_, mut cx| async move {
+        Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 cx.remove_window(window_id);
             }
@@ -1211,7 +1207,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
-                        Some((pane.clone(), item.boxed_clone()))
+                        Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
                     }
@@ -1220,7 +1216,7 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn_weak(|_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
@@ -1975,32 +1971,30 @@ impl Workspace {
             leader_id: Some(leader_id),
         });
 
-        Some(cx.spawn_weak(|this, mut cx| async move {
+        Some(cx.spawn(|this, mut cx| async move {
             let response = request.await?;
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, _| {
-                    let state = this
-                        .follower_states_by_leader
-                        .get_mut(&leader_id)
-                        .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
-                        .ok_or_else(|| anyhow!("following interrupted"))?;
-                    state.active_view_id = if let Some(active_view_id) = response.active_view_id {
-                        Some(ViewId::from_proto(active_view_id)?)
-                    } else {
-                        None
-                    };
-                    Ok::<_, anyhow::Error>(())
-                })??;
-                Self::add_views_from_leader(
-                    this.clone(),
-                    leader_id,
-                    vec![pane],
-                    response.views,
-                    &mut cx,
-                )
-                .await?;
-                this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
-            }
+            this.update(&mut cx, |this, _| {
+                let state = this
+                    .follower_states_by_leader
+                    .get_mut(&leader_id)
+                    .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
+                    .ok_or_else(|| anyhow!("following interrupted"))?;
+                state.active_view_id = if let Some(active_view_id) = response.active_view_id {
+                    Some(ViewId::from_proto(active_view_id)?)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(())
+            })??;
+            Self::add_views_from_leader(
+                this.clone(),
+                leader_id,
+                vec![pane],
+                response.views,
+                &mut cx,
+            )
+            .await?;
+            this.update(&mut cx, |this, cx| this.leader_updated(leader_id, cx))?;
             Ok(())
         }))
     }
@@ -2226,7 +2220,7 @@ impl Workspace {
     // RPC handlers
 
     async fn handle_follow(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         envelope: TypedEnvelope<proto::Follow>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -2274,7 +2268,7 @@ impl Workspace {
     }
 
     async fn handle_unfollow(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         envelope: TypedEnvelope<proto::Unfollow>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -2289,7 +2283,7 @@ impl Workspace {
     }
 
     async fn handle_update_followers(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
         _: Arc<Client>,
         cx: AsyncAppContext,
@@ -2303,7 +2297,7 @@ impl Workspace {
     }
 
     async fn process_leader_update(
-        this: ViewHandle<Self>,
+        this: &WeakViewHandle<Self>,
         leader_id: PeerId,
         update: proto::UpdateFollowers,
         cx: &mut AsyncAppContext,
@@ -2363,7 +2357,7 @@ impl Workspace {
     }
 
     async fn add_views_from_leader(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         leader_id: PeerId,
         panes: Vec<ViewHandle<Pane>>,
         views: Vec<proto::View>,
@@ -2691,82 +2685,80 @@ impl Workspace {
         cx: &mut AppContext,
     ) {
         cx.spawn(|mut cx| async move {
-            if let Some(workspace) = workspace.upgrade(&cx) {
-                let (project, dock_pane_handle, old_center_pane) =
-                    workspace.read_with(&cx, |workspace, _| {
-                        (
-                            workspace.project().clone(),
-                            workspace.dock_pane().clone(),
-                            workspace.last_active_center_pane.clone(),
-                        )
-                    })?;
-
-                serialized_workspace
-                    .dock_pane
-                    .deserialize_to(
-                        &project,
-                        &dock_pane_handle,
-                        serialized_workspace.id,
-                        &workspace,
-                        &mut cx,
+            let (project, dock_pane_handle, old_center_pane) =
+                workspace.read_with(&cx, |workspace, _| {
+                    (
+                        workspace.project().clone(),
+                        workspace.dock_pane().downgrade(),
+                        workspace.last_active_center_pane.clone(),
                     )
-                    .await?;
-
-                // Traverse the splits tree and add to things
-                let center_group = serialized_workspace
-                    .center_group
-                    .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
-                    .await;
-
-                // Remove old panes from workspace panes list
-                workspace.update(&mut cx, |workspace, cx| {
-                    if let Some((center_group, active_pane)) = center_group {
-                        workspace.remove_panes(workspace.center.root.clone(), cx);
-
-                        // Swap workspace center group
-                        workspace.center = PaneGroup::with_root(center_group);
-
-                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                        cx.focus_self();
-
-                        if let Some(active_pane) = active_pane {
-                            cx.focus(&active_pane);
-                        } else {
-                            cx.focus(workspace.panes.last().unwrap());
-                        }
-                    } else {
-                        let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
-                        if let Some(old_center_handle) = old_center_handle {
-                            cx.focus(&old_center_handle)
-                        } else {
-                            cx.focus_self()
-                        }
-                    }
-
-                    if workspace.left_sidebar().read(cx).is_open()
-                        != serialized_workspace.left_sidebar_open
-                    {
-                        workspace.toggle_sidebar(SidebarSide::Left, cx);
-                    }
-
-                    // Note that without after_window, the focus_self() and
-                    // the focus the dock generates start generating alternating
-                    // focus due to the deferred execution each triggering each other
-                    cx.after_window_update(move |workspace, cx| {
-                        Dock::set_dock_position(
-                            workspace,
-                            serialized_workspace.dock_position,
-                            true,
-                            cx,
-                        );
-                    });
-
-                    cx.notify();
                 })?;
 
-                // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?
-            }
+            serialized_workspace
+                .dock_pane
+                .deserialize_to(
+                    &project,
+                    &dock_pane_handle,
+                    serialized_workspace.id,
+                    &workspace,
+                    &mut cx,
+                )
+                .await?;
+
+            // Traverse the splits tree and add to things
+            let center_group = serialized_workspace
+                .center_group
+                .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+                .await;
+
+            // Remove old panes from workspace panes list
+            workspace.update(&mut cx, |workspace, cx| {
+                if let Some((center_group, active_pane)) = center_group {
+                    workspace.remove_panes(workspace.center.root.clone(), cx);
+
+                    // Swap workspace center group
+                    workspace.center = PaneGroup::with_root(center_group);
+
+                    // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                    cx.focus_self();
+
+                    if let Some(active_pane) = active_pane {
+                        cx.focus(&active_pane);
+                    } else {
+                        cx.focus(workspace.panes.last().unwrap());
+                    }
+                } else {
+                    let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
+                    if let Some(old_center_handle) = old_center_handle {
+                        cx.focus(&old_center_handle)
+                    } else {
+                        cx.focus_self()
+                    }
+                }
+
+                if workspace.left_sidebar().read(cx).is_open()
+                    != serialized_workspace.left_sidebar_open
+                {
+                    workspace.toggle_sidebar(SidebarSide::Left, cx);
+                }
+
+                // Note that without after_window, the focus_self() and
+                // the focus the dock generates start generating alternating
+                // focus due to the deferred execution each triggering each other
+                cx.after_window_update(move |workspace, cx| {
+                    Dock::set_dock_position(
+                        workspace,
+                        serialized_workspace.dock_position,
+                        true,
+                        cx,
+                    );
+                });
+
+                cx.notify();
+            })?;
+
+            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+            workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -2778,7 +2770,7 @@ impl Workspace {
     }
 }
 
-fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
     workspace.update(cx, |workspace, cx| {
         if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
             workspace.show_notification_once(0, cx, |cx| {
@@ -2989,7 +2981,7 @@ pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 pub fn activate_workspace_for_project(
     cx: &mut AppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
-) -> Option<ViewHandle<Workspace>> {
+) -> Option<WeakViewHandle<Workspace>> {
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         let handle = cx
             .update_window(window_id, |cx| {
@@ -3004,8 +2996,8 @@ pub fn activate_workspace_for_project(
             })
             .flatten();
 
-        if handle.is_some() {
-            return handle;
+        if let Some(handle) = handle {
+            return Some(handle.downgrade());
         }
     }
     None
@@ -3023,7 +3015,7 @@ pub fn open_paths(
     cx: &mut AppContext,
 ) -> Task<
     Result<(
-        ViewHandle<Workspace>,
+        WeakViewHandle<Workspace>,
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )>,
 > {
@@ -3709,7 +3701,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                Pane::go_back(workspace, Some(pane.clone()), cx)
+                Pane::go_back(workspace, Some(pane.downgrade()), cx)
             })
             .await
             .unwrap();

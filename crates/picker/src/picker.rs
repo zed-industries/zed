@@ -238,10 +238,9 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         let update = self.delegate.update_matches(query, cx);
         self.matches_updated(cx);
-        self.pending_update_matches = cx.spawn_weak(|this, mut cx| async move {
+        self.pending_update_matches = cx.spawn(|this, mut cx| async move {
             update.await;
-            this.upgrade(&cx)?
-                .update(&mut cx, |this, cx| this.matches_updated(cx))
+            this.update(&mut cx, |this, cx| this.matches_updated(cx))
                 .log_err()
         });
     }

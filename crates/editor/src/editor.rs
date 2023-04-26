@@ -2477,7 +2477,7 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn_weak(|this, mut cx| {
+        let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
                     let mut menu = CompletionsMenu {
@@ -2510,9 +2510,6 @@ impl Editor {
                     None
                 };
 
-                let this = this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("editor was dropped"))?;
                 this.update(&mut cx, |this, cx| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id > id);
 
@@ -2669,33 +2666,28 @@ impl Editor {
 
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             while let Some(prev_task) = task {
                 prev_task.await;
-                task = this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("editor dropped"))?
-                    .update(&mut cx, |this, _| this.code_actions_task.take())?;
+                task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
             }
 
-            this.upgrade(&cx)
-                .ok_or_else(|| anyhow!("editor dropped"))?
-                .update(&mut cx, |this, cx| {
-                    if this.focused {
-                        if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                            this.show_context_menu(
-                                ContextMenu::CodeActions(CodeActionsMenu {
-                                    buffer,
-                                    actions,
-                                    selected_item: Default::default(),
-                                    list: Default::default(),
-                                    deployed_from_indicator,
-                                }),
-                                cx,
-                            );
-                        }
+            this.update(&mut cx, |this, cx| {
+                if this.focused {
+                    if let Some((buffer, actions)) = this.available_code_actions.clone() {
+                        this.show_context_menu(
+                            ContextMenu::CodeActions(CodeActionsMenu {
+                                buffer,
+                                actions,
+                                selected_item: Default::default(),
+                                list: Default::default(),
+                                deployed_from_indicator,
+                            }),
+                            cx,
+                        );
                     }
-                })?;
+                }
+            })?;
 
             Ok::<_, anyhow::Error>(())
         })
@@ -2723,15 +2715,16 @@ impl Editor {
         let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, true, cx)
         });
+        let editor = editor.downgrade();
         Some(cx.spawn(|workspace, cx| async move {
             let project_transaction = apply_code_actions.await?;
-            Self::open_project_transaction(editor, workspace, project_transaction, title, cx).await
+            Self::open_project_transaction(&editor, workspace, project_transaction, title, cx).await
         }))
     }
 
     async fn open_project_transaction(
-        this: ViewHandle<Editor>,
-        workspace: ViewHandle<Workspace>,
+        this: &WeakViewHandle<Editor>,
+        workspace: WeakViewHandle<Workspace>,
         transaction: ProjectTransaction,
         title: String,
         mut cx: AsyncAppContext,
@@ -2826,21 +2819,19 @@ impl Editor {
         let actions = project.update(cx, |project, cx| {
             project.code_actions(&start_buffer, start..end, cx)
         });
-        self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
+        self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
             let actions = actions.await;
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    this.available_code_actions = actions.log_err().and_then(|actions| {
-                        if actions.is_empty() {
-                            None
-                        } else {
-                            Some((start_buffer, actions.into()))
-                        }
-                    });
-                    cx.notify();
-                })
-                .log_err();
-            }
+            this.update(&mut cx, |this, cx| {
+                this.available_code_actions = actions.log_err().and_then(|actions| {
+                    if actions.is_empty() {
+                        None
+                    } else {
+                        Some((start_buffer, actions.into()))
+                    }
+                });
+                cx.notify();
+            })
+            .log_err();
         }));
         None
     }
@@ -2865,9 +2856,8 @@ impl Editor {
             project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
         });
 
-        self.document_highlights_task = Some(cx.spawn_weak(|this, mut cx| async move {
-            let highlights = highlights.log_err().await;
-            if let Some((this, highlights)) = this.upgrade(&cx).zip(highlights) {
+        self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
+            if let Some(highlights) = highlights.await.log_err() {
                 this.update(&mut cx, |this, cx| {
                     if this.pending_rename.is_some() {
                         return;
@@ -2961,7 +2951,7 @@ impl Editor {
 
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
+        self.copilot_state.pending_refresh = cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background().timer(COPILOT_DEBOUNCE_TIMEOUT).await;
             }
@@ -2976,21 +2966,20 @@ impl Editor {
                 .flatten()
                 .collect_vec();
 
-            this.upgrade(&cx)?
-                .update(&mut cx, |this, cx| {
-                    if !completions.is_empty() {
-                        this.copilot_state.cycled = false;
-                        this.copilot_state.pending_cycling_refresh = Task::ready(None);
-                        this.copilot_state.completions.clear();
-                        this.copilot_state.active_completion_index = 0;
-                        this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
-                        for completion in completions {
-                            this.copilot_state.push_completion(completion);
-                        }
-                        this.update_visible_copilot_suggestion(cx);
+            this.update(&mut cx, |this, cx| {
+                if !completions.is_empty() {
+                    this.copilot_state.cycled = false;
+                    this.copilot_state.pending_cycling_refresh = Task::ready(None);
+                    this.copilot_state.completions.clear();
+                    this.copilot_state.active_completion_index = 0;
+                    this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
+                    for completion in completions {
+                        this.copilot_state.push_completion(completion);
                     }
-                })
-                .log_err()?;
+                    this.update_visible_copilot_suggestion(cx);
+                }
+            })
+            .log_err()?;
             Some(())
         });
 
@@ -3014,23 +3003,22 @@ impl Editor {
             let cursor = self.selections.newest_anchor().head();
             let (buffer, buffer_position) =
                 self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-            self.copilot_state.pending_cycling_refresh = cx.spawn_weak(|this, mut cx| async move {
+            self.copilot_state.pending_cycling_refresh = cx.spawn(|this, mut cx| async move {
                 let completions = copilot
                     .update(&mut cx, |copilot, cx| {
                         copilot.completions_cycling(&buffer, buffer_position, cx)
                     })
                     .await;
 
-                this.upgrade(&cx)?
-                    .update(&mut cx, |this, cx| {
-                        this.copilot_state.cycled = true;
-                        for completion in completions.log_err().into_iter().flatten() {
-                            this.copilot_state.push_completion(completion);
-                        }
-                        this.copilot_state.cycle_completions(direction);
-                        this.update_visible_copilot_suggestion(cx);
-                    })
-                    .log_err()?;
+                this.update(&mut cx, |this, cx| {
+                    this.copilot_state.cycled = true;
+                    for completion in completions.log_err().into_iter().flatten() {
+                        this.copilot_state.push_completion(completion);
+                    }
+                    this.copilot_state.cycle_completions(direction);
+                    this.update_visible_copilot_suggestion(cx);
+                })
+                .log_err()?;
 
                 Some(())
             });
@@ -5956,10 +5944,11 @@ impl Editor {
             project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
         });
 
+        let editor = editor.downgrade();
         Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
-                editor.clone(),
+                &editor,
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
@@ -6770,11 +6759,12 @@ impl Editor {
         let editor = workspace.open_path(action.path.clone(), None, true, cx);
         let position = action.position;
         let anchor = action.anchor;
-        cx.spawn_weak(|_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let editor = editor
                 .await?
                 .downcast::<Editor>()
-                .ok_or_else(|| anyhow!("opened item was not an editor"))?;
+                .ok_or_else(|| anyhow!("opened item was not an editor"))?
+                .downgrade();
             editor.update(&mut cx, |editor, cx| {
                 let buffer = editor
                     .buffer()
@@ -6796,6 +6786,7 @@ impl Editor {
 
                 anyhow::Ok(())
             })??;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);

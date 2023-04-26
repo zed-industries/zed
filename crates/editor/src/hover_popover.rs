@@ -149,7 +149,7 @@ fn show_hover(
         }
     }
 
-    let task = cx.spawn_weak(|this, mut cx| {
+    let task = cx.spawn(|this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if !ignore_timeout {
@@ -201,15 +201,13 @@ fn show_hover(
                     })
             });
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, _| {
-                    this.hover_state.diagnostic_popover =
-                        local_diagnostic.map(|local_diagnostic| DiagnosticPopover {
-                            local_diagnostic,
-                            primary_diagnostic,
-                        });
-                })?;
-            }
+            this.update(&mut cx, |this, _| {
+                this.hover_state.diagnostic_popover =
+                    local_diagnostic.map(|local_diagnostic| DiagnosticPopover {
+                        local_diagnostic,
+                        primary_diagnostic,
+                    });
+            })?;
 
             // Construct new hover popover from hover request
             let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
@@ -239,23 +237,22 @@ fn show_hover(
                 })
             });
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    if let Some(hover_popover) = hover_popover.as_ref() {
-                        // Highlight the selected symbol using a background highlight
-                        this.highlight_background::<HoverState>(
-                            vec![hover_popover.symbol_range.clone()],
-                            |theme| theme.editor.hover_popover.highlight,
-                            cx,
-                        );
-                    } else {
-                        this.clear_background_highlights::<HoverState>(cx);
-                    }
+            this.update(&mut cx, |this, cx| {
+                if let Some(hover_popover) = hover_popover.as_ref() {
+                    // Highlight the selected symbol using a background highlight
+                    this.highlight_background::<HoverState>(
+                        vec![hover_popover.symbol_range.clone()],
+                        |theme| theme.editor.hover_popover.highlight,
+                        cx,
+                    );
+                } else {
+                    this.clear_background_highlights::<HoverState>(cx);
+                }
 
-                    this.hover_state.info_popover = hover_popover;
-                    cx.notify();
-                })?;
-            }
+                this.hover_state.info_popover = hover_popover;
+                cx.notify();
+            })?;
+
             Ok::<_, anyhow::Error>(())
         }
         .log_err()
