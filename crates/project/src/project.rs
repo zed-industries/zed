@@ -2954,6 +2954,7 @@ impl Project {
                 diagnostics.push(DiagnosticEntry {
                     range,
                     diagnostic: Diagnostic {
+                        source: diagnostic.source.clone(),
                         code: code.clone(),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         message: diagnostic.message.clone(),
@@ -2971,6 +2972,7 @@ impl Project {
                             diagnostics.push(DiagnosticEntry {
                                 range,
                                 diagnostic: Diagnostic {
+                                    source: diagnostic.source.clone(),
                                     code: code.clone(),
                                     severity: DiagnosticSeverity::INFORMATION,
                                     message: info.message.clone(),

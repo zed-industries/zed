@@ -1,7 +1,7 @@
 use futures::FutureExt;
 use gpui::{
     actions,
-    elements::{Flex, MouseEventHandler, Padding, Text},
+    elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Axis, Element, ModelHandle, Task, ViewContext,
@@ -378,6 +378,8 @@ impl DiagnosticPopover {
 
         let mut text_style = style.hover_popover.prose.clone();
         text_style.font_size = style.text.font_size;
+        let mut diagnostic_source_style = style.hover_popover.diagnostic_source.clone();
+        diagnostic_source_style.font_size = style.text.font_size;
 
         let container_style = match self.local_diagnostic.diagnostic.severity {
             DiagnosticSeverity::HINT => style.hover_popover.info_container,
@@ -390,8 +392,18 @@ impl DiagnosticPopover {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         MouseEventHandler::<DiagnosticPopover, _>::new(0, cx, |_, _| {
-            Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
-                .with_soft_wrap(true)
+            Flex::row()
+                .with_children(
+                    self.local_diagnostic
+                        .diagnostic
+                        .source
+                        .as_ref()
+                        .map(|source| Text::new(format!("{source}: "), diagnostic_source_style)),
+                )
+                .with_child(
+                    Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
+                        .with_soft_wrap(true),
+                )
                 .contained()
                 .with_style(container_style)
         })
