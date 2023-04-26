@@ -36,7 +36,7 @@ use language::{
 };
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerId, LanguageString, MarkedString,
+    DocumentHighlightKind, LanguageServer, LanguageServerId,
 };
 use lsp_command::*;
 use lsp_glob_set::LspGlobSet;
@@ -287,27 +287,14 @@ pub struct Symbol {
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoverBlock {
     pub text: String,
-    pub language: Option<String>,
+    pub kind: HoverBlockKind,
 }
 
-impl HoverBlock {
-    fn try_new(marked_string: MarkedString) -> Option<Self> {
-        let result = match marked_string {
-            MarkedString::LanguageString(LanguageString { language, value }) => HoverBlock {
-                text: value,
-                language: Some(language),
-            },
-            MarkedString::String(text) => HoverBlock {
-                text,
-                language: None,
-            },
-        };
-        if result.text.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub enum HoverBlockKind {
+    PlainText,
+    Markdown,
+    Code { language: String },
 }
 
 #[derive(Debug)]
