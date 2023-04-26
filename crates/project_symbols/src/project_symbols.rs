@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use editor::{
     combine_syntax_and_fuzzy_match_highlights, scroll::autoscroll::Autoscroll,
     styled_runs_for_code_label, Bias, Editor,
@@ -119,9 +118,6 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             let workspace = self.workspace.clone();
             cx.spawn(|_, mut cx| async move {
                 let buffer = buffer.await?;
-                let workspace = workspace
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
                 workspace.update(&mut cx, |workspace, cx| {
                     let position = buffer
                         .read(cx)
@@ -163,34 +159,31 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             .update(cx, |project, cx| project.symbols(&query, cx));
         cx.spawn(|this, mut cx| async move {
             let symbols = symbols.await.log_err();
-            if let Some(this) = this.upgrade(&cx) {
-                if let Some(symbols) = symbols {
-                    this.update(&mut cx, |this, cx| {
-                        let delegate = this.delegate_mut();
-                        let project = delegate.project.read(cx);
-                        let (visible_match_candidates, external_match_candidates) = symbols
-                            .iter()
-                            .enumerate()
-                            .map(|(id, symbol)| {
-                                StringMatchCandidate::new(
-                                    id,
-                                    symbol.label.text[symbol.label.filter_range.clone()]
-                                        .to_string(),
-                                )
-                            })
-                            .partition(|candidate| {
-                                project
-                                    .entry_for_path(&symbols[candidate.id].path, cx)
-                                    .map_or(false, |e| !e.is_ignored)
-                            });
+            if let Some(symbols) = symbols {
+                this.update(&mut cx, |this, cx| {
+                    let delegate = this.delegate_mut();
+                    let project = delegate.project.read(cx);
+                    let (visible_match_candidates, external_match_candidates) = symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| {
+                            StringMatchCandidate::new(
+                                id,
+                                symbol.label.text[symbol.label.filter_range.clone()].to_string(),
+                            )
+                        })
+                        .partition(|candidate| {
+                            project
+                                .entry_for_path(&symbols[candidate.id].path, cx)
+                                .map_or(false, |e| !e.is_ignored)
+                        });
 
-                        delegate.visible_match_candidates = visible_match_candidates;
-                        delegate.external_match_candidates = external_match_candidates;
-                        delegate.symbols = symbols;
-                        delegate.filter(&query, cx);
-                    })
-                    .log_err();
-                }
+                    delegate.visible_match_candidates = visible_match_candidates;
+                    delegate.external_match_candidates = external_match_candidates;
+                    delegate.symbols = symbols;
+                    delegate.filter(&query, cx);
+                })
+                .log_err();
             }
         })
     }

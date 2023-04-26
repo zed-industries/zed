@@ -104,9 +104,7 @@ impl<V: View> Tooltip<V> {
                                 |view, mut cx| async move {
                                     cx.background().timer(DEBOUNCE_TIMEOUT).await;
                                     state.visible.set(true);
-                                    if let Some(view) = view.upgrade(&cx) {
-                                        view.update(&mut cx, |_, cx| cx.notify()).log_err();
-                                    }
+                                    view.update(&mut cx, |_, cx| cx.notify()).log_err();
                                 }
                             }));
                         }

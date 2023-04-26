@@ -105,16 +105,14 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
                 .await
             };
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, _| {
-                    let delegate = this.delegate_mut();
-                    delegate.matches = matches;
-                    delegate.selected_index = delegate
-                        .selected_index
-                        .min(delegate.matches.len().saturating_sub(1));
-                })
-                .log_err();
-            }
+            this.update(&mut cx, |this, _| {
+                let delegate = this.delegate_mut();
+                delegate.matches = matches;
+                delegate.selected_index = delegate
+                    .selected_index
+                    .min(delegate.matches.len().saturating_sub(1));
+            })
+            .log_err();
         })
     }
 

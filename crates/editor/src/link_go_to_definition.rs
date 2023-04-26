@@ -202,67 +202,65 @@ pub fn show_link_definition(
                 )
             });
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    // Clear any existing highlights
-                    this.clear_text_highlights::<LinkGoToDefinitionState>(cx);
-                    this.link_go_to_definition_state.kind = Some(definition_kind);
-                    this.link_go_to_definition_state.symbol_range = result
-                        .as_ref()
-                        .and_then(|(symbol_range, _)| symbol_range.clone());
+            this.update(&mut cx, |this, cx| {
+                // Clear any existing highlights
+                this.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+                this.link_go_to_definition_state.kind = Some(definition_kind);
+                this.link_go_to_definition_state.symbol_range = result
+                    .as_ref()
+                    .and_then(|(symbol_range, _)| symbol_range.clone());
 
-                    if let Some((symbol_range, definitions)) = result {
-                        this.link_go_to_definition_state.definitions = definitions.clone();
+                if let Some((symbol_range, definitions)) = result {
+                    this.link_go_to_definition_state.definitions = definitions.clone();
 
-                        let buffer_snapshot = buffer.read(cx).snapshot();
+                    let buffer_snapshot = buffer.read(cx).snapshot();
 
-                        // Only show highlight if there exists a definition to jump to that doesn't contain
-                        // the current location.
-                        let any_definition_does_not_contain_current_location =
-                            definitions.iter().any(|definition| {
-                                let target = &definition.target;
-                                if target.buffer == buffer {
-                                    let range = &target.range;
-                                    // Expand range by one character as lsp definition ranges include positions adjacent
-                                    // but not contained by the symbol range
-                                    let start = buffer_snapshot.clip_offset(
-                                        range.start.to_offset(&buffer_snapshot).saturating_sub(1),
-                                        Bias::Left,
-                                    );
-                                    let end = buffer_snapshot.clip_offset(
-                                        range.end.to_offset(&buffer_snapshot) + 1,
-                                        Bias::Right,
-                                    );
-                                    let offset = buffer_position.to_offset(&buffer_snapshot);
-                                    !(start <= offset && end >= offset)
-                                } else {
-                                    true
-                                }
-                            });
+                    // Only show highlight if there exists a definition to jump to that doesn't contain
+                    // the current location.
+                    let any_definition_does_not_contain_current_location =
+                        definitions.iter().any(|definition| {
+                            let target = &definition.target;
+                            if target.buffer == buffer {
+                                let range = &target.range;
+                                // Expand range by one character as lsp definition ranges include positions adjacent
+                                // but not contained by the symbol range
+                                let start = buffer_snapshot.clip_offset(
+                                    range.start.to_offset(&buffer_snapshot).saturating_sub(1),
+                                    Bias::Left,
+                                );
+                                let end = buffer_snapshot.clip_offset(
+                                    range.end.to_offset(&buffer_snapshot) + 1,
+                                    Bias::Right,
+                                );
+                                let offset = buffer_position.to_offset(&buffer_snapshot);
+                                !(start <= offset && end >= offset)
+                            } else {
+                                true
+                            }
+                        });
 
-                        if any_definition_does_not_contain_current_location {
-                            // If no symbol range returned from language server, use the surrounding word.
-                            let highlight_range = symbol_range.unwrap_or_else(|| {
-                                let snapshot = &snapshot.buffer_snapshot;
-                                let (offset_range, _) = snapshot.surrounding_word(trigger_point);
+                    if any_definition_does_not_contain_current_location {
+                        // If no symbol range returned from language server, use the surrounding word.
+                        let highlight_range = symbol_range.unwrap_or_else(|| {
+                            let snapshot = &snapshot.buffer_snapshot;
+                            let (offset_range, _) = snapshot.surrounding_word(trigger_point);
 
-                                snapshot.anchor_before(offset_range.start)
-                                    ..snapshot.anchor_after(offset_range.end)
-                            });
+                            snapshot.anchor_before(offset_range.start)
+                                ..snapshot.anchor_after(offset_range.end)
+                        });
 
-                            // Highlight symbol using theme link definition highlight style
-                            let style = cx.global::<Settings>().theme.editor.link_definition;
-                            this.highlight_text::<LinkGoToDefinitionState>(
-                                vec![highlight_range],
-                                style,
-                                cx,
-                            );
-                        } else {
-                            hide_link_definition(this, cx);
-                        }
+                        // Highlight symbol using theme link definition highlight style
+                        let style = cx.global::<Settings>().theme.editor.link_definition;
+                        this.highlight_text::<LinkGoToDefinitionState>(
+                            vec![highlight_range],
+                            style,
+                            cx,
+                        );
+                    } else {
+                        hide_link_definition(this, cx);
                     }
-                })?;
-            }
+                }
+            })?;
 
             Ok::<_, anyhow::Error>(())
         }

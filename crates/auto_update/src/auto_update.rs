@@ -104,17 +104,15 @@ pub fn notify_of_any_new_update(
     cx.spawn(|mut cx| async move {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
-            if let Some(workspace) = workspace.upgrade(&cx) {
-                workspace.update(&mut cx, |workspace, cx| {
-                    workspace.show_notification(0, cx, |cx| {
-                        cx.add_view(|_| UpdateNotification::new(version))
-                    });
-                    updater
-                        .read(cx)
-                        .set_should_show_update_notification(false, cx)
-                        .detach_and_log_err(cx);
-                })?;
-            }
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.show_notification(0, cx, |cx| {
+                    cx.add_view(|_| UpdateNotification::new(version))
+                });
+                updater
+                    .read(cx)
+                    .set_should_show_update_notification(false, cx)
+                    .detach_and_log_err(cx);
+            })?;
         }
         anyhow::Ok(())
     })

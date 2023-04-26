@@ -240,8 +240,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.matches_updated(cx);
         self.pending_update_matches = cx.spawn(|this, mut cx| async move {
             update.await;
-            this.upgrade(&cx)?
-                .update(&mut cx, |this, cx| this.matches_updated(cx))
+            this.update(&mut cx, |this, cx| this.matches_updated(cx))
                 .log_err()
         });
     }

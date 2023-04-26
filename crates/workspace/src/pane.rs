@@ -2005,9 +2005,11 @@ impl NavHistory {
     }
 
     fn did_update(&self, cx: &mut WindowContext) {
-        if let Some(pane) = self.pane.upgrade(cx) {
-            cx.defer(move |cx| pane.update(cx, |pane, cx| pane.history_updated(cx)));
-        }
+        let pane = self.pane.clone();
+        cx.defer(move |cx| {
+            pane.update(cx, |pane, cx| pane.history_updated(cx))
+                .log_err();
+        });
     }
 }
 

@@ -2510,9 +2510,6 @@ impl Editor {
                     None
                 };
 
-                let this = this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("editor was dropped"))?;
                 this.update(&mut cx, |this, cx| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id > id);
 
@@ -2672,30 +2669,25 @@ impl Editor {
         cx.spawn(|this, mut cx| async move {
             while let Some(prev_task) = task {
                 prev_task.await;
-                task = this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("editor dropped"))?
-                    .update(&mut cx, |this, _| this.code_actions_task.take())?;
+                task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
             }
 
-            this.upgrade(&cx)
-                .ok_or_else(|| anyhow!("editor dropped"))?
-                .update(&mut cx, |this, cx| {
-                    if this.focused {
-                        if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                            this.show_context_menu(
-                                ContextMenu::CodeActions(CodeActionsMenu {
-                                    buffer,
-                                    actions,
-                                    selected_item: Default::default(),
-                                    list: Default::default(),
-                                    deployed_from_indicator,
-                                }),
-                                cx,
-                            );
-                        }
+            this.update(&mut cx, |this, cx| {
+                if this.focused {
+                    if let Some((buffer, actions)) = this.available_code_actions.clone() {
+                        this.show_context_menu(
+                            ContextMenu::CodeActions(CodeActionsMenu {
+                                buffer,
+                                actions,
+                                selected_item: Default::default(),
+                                list: Default::default(),
+                                deployed_from_indicator,
+                            }),
+                            cx,
+                        );
                     }
-                })?;
+                }
+            })?;
 
             Ok::<_, anyhow::Error>(())
         })
@@ -2828,19 +2820,17 @@ impl Editor {
         });
         self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
             let actions = actions.await;
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    this.available_code_actions = actions.log_err().and_then(|actions| {
-                        if actions.is_empty() {
-                            None
-                        } else {
-                            Some((start_buffer, actions.into()))
-                        }
-                    });
-                    cx.notify();
-                })
-                .log_err();
-            }
+            this.update(&mut cx, |this, cx| {
+                this.available_code_actions = actions.log_err().and_then(|actions| {
+                    if actions.is_empty() {
+                        None
+                    } else {
+                        Some((start_buffer, actions.into()))
+                    }
+                });
+                cx.notify();
+            })
+            .log_err();
         }));
         None
     }
@@ -2866,8 +2856,7 @@ impl Editor {
         });
 
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
-            let highlights = highlights.log_err().await;
-            if let Some((this, highlights)) = this.upgrade(&cx).zip(highlights) {
+            if let Some(highlights) = highlights.await.log_err() {
                 this.update(&mut cx, |this, cx| {
                     if this.pending_rename.is_some() {
                         return;
@@ -2976,21 +2965,20 @@ impl Editor {
                 .flatten()
                 .collect_vec();
 
-            this.upgrade(&cx)?
-                .update(&mut cx, |this, cx| {
-                    if !completions.is_empty() {
-                        this.copilot_state.cycled = false;
-                        this.copilot_state.pending_cycling_refresh = Task::ready(None);
-                        this.copilot_state.completions.clear();
-                        this.copilot_state.active_completion_index = 0;
-                        this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
-                        for completion in completions {
-                            this.copilot_state.push_completion(completion);
-                        }
-                        this.update_visible_copilot_suggestion(cx);
+            this.update(&mut cx, |this, cx| {
+                if !completions.is_empty() {
+                    this.copilot_state.cycled = false;
+                    this.copilot_state.pending_cycling_refresh = Task::ready(None);
+                    this.copilot_state.completions.clear();
+                    this.copilot_state.active_completion_index = 0;
+                    this.copilot_state.excerpt_id = Some(cursor.excerpt_id);
+                    for completion in completions {
+                        this.copilot_state.push_completion(completion);
                     }
-                })
-                .log_err()?;
+                    this.update_visible_copilot_suggestion(cx);
+                }
+            })
+            .log_err()?;
             Some(())
         });
 
@@ -3021,16 +3009,15 @@ impl Editor {
                     })
                     .await;
 
-                this.upgrade(&cx)?
-                    .update(&mut cx, |this, cx| {
-                        this.copilot_state.cycled = true;
-                        for completion in completions.log_err().into_iter().flatten() {
-                            this.copilot_state.push_completion(completion);
-                        }
-                        this.copilot_state.cycle_completions(direction);
-                        this.update_visible_copilot_suggestion(cx);
-                    })
-                    .log_err()?;
+                this.update(&mut cx, |this, cx| {
+                    this.copilot_state.cycled = true;
+                    for completion in completions.log_err().into_iter().flatten() {
+                        this.copilot_state.push_completion(completion);
+                    }
+                    this.copilot_state.cycle_completions(direction);
+                    this.update_visible_copilot_suggestion(cx);
+                })
+                .log_err()?;
 
                 Some(())
             });
