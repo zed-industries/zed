@@ -50,6 +50,10 @@ export function useIntensityColor(
     color_family: UIColor,
     intensity: Intensity
 ): string {
+    if (!theme.color) {
+        throw new Error("useIntensityColor: Theme has no colors provided")
+    }
+
     if (intensity < 1 || intensity > 100) {
         throw new Error(
             `useIntensityColor: Intensity must be between 1 and 100, received ${intensity}`

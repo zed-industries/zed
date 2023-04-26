@@ -12,7 +12,7 @@ const zedDark: ThemeConfig = {
     license: "MIT",
     url: "https://zed.dev",
     colors: {
-        neutral: ["#020202", "#D8D8CA"],
+        neutral: ["#020202", "#FFF"],
         accent: ["#ff6a00", "#ff8f00", "#c43e00"],
         error: ["#420904", "#60201A", "#9A2C1B", "#BA4734", "BD6755"],
         info: "#2196f3",

@@ -114,6 +114,7 @@ const DEFAULT_TEXT_OPTIONS: Partial<TextStyle> = {
     lineHeight: 1,
 }
 
+const DEFAULT_BASE_TEXT_SIZE = 13
 const DEFAULT_TEXT_INTENSITY: Intensity = 100
 
 export function text(
@@ -141,7 +142,7 @@ export function text(
 
     const text: TextStyle = {
         family: mergedOptions.family,
-        size: mergedOptions.size,
+        size: mergedOptions.size * DEFAULT_BASE_TEXT_SIZE,
         weight: mergedOptions.weight,
         color,
         lineHeight: mergedOptions.lineHeight,

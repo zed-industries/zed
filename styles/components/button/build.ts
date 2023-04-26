@@ -42,7 +42,7 @@ interface ButtonProps {
     size?: ButtonSize
 }
 
-type Button =
+export type Button =
     | InteractiveContainer<ContainedIcon>
     | InteractiveContainer<ContainedText>
 
@@ -61,7 +61,7 @@ export function buildButton({
     let container: ContainerStyle = {
         background: color.neutral(resolvedIntensities.bg),
         margin: margin(0, 0, 0, 0),
-        padding: padding(0, 0, 0, 0),
+        padding: padding(6, 4),
         borderRadius: BorderRadius.Medium,
         border: border(theme, resolvedIntensities.border),
         width: "auto",
@@ -77,32 +77,52 @@ export function buildButton({
 
     const states = buildIntensitiesForStates(theme, name, resolvedIntensities)
 
-    const buildStates = (intensities: StateIntensity) => {
-        container.background = color.neutral(intensities.bg)
-        container.border = border(theme, intensities.border)
-        icon.color = color.neutral(intensities.fg)
-        text.color = color.neutral(intensities.fg)
+    console.log(states)
 
-        let stateStyle
+    const buildStates = (intensities: StateIntensity) => {
+        let updatedContainer = {
+            ...container,
+            background: color.neutral(intensities.bg),
+            border: border(theme, intensities.border),
+        };
+
+        let updatedIcon = {
+            ...icon,
+            color: color.neutral(intensities.fg),
+        };
+
+        let updatedText = {
+            ...text,
+            color: color.neutral(intensities.fg),
+        };
+
+        console.log(`
+            updatedContainer.background = ${updatedContainer.background}
+            updatedContainer.border = ${updatedContainer.border}
+            updatedIcon.color = ${updatedIcon.color}
+            updatedText.color = ${updatedText.color}
+            `);
+
+        let stateStyle;
 
         switch (kind) {
             case "icon":
                 stateStyle = {
-                    container,
-                    icon,
-                }
+                    container: updatedContainer,
+                    icon: updatedIcon,
+                };
 
-                return stateStyle as ContainedIcon
+                return stateStyle as ContainedIcon;
             case "label":
                 stateStyle = {
-                    container,
-                    text,
-                }
-                return stateStyle as ContainedText
+                    container: updatedContainer,
+                    text: updatedText,
+                };
+                return stateStyle as ContainedText;
             default:
-                throw new Error("Unhandled button kind")
+                throw new Error("Unhandled button kind");
         }
-    }
+    };
 
     let button = {
         default: buildStates(states.default),

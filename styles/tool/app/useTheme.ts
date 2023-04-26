@@ -1,14 +1,14 @@
-import * as themes from "../../themes"
+import { zedLight } from "../../themes"
+import { buildTheme } from "../../theme/buildTheme"
 import { buildUI } from "../../ui"
 
 export function useTheme() {
-    const dark = themes.zedDark
-    const ui = buildUI(dark)
+    const themeConfig = zedLight
+    const theme = buildTheme(themeConfig)
+    const ui = buildUI(theme)
 
-    const theme = {
-        config: dark,
+    return {
+        config: themeConfig,
         ui,
     }
-
-    return theme
 }
