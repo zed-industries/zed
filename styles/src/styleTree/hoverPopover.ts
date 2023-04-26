@@ -40,7 +40,7 @@ export default function HoverPopover(colorScheme: ColorScheme) {
             padding: { top: 4 },
         },
         prose: text(layer, "sans", { size: "sm" }),
-        diagnosticSource: text(layer, "sans", { size: "sm", underline: true, color: foreground(layer, "accent") }),
+        diagnosticSourceHighlight: { underline: true, color: foreground(layer, "accent") },
         highlight: colorScheme.ramps.neutral(0.5).alpha(0.2).hex(), // TODO: blend was used here. Replace with something better
     }
 }
