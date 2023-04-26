@@ -12,8 +12,10 @@ import {
     buildStates,
     checkContrast,
 } from "@theme/container"
-import { TextStyle, useText } from "@theme/text"
+import { TextStyle } from "@theme/text"
 import { ElementIntensities, useElementIntensities } from "@theme/intensity"
+import { margin, padding } from "@theme/properties"
+import { text as textStyle } from "@theme/text"
 
 type ButtonSizes = "small" | "medium" | "large"
 type ButtonSize = (typeof buttonSize)[keyof typeof buttonSize]
@@ -61,8 +63,8 @@ export function buildButton({
 
     let container: ContainerStyle = {
         background: color.neutral(states.default.bg),
-        margin: [0, 0, 0, 0],
-        padding: [4, 4, 4, 4],
+        margin: margin(0, 0, 0, 0),
+        padding: padding(0, 0, 0, 0),
         borderRadius: BorderRadius.Medium,
         border: border(theme, states.default.border),
         width: "auto",
@@ -74,7 +76,7 @@ export function buildButton({
         size: IconSize.Medium,
     }
 
-    let text: TextStyle = useText(color.neutral(states.default.fg))
+    let text: TextStyle = textStyle(theme, states.default.fg)
 
     const buildStateStyle = (state: StateIntensity) => {
         container.background = color.neutral(state.bg)

@@ -1,7 +1,7 @@
 import { useColors } from "./colors"
 import * as color from "./color"
 import { Theme } from "./config"
-import { Intensity } from "./intensity"
+import { Intensity, resolveThemeColorIntensity } from "./intensity"
 
 type BorderStyle = "solid" | "dashed" | "dotted" | "double" | "wavy"
 
@@ -13,10 +13,10 @@ export interface BorderOptions {
     width: number
     style: BorderStyle
     inset: boolean
-    side: "all" | "top" | "bottom" | "left" | "right"
+    position: "all" | "top" | "bottom" | "left" | "right"
 }
 
-interface Border {
+export interface Border {
     color: string
     width: number
     top?: boolean
@@ -31,36 +31,46 @@ interface Border {
 const DEFAULT_BORDER_OPTIONS: Partial<BorderOptions> = {
     width: 1,
     style: "solid",
-    side: "all",
+    position: "all",
     inset: false,
 }
+
+const DEFAULT_BORDER_INTENSITY: Intensity = 100
 
 export function border(
     theme: Theme,
     intensity: Intensity,
     options?: Partial<BorderOptions>,
 ): Border {
+    if (!intensity) {
+        intensity = DEFAULT_BORDER_INTENSITY
+    }
+
     const themeColor = useColors(theme)
+    const resolvedColorIntensity = resolveThemeColorIntensity(theme, intensity)
+    const DEFAULT_COLOR = themeColor.neutral(resolvedColorIntensity)
 
     const mergedOptions = {
         ...DEFAULT_BORDER_OPTIONS,
         ...options,
     }
 
-    const side = {
-        top: mergedOptions.side === "all" || mergedOptions.side === "top",
-        bottom: mergedOptions.side === "all" || mergedOptions.side === "bottom",
-        left: mergedOptions.side === "all" || mergedOptions.side === "left",
-        right: mergedOptions.side === "all" || mergedOptions.side === "right",
-    }
+    // If options are provided, we use the provided color intensity
+    // Otherwise we use the default color intensity
+    const color = (options?.color && themeColor[options.color](intensity)) || DEFAULT_COLOR;
 
-    const color = options.color ? themeColor[options.color](intensity) : themeColor.neutral(intensity)
+    const position = {
+        top: mergedOptions.position === "all" || mergedOptions.position === "top",
+        bottom: mergedOptions.position === "all" || mergedOptions.position === "bottom",
+        left: mergedOptions.position === "all" || mergedOptions.position === "left",
+        right: mergedOptions.position === "all" || mergedOptions.position === "right",
+    }
 
     const border: Border = {
         color: color,
         width: mergedOptions.width,
         overlay: mergedOptions.inset,
-        ...side
+        ...position
     }
 
     return border

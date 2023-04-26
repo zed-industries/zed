@@ -149,6 +149,13 @@ export interface ElementIntensities<T = ElementIntensity> {
     fg: T
 }
 
+export function resolveThemeColorIntensity(theme: Theme, intensity: ElementIntensity): Intensity {
+    if (Array.isArray(intensity)) {
+        return theme.appearance === "light" ? intensity[1] : intensity[0]
+    }
+    return intensity
+}
+
 /** Resolves ElementIntensity down to a single Intensity per property based on the theme's appearance
  *
  * If two intensities are provided, the first is used for dark appearance and the second for light appearance
@@ -160,21 +167,9 @@ export function useElementIntensities(
     intensity: ElementIntensities<ElementIntensity>
 ): ElementIntensities<Intensity> {
     const elementIntensities: ElementIntensities<Intensity> = {
-        bg: Array.isArray(intensity.bg)
-            ? theme.appearance === "light"
-                ? intensity.bg[1]
-                : intensity.bg[0]
-            : intensity.bg,
-        border: Array.isArray(intensity.border)
-            ? theme.appearance === "light"
-                ? intensity.border[1]
-                : intensity.border[0]
-            : intensity.border,
-        fg: Array.isArray(intensity.fg)
-            ? theme.appearance === "light"
-                ? intensity.fg[1]
-                : intensity.fg[0]
-            : intensity.fg,
+        bg: resolveThemeColorIntensity(theme, intensity.bg),
+        border: resolveThemeColorIntensity(theme, intensity.border),
+        fg: resolveThemeColorIntensity(theme, intensity.fg),
     }
 
     return { ...intensity, ...elementIntensities }
