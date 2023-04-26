@@ -226,17 +226,20 @@ impl<V: View> Element<V> for Text {
                     let mut glyph_origin = origin;
                     let mut prev_position = 0.;
                     let mut wrap_boundaries = wrap_boundaries.iter().copied().peekable();
-                    for (glyph_ix, glyph) in line
-                        .runs()
-                        .iter()
-                        .flat_map(|run| run.glyphs().iter().enumerate())
+                    for (run_ix, glyph_ix, glyph) in
+                        line.runs().iter().enumerate().flat_map(|(run_ix, run)| {
+                            run.glyphs()
+                                .iter()
+                                .enumerate()
+                                .map(move |(ix, glyph)| (run_ix, ix, glyph))
+                        })
                     {
                         glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
                         prev_position = glyph.position.x();
 
                         if wrap_boundaries
                             .peek()
-                            .map_or(false, |b| b.glyph_ix == glyph_ix)
+                            .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
                         {
                             if let Some((mouse_run_ix, mouse_region_start)) = &mut current_mouse_run
                             {
