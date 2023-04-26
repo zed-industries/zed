@@ -37,6 +37,7 @@ settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 terminal = { path = "../terminal" }
 util = { path = "../util" }
+
 aho-corasick = "0.7"
 anyhow.workspace = true
 async-trait.workspace = true
@@ -47,7 +48,6 @@ lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-pulldown-cmark = { version = "0.9.1", default-features = false }
 rand.workspace = true
 regex.workspace = true
 serde.workspace = true

@@ -1,15 +1,17 @@
 use futures::FutureExt;
 use gpui::{
     actions,
-    elements::{Flex, MouseEventHandler, Padding, Text},
+    color::Color,
+    elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
+    fonts::{HighlightStyle, Underline, Weight},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Axis, Element, ModelHandle, Task, ViewContext,
+    AnyElement, AppContext, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
-use language::{Bias, DiagnosticEntry, DiagnosticSeverity};
-use project::{HoverBlock, Project};
+use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
+use project::{HoverBlock, HoverBlockKind, Project};
 use settings::Settings;
-use std::{ops::Range, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
 
 use crate::{
@@ -235,7 +237,8 @@ fn show_hover(
                 Some(InfoPopover {
                     project: project.clone(),
                     symbol_range: range,
-                    contents: hover_result.contents,
+                    blocks: hover_result.contents,
+                    rendered_content: None,
                 })
             });
 
@@ -264,6 +267,191 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
+fn render_blocks(
+    theme_id: usize,
+    blocks: &[HoverBlock],
+    language_registry: &Arc<LanguageRegistry>,
+    style: &EditorStyle,
+) -> RenderedInfo {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    let mut link_ranges = Vec::new();
+    let mut link_urls = Vec::new();
+
+    for block in blocks {
+        match &block.kind {
+            HoverBlockKind::PlainText => {
+                new_paragraph(&mut text);
+                text.push_str(&block.text);
+            }
+            HoverBlockKind::Markdown => {
+                use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
+
+                let mut bold_depth = 0;
+                let mut italic_depth = 0;
+                let mut link_url = None;
+                let mut current_language = None;
+                let mut list_stack = Vec::new();
+
+                for event in Parser::new_ext(&block.text, Options::all()) {
+                    let prev_len = text.len();
+                    match event {
+                        Event::Text(t) => {
+                            if let Some(language) = &current_language {
+                                render_code(
+                                    &mut text,
+                                    &mut highlights,
+                                    t.as_ref(),
+                                    language,
+                                    style,
+                                );
+                            } else {
+                                text.push_str(t.as_ref());
+
+                                let mut style = HighlightStyle::default();
+                                if bold_depth > 0 {
+                                    style.weight = Some(Weight::BOLD);
+                                }
+                                if italic_depth > 0 {
+                                    style.italic = Some(true);
+                                }
+                                if link_url.is_some() {
+                                    style.underline = Some(Underline {
+                                        thickness: 1.0.into(),
+                                        ..Default::default()
+                                    });
+                                }
+
+                                if style != HighlightStyle::default() {
+                                    let mut new_highlight = true;
+                                    if let Some((last_range, last_style)) = highlights.last_mut() {
+                                        if last_range.end == prev_len && last_style == &style {
+                                            last_range.end = text.len();
+                                            new_highlight = false;
+                                        }
+                                    }
+                                    if new_highlight {
+                                        highlights.push((prev_len..text.len(), style));
+                                    }
+                                }
+                            }
+                        }
+                        Event::Code(t) => {
+                            text.push_str(t.as_ref());
+                            highlights.push((
+                                prev_len..text.len(),
+                                HighlightStyle {
+                                    color: Some(Color::red()),
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        Event::Start(tag) => match tag {
+                            Tag::Paragraph => new_paragraph(&mut text),
+                            Tag::Heading(_, _, _) => {
+                                new_paragraph(&mut text);
+                                bold_depth += 1;
+                            }
+                            Tag::CodeBlock(kind) => {
+                                new_paragraph(&mut text);
+                                if let CodeBlockKind::Fenced(language) = kind {
+                                    current_language = language_registry
+                                        .language_for_name(language.as_ref())
+                                        .now_or_never()
+                                        .and_then(Result::ok);
+                                }
+                            }
+                            Tag::Emphasis => italic_depth += 1,
+                            Tag::Strong => bold_depth += 1,
+                            Tag::Link(_, url, _) => link_url = Some((prev_len, url)),
+                            Tag::List(number) => list_stack.push(number),
+                            Tag::Item => {
+                                let len = list_stack.len();
+                                if let Some(list_state) = list_stack.last_mut() {
+                                    new_paragraph(&mut text);
+                                    for _ in 0..len - 1 {
+                                        text.push_str("  ");
+                                    }
+                                    if let Some(number) = list_state {
+                                        text.push_str(&format!("{}. ", number));
+                                        *number += 1;
+                                    } else {
+                                        text.push_str("* ");
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
+                        Event::End(tag) => match tag {
+                            Tag::Heading(_, _, _) => bold_depth -= 1,
+                            Tag::CodeBlock(_) => current_language = None,
+                            Tag::Emphasis => italic_depth -= 1,
+                            Tag::Strong => bold_depth -= 1,
+                            Tag::Link(_, _, _) => {
+                                if let Some((start_offset, link_url)) = link_url.take() {
+                                    link_ranges.push(start_offset..text.len());
+                                    link_urls.push(link_url.to_string());
+                                }
+                            }
+                            Tag::List(_) => {
+                                list_stack.pop();
+                            }
+                            _ => {}
+                        },
+                        Event::HardBreak => text.push('\n'),
+                        Event::SoftBreak => text.push(' '),
+                        _ => {}
+                    }
+                }
+            }
+            HoverBlockKind::Code { language } => {
+                if let Some(language) = language_registry
+                    .language_for_name(language)
+                    .now_or_never()
+                    .and_then(Result::ok)
+                {
+                    render_code(&mut text, &mut highlights, &block.text, &language, style);
+                } else {
+                    text.push_str(&block.text);
+                }
+            }
+        }
+    }
+
+    RenderedInfo {
+        theme_id,
+        text,
+        highlights,
+        link_ranges,
+        link_urls,
+    }
+}
+
+fn render_code(
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    content: &str,
+    language: &Arc<Language>,
+    style: &EditorStyle,
+) {
+    let prev_len = text.len();
+    text.push_str(content);
+    for (range, highlight_id) in language.highlight_text(&content.into(), 0..content.len()) {
+        if let Some(style) = highlight_id.style(&style.syntax) {
+            highlights.push((prev_len + range.start..prev_len + range.end, style));
+        }
+    }
+}
+
+fn new_paragraph(text: &mut String) {
+    if !text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push('\n');
+    }
+}
+
 #[derive(Default)]
 pub struct HoverState {
     pub info_popover: Option<InfoPopover>,
@@ -278,7 +466,7 @@ impl HoverState {
     }
 
     pub fn render(
-        &self,
+        &mut self,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
@@ -307,7 +495,7 @@ impl HoverState {
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
             elements.push(diagnostic_popover.render(style, cx));
         }
-        if let Some(info_popover) = self.info_popover.as_ref() {
+        if let Some(info_popover) = self.info_popover.as_mut() {
             elements.push(info_popover.render(style, cx));
         }
 
@@ -319,44 +507,66 @@ impl HoverState {
 pub struct InfoPopover {
     pub project: ModelHandle<Project>,
     pub symbol_range: Range<Anchor>,
-    pub contents: Vec<HoverBlock>,
+    pub blocks: Vec<HoverBlock>,
+    rendered_content: Option<RenderedInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedInfo {
+    theme_id: usize,
+    text: String,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    link_ranges: Vec<Range<usize>>,
+    link_urls: Vec<String>,
 }
 
 impl InfoPopover {
-    pub fn render(&self, style: &EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
+    pub fn render(
+        &mut self,
+        style: &EditorStyle,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement<Editor> {
+        if let Some(rendered) = &self.rendered_content {
+            if rendered.theme_id != style.theme_id {
+                self.rendered_content = None;
+            }
+        }
+
+        let rendered_content = self.rendered_content.get_or_insert_with(|| {
+            render_blocks(
+                style.theme_id,
+                &self.blocks,
+                self.project.read(cx).languages(),
+                style,
+            )
+        });
+
         MouseEventHandler::<InfoPopover, _>::new(0, cx, |_, cx| {
-            let mut flex = Flex::new(Axis::Vertical).scrollable::<HoverBlock>(1, None, cx);
-            flex.extend(self.contents.iter().map(|content| {
-                let languages = self.project.read(cx).languages();
-                if let Some(language) = content.language.clone().and_then(|language| {
-                    languages.language_for_name(&language).now_or_never()?.ok()
-                }) {
-                    let runs = language
-                        .highlight_text(&content.text.as_str().into(), 0..content.text.len());
+            let mut region_id = 0;
+            let view_id = cx.view_id();
 
-                    Text::new(content.text.clone(), style.text.clone())
-                        .with_soft_wrap(true)
-                        .with_highlights(
-                            runs.iter()
-                                .filter_map(|(range, id)| {
-                                    id.style(style.theme.syntax.as_ref())
-                                        .map(|style| (range.clone(), style))
-                                })
-                                .collect(),
+            let link_urls = rendered_content.link_urls.clone();
+            Flex::column()
+                .scrollable::<HoverBlock>(1, None, cx)
+                .with_child(
+                    Text::new(rendered_content.text.clone(), style.text.clone())
+                        .with_highlights(rendered_content.highlights.clone())
+                        .with_mouse_regions(
+                            rendered_content.link_ranges.clone(),
+                            move |ix, bounds| {
+                                region_id += 1;
+                                let url = link_urls[ix].clone();
+                                MouseRegion::new::<Self>(view_id, region_id, bounds)
+                                    .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
+                                        println!("clicked link {url}");
+                                        cx.platform().open_url(&url);
+                                    })
+                            },
                         )
-                        .into_any()
-                } else {
-                    let mut text_style = style.hover_popover.prose.clone();
-                    text_style.font_size = style.text.font_size;
-
-                    Text::new(content.text.clone(), text_style)
-                        .with_soft_wrap(true)
-                        .contained()
-                        .with_style(style.hover_popover.block_style)
-                        .into_any()
-                }
-            }));
-            flex.contained().with_style(style.hover_popover.container)
+                        .with_soft_wrap(true),
+                )
+                .contained()
+                .with_style(style.hover_popover.container)
         })
         .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
         .with_cursor_style(CursorStyle::Arrow)
@@ -430,16 +640,15 @@ impl DiagnosticPopover {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test::editor_lsp_test_context::EditorLspTestContext;
+    use gpui::fonts::Weight;
     use indoc::indoc;
-
     use language::{Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
-    use project::HoverBlock;
+    use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
-
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
-
-    use super::*;
+    use util::test::marked_text_ranges;
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
@@ -480,10 +689,7 @@ mod tests {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
-                        value: indoc! {"
-                            # Some basic docs
-                            Some test documentation"}
-                        .to_string(),
+                        value: "some basic docs".to_string(),
                     }),
                     range: Some(symbol_range),
                 }))
@@ -495,17 +701,11 @@ mod tests {
         cx.editor(|editor, _| {
             assert!(editor.hover_state.visible());
             assert_eq!(
-                editor.hover_state.info_popover.clone().unwrap().contents,
-                vec![
-                    HoverBlock {
-                        text: "Some basic docs".to_string(),
-                        language: None
-                    },
-                    HoverBlock {
-                        text: "Some test documentation".to_string(),
-                        language: None
-                    }
-                ]
+                editor.hover_state.info_popover.clone().unwrap().blocks,
+                vec![HoverBlock {
+                    text: "some basic docs".to_string(),
+                    kind: HoverBlockKind::Markdown,
+                },]
             )
         });
 
@@ -556,10 +756,7 @@ mod tests {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                     kind: lsp::MarkupKind::Markdown,
-                    value: indoc! {"
-                        # Some other basic docs
-                        Some other test documentation"}
-                    .to_string(),
+                    value: "some other basic docs".to_string(),
                 }),
                 range: Some(symbol_range),
             }))
@@ -570,17 +767,11 @@ mod tests {
         cx.condition(|editor, _| editor.hover_state.visible()).await;
         cx.editor(|editor, _| {
             assert_eq!(
-                editor.hover_state.info_popover.clone().unwrap().contents,
-                vec![
-                    HoverBlock {
-                        text: "Some other basic docs".to_string(),
-                        language: None
-                    },
-                    HoverBlock {
-                        text: "Some other test documentation".to_string(),
-                        language: None
-                    }
-                ]
+                editor.hover_state.info_popover.clone().unwrap().blocks,
+                vec![HoverBlock {
+                    text: "some other basic docs".to_string(),
+                    kind: HoverBlockKind::Markdown,
+                }]
             )
         });
     }
@@ -637,10 +828,7 @@ mod tests {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                     kind: lsp::MarkupKind::Markdown,
-                    value: indoc! {"
-                        # Some other basic docs
-                        Some other test documentation"}
-                    .to_string(),
+                    value: "some new docs".to_string(),
                 }),
                 range: Some(range),
             }))
@@ -651,6 +839,74 @@ mod tests {
         cx.foreground().run_until_parked();
         cx.editor(|Editor { hover_state, .. }, _| {
             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+        });
+    }
+
+    #[gpui::test]
+    fn test_render_blocks(cx: &mut gpui::TestAppContext) {
+        Settings::test_async(cx);
+        cx.add_window(|cx| {
+            let editor = Editor::single_line(None, cx);
+            let style = editor.style(cx);
+
+            struct Row {
+                blocks: Vec<HoverBlock>,
+                expected_marked_text: &'static str,
+                expected_styles: Vec<HighlightStyle>,
+            }
+
+            let rows = &[
+                Row {
+                    blocks: vec![HoverBlock {
+                        text: "one **two** three".to_string(),
+                        kind: HoverBlockKind::Markdown,
+                    }],
+                    expected_marked_text: "one «two» three",
+                    expected_styles: vec![HighlightStyle {
+                        weight: Some(Weight::BOLD),
+                        ..Default::default()
+                    }],
+                },
+                Row {
+                    blocks: vec![HoverBlock {
+                        text: "one [two](the-url) three".to_string(),
+                        kind: HoverBlockKind::Markdown,
+                    }],
+                    expected_marked_text: "one «two» three",
+                    expected_styles: vec![HighlightStyle {
+                        underline: Some(Underline {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
+                },
+            ];
+
+            for Row {
+                blocks,
+                expected_marked_text,
+                expected_styles,
+            } in rows
+            {
+                let rendered = render_blocks(0, &blocks, &Default::default(), &style);
+
+                let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
+                let expected_highlights = ranges
+                    .into_iter()
+                    .zip(expected_styles.iter().cloned())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    rendered.text, expected_text,
+                    "wrong text for input {blocks:?}"
+                );
+                assert_eq!(
+                    rendered.highlights, expected_highlights,
+                    "wrong highlights for input {blocks:?}"
+                );
+            }
+
+            editor
         });
     }
 }

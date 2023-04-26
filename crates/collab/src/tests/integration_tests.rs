@@ -23,7 +23,7 @@ use language::{
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
-use project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath};
+use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -4693,11 +4693,13 @@ async fn test_lsp_hover(
             vec![
                 project::HoverBlock {
                     text: "Test hover content.".to_string(),
-                    language: None,
+                    kind: HoverBlockKind::Markdown,
                 },
                 project::HoverBlock {
                     text: "let foo = 42;".to_string(),
-                    language: Some("Rust".to_string()),
+                    kind: HoverBlockKind::Code {
+                        language: "Rust".to_string()
+                    },
                 }
             ]
         );
