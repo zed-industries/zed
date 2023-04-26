@@ -18,8 +18,8 @@ use gpui::{
     actions,
     platform::AppVersion,
     serde_json::{self, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
-    AsyncAppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle,
+    AnyModelHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
+    ModelHandle, Task, View, ViewContext, WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -221,7 +221,7 @@ enum WeakSubscriber {
 
 enum Subscriber {
     Model(AnyModelHandle),
-    View(AnyViewHandle),
+    View(AnyWeakViewHandle),
 }
 
 #[derive(Clone, Debug)]
@@ -567,7 +567,7 @@ impl Client {
         H: 'static
             + Send
             + Sync
-            + Fn(ViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+            + Fn(WeakViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>>,
     {
         self.add_entity_message_handler::<M, E, _, _>(move |handle, message, client, cx| {
@@ -666,7 +666,7 @@ impl Client {
         H: 'static
             + Send
             + Sync
-            + Fn(ViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+            + Fn(WeakViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<M::Response>>,
     {
         self.add_view_message_handler(move |entity, envelope, client, cx| {
@@ -1273,7 +1273,15 @@ impl Client {
                     pending.push(message);
                     return;
                 }
-                Some(weak_subscriber @ _) => subscriber = weak_subscriber.upgrade(cx),
+                Some(weak_subscriber @ _) => match weak_subscriber {
+                    WeakSubscriber::Model(handle) => {
+                        subscriber = handle.upgrade(cx).map(Subscriber::Model);
+                    }
+                    WeakSubscriber::View(handle) => {
+                        subscriber = Some(Subscriber::View(handle.clone()));
+                    }
+                    WeakSubscriber::Pending(_) => {}
+                },
                 _ => {}
             }
         }
@@ -1354,16 +1362,6 @@ impl Client {
 
     pub fn is_staff(&self) -> Option<bool> {
         self.telemetry.is_staff()
-    }
-}
-
-impl WeakSubscriber {
-    fn upgrade(&self, cx: &AsyncAppContext) -> Option<Subscriber> {
-        match self {
-            WeakSubscriber::Model(handle) => handle.upgrade(cx).map(Subscriber::Model),
-            WeakSubscriber::View(handle) => handle.upgrade(cx).map(Subscriber::View),
-            WeakSubscriber::Pending(_) => None,
-        }
     }
 }
 
