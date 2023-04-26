@@ -173,6 +173,7 @@ pub fn serialize_diagnostics<'a>(
     diagnostics
         .into_iter()
         .map(|entry| proto::Diagnostic {
+            source: entry.diagnostic.source.clone(),
             start: Some(serialize_anchor(&entry.range.start)),
             end: Some(serialize_anchor(&entry.range.end)),
             message: entry.diagnostic.message.clone(),
@@ -359,6 +360,7 @@ pub fn deserialize_diagnostics(
             Some(DiagnosticEntry {
                 range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
                 diagnostic: Diagnostic {
+                    source: diagnostic.source,
                     severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
                         proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
                         proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
