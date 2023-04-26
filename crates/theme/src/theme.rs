@@ -887,7 +887,7 @@ pub struct HoverPopover {
     pub error_container: ContainerStyle,
     pub block_style: ContainerStyle,
     pub prose: TextStyle,
-    pub diagnostic_source: TextStyle,
+    pub diagnostic_source_highlight: HighlightStyle,
     pub highlight: Color,
 }
 
