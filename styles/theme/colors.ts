@@ -7,7 +7,6 @@ function getColor(
     colorKey: keyof Theme["colors"],
     intensity: Intensity
 ): string {
-    console.log("getColor", colorKey, intensity)
     return useIntensityColor(theme, colorKey, intensity)
 }
 

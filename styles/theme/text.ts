@@ -1,6 +1,6 @@
 import { useColors } from "./colors"
 import { Theme } from "./config"
-import { ContainedText, InteractiveContainer, buildStates, container } from "./container"
+import { ContainedText, InteractiveContainer, buildIntensitiesForStates, container } from "./container"
 import { ElementIntensities, Intensity, resolveThemeColorIntensity, useElementIntensities } from "./intensity"
 
 type Font = "Zed Mono" | "Zed Sans"
@@ -130,7 +130,9 @@ export function text(
     const resolvedColorIntensity = resolveThemeColorIntensity(theme, intensity)
     const DEFAULT_COLOR = themeColor.neutral(resolvedColorIntensity)
 
-    const color = options.color ? themeColor[options.color](intensity) : DEFAULT_COLOR
+    // If options are provided, we use the provided color intensity
+    // Otherwise we use the default color intensity
+    const color = (options?.color && themeColor[options.color](intensity)) || DEFAULT_COLOR;
 
     const mergedOptions = {
         ...DEFAULT_TEXT_OPTIONS,
@@ -162,7 +164,7 @@ export function interactiveText(
     const fg = resolveThemeColorIntensity(theme, DEFAULT_INTENSITIES.fg);
     const { color = 'neutral', ...mergedOptions } = options;
     const { neutral, ...themeColor } = useColors(theme);
-    const states = buildStates(theme, DEFAULT_INTENSITIES);
+    const states = buildIntensitiesForStates(theme, "interactiveText", DEFAULT_INTENSITIES);
 
     const common = {
         container: container.blank,

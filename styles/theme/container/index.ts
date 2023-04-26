@@ -83,8 +83,9 @@ type ContainerColors = {
 export type StateIntensity = ContainerColors
 export type StateIntensities = Record<State, StateIntensity>
 
-export function buildStates(
+export function buildIntensitiesForStates(
     theme: Theme,
+    name: string,
     startingIntensity: ElementIntensities,
 ): StateIntensities {
     const light = theme.appearance === "light"
@@ -108,23 +109,33 @@ export function buildStates(
     }
 
     const elementStates = {
-        default: defaultState,
-        hovered: buildState(defaultState, scaledIntensitySteps[1]),
-        pressed: buildState(defaultState, scaledIntensitySteps[2]),
+        default: buildStateIntensity(name, "default", defaultState),
+        hovered: buildStateIntensity(name, "hovered", defaultState, scaledIntensitySteps[1]),
+        pressed: buildStateIntensity(name, "pressed", defaultState, scaledIntensitySteps[2]),
     }
 
     return elementStates
 }
 
-export function buildState(
+export function buildStateIntensity(
+    componentName: string,
+    name: string,
     startingIntensity: StateIntensity,
-    change: number
+    change?: number
 ): StateIntensity {
+    if (!change) {
+        return startingIntensity
+    }
+
     const stateIntensity: StateIntensity = {
         bg: calculateIntensity(startingIntensity.bg, change),
         border: calculateIntensity(startingIntensity.border, change),
         fg: calculateIntensity(startingIntensity.fg, change),
     }
+
+    const nameForCheck = `${componentName} ${name}`
+
+    checkContrast(nameForCheck, startingIntensity.bg, stateIntensity.fg)
 
     return stateIntensity
 }
@@ -132,9 +143,17 @@ export function buildState(
 export const checkContrast = (
     name: string,
     background: Intensity,
-    foreground: Intensity
+    foreground: Intensity,
+    debug?: boolean
 ) => {
-    const contrast = foreground / background
+    const foregroundIntensity = Math.max(foreground, background) + 0.05
+    const backgroundIntensity = Math.min(foreground, background) + 0.05
+    const contrastRatio = foregroundIntensity / backgroundIntensity
+
+    // Return a contrast with 2 decimal places
+    const contrast = +contrastRatio.toFixed(2)
+
+    debug && console.log(`Contrast on ${name}: ${contrast}. Foreground: ${foreground}, Background: ${background}`)
 
     if (contrast < 4.5) {
         console.log(`Constrast on ${name} may be too low: ${contrast}`)

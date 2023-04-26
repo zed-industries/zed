@@ -9,8 +9,7 @@ import {
     IconStyle,
     InteractiveContainer,
     StateIntensity,
-    buildStates,
-    checkContrast,
+    buildIntensitiesForStates,
 } from "@theme/container"
 import { TextStyle } from "@theme/text"
 import { ElementIntensities, useElementIntensities } from "@theme/intensity"
@@ -27,7 +26,7 @@ const buttonSize: Record<ButtonSizes, number> = {
 }
 
 const DEFAULT_BUTTON_INTENSITIES: ElementIntensities = {
-    bg: 1,
+    bg: 5,
     border: 8,
     fg: 100,
 }
@@ -57,34 +56,32 @@ export function buildButton({
     size = buttonSize.medium,
 }: ButtonProps): Button {
     const color = useColors(theme)
-    const intensity = useElementIntensities(theme, intensities)
-
-    const states = buildStates(theme, intensity)
+    const resolvedIntensities = useElementIntensities(theme, intensities)
 
     let container: ContainerStyle = {
-        background: color.neutral(states.default.bg),
+        background: color.neutral(resolvedIntensities.bg),
         margin: margin(0, 0, 0, 0),
         padding: padding(0, 0, 0, 0),
         borderRadius: BorderRadius.Medium,
-        border: border(theme, states.default.border),
+        border: border(theme, resolvedIntensities.border),
         width: "auto",
         height: size,
     }
 
     let icon: IconStyle = {
-        color: color.neutral(states.default.fg),
+        color: color.neutral(resolvedIntensities.fg),
         size: IconSize.Medium,
     }
 
-    let text: TextStyle = textStyle(theme, states.default.fg)
+    let text: TextStyle = textStyle(theme, resolvedIntensities.fg)
 
-    const buildStateStyle = (state: StateIntensity) => {
-        container.background = color.neutral(state.bg)
-        container.border = border(theme, state.border)
-        icon.color = color.neutral(state.fg)
-        text.color = color.neutral(state.fg)
+    const states = buildIntensitiesForStates(theme, name, resolvedIntensities)
 
-        checkContrast(`${name}:${state}`, state.bg, state.fg)
+    const buildStates = (intensities: StateIntensity) => {
+        container.background = color.neutral(intensities.bg)
+        container.border = border(theme, intensities.border)
+        icon.color = color.neutral(intensities.fg)
+        text.color = color.neutral(intensities.fg)
 
         let stateStyle
 
@@ -108,9 +105,9 @@ export function buildButton({
     }
 
     let button = {
-        default: buildStateStyle(states.default),
-        hovered: buildStateStyle(states.hovered),
-        pressed: buildStateStyle(states.pressed)
+        default: buildStates(states.default),
+        hovered: buildStates(states.hovered),
+        pressed: buildStates(states.pressed)
     }
 
     switch (kind) {
