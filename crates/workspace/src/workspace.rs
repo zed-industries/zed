@@ -864,7 +864,7 @@ impl Workspace {
         requesting_window_id: Option<usize>,
         cx: &mut AppContext,
     ) -> Task<(
-        ViewHandle<Workspace>,
+        WeakViewHandle<Workspace>,
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )> {
         let project_handle = Project::local(
@@ -982,6 +982,7 @@ impl Workspace {
                     .1
                 });
 
+            let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
 
             // Call open path for each of the project paths
@@ -1206,7 +1207,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
-                        Some((pane.clone(), item.boxed_clone()))
+                        Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
                     }
@@ -2688,7 +2689,7 @@ impl Workspace {
                 workspace.read_with(&cx, |workspace, _| {
                     (
                         workspace.project().clone(),
-                        workspace.dock_pane().clone(),
+                        workspace.dock_pane().downgrade(),
                         workspace.last_active_center_pane.clone(),
                     )
                 })?;
@@ -2769,7 +2770,7 @@ impl Workspace {
     }
 }
 
-fn notify_if_database_failed(workspace: &ViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
     workspace.update(cx, |workspace, cx| {
         if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
             workspace.show_notification_once(0, cx, |cx| {
@@ -2980,7 +2981,7 @@ pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 pub fn activate_workspace_for_project(
     cx: &mut AppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
-) -> Option<ViewHandle<Workspace>> {
+) -> Option<WeakViewHandle<Workspace>> {
     for window_id in cx.window_ids().collect::<Vec<_>>() {
         let handle = cx
             .update_window(window_id, |cx| {
@@ -2995,8 +2996,8 @@ pub fn activate_workspace_for_project(
             })
             .flatten();
 
-        if handle.is_some() {
-            return handle;
+        if let Some(handle) = handle {
+            return Some(handle.downgrade());
         }
     }
     None
@@ -3014,7 +3015,7 @@ pub fn open_paths(
     cx: &mut AppContext,
 ) -> Task<
     Result<(
-        ViewHandle<Workspace>,
+        WeakViewHandle<Workspace>,
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )>,
 > {
@@ -3700,7 +3701,7 @@ mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                Pane::go_back(workspace, Some(pane.clone()), cx)
+                Pane::go_back(workspace, Some(pane.downgrade()), cx)
             })
             .await
             .unwrap();

@@ -127,18 +127,8 @@ pub trait BorrowAppContext {
 }
 
 pub trait BorrowWindowContext {
-    type ReturnValue<T>;
-
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(
-        &self,
-        window_id: usize,
-        f: F,
-    ) -> Self::ReturnValue<T>;
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        f: F,
-    ) -> Self::ReturnValue<T>;
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T;
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T;
 }
 
 #[derive(Clone)]
@@ -378,28 +368,6 @@ impl BorrowAppContext for AsyncAppContext {
 
     fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
         self.0.borrow_mut().update(f)
-    }
-}
-
-impl BorrowWindowContext for AsyncAppContext {
-    type ReturnValue<T> = Result<T>;
-
-    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> Result<T> {
-        self.0
-            .borrow()
-            .read_window(window_id, f)
-            .ok_or_else(|| anyhow!("window was closed"))
-    }
-
-    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window_id: usize,
-        f: F,
-    ) -> Result<T> {
-        self.0
-            .borrow_mut()
-            .update_window(window_id, f)
-            .ok_or_else(|| anyhow!("window was closed"))
     }
 }
 
@@ -3330,8 +3298,6 @@ impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
 }
 
 impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
-    type ReturnValue<T> = T;
-
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.window_context, window_id, f)
     }
@@ -3384,8 +3350,6 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
 }
 
 impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
-    type ReturnValue<T> = T;
-
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         BorrowWindowContext::read_with(&*self.view_context, window_id, f)
     }
@@ -3722,7 +3686,7 @@ impl<T: View> ViewHandle<T> {
         cx.read_view(self)
     }
 
-    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> C::ReturnValue<S>
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
     where
         C: BorrowWindowContext,
         F: FnOnce(&T, &ViewContext<T>) -> S,
@@ -3733,7 +3697,7 @@ impl<T: View> ViewHandle<T> {
         })
     }
 
-    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::ReturnValue<S>
+    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
     where
         C: BorrowWindowContext,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,

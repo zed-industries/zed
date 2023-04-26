@@ -61,7 +61,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut AppCont
         });
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
-            existing_workspace
+            existing_workspace.downgrade()
         } else {
             let active_call = cx.read(ActiveCall::global);
             let room = active_call
@@ -93,7 +93,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut AppCont
                     workspace
                 },
             );
-            workspace
+            workspace.downgrade()
         };
 
         cx.activate_window(workspace.window_id());

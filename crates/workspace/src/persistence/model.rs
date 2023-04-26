@@ -1,27 +1,23 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
+use crate::{
+    dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
 };
-
-use anyhow::{Context, Result};
-
+use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
-use gpui::{
-    platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WeakViewHandle,
-};
-
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
+use gpui::{
+    platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WeakViewHandle,
+};
 use project::Project;
 use settings::DockAnchor;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::ResultExt;
 use uuid::Uuid;
-
-use crate::{
-    dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
-};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLocation(Arc<Vec<PathBuf>>);
@@ -134,7 +130,7 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| workspace.add_pane(cx))
+                    .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
                     .log_err()?;
                 let active = serialized_pane.active;
                 serialized_pane
@@ -146,8 +142,10 @@ impl SerializedPaneGroup {
                     .read_with(cx, |pane, _| pane.items_len() != 0)
                     .log_err()?
                 {
+                    let pane = pane.upgrade(cx)?;
                     Some((Member::Pane(pane.clone()), active.then(|| pane)))
                 } else {
+                    let pane = pane.upgrade(cx)?;
                     workspace
                         .update(cx, |workspace, cx| workspace.remove_pane(pane, cx))
                         .log_err()?;
@@ -172,7 +170,7 @@ impl SerializedPane {
     pub async fn deserialize_to(
         &self,
         project: &ModelHandle<Project>,
-        pane_handle: &ViewHandle<Pane>,
+        pane_handle: &WeakViewHandle<Pane>,
         workspace_id: WorkspaceId,
         workspace: &WeakViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
@@ -196,8 +194,12 @@ impl SerializedPane {
 
             if let Some(item_handle) = item_handle {
                 workspace.update(cx, |workspace, cx| {
+                    let pane_handle = pane_handle
+                        .upgrade(cx)
+                        .ok_or_else(|| anyhow!("pane was dropped"))?;
                     Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);
-                })?;
+                    anyhow::Ok(())
+                })??;
             }
 
             if item.active {

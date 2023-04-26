@@ -214,26 +214,10 @@ pub fn init(cx: &mut AppContext) {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
     cx.add_action(|workspace: &mut Workspace, action: &GoBack, cx| {
-        Pane::go_back(
-            workspace,
-            action
-                .pane
-                .as_ref()
-                .and_then(|weak_handle| weak_handle.upgrade(cx)),
-            cx,
-        )
-        .detach();
+        Pane::go_back(workspace, action.pane.clone(), cx).detach();
     });
     cx.add_action(|workspace: &mut Workspace, action: &GoForward, cx| {
-        Pane::go_forward(
-            workspace,
-            action
-                .pane
-                .as_ref()
-                .and_then(|weak_handle| weak_handle.upgrade(cx)),
-            cx,
-        )
-        .detach();
+        Pane::go_forward(workspace, action.pane.clone(), cx).detach();
     });
 }
 
@@ -392,12 +376,12 @@ impl Pane {
 
     pub fn go_back(
         workspace: &mut Workspace,
-        pane: Option<ViewHandle<Pane>>,
+        pane: Option<WeakViewHandle<Pane>>,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         Self::navigate_history(
             workspace,
-            pane.unwrap_or_else(|| workspace.active_pane().clone()),
+            pane.unwrap_or_else(|| workspace.active_pane().downgrade()),
             NavigationMode::GoingBack,
             cx,
         )
@@ -405,12 +389,12 @@ impl Pane {
 
     pub fn go_forward(
         workspace: &mut Workspace,
-        pane: Option<ViewHandle<Pane>>,
+        pane: Option<WeakViewHandle<Pane>>,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         Self::navigate_history(
             workspace,
-            pane.unwrap_or_else(|| workspace.active_pane().clone()),
+            pane.unwrap_or_else(|| workspace.active_pane().downgrade()),
             NavigationMode::GoingForward,
             cx,
         )
@@ -422,7 +406,7 @@ impl Pane {
     ) -> Task<Result<()>> {
         Self::navigate_history(
             workspace,
-            workspace.active_pane().clone(),
+            workspace.active_pane().downgrade(),
             NavigationMode::ReopeningClosedItem,
             cx,
         )
@@ -450,62 +434,62 @@ impl Pane {
 
     fn navigate_history(
         workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        pane: WeakViewHandle<Pane>,
         mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
-        cx.focus(&pane);
+        let to_load = if let Some(pane) = pane.upgrade(cx) {
+            cx.focus(&pane);
 
-        let to_load = pane.update(cx, |pane, cx| {
-            loop {
-                // Retrieve the weak item handle from the history.
-                let entry = pane.nav_history.borrow_mut().pop(mode, cx)?;
+            pane.update(cx, |pane, cx| {
+                loop {
+                    // Retrieve the weak item handle from the history.
+                    let entry = pane.nav_history.borrow_mut().pop(mode, cx)?;
 
-                // If the item is still present in this pane, then activate it.
-                if let Some(index) = entry
-                    .item
-                    .upgrade(cx)
-                    .and_then(|v| pane.index_for_item(v.as_ref()))
-                {
-                    let prev_active_item_index = pane.active_item_index;
-                    pane.nav_history.borrow_mut().set_mode(mode);
-                    pane.activate_item(index, true, true, cx);
-                    pane.nav_history
-                        .borrow_mut()
-                        .set_mode(NavigationMode::Normal);
+                    // If the item is still present in this pane, then activate it.
+                    if let Some(index) = entry
+                        .item
+                        .upgrade(cx)
+                        .and_then(|v| pane.index_for_item(v.as_ref()))
+                    {
+                        let prev_active_item_index = pane.active_item_index;
+                        pane.nav_history.borrow_mut().set_mode(mode);
+                        pane.activate_item(index, true, true, cx);
+                        pane.nav_history
+                            .borrow_mut()
+                            .set_mode(NavigationMode::Normal);
 
-                    let mut navigated = prev_active_item_index != pane.active_item_index;
-                    if let Some(data) = entry.data {
-                        navigated |= pane.active_item()?.navigate(data, cx);
+                        let mut navigated = prev_active_item_index != pane.active_item_index;
+                        if let Some(data) = entry.data {
+                            navigated |= pane.active_item()?.navigate(data, cx);
+                        }
+
+                        if navigated {
+                            break None;
+                        }
                     }
-
-                    if navigated {
-                        break None;
+                    // If the item is no longer present in this pane, then retrieve its
+                    // project path in order to reopen it.
+                    else {
+                        break pane
+                            .nav_history
+                            .borrow()
+                            .paths_by_item
+                            .get(&entry.item.id())
+                            .cloned()
+                            .map(|project_path| (project_path, entry));
                     }
                 }
-                // If the item is no longer present in this pane, then retrieve its
-                // project path in order to reopen it.
-                else {
-                    break pane
-                        .nav_history
-                        .borrow()
-                        .paths_by_item
-                        .get(&entry.item.id())
-                        .cloned()
-                        .map(|project_path| (project_path, entry));
-                }
-            }
-        });
+            })
+        } else {
+            None
+        };
 
         if let Some((project_path, entry)) = to_load {
             // If the item was no longer present, then load it again from its previous path.
-            let pane = pane.downgrade();
             let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
                 let task = task.await;
-                let pane = pane
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("pane was dropped"))?;
                 let mut navigated = false;
                 if let Some((project_entry_id, build_item)) = task.log_err() {
                     let prev_active_item_id = pane.update(&mut cx, |pane, _| {
@@ -514,15 +498,18 @@ impl Pane {
                     })?;
 
                     let item = workspace.update(&mut cx, |workspace, cx| {
-                        Self::open_item(
+                        let pane = pane
+                            .upgrade(cx)
+                            .ok_or_else(|| anyhow!("pane was dropped"))?;
+                        anyhow::Ok(Self::open_item(
                             workspace,
                             pane.clone(),
                             project_entry_id,
                             true,
                             cx,
                             build_item,
-                        )
-                    })?;
+                        ))
+                    })??;
 
                     pane.update(&mut cx, |pane, cx| {
                         navigated |= Some(item.id()) != prev_active_item_id;
@@ -973,6 +960,7 @@ impl Pane {
         // of what content they would be saving.
         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
+        let pane = pane.downgrade();
         cx.spawn(|workspace, mut cx| async move {
             let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
@@ -1084,7 +1072,7 @@ impl Pane {
 
     pub async fn save_item(
         project: ModelHandle<Project>,
-        pane: &ViewHandle<Pane>,
+        pane: &WeakViewHandle<Pane>,
         item_ix: usize,
         item: &dyn ItemHandle,
         should_prompt_for_save: bool,

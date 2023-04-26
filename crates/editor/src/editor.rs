@@ -2715,14 +2715,15 @@ impl Editor {
         let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, true, cx)
         });
+        let editor = editor.downgrade();
         Some(cx.spawn(|workspace, cx| async move {
             let project_transaction = apply_code_actions.await?;
-            Self::open_project_transaction(editor, workspace, project_transaction, title, cx).await
+            Self::open_project_transaction(&editor, workspace, project_transaction, title, cx).await
         }))
     }
 
     async fn open_project_transaction(
-        this: ViewHandle<Editor>,
+        this: &WeakViewHandle<Editor>,
         workspace: WeakViewHandle<Workspace>,
         transaction: ProjectTransaction,
         title: String,
@@ -5943,10 +5944,11 @@ impl Editor {
             project.perform_rename(buffer.clone(), range.start, new_name.clone(), true, cx)
         });
 
+        let editor = editor.downgrade();
         Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
-                editor.clone(),
+                &editor,
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
@@ -6761,7 +6763,8 @@ impl Editor {
             let editor = editor
                 .await?
                 .downcast::<Editor>()
-                .ok_or_else(|| anyhow!("opened item was not an editor"))?;
+                .ok_or_else(|| anyhow!("opened item was not an editor"))?
+                .downgrade();
             editor.update(&mut cx, |editor, cx| {
                 let buffer = editor
                     .buffer()
@@ -6783,6 +6786,7 @@ impl Editor {
 
                 anyhow::Ok(())
             })??;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
