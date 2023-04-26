@@ -171,7 +171,7 @@ pub fn show_link_definition(
         }
     }
 
-    let task = cx.spawn_weak(|this, mut cx| {
+    let task = cx.spawn(|this, mut cx| {
         async move {
             // query the LSP for definition info
             let definition_request = cx.update(|cx| {

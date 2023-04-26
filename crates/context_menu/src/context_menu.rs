@@ -1,4 +1,5 @@
 use gpui::{
+    anyhow,
     elements::*,
     geometry::vector::Vector2F,
     impl_internal_actions,
@@ -209,7 +210,8 @@ impl ContextMenu {
                 cx.notify();
                 cx.spawn(|this, mut cx| async move {
                     cx.background().timer(Duration::from_millis(50)).await;
-                    this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx))
+                    this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx))?;
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }

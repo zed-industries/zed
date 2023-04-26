@@ -2477,7 +2477,7 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn_weak(|this, mut cx| {
+        let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
                     let mut menu = CompletionsMenu {
@@ -2669,7 +2669,7 @@ impl Editor {
 
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             while let Some(prev_task) = task {
                 prev_task.await;
                 task = this
@@ -2731,7 +2731,7 @@ impl Editor {
 
     async fn open_project_transaction(
         this: ViewHandle<Editor>,
-        workspace: ViewHandle<Workspace>,
+        workspace: WeakViewHandle<Workspace>,
         transaction: ProjectTransaction,
         title: String,
         mut cx: AsyncAppContext,
@@ -2826,7 +2826,7 @@ impl Editor {
         let actions = project.update(cx, |project, cx| {
             project.code_actions(&start_buffer, start..end, cx)
         });
-        self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
+        self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
             let actions = actions.await;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
@@ -2865,7 +2865,7 @@ impl Editor {
             project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
         });
 
-        self.document_highlights_task = Some(cx.spawn_weak(|this, mut cx| async move {
+        self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
             let highlights = highlights.log_err().await;
             if let Some((this, highlights)) = this.upgrade(&cx).zip(highlights) {
                 this.update(&mut cx, |this, cx| {
@@ -2961,7 +2961,7 @@ impl Editor {
 
         let (buffer, buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        self.copilot_state.pending_refresh = cx.spawn_weak(|this, mut cx| async move {
+        self.copilot_state.pending_refresh = cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background().timer(COPILOT_DEBOUNCE_TIMEOUT).await;
             }
@@ -3014,7 +3014,7 @@ impl Editor {
             let cursor = self.selections.newest_anchor().head();
             let (buffer, buffer_position) =
                 self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-            self.copilot_state.pending_cycling_refresh = cx.spawn_weak(|this, mut cx| async move {
+            self.copilot_state.pending_cycling_refresh = cx.spawn(|this, mut cx| async move {
                 let completions = copilot
                     .update(&mut cx, |copilot, cx| {
                         copilot.completions_cycling(&buffer, buffer_position, cx)
@@ -6770,7 +6770,7 @@ impl Editor {
         let editor = workspace.open_path(action.path.clone(), None, true, cx);
         let position = action.position;
         let anchor = action.anchor;
-        cx.spawn_weak(|_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let editor = editor
                 .await?
                 .downcast::<Editor>()

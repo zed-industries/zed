@@ -3262,26 +3262,16 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
 
     pub fn spawn_labeled<F, Fut, S>(&mut self, task_label: &'static str, f: F) -> Task<S>
     where
-        F: FnOnce(ViewHandle<V>, AsyncAppContext) -> Fut,
+        F: FnOnce(WeakViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
-        let handle = self.handle();
+        let handle = self.weak_handle();
         self.window_context
             .spawn_labeled(task_label, |cx| f(handle, cx))
     }
 
     pub fn spawn<F, Fut, S>(&mut self, f: F) -> Task<S>
-    where
-        F: FnOnce(ViewHandle<V>, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = S>,
-        S: 'static,
-    {
-        let handle = self.handle();
-        self.window_context.spawn(|cx| f(handle, cx))
-    }
-
-    pub fn spawn_weak<F, Fut, S>(&mut self, f: F) -> Task<S>
     where
         F: FnOnce(WeakViewHandle<V>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = S>,
@@ -4094,15 +4084,31 @@ impl<V: View> WeakViewHandle<V> {
         cx.read_with(|cx| cx.upgrade_view_handle(self))
     }
 
+    pub fn read_with<T>(
+        &self,
+        cx: &impl BorrowAppContext,
+        read: impl FnOnce(&V, &ViewContext<V>) -> T,
+    ) -> Result<T> {
+        cx.read_with(|cx| {
+            let handle = cx
+                .upgrade_view_handle(self)
+                .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
+            cx.read_window(self.window_id, |cx| handle.read_with(cx, read))
+                .ok_or_else(|| anyhow!("window was removed"))
+        })
+    }
+
     pub fn update<T>(
         &self,
         cx: &mut impl BorrowAppContext,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
-    ) -> Option<T> {
+    ) -> Result<T> {
         cx.update(|cx| {
-            let handle = cx.upgrade_view_handle(self)?;
-
+            let handle = cx
+                .upgrade_view_handle(self)
+                .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
             cx.update_window(self.window_id, |cx| handle.update(cx, update))
+                .ok_or_else(|| anyhow!("window was removed"))
         })
     }
 }

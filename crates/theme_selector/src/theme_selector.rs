@@ -163,7 +163,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()

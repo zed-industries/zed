@@ -3,7 +3,7 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
@@ -286,6 +286,9 @@ impl FollowableItem for Editor {
         let update_view::Variant::Editor(message) = message;
         let project = project.clone();
         cx.spawn(|this, mut cx| async move {
+            let this = this
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("editor was dropped"))?;
             update_editor_from_message(this, project, message, &mut cx).await
         })
     }
@@ -863,7 +866,9 @@ impl Item for Editor {
                     let buffer = project_item
                         .downcast::<Buffer>()
                         .context("Project item at stored path was not a buffer")?;
-
+                    let pane = pane
+                        .upgrade(&cx)
+                        .ok_or_else(|| anyhow!("pane was dropped"))?;
                     Ok(cx.update(|cx| {
                         cx.add_view(&pane, |cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);

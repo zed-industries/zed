@@ -479,7 +479,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                         },
                                     );
                                 } else {
-                                    cx.spawn_weak(|workspace, mut cx| async move {
+                                    cx.spawn(|workspace, mut cx| async move {
                                         workspace
                                             .upgrade(&cx)
                                             .ok_or_else(|| anyhow!("workspace was dropped"))?

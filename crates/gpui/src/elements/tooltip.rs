@@ -99,7 +99,7 @@ impl<V: View> Tooltip<V> {
 
                         let mut debounce = state.debounce.borrow_mut();
                         if debounce.is_none() {
-                            *debounce = Some(cx.spawn_weak({
+                            *debounce = Some(cx.spawn({
                                 let state = state.clone();
                                 |view, mut cx| async move {
                                     cx.background().timer(DEBOUNCE_TIMEOUT).await;

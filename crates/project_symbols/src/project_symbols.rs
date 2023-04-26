@@ -117,7 +117,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             });
             let symbol = symbol.clone();
             let workspace = self.workspace.clone();
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn(|_, mut cx| async move {
                 let buffer = buffer.await?;
                 let workspace = workspace
                     .upgrade(&cx)
@@ -161,7 +161,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let symbols = self
             .project
             .update(cx, |project, cx| project.symbols(&query, cx));
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let symbols = symbols.await.log_err();
             if let Some(this) = this.upgrade(&cx) {
                 if let Some(symbols) = symbols {

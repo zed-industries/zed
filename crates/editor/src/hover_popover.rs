@@ -149,7 +149,7 @@ fn show_hover(
         }
     }
 
-    let task = cx.spawn_weak(|this, mut cx| {
+    let task = cx.spawn(|this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if !ignore_timeout {
