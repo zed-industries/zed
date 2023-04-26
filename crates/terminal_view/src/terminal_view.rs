@@ -2,13 +2,7 @@ mod persistence;
 pub mod terminal_button;
 pub mod terminal_element;
 
-use std::{
-    borrow::Cow,
-    ops::RangeInclusive,
-    path::{Path, PathBuf},
-    time::Duration,
-};
-
+use anyhow::anyhow;
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
 use gpui::{
@@ -26,6 +20,12 @@ use serde::Deserialize;
 use settings::{Settings, TerminalBlink, WorkingDirectory};
 use smallvec::{smallvec, SmallVec};
 use smol::Timer;
+use std::{
+    borrow::Cow,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -275,14 +275,11 @@ impl TerminalView {
             cx.notify();
 
             let epoch = self.next_blink_epoch();
-            cx.spawn(|this, mut cx| {
-                let this = this.downgrade();
-                async move {
-                    Timer::after(CURSOR_BLINK_INTERVAL).await;
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                            .log_err();
-                    }
+            cx.spawn(|this, mut cx| async move {
+                Timer::after(CURSOR_BLINK_INTERVAL).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                        .log_err();
                 }
             })
             .detach();
@@ -294,14 +291,11 @@ impl TerminalView {
         cx.notify();
 
         let epoch = self.next_blink_epoch();
-        cx.spawn(|this, mut cx| {
-            let this = this.downgrade();
-            async move {
-                Timer::after(CURSOR_BLINK_INTERVAL).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-                        .log_err();
-                }
+        cx.spawn(|this, mut cx| async move {
+            Timer::after(CURSOR_BLINK_INTERVAL).await;
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                    .log_err();
             }
         })
         .detach();
@@ -646,6 +640,9 @@ impl Item for TerminalView {
                     })
                 });
 
+            let pane = pane
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("pane was dropped"))?;
             cx.update(|cx| {
                 let terminal = project.update(cx, |project, cx| {
                     project.create_terminal(cwd, window_id, cx)

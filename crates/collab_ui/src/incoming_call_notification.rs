@@ -79,7 +79,7 @@ impl IncomingCallNotification {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn(|_, mut cx| async move {
                 join.await?;
                 if let Some(project_id) = initial_project_id {
                     cx.update(|cx| {

@@ -503,7 +503,7 @@ fn open_log_file(
 
     workspace
         .with_local_workspace(&app_state.clone(), cx, move |_, cx| {
-            cx.spawn_weak(|workspace, mut cx| async move {
+            cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) = futures::join!(
                     app_state.fs.load(&paths::OLD_LOG),
                     app_state.fs.load(&paths::LOG)
@@ -558,7 +558,7 @@ fn open_telemetry_log_file(
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
-        cx.spawn_weak(|workspace, mut cx| async move {
+        cx.spawn(|workspace, mut cx| async move {
             let workspace = workspace.upgrade(&cx)?;
 
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {

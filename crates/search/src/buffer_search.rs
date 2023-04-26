@@ -582,7 +582,7 @@ impl BufferSearchBar {
                 let matches = active_searchable_item.find_matches(query, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
-                self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
+                self.pending_search = Some(cx.spawn(|this, mut cx| async move {
                     let matches = matches.await;
                     if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| {

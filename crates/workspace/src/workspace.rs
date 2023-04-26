@@ -314,7 +314,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 Some(workspace.prepare_to_close(false, cx))
             };
 
-            Some(cx.spawn_weak(|_, mut cx| async move {
+            Some(cx.spawn(|_, mut cx| async move {
                 let window_id_to_replace = if let Some(close_task) = close_task {
                     if !close_task.await? {
                         return Ok(());
@@ -588,7 +588,7 @@ impl DelayedDebouncedEditAction {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn_weak(|workspace, mut cx| async move {
+        self.task = Some(cx.spawn(|workspace, mut cx| async move {
             let mut timer = cx.background().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -733,7 +733,7 @@ impl Workspace {
         let client = project.read(cx).client();
         let mut current_user = user_store.read(cx).watch_current_user();
         let mut connection_status = client.status();
-        let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
+        let _observe_current_user = cx.spawn(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
             let mut stream =
@@ -752,7 +752,7 @@ impl Workspace {
         // that each asynchronous operation can be run in order.
         let (leader_updates_tx, mut leader_updates_rx) =
             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
-        let _apply_leader_updates = cx.spawn_weak(|this, mut cx| async move {
+        let _apply_leader_updates = cx.spawn(|this, mut cx| async move {
             while let Some((leader_id, update)) = leader_updates_rx.next().await {
                 let Some(this) = this.upgrade(&cx) else { break };
                 Self::process_leader_update(this, leader_id, update, &mut cx)
@@ -1129,7 +1129,7 @@ impl Workspace {
     ) -> Option<Task<Result<()>>> {
         let window_id = cx.window_id();
         let prepare = self.prepare_to_close(false, cx);
-        Some(cx.spawn_weak(|_, mut cx| async move {
+        Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 cx.remove_window(window_id);
             }
@@ -1220,7 +1220,7 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn_weak(|_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
@@ -1975,7 +1975,7 @@ impl Workspace {
             leader_id: Some(leader_id),
         });
 
-        Some(cx.spawn_weak(|this, mut cx| async move {
+        Some(cx.spawn(|this, mut cx| async move {
             let response = request.await?;
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, _| {
