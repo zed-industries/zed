@@ -407,11 +407,14 @@ impl Line {
 
         let mut glyph_origin = origin;
         let mut prev_position = 0.;
-        for run in &self.layout.runs {
+        for (run_ix, run) in self.layout.runs.iter().enumerate() {
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
 
-                if boundaries.peek().map_or(false, |b| b.glyph_ix == glyph_ix) {
+                if boundaries
+                    .peek()
+                    .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
+                {
                     boundaries.next();
                     if let Some((underline_origin, underline_style)) = underline {
                         scene.push_underline(scene::Underline {
