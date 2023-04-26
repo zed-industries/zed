@@ -67,6 +67,7 @@ impl FollowableItem for Editor {
                 .collect::<Vec<_>>()
         });
 
+        let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
             let mut buffers = futures::future::try_join_all(buffers).await?;
             let editor = pane.read_with(&cx, |pane, cx| {
@@ -127,7 +128,7 @@ impl FollowableItem for Editor {
             };
 
             update_editor_from_message(
-                editor.clone(),
+                editor.downgrade(),
                 project,
                 proto::update_view::Editor {
                     selections: state.selections,
@@ -286,9 +287,6 @@ impl FollowableItem for Editor {
         let update_view::Variant::Editor(message) = message;
         let project = project.clone();
         cx.spawn(|this, mut cx| async move {
-            let this = this
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("editor was dropped"))?;
             update_editor_from_message(this, project, message, &mut cx).await
         })
     }
@@ -304,7 +302,7 @@ impl FollowableItem for Editor {
 }
 
 async fn update_editor_from_message(
-    this: ViewHandle<Editor>,
+    this: WeakViewHandle<Editor>,
     project: ModelHandle<Project>,
     message: proto::update_view::Editor,
     cx: &mut AsyncAppContext,

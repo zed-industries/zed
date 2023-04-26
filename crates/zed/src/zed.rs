@@ -374,7 +374,14 @@ pub fn build_window_options(
 fn restart(_: &Restart, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+        .filter_map(|window_id| {
+            Some(
+                cx.root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()?
+                    .downgrade(),
+            )
+        })
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -419,7 +426,14 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+        .filter_map(|window_id| {
+            Some(
+                cx.root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()?
+                    .downgrade(),
+            )
+        })
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,

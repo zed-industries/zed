@@ -124,11 +124,10 @@ impl FeedbackEditor {
             &["Yes, Submit!", "No"],
         );
 
-        let this = cx.handle();
         let client = cx.global::<Arc<Client>>().clone();
         let specs = self.system_specs.clone();
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let answer = answer.recv().await;
 
             if answer == Some(0) {

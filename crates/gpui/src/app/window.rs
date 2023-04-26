@@ -142,8 +142,6 @@ impl BorrowAppContext for WindowContext<'_> {
 }
 
 impl BorrowWindowContext for WindowContext<'_> {
-    type ReturnValue<T> = T;
-
     fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
         if self.window_id == window_id {
             f(self)
