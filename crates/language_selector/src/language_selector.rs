@@ -162,17 +162,15 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 .await
             };
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    let delegate = this.delegate_mut();
-                    delegate.matches = matches;
-                    delegate.selected_index = delegate
-                        .selected_index
-                        .min(delegate.matches.len().saturating_sub(1));
-                    cx.notify();
-                })
-                .log_err();
-            }
+            this.update(&mut cx, |this, cx| {
+                let delegate = this.delegate_mut();
+                delegate.matches = matches;
+                delegate.selected_index = delegate
+                    .selected_index
+                    .min(delegate.matches.len().saturating_sub(1));
+                cx.notify();
+            })
+            .log_err();
         })
     }
 

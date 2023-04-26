@@ -6,7 +6,9 @@ use std::{
 use anyhow::{Context, Result};
 
 use async_recursion::async_recursion;
-use gpui::{platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle};
+use gpui::{
+    platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WeakViewHandle,
+};
 
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -97,7 +99,7 @@ impl SerializedPaneGroup {
         &self,
         project: &ModelHandle<Project>,
         workspace_id: WorkspaceId,
-        workspace: &ViewHandle<Workspace>,
+        workspace: &WeakViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
     ) -> Option<(Member, Option<ViewHandle<Pane>>)> {
         match self {
@@ -172,7 +174,7 @@ impl SerializedPane {
         project: &ModelHandle<Project>,
         pane_handle: &ViewHandle<Pane>,
         workspace_id: WorkspaceId,
-        workspace: &ViewHandle<Workspace>,
+        workspace: &WeakViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         let mut active_item_index = None;
@@ -181,13 +183,7 @@ impl SerializedPane {
             let item_handle = pane_handle
                 .update(cx, |_, cx| {
                     if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
-                        deserializer(
-                            project,
-                            workspace.downgrade(),
-                            workspace_id,
-                            item.item_id,
-                            cx,
-                        )
+                        deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
                     } else {
                         Task::ready(Err(anyhow::anyhow!(
                             "Deserializer does not exist for item kind: {}",

@@ -277,10 +277,8 @@ impl TerminalView {
             let epoch = self.next_blink_epoch();
             cx.spawn(|this, mut cx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                        .log_err();
-                }
+                this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                    .log_err();
             })
             .detach();
         }
@@ -293,10 +291,8 @@ impl TerminalView {
         let epoch = self.next_blink_epoch();
         cx.spawn(|this, mut cx| async move {
             Timer::after(CURSOR_BLINK_INTERVAL).await;
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-                    .log_err();
-            }
+            this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+                .log_err();
         })
         .detach();
     }

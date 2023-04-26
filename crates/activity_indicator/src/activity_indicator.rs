@@ -65,18 +65,14 @@ impl ActivityIndicator {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(|this, mut cx| async move {
                 while let Some((language, event)) = status_events.next().await {
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| {
-                            this.statuses.retain(|s| s.name != language.name());
-                            this.statuses.push(LspStatus {
-                                name: language.name(),
-                                status: event,
-                            });
-                            cx.notify();
-                        })?;
-                    } else {
-                        break;
-                    }
+                    this.update(&mut cx, |this, cx| {
+                        this.statuses.retain(|s| s.name != language.name());
+                        this.statuses.push(LspStatus {
+                            name: language.name(),
+                            status: event,
+                        });
+                        cx.notify();
+                    })?;
                 }
                 anyhow::Ok(())
             })

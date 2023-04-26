@@ -3,7 +3,7 @@ use crate::{
     FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace,
     WorkspaceId,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
     fonts::HighlightStyle, AnyElement, AnyViewHandle, AppContext, ModelHandle, Task, View,
@@ -481,8 +481,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                 } else {
                                     cx.spawn(|workspace, mut cx| async move {
                                         workspace
-                                            .upgrade(&cx)
-                                            .ok_or_else(|| anyhow!("workspace was dropped"))?
                                             .update(&mut cx, |workspace, cx| {
                                                 item.git_diff_recalc(
                                                     workspace.project().clone(),
