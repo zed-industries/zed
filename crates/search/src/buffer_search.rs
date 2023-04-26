@@ -201,10 +201,11 @@ impl ToolbarItemView for BufferSearchBar {
                 Some(searchable_item_handle.subscribe_to_search_events(
                     cx,
                     Box::new(move |search_event, cx| {
-                        this.update(cx, |this, cx| {
-                            this.on_active_searchable_item_event(search_event, cx)
-                        })
-                        .log_err();
+                        if let Some(this) = this.upgrade(cx) {
+                            this.update(cx, |this, cx| {
+                                this.on_active_searchable_item_event(search_event, cx)
+                            });
+                        }
                     }),
                 ));
 
