@@ -2,7 +2,7 @@ use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Element, MouseState,
-    ViewContext,
+    ViewContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
@@ -45,15 +45,19 @@ fn toggle_command_palette(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Wo
     let workspace = cx.handle();
     let focused_view_id = cx.focused_view_id().unwrap_or_else(|| workspace.id());
 
-    cx.defer(move |workspace, cx| {
-        workspace.toggle_modal(cx, |_, cx| {
-            cx.add_view(|cx| Picker::new(CommandPaletteDelegate::new(focused_view_id, cx), cx))
-        });
+    cx.window_context().defer(move |cx| {
+        // Build the delegate before the workspace is put on the stack so we can find it when
+        // computing the actions. We should really not allow available_actions to be called
+        // if it's not reliable however.
+        let delegate = CommandPaletteDelegate::new(focused_view_id, cx);
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(cx, |_, cx| cx.add_view(|cx| Picker::new(delegate, cx)));
+        })
     });
 }
 
 impl CommandPaletteDelegate {
-    pub fn new(focused_view_id: usize, cx: &mut ViewContext<Picker<Self>>) -> Self {
+    pub fn new(focused_view_id: usize, cx: &mut WindowContext) -> Self {
         let actions = cx
             .available_actions(focused_view_id)
             .filter_map(|(name, action, bindings)| {

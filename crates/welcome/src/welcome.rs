@@ -126,7 +126,7 @@ impl View for WelcomePage {
                 .with_child(
                     Flex::column()
                         .with_child(
-                            theme::ui::checkbox_with_label::<Metrics, _, Self>(
+                            theme::ui::checkbox_with_label::<Metrics, _, Self, _>(
                                 Flex::column()
                                     .with_child(
                                         Label::new(
@@ -146,8 +146,9 @@ impl View for WelcomePage {
                                     ),
                                 &theme.welcome.checkbox,
                                 metrics,
+                                0,
                                 cx,
-                                |checked, cx| {
+                                |_, checked, cx| {
                                     SettingsFile::update(cx, move |file| {
                                         file.telemetry.set_metrics(checked)
                                     })
@@ -157,12 +158,13 @@ impl View for WelcomePage {
                             .with_style(theme.welcome.checkbox_container),
                         )
                         .with_child(
-                            theme::ui::checkbox::<Diagnostics, Self>(
+                            theme::ui::checkbox::<Diagnostics, Self, _>(
                                 "Send crash reports",
                                 &theme.welcome.checkbox,
                                 diagnostics,
+                                0,
                                 cx,
-                                |checked, cx| {
+                                |_, checked, cx| {
                                     SettingsFile::update(cx, move |file| {
                                         file.telemetry.set_diagnostics(checked)
                                     })

@@ -511,6 +511,7 @@ pub struct Editor {
     workspace_id: Option<WorkspaceId>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
+    read_only: bool,
     leader_replica_id: Option<u16>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
@@ -1283,6 +1284,7 @@ impl Editor {
             workspace_id: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
+            read_only: false,
             leader_replica_id: None,
             remote_id: None,
             hover_state: Default::default(),
@@ -1425,6 +1427,10 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+
     fn selections_did_change(
         &mut self,
         local: bool,
@@ -1533,6 +1539,10 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        if self.read_only {
+            return;
+        }
+
         self.buffer
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
     }
@@ -1543,6 +1553,10 @@ impl Editor {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        if self.read_only {
+            return;
+        }
+
         self.buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, Some(AutoindentMode::EachLine), cx)
         });
@@ -1897,6 +1911,9 @@ impl Editor {
     pub fn handle_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         let text: Arc<str> = text.into();
 
+        if self.read_only {
+            return;
+        }
         if !self.input_enabled {
             cx.emit(Event::InputIgnored { text });
             return;
@@ -2282,6 +2299,10 @@ impl Editor {
         autoindent_mode: Option<AutoindentMode>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.read_only {
+            return;
+        }
+
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
             let old_selections = this.selections.all_adjusted(cx);

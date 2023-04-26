@@ -13,4 +13,4 @@ gpui = { path = "../gpui" }
 menu = { path = "../menu" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
-smallvec = { workspace = true }
+smallvec.workspace = true

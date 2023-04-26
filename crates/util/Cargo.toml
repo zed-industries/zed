@@ -12,21 +12,21 @@ doctest = true
 test-support = ["tempdir", "git2"]
 
 [dependencies]
-anyhow = "1.0.38"
+anyhow.workspace = true
 backtrace = "0.3"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
-lazy_static = "1.4.0"
-futures = "0.3"
+log.workspace = true
+lazy_static.workspace = true
+futures.workspace = true
 isahc = "1.7"
-smol = "1.2.5"
+smol.workspace = true
 url = "2.2"
-rand = { workspace = true }
-tempdir = { version = "0.3.7", optional = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+rand.workspace = true
+tempdir = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
 git2 = { version = "0.15", default-features = false, optional = true }
 dirs = "3.0"
 
 [dev-dependencies]
-tempdir = { version = "0.3.7" }
+tempdir.workspace = true
 git2 = { version = "0.15", default-features = false }

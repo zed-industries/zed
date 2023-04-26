@@ -262,6 +262,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     );
     activity_indicator::init(cx);
     copilot_button::init(cx);
+    lsp_log::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
@@ -273,7 +274,7 @@ pub fn initialize_workspace(
 ) {
     let workspace_handle = cx.handle();
     cx.subscribe(&workspace_handle, {
-        move |_, _, event, cx| {
+        move |workspace, _, event, cx| {
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
                     pane.toolbar().update(cx, |toolbar, cx| {
@@ -287,6 +288,10 @@ pub fn initialize_workspace(
                         toolbar.add_item(submit_feedback_button, cx);
                         let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
                         toolbar.add_item(feedback_info_text, cx);
+                        let lsp_log_item = cx.add_view(|_| {
+                            lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
+                        });
+                        toolbar.add_item(lsp_log_item, cx);
                     })
                 });
             }

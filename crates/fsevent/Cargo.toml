@@ -12,10 +12,10 @@ doctest = false
 [dependencies]
 bitflags = "1"
 fsevent-sys = "3.0.2"
-parking_lot = "0.11.1"
+parking_lot.workspace = true
 
 [dev-dependencies]
-tempdir = "0.3.7"
+tempdir.workspace = true
 
 [package.metadata.docs.rs]
 targets = ["x86_64-apple-darwin"]

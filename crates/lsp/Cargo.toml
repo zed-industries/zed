@@ -15,22 +15,24 @@ test-support = ["async-pipe"]
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
-anyhow = "1.0"
+
+anyhow.workspace = true
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553", optional = true }
-futures = "0.3"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+futures.workspace = true
+log.workspace = true
 lsp-types = "0.91"
-parking_lot = "0.11"
-postage = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
-serde_json = { workspace = true }
-smol = "1.2"
+parking_lot.workspace = true
+postage.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+smol.workspace = true
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
+
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
-ctor = "0.1"
-env_logger = "0.9"
-unindent = "0.1.7"
+ctor.workspace = true
+env_logger.workspace = true
+unindent.workspace = true

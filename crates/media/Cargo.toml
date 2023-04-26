@@ -9,7 +9,7 @@ path = "src/media.rs"
 doctest = false
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 block = "0.1"
 bytes = "1.2"
 core-foundation = "0.9.3"

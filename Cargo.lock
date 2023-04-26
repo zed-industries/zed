@@ -148,9 +148,6 @@ name = "anyhow"
 version = "1.0.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "216261ddc8289130e551ddcd5ce8a064710c0d064a4d2895c67151c92b5443f6"
-dependencies = [
- "backtrace",
-]
 
 [[package]]
 name = "arrayref"
@@ -3610,6 +3607,26 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
+]
+
+[[package]]
+name = "lsp_log"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "editor",
+ "futures 0.3.25",
+ "gpui",
+ "language",
+ "lsp",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "unindent",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -7239,7 +7256,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-json"
 version = "0.20.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-json?rev=137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8#137e1ce6a02698fc246cdb9c6b886ed1de9a1ed8"
+source = "git+https://github.com/tree-sitter/tree-sitter-json?rev=40a81c01a40ac48744e0c8ccabbaba1920441199#40a81c01a40ac48744e0c8ccabbaba1920441199"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -8571,6 +8588,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "lsp_log",
  "node_runtime",
  "num_cpus",
  "outline",
