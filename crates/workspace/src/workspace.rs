@@ -1226,7 +1226,7 @@ impl Workspace {
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
                 if singleton || !project_entry_ids.is_empty() {
                     if let Some(ix) =
-                        pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))
+                        pane.read_with(&cx, |pane, _| pane.index_for_item(item.as_ref()))?
                     {
                         if !Pane::save_item(
                             project.clone(),
@@ -2298,7 +2298,7 @@ impl Workspace {
         this.read_with(&cx, |this, _| {
             this.leader_updates_tx
                 .unbounded_send((leader_id, envelope.payload))
-        })?;
+        })??;
         Ok(())
     }
 
@@ -2354,7 +2354,7 @@ impl Workspace {
                         .flat_map(|states_by_pane| states_by_pane.keys())
                         .cloned()
                         .collect()
-                });
+                })?;
                 Self::add_views_from_leader(this.clone(), leader_id, panes, vec![view], cx).await?;
             }
         }
@@ -2369,7 +2369,7 @@ impl Workspace {
         views: Vec<proto::View>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let project = this.read_with(cx, |this, _| this.project.clone());
+        let project = this.read_with(cx, |this, _| this.project.clone())?;
         let replica_id = project
             .read_with(cx, |project, _| {
                 project
@@ -2699,7 +2699,7 @@ impl Workspace {
                             workspace.dock_pane().clone(),
                             workspace.last_active_center_pane.clone(),
                         )
-                    });
+                    })?;
 
                 serialized_workspace
                     .dock_pane
@@ -2765,7 +2765,7 @@ impl Workspace {
                 })?;
 
                 // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))
+                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?
             }
             anyhow::Ok(())
         })

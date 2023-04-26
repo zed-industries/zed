@@ -19,8 +19,8 @@ use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
 use gpui::{
-    AnyModelHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task,
-    UpgradeModelHandle, WeakModelHandle,
+    AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
+    ModelHandle, Task, WeakModelHandle,
 };
 use language::{
     point_to_lsp,
@@ -6418,7 +6418,7 @@ impl WorktreeHandle {
 }
 
 impl OpenBuffer {
-    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<Buffer>> {
+    pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<ModelHandle<Buffer>> {
         match self {
             OpenBuffer::Strong(handle) => Some(handle.clone()),
             OpenBuffer::Weak(handle) => handle.upgrade(cx),

@@ -121,74 +121,28 @@ pub trait View: Entity + Sized {
     }
 }
 
-pub trait ReadModel {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T;
+pub trait BorrowAppContext {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T;
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T;
 }
 
-pub trait ReadModelWith {
-    fn read_model_with<E: Entity, T>(
+pub trait BorrowWindowContext {
+    type ReturnValue<T>;
+
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(
         &self,
-        handle: &ModelHandle<E>,
-        read: &mut dyn FnMut(&E, &AppContext) -> T,
-    ) -> T;
-}
-
-pub trait UpdateModel {
-    fn update_model<T: Entity, O>(
+        window_id: usize,
+        f: F,
+    ) -> Self::ReturnValue<T>;
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O;
-}
-
-pub trait UpgradeModelHandle {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>>;
-
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool;
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle>;
-}
-
-pub trait UpgradeViewHandle {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>>;
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle>;
-}
-
-pub trait ReadView {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T;
-}
-
-pub trait ReadViewWith {
-    fn read_view_with<V, T>(
-        &self,
-        handle: &ViewHandle<V>,
-        read: &mut dyn FnMut(&V, &AppContext) -> T,
-    ) -> T
-    where
-        V: View;
-}
-
-pub trait UpdateView {
-    type Output<S>;
-
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> Self::Output<S>
-    where
-        T: View;
+        window_id: usize,
+        f: F,
+    ) -> Self::ReturnValue<T>;
 }
 
 #[derive(Clone)]
 pub struct App(Rc<RefCell<AppContext>>);
-
-#[derive(Clone)]
-pub struct AsyncAppContext(Rc<RefCell<AppContext>>);
 
 impl App {
     pub fn new(asset_source: impl AssetSource) -> Result<Self> {
@@ -336,6 +290,9 @@ impl App {
     }
 }
 
+#[derive(Clone)]
+pub struct AsyncAppContext(Rc<RefCell<AppContext>>);
+
 impl AsyncAppContext {
     pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
     where
@@ -414,85 +371,35 @@ impl AsyncAppContext {
     }
 }
 
-impl UpdateModel for AsyncAppContext {
-    fn update_model<E: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<E>,
-        update: &mut dyn FnMut(&mut E, &mut ModelContext<E>) -> O,
-    ) -> O {
-        self.0.borrow_mut().update_model(handle, update)
+impl BorrowAppContext for AsyncAppContext {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.0.borrow().read_with(f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        self.0.borrow_mut().update(f)
     }
 }
 
-impl UpgradeModelHandle for AsyncAppContext {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        self.0.borrow().upgrade_model_handle(handle)
-    }
+impl BorrowWindowContext for AsyncAppContext {
+    type ReturnValue<T> = Result<T>;
 
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.0.borrow().model_handle_is_upgradable(handle)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.0.borrow().upgrade_any_model_handle(handle)
-    }
-}
-
-impl UpgradeViewHandle for AsyncAppContext {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.0.borrow_mut().upgrade_view_handle(handle)
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.0.borrow_mut().upgrade_any_view_handle(handle)
-    }
-}
-
-impl ReadModelWith for AsyncAppContext {
-    fn read_model_with<E: Entity, T>(
-        &self,
-        handle: &ModelHandle<E>,
-        read: &mut dyn FnMut(&E, &AppContext) -> T,
-    ) -> T {
-        let cx = self.0.borrow();
-        let cx = &*cx;
-        read(handle.read(cx), cx)
-    }
-}
-
-impl UpdateView for AsyncAppContext {
-    type Output<S> = Result<S>;
-
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> Result<S>
-    where
-        T: View,
-    {
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> Result<T> {
         self.0
-            .borrow_mut()
-            .update_window(handle.window_id, |cx| cx.update_view(handle, update))
+            .borrow()
+            .read_window(window_id, f)
             .ok_or_else(|| anyhow!("window was closed"))
     }
-}
 
-impl ReadViewWith for AsyncAppContext {
-    fn read_view_with<V, T>(
-        &self,
-        handle: &ViewHandle<V>,
-        read: &mut dyn FnMut(&V, &AppContext) -> T,
-    ) -> T
-    where
-        V: View,
-    {
-        let cx = self.0.borrow();
-        let cx = &*cx;
-        read(handle.read(cx), cx)
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(
+        &mut self,
+        window_id: usize,
+        f: F,
+    ) -> Result<T> {
+        self.0
+            .borrow_mut()
+            .update_window(window_id, f)
+            .ok_or_else(|| anyhow!("window was closed"))
     }
 }
 
@@ -1289,6 +1196,67 @@ impl AppContext {
         })
     }
 
+    pub fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
+        if let Some(model) = self.models.get(&handle.model_id) {
+            model
+                .as_any()
+                .downcast_ref()
+                .expect("downcast is type safe")
+        } else {
+            panic!("circular model reference");
+        }
+    }
+
+    fn update_model<T: Entity, V>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
+    ) -> V {
+        if let Some(mut model) = self.models.remove(&handle.model_id) {
+            self.update(|this| {
+                let mut cx = ModelContext::new(this, handle.model_id);
+                let result = update(
+                    model
+                        .as_any_mut()
+                        .downcast_mut()
+                        .expect("downcast is type safe"),
+                    &mut cx,
+                );
+                this.models.insert(handle.model_id, model);
+                result
+            })
+        } else {
+            panic!("circular model update");
+        }
+    }
+
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: &WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        if self.ref_counts.lock().is_entity_alive(handle.model_id) {
+            Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        } else {
+            None
+        }
+    }
+
+    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
+        self.ref_counts.lock().is_entity_alive(handle.model_id)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        if self.ref_counts.lock().is_entity_alive(handle.model_id) {
+            Some(AnyModelHandle::new(
+                handle.model_id,
+                handle.model_type,
+                self.ref_counts.clone(),
+            ))
+        } else {
+            None
+        }
+    }
+
     pub fn add_window<V, F>(
         &mut self,
         window_options: WindowOptions,
@@ -1442,6 +1410,39 @@ impl AppContext {
                 .unwrap()
         })
         .unwrap()
+    }
+
+    pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
+            view.as_any().downcast_ref().expect("downcast is type safe")
+        } else {
+            panic!("circular view reference for type {}", type_name::<T>());
+        }
+    }
+
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(ViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                &self.ref_counts,
+            ))
+        } else {
+            None
+        }
+    }
+
+    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(AnyViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                handle.view_type,
+                self.ref_counts.clone(),
+            ))
+        } else {
+            None
+        }
     }
 
     fn remove_dropped_entities(&mut self) {
@@ -2078,107 +2079,13 @@ impl AppContext {
     }
 }
 
-impl ReadModel for AppContext {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        if let Some(model) = self.models.get(&handle.model_id) {
-            model
-                .as_any()
-                .downcast_ref()
-                .expect("downcast is type safe")
-        } else {
-            panic!("circular model reference");
-        }
-    }
-}
-
-impl UpdateModel for AppContext {
-    fn update_model<T: Entity, V>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
-    ) -> V {
-        if let Some(mut model) = self.models.remove(&handle.model_id) {
-            self.update(|this| {
-                let mut cx = ModelContext::new(this, handle.model_id);
-                let result = update(
-                    model
-                        .as_any_mut()
-                        .downcast_mut()
-                        .expect("downcast is type safe"),
-                    &mut cx,
-                );
-                this.models.insert(handle.model_id, model);
-                result
-            })
-        } else {
-            panic!("circular model update");
-        }
-    }
-}
-
-impl UpgradeModelHandle for AppContext {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        if self.ref_counts.lock().is_entity_alive(handle.model_id) {
-            Some(ModelHandle::new(handle.model_id, &self.ref_counts))
-        } else {
-            None
-        }
+impl BorrowAppContext for AppContext {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        f(self)
     }
 
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.ref_counts.lock().is_entity_alive(handle.model_id)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        if self.ref_counts.lock().is_entity_alive(handle.model_id) {
-            Some(AnyModelHandle::new(
-                handle.model_id,
-                handle.model_type,
-                self.ref_counts.clone(),
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-impl UpgradeViewHandle for AppContext {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
-            Some(ViewHandle::new(
-                handle.window_id,
-                handle.view_id,
-                &self.ref_counts,
-            ))
-        } else {
-            None
-        }
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
-            Some(AnyViewHandle::new(
-                handle.window_id,
-                handle.view_id,
-                handle.view_type,
-                self.ref_counts.clone(),
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-impl ReadView for AppContext {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
-            view.as_any().downcast_ref().expect("downcast is type safe")
-        } else {
-            panic!("circular view reference for type {}", type_name::<T>());
-        }
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        f(self)
     }
 }
 
@@ -2867,36 +2774,13 @@ impl<M> AsMut<AppContext> for ModelContext<'_, M> {
     }
 }
 
-impl<M> ReadModel for ModelContext<'_, M> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.app.read_model(handle)
-    }
-}
-
-impl<M> UpdateModel for ModelContext<'_, M> {
-    fn update_model<T: Entity, V>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
-    ) -> V {
-        self.app.update_model(handle, update)
-    }
-}
-
-impl<M> UpgradeModelHandle for ModelContext<'_, M> {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        self.app.upgrade_model_handle(handle)
+impl<M> BorrowAppContext for ModelContext<'_, M> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        self.app.read_with(f)
     }
 
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.app.model_handle_is_upgradable(handle)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.app.upgrade_any_model_handle(handle)
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        self.app.update(f)
     }
 }
 
@@ -3445,67 +3329,25 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     }
 }
 
-impl<V> UpgradeModelHandle for ViewContext<'_, '_, V> {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        self.window_context.upgrade_model_handle(handle)
+impl<V> BorrowAppContext for ViewContext<'_, '_, V> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        BorrowAppContext::read_with(&*self.window_context, f)
     }
 
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.window_context.model_handle_is_upgradable(handle)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.window_context.upgrade_any_model_handle(handle)
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        BorrowAppContext::update(&mut *self.window_context, f)
     }
 }
 
-impl<V> UpgradeViewHandle for ViewContext<'_, '_, V> {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.window_context.upgrade_view_handle(handle)
+impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
+    type ReturnValue<T> = T;
+
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.window_context, window_id, f)
     }
 
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.window_context.upgrade_any_view_handle(handle)
-    }
-}
-
-impl<V: View> ReadModel for ViewContext<'_, '_, V> {
-    fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
-        self.window_context.read_model(handle)
-    }
-}
-
-impl<V: View> UpdateModel for ViewContext<'_, '_, V> {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O {
-        self.window_context.update_model(handle, update)
-    }
-}
-
-impl<V: View> ReadView for ViewContext<'_, '_, V> {
-    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
-        self.window_context.read_view(handle)
-    }
-}
-
-impl<V: View> UpdateView for ViewContext<'_, '_, V> {
-    type Output<S> = S;
-
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
-        self.window_context.update_view(handle, update)
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.window_context, window_id, f)
     }
 }
 
@@ -3541,61 +3383,25 @@ impl<V: View> DerefMut for EventContext<'_, '_, '_, V> {
     }
 }
 
-impl<V: View> UpdateModel for EventContext<'_, '_, '_, V> {
-    fn update_model<T: Entity, O>(
-        &mut self,
-        handle: &ModelHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
-    ) -> O {
-        self.view_context.update_model(handle, update)
+impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        BorrowAppContext::read_with(&*self.view_context, f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        BorrowAppContext::update(&mut *self.view_context, f)
     }
 }
 
-impl<V: View> ReadView for EventContext<'_, '_, '_, V> {
-    fn read_view<W: View>(&self, handle: &crate::ViewHandle<W>) -> &W {
-        self.view_context.read_view(handle)
-    }
-}
+impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
+    type ReturnValue<T> = T;
 
-impl<V: View> UpdateView for EventContext<'_, '_, '_, V> {
-    type Output<S> = S;
-
-    fn update_view<T, S>(
-        &mut self,
-        handle: &ViewHandle<T>,
-        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-    ) -> S
-    where
-        T: View,
-    {
-        self.view_context.update_view(handle, update)
-    }
-}
-
-impl<V: View> UpgradeModelHandle for EventContext<'_, '_, '_, V> {
-    fn upgrade_model_handle<T: Entity>(
-        &self,
-        handle: &WeakModelHandle<T>,
-    ) -> Option<ModelHandle<T>> {
-        self.view_context.upgrade_model_handle(handle)
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.view_context, window_id, f)
     }
 
-    fn model_handle_is_upgradable<T: Entity>(&self, handle: &WeakModelHandle<T>) -> bool {
-        self.view_context.model_handle_is_upgradable(handle)
-    }
-
-    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
-        self.view_context.upgrade_any_model_handle(handle)
-    }
-}
-
-impl<V: View> UpgradeViewHandle for EventContext<'_, '_, '_, V> {
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
-        self.view_context.upgrade_view_handle(handle)
-    }
-
-    fn upgrade_any_view_handle(&self, handle: &AnyWeakViewHandle) -> Option<AnyViewHandle> {
-        self.view_context.upgrade_any_view_handle(handle)
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.view_context, window_id, f)
     }
 }
 
@@ -3703,31 +3509,29 @@ impl<T: Entity> ModelHandle<T> {
         self.model_id
     }
 
-    pub fn read<'a, C: ReadModel>(&self, cx: &'a C) -> &'a T {
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.read_model(self)
     }
 
     pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
     where
-        C: ReadModelWith,
+        C: BorrowAppContext,
         F: FnOnce(&T, &AppContext) -> S,
     {
-        let mut read = Some(read);
-        cx.read_model_with(self, &mut |model, cx| {
-            let read = read.take().unwrap();
-            read(model, cx)
-        })
+        cx.read_with(|cx| read(self.read(cx), cx))
     }
 
     pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
     where
-        C: UpdateModel,
+        C: BorrowAppContext,
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
         let mut update = Some(update);
-        cx.update_model(self, &mut |model, cx| {
-            let update = update.take().unwrap();
-            update(model, cx)
+        cx.update(|cx| {
+            cx.update_model(self, &mut |model, cx| {
+                let update = update.take().unwrap();
+                update(model, cx)
+            })
         })
     }
 }
@@ -3841,12 +3645,12 @@ impl<T: Entity> WeakModelHandle<T> {
         self.model_id
     }
 
-    pub fn is_upgradable(&self, cx: &impl UpgradeModelHandle) -> bool {
-        cx.model_handle_is_upgradable(self)
+    pub fn is_upgradable(&self, cx: &impl BorrowAppContext) -> bool {
+        cx.read_with(|cx| cx.model_handle_is_upgradable(self))
     }
 
-    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {
-        cx.upgrade_model_handle(self)
+    pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<ModelHandle<T>> {
+        cx.read_with(|cx| cx.upgrade_model_handle(self))
     }
 }
 
@@ -3924,31 +3728,33 @@ impl<T: View> ViewHandle<T> {
         self.view_id
     }
 
-    pub fn read<'a, C: ReadView>(&self, cx: &'a C) -> &'a T {
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.read_view(self)
     }
 
-    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> S
+    pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> C::ReturnValue<S>
     where
-        C: ReadViewWith,
-        F: FnOnce(&T, &AppContext) -> S,
+        C: BorrowWindowContext,
+        F: FnOnce(&T, &ViewContext<T>) -> S,
     {
-        let mut read = Some(read);
-        cx.read_view_with(self, &mut |view, cx| {
-            let read = read.take().unwrap();
-            read(view, cx)
+        cx.read_with(self.window_id, |cx| {
+            let cx = ViewContext::immutable(cx, self.view_id);
+            read(cx.read_view(self), &cx)
         })
     }
 
-    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::Output<S>
+    pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::ReturnValue<S>
     where
-        C: UpdateView,
+        C: BorrowWindowContext,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         let mut update = Some(update);
-        cx.update_view(self, &mut |view, cx| {
-            let update = update.take().unwrap();
-            update(view, cx)
+
+        cx.update(self.window_id, |cx| {
+            cx.update_view(self, &mut |view, cx| {
+                let update = update.take().unwrap();
+                update(view, cx)
+            })
         })
     }
 
@@ -4222,9 +4028,10 @@ pub struct AnyWeakModelHandle {
 }
 
 impl AnyWeakModelHandle {
-    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<AnyModelHandle> {
-        cx.upgrade_any_model_handle(self)
+    pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<AnyModelHandle> {
+        cx.read_with(|cx| cx.upgrade_any_model_handle(self))
     }
+
     pub fn model_type(&self) -> TypeId {
         self.model_type
     }
@@ -4259,13 +4066,13 @@ impl<T> WeakHandle for WeakViewHandle<T> {
     }
 }
 
-impl<T: View> WeakViewHandle<T> {
+impl<V: View> WeakViewHandle<V> {
     fn new(window_id: usize, view_id: usize) -> Self {
         Self {
             any_handle: AnyWeakViewHandle {
                 window_id,
                 view_id,
-                view_type: TypeId::of::<T>(),
+                view_type: TypeId::of::<V>(),
             },
             view_type: PhantomData,
         }
@@ -4283,8 +4090,20 @@ impl<T: View> WeakViewHandle<T> {
         self.any_handle
     }
 
-    pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<ViewHandle<T>> {
-        cx.upgrade_view_handle(self)
+    pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<ViewHandle<V>> {
+        cx.read_with(|cx| cx.upgrade_view_handle(self))
+    }
+
+    pub fn update<T>(
+        &self,
+        cx: &mut impl BorrowAppContext,
+        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
+    ) -> Option<T> {
+        cx.update(|cx| {
+            let handle = cx.upgrade_view_handle(self)?;
+
+            cx.update_window(self.window_id, |cx| handle.update(cx, update))
+        })
     }
 }
 
@@ -4331,8 +4150,8 @@ impl AnyWeakViewHandle {
         self.view_id
     }
 
-    pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<AnyViewHandle> {
-        cx.upgrade_any_view_handle(self)
+    pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<AnyViewHandle> {
+        cx.read_with(|cx| cx.upgrade_any_view_handle(self))
     }
 }
 

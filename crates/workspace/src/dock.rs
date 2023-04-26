@@ -428,7 +428,7 @@ mod tests {
         path::PathBuf,
     };
 
-    use gpui::{AppContext, TestAppContext, UpdateView, View, ViewContext};
+    use gpui::{AppContext, BorrowWindowContext, TestAppContext, ViewContext, WindowContext};
     use project::{FakeFs, Project};
     use settings::Settings;
 
@@ -660,7 +660,7 @@ mod tests {
 
         pub fn workspace<F, T>(&self, read: F) -> T
         where
-            F: FnOnce(&Workspace, &AppContext) -> T,
+            F: FnOnce(&Workspace, &ViewContext<Workspace>) -> T,
         {
             self.workspace.read_with(self.cx, read)
         }
@@ -810,18 +810,15 @@ mod tests {
         }
     }
 
-    impl<'a> UpdateView for DockTestContext<'a> {
-        type Output<S> = S;
+    impl BorrowWindowContext for DockTestContext<'_> {
+        type ReturnValue<T> = T;
 
-        fn update_view<T, S>(
-            &mut self,
-            handle: &ViewHandle<T>,
-            update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
-        ) -> S
-        where
-            T: View,
-        {
-            handle.update(self.cx, update)
+        fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+            BorrowWindowContext::read_with(self.cx, window_id, f)
+        }
+
+        fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+            BorrowWindowContext::update(self.cx, window_id, f)
         }
     }
 }
