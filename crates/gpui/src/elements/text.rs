@@ -6,8 +6,10 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
+    platform::CursorStyle,
     text_layout::{Line, RunStyle, ShapedBoundary},
-    Element, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View, ViewContext,
+    CursorRegion, Element, FontCache, MouseRegion, SceneBuilder, SizeConstraint, TextLayoutCache,
+    View, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -17,7 +19,11 @@ pub struct Text {
     text: Cow<'static, str>,
     style: TextStyle,
     soft_wrap: bool,
-    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    highlights: Option<Box<[(Range<usize>, HighlightStyle)]>>,
+    mouse_runs: Option<(
+        Box<[Range<usize>]>,
+        Box<dyn FnMut(usize, RectF) -> MouseRegion>,
+    )>,
 }
 
 pub struct LayoutState {
@@ -32,7 +38,8 @@ impl Text {
             text: text.into(),
             style,
             soft_wrap: true,
-            highlights: Vec::new(),
+            highlights: None,
+            mouse_runs: None,
         }
     }
 
@@ -41,8 +48,20 @@ impl Text {
         self
     }
 
-    pub fn with_highlights(mut self, runs: Vec<(Range<usize>, HighlightStyle)>) -> Self {
-        self.highlights = runs;
+    pub fn with_highlights(
+        mut self,
+        runs: impl Into<Box<[(Range<usize>, HighlightStyle)]>>,
+    ) -> Self {
+        self.highlights = Some(runs.into());
+        self
+    }
+
+    pub fn with_mouse_regions(
+        mut self,
+        runs: impl Into<Box<[Range<usize>]>>,
+        build_mouse_region: impl 'static + FnMut(usize, RectF) -> MouseRegion,
+    ) -> Self {
+        self.mouse_runs = Some((runs.into(), Box::new(build_mouse_region)));
         self
     }
 
@@ -65,7 +84,12 @@ impl<V: View> Element<V> for Text {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
 
         let mut offset = 0;
-        let mut highlight_ranges = self.highlights.iter().peekable();
+        let mut highlight_ranges = self
+            .highlights
+            .as_ref()
+            .map_or(Default::default(), AsRef::as_ref)
+            .iter()
+            .peekable();
         let chunks = std::iter::from_fn(|| {
             let result;
             if let Some((range, highlight_style)) = highlight_ranges.peek() {
@@ -152,6 +176,19 @@ impl<V: View> Element<V> for Text {
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();
+
+        let mouse_runs;
+        let mut build_mouse_region;
+        if let Some((runs, build_region)) = &mut self.mouse_runs {
+            mouse_runs = runs.iter();
+            build_mouse_region = Some(build_region);
+        } else {
+            mouse_runs = [].iter();
+            build_mouse_region = None;
+        }
+        let mut mouse_runs = mouse_runs.enumerate().peekable();
+
+        let mut offset = 0;
         for (ix, line) in layout.shaped_lines.iter().enumerate() {
             let wrap_boundaries = layout.wrap_boundaries.get(ix).unwrap_or(&empty);
             let boundaries = RectF::new(
@@ -169,13 +206,114 @@ impl<V: View> Element<V> for Text {
                         origin,
                         visible_bounds,
                         layout.line_height,
-                        wrap_boundaries.iter().copied(),
+                        wrap_boundaries,
                         cx,
                     );
                 } else {
                     line.paint(scene, origin, visible_bounds, layout.line_height, cx);
                 }
             }
+
+            // Add the mouse regions
+            let end_offset = offset + line.len();
+            if let Some((mut mouse_run_ix, mut mouse_run_range)) = mouse_runs.peek().cloned() {
+                if mouse_run_range.start < end_offset {
+                    let mut current_mouse_run = None;
+                    if mouse_run_range.start <= offset {
+                        current_mouse_run = Some((mouse_run_ix, origin));
+                    }
+
+                    let mut glyph_origin = origin;
+                    let mut prev_position = 0.;
+                    let mut wrap_boundaries = wrap_boundaries.iter().copied().peekable();
+                    for (glyph_ix, glyph) in line
+                        .runs()
+                        .iter()
+                        .flat_map(|run| run.glyphs().iter().enumerate())
+                    {
+                        glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
+                        prev_position = glyph.position.x();
+
+                        if wrap_boundaries
+                            .peek()
+                            .map_or(false, |b| b.glyph_ix == glyph_ix)
+                        {
+                            if let Some((mouse_run_ix, mouse_region_start)) = &mut current_mouse_run
+                            {
+                                let bounds = RectF::from_points(
+                                    *mouse_region_start,
+                                    glyph_origin + vec2f(0., layout.line_height),
+                                );
+                                scene.push_cursor_region(CursorRegion {
+                                    bounds,
+                                    style: CursorStyle::PointingHand,
+                                });
+                                scene.push_mouse_region((build_mouse_region.as_mut().unwrap())(
+                                    *mouse_run_ix,
+                                    bounds,
+                                ));
+                                *mouse_region_start =
+                                    vec2f(origin.x(), glyph_origin.y() + layout.line_height);
+                            }
+
+                            wrap_boundaries.next();
+                            glyph_origin = vec2f(origin.x(), glyph_origin.y() + layout.line_height);
+                        }
+
+                        if offset + glyph.index == mouse_run_range.start {
+                            current_mouse_run = Some((mouse_run_ix, glyph_origin));
+                        }
+                        if offset + glyph.index == mouse_run_range.end {
+                            if let Some((mouse_run_ix, mouse_region_start)) =
+                                current_mouse_run.take()
+                            {
+                                let bounds = RectF::from_points(
+                                    mouse_region_start,
+                                    glyph_origin + vec2f(0., layout.line_height),
+                                );
+                                scene.push_cursor_region(CursorRegion {
+                                    bounds,
+                                    style: CursorStyle::PointingHand,
+                                });
+                                scene.push_mouse_region((build_mouse_region.as_mut().unwrap())(
+                                    mouse_run_ix,
+                                    bounds,
+                                ));
+                                mouse_runs.next();
+                            }
+
+                            if let Some(next) = mouse_runs.peek() {
+                                mouse_run_ix = next.0;
+                                mouse_run_range = next.1;
+                                if mouse_run_range.start >= end_offset {
+                                    break;
+                                }
+                                if mouse_run_range.start == offset + glyph.index {
+                                    current_mouse_run = Some((mouse_run_ix, glyph_origin));
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some((mouse_run_ix, mouse_region_start)) = current_mouse_run {
+                        let line_end = glyph_origin + vec2f(line.width() - prev_position, 0.);
+                        let bounds = RectF::from_points(
+                            mouse_region_start,
+                            line_end + vec2f(0., layout.line_height),
+                        );
+                        scene.push_cursor_region(CursorRegion {
+                            bounds,
+                            style: CursorStyle::PointingHand,
+                        });
+                        scene.push_mouse_region((build_mouse_region.as_mut().unwrap())(
+                            mouse_run_ix,
+                            bounds,
+                        ));
+                    }
+                }
+            }
+
+            offset = end_offset + 1;
             origin.set_y(boundaries.max_y());
         }
     }

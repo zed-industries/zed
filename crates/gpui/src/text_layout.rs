@@ -393,41 +393,82 @@ impl Line {
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
-        boundaries: impl IntoIterator<Item = ShapedBoundary>,
+        boundaries: &[ShapedBoundary],
         cx: &mut WindowContext,
     ) {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
-        let baseline_origin = vec2f(0., padding_top + self.layout.ascent);
+        let baseline_offset = vec2f(0., padding_top + self.layout.ascent);
 
         let mut boundaries = boundaries.into_iter().peekable();
         let mut color_runs = self.style_runs.iter();
-        let mut color_end = 0;
+        let mut style_run_end = 0;
         let mut color = Color::black();
+        let mut underline: Option<(Vector2F, Underline)> = None;
 
-        let mut glyph_origin = vec2f(0., 0.);
+        let mut glyph_origin = origin;
         let mut prev_position = 0.;
         for run in &self.layout.runs {
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
+                glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
+
                 if boundaries.peek().map_or(false, |b| b.glyph_ix == glyph_ix) {
                     boundaries.next();
-                    glyph_origin = vec2f(0., glyph_origin.y() + line_height);
-                } else {
-                    glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
+                    if let Some((underline_origin, underline_style)) = underline {
+                        scene.push_underline(scene::Underline {
+                            origin: underline_origin,
+                            width: glyph_origin.x() - underline_origin.x(),
+                            thickness: underline_style.thickness.into(),
+                            color: underline_style.color.unwrap(),
+                            squiggly: underline_style.squiggly,
+                        });
+                    }
+
+                    glyph_origin = vec2f(origin.x(), glyph_origin.y() + line_height);
                 }
                 prev_position = glyph.position.x();
 
-                if glyph.index >= color_end {
-                    if let Some(next_run) = color_runs.next() {
-                        color_end += next_run.len as usize;
-                        color = next_run.color;
+                let mut finished_underline = None;
+                if glyph.index >= style_run_end {
+                    if let Some(style_run) = color_runs.next() {
+                        style_run_end += style_run.len as usize;
+                        color = style_run.color;
+                        if let Some((_, underline_style)) = underline {
+                            if style_run.underline != underline_style {
+                                finished_underline = underline.take();
+                            }
+                        }
+                        if style_run.underline.thickness.into_inner() > 0. {
+                            underline.get_or_insert((
+                                glyph_origin
+                                    + vec2f(0., baseline_offset.y() + 0.618 * self.layout.descent),
+                                Underline {
+                                    color: Some(
+                                        style_run.underline.color.unwrap_or(style_run.color),
+                                    ),
+                                    thickness: style_run.underline.thickness,
+                                    squiggly: style_run.underline.squiggly,
+                                },
+                            ));
+                        }
                     } else {
-                        color_end = self.layout.len;
+                        style_run_end = self.layout.len;
                         color = Color::black();
+                        finished_underline = underline.take();
                     }
                 }
 
+                if let Some((underline_origin, underline_style)) = finished_underline {
+                    scene.push_underline(scene::Underline {
+                        origin: underline_origin,
+                        width: glyph_origin.x() - underline_origin.x(),
+                        thickness: underline_style.thickness.into(),
+                        color: underline_style.color.unwrap(),
+                        squiggly: underline_style.squiggly,
+                    });
+                }
+
                 let glyph_bounds = RectF::new(
-                    origin + glyph_origin,
+                    glyph_origin,
                     cx.font_cache
                         .bounding_box(run.font_id, self.layout.font_size),
                 );
@@ -437,19 +478,30 @@ impl Line {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,
-                            origin: glyph_bounds.origin() + baseline_origin,
+                            origin: glyph_bounds.origin() + baseline_offset,
                         });
                     } else {
                         scene.push_glyph(scene::Glyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,
-                            origin: glyph_bounds.origin() + baseline_origin,
+                            origin: glyph_bounds.origin() + baseline_offset,
                             color,
                         });
                     }
                 }
             }
+        }
+
+        if let Some((underline_origin, underline_style)) = underline.take() {
+            let line_end_x = glyph_origin.x() + self.layout.width - prev_position;
+            scene.push_underline(scene::Underline {
+                origin: underline_origin,
+                width: line_end_x - underline_origin.x(),
+                thickness: underline_style.thickness.into(),
+                color: underline_style.color.unwrap(),
+                squiggly: underline_style.squiggly,
+            });
         }
     }
 }
