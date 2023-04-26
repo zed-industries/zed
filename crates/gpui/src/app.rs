@@ -4156,8 +4156,23 @@ impl AnyWeakViewHandle {
         self.view_id
     }
 
+    fn is<T: 'static>(&self) -> bool {
+        TypeId::of::<T>() == self.view_type
+    }
+
     pub fn upgrade(&self, cx: &impl BorrowAppContext) -> Option<AnyViewHandle> {
         cx.read_with(|cx| cx.upgrade_any_view_handle(self))
+    }
+
+    pub fn downcast<T: View>(self) -> Option<WeakViewHandle<T>> {
+        if self.is::<T>() {
+            Some(WeakViewHandle {
+                any_handle: self,
+                view_type: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 }
 

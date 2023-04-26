@@ -2219,7 +2219,7 @@ impl Workspace {
     // RPC handlers
 
     async fn handle_follow(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         envelope: TypedEnvelope<proto::Follow>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -2267,7 +2267,7 @@ impl Workspace {
     }
 
     async fn handle_unfollow(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         envelope: TypedEnvelope<proto::Unfollow>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -2282,7 +2282,7 @@ impl Workspace {
     }
 
     async fn handle_update_followers(
-        this: ViewHandle<Self>,
+        this: WeakViewHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
         _: Arc<Client>,
         cx: AsyncAppContext,
