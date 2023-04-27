@@ -5,30 +5,30 @@ use gpui::{
     actions,
     anyhow::Result,
     elements::{Flex, ParentElement},
-    AnyElement, AppContext, Element, Task, ViewContext,
+    AnyElement, AppContext, Element, Task, ViewContext, WeakViewHandle,
 };
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use workspace::{
-    notifications::simple_message_notification::MessageNotification, OpenPaths, Workspace,
+    notifications::simple_message_notification::MessageNotification, AppState, Workspace,
     WorkspaceLocation, WORKSPACE_DB,
 };
 
 actions!(projects, [OpenRecent]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_async_action(toggle);
+pub fn init(cx: &mut AppContext, app_state: Weak<AppState>) {
+    cx.add_async_action(
+        move |_: &mut Workspace, _: &OpenRecent, cx: &mut ViewContext<Workspace>| {
+            toggle(app_state.clone(), cx)
+        },
+    );
     RecentProjects::init(cx);
 }
 
-fn toggle(
-    _: &mut Workspace,
-    _: &OpenRecent,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<Task<Result<()>>> {
+fn toggle(app_state: Weak<AppState>, cx: &mut ViewContext<Workspace>) -> Option<Task<Result<()>>> {
     Some(cx.spawn(|workspace, mut cx| async move {
         let workspace_locations: Vec<_> = cx
             .background()
@@ -46,9 +46,17 @@ fn toggle(
         workspace.update(&mut cx, |workspace, cx| {
             if !workspace_locations.is_empty() {
                 workspace.toggle_modal(cx, |_, cx| {
+                    let workspace = cx.weak_handle();
                     cx.add_view(|cx| {
-                        RecentProjects::new(RecentProjectsDelegate::new(workspace_locations), cx)
-                            .with_max_size(800., 1200.)
+                        RecentProjects::new(
+                            RecentProjectsDelegate::new(
+                                workspace,
+                                workspace_locations,
+                                app_state.clone(),
+                            ),
+                            cx,
+                        )
+                        .with_max_size(800., 1200.)
                     })
                 });
             } else {
@@ -64,15 +72,23 @@ fn toggle(
 type RecentProjects = Picker<RecentProjectsDelegate>;
 
 struct RecentProjectsDelegate {
+    workspace: WeakViewHandle<Workspace>,
     workspace_locations: Vec<WorkspaceLocation>,
+    app_state: Weak<AppState>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
 }
 
 impl RecentProjectsDelegate {
-    fn new(workspace_locations: Vec<WorkspaceLocation>) -> Self {
+    fn new(
+        workspace: WeakViewHandle<Workspace>,
+        workspace_locations: Vec<WorkspaceLocation>,
+        app_state: Weak<AppState>,
+    ) -> Self {
         Self {
+            workspace,
             workspace_locations,
+            app_state,
             selected_match_index: 0,
             matches: Default::default(),
         }
@@ -139,11 +155,22 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 
     fn confirm(&mut self, cx: &mut ViewContext<RecentProjects>) {
-        if let Some(selected_match) = &self.matches.get(self.selected_index()) {
+        if let Some(((selected_match, workspace), app_state)) = self
+            .matches
+            .get(self.selected_index())
+            .zip(self.workspace.upgrade(cx))
+            .zip(self.app_state.upgrade())
+        {
             let workspace_location = &self.workspace_locations[selected_match.candidate_id];
-            cx.dispatch_action(OpenPaths {
-                paths: workspace_location.paths().as_ref().clone(),
-            });
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.open_workspace_for_paths(
+                        workspace_location.paths().as_ref().clone(),
+                        app_state,
+                        cx,
+                    )
+                })
+                .detach_and_log_err(cx);
             cx.emit(PickerEvent::Dismiss);
         }
     }

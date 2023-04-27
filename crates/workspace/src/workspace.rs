@@ -219,7 +219,6 @@ pub type WorkspaceId = i64;
 impl_internal_actions!(
     workspace,
     [
-        OpenPaths,
         ToggleFollow,
         JoinProject,
         OpenSharedScreen,
@@ -235,81 +234,53 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     dock::init(cx);
     notifications::init(cx);
 
-    cx.add_global_action(|_: &Open, cx: &mut AppContext| {
-        let mut paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        });
-
-        cx.spawn(|mut cx| async move {
-            if let Some(paths) = paths.recv().await.flatten() {
-                cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
-            }
-        })
-        .detach();
-    });
-    cx.add_action(|_, _: &Open, cx: &mut ViewContext<Workspace>| {
-        let mut paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        });
-
-        let handle = cx.handle().downgrade();
-        cx.spawn(|_, mut cx| async move {
-            if let Some(paths) = paths.recv().await.flatten() {
-                cx.update(|cx| {
-                    cx.dispatch_action_at(handle.window_id(), handle.id(), OpenPaths { paths })
-                })
-            }
-        })
-        .detach();
-    });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |action: &OpenPaths, cx: &mut AppContext| {
+        move |_: &Open, cx: &mut AppContext| {
+            let mut paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            });
+
             if let Some(app_state) = app_state.upgrade() {
-                open_paths(&action.paths, &app_state, None, cx).detach();
-            }
-        }
-    });
-    cx.add_async_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |workspace, action: &OpenPaths, cx: &mut ViewContext<Workspace>| {
-            if !workspace.project().read(cx).is_local() {
-                cx.propagate_action();
-                return None;
-            }
-
-            let app_state = app_state.upgrade()?;
-            let window_id = cx.window_id();
-            let action = action.clone();
-            let is_remote = workspace.project.read(cx).is_remote();
-            let has_worktree = workspace.project.read(cx).worktrees(cx).next().is_some();
-            let has_dirty_items = workspace.items(cx).any(|item| item.is_dirty(cx));
-            let close_task = if is_remote || has_worktree || has_dirty_items {
-                None
-            } else {
-                Some(workspace.prepare_to_close(false, cx))
-            };
-
-            Some(cx.spawn(|_, mut cx| async move {
-                let window_id_to_replace = if let Some(close_task) = close_task {
-                    if !close_task.await? {
-                        return Ok(());
+                cx.spawn(move |mut cx| async move {
+                    if let Some(paths) = paths.recv().await.flatten() {
+                        cx.update(|cx| {
+                            open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
+                        });
                     }
-                    Some(window_id)
-                } else {
-                    None
-                };
-                cx.update(|cx| open_paths(&action.paths, &app_state, window_id_to_replace, cx))
-                    .await?;
-                Ok(())
-            }))
+                })
+                .detach();
+            }
         }
     });
+    cx.add_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_, _: &Open, cx: &mut ViewContext<Workspace>| {
+            let mut paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            });
 
+            if let Some(app_state) = app_state.upgrade() {
+                cx.spawn(|this, mut cx| async move {
+                    if let Some(paths) = paths.recv().await.flatten() {
+                        if let Some(task) = this
+                            .update(&mut cx, |this, cx| {
+                                this.open_workspace_for_paths(paths, app_state, cx)
+                            })
+                            .log_err()
+                        {
+                            task.await.log_err();
+                        }
+                    }
+                })
+                .detach();
+            }
+        }
+    });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut AppContext| {
@@ -1176,6 +1147,37 @@ impl Workspace {
                 }
             }
             Ok(true)
+        })
+    }
+
+    pub fn open_workspace_for_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let window_id = cx.window_id();
+        let is_remote = self.project.read(cx).is_remote();
+        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
+        let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
+        let close_task = if is_remote || has_worktree || has_dirty_items {
+            None
+        } else {
+            Some(self.prepare_to_close(false, cx))
+        };
+
+        cx.spawn(|_, mut cx| async move {
+            let window_id_to_replace = if let Some(close_task) = close_task {
+                if !close_task.await? {
+                    return Ok(());
+                }
+                Some(window_id)
+            } else {
+                None
+            };
+            cx.update(|cx| open_paths(&paths, &app_state, window_id_to_replace, cx))
+                .await?;
+            Ok(())
         })
     }
 
