@@ -139,27 +139,11 @@ pub fn keystroke_label<V: View>(
 ) -> Container<V> {
     // FIXME: Put the theme in it's own global so we can
     // query the keystroke style on our own
-    keystroke_label_for(
-        cx.handle().id(),
-        label_text,
-        label_style,
-        keystroke_style,
-        action,
-    )
-}
-
-pub fn keystroke_label_for<V: View>(
-    view_id: usize,
-    label_text: &'static str,
-    label_style: &ContainedText,
-    keystroke_style: &ContainedText,
-    action: Box<dyn Action>,
-) -> Container<V> {
     Flex::row()
         .with_child(Label::new(label_text, label_style.text.clone()).contained())
         .with_child(
             KeystrokeLabel::new(
-                view_id,
+                cx.view_id(),
                 action,
                 keystroke_style.container,
                 keystroke_style.text.clone(),
