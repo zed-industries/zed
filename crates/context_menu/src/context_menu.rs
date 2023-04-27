@@ -2,7 +2,6 @@ use gpui::{
     anyhow,
     elements::*,
     geometry::vector::Vector2F,
-    impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     Action, AnyViewHandle, AppContext, Axis, Entity, MouseState, SizeConstraint, Subscription,
@@ -12,17 +11,11 @@ use menu::*;
 use settings::Settings;
 use std::{any::TypeId, borrow::Cow, sync::Arc, time::Duration};
 
-#[derive(Copy, Clone, PartialEq)]
-struct Clicked;
-
-impl_internal_actions!(context_menu, [Clicked]);
-
 pub fn init(cx: &mut AppContext) {
     cx.add_action(ContextMenu::select_first);
     cx.add_action(ContextMenu::select_last);
     cx.add_action(ContextMenu::select_next);
     cx.add_action(ContextMenu::select_prev);
-    cx.add_action(ContextMenu::clicked);
     cx.add_action(ContextMenu::confirm);
     cx.add_action(ContextMenu::cancel);
 }
@@ -226,10 +219,6 @@ impl ContextMenu {
                 .detach_and_log_err(cx);
             }
         }
-    }
-
-    fn clicked(&mut self, _: &Clicked, _: &mut ViewContext<Self>) {
-        self.clicked = true;
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -465,9 +454,9 @@ impl ContextMenu {
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_up(MouseButton::Left, |_, _, _| {}) // Capture these events
                             .on_down(MouseButton::Left, |_, _, _| {}) // Capture these events
-                            .on_click(MouseButton::Left, move |_, _, cx| {
+                            .on_click(MouseButton::Left, move |_, menu, cx| {
+                                menu.clicked = true;
                                 let window_id = cx.window_id();
-                                cx.dispatch_action(Clicked);
                                 match &action {
                                     ContextMenuItemAction::Action(action) => {
                                         cx.dispatch_any_action_at(
