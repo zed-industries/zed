@@ -44,7 +44,7 @@ use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,
-    OpenPaths, Workspace,
+    Workspace,
 };
 use zed::{self, build_window_options, initialize_workspace, languages, menus, OpenSettings};
 
@@ -160,7 +160,6 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         theme_testbench::init(cx);
-        recent_projects::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
@@ -194,6 +193,7 @@ fn main() {
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
+        recent_projects::init(cx, Arc::downgrade(&app_state));
 
         journal::init(app_state.clone(), cx);
         language_selector::init(app_state.clone(), cx);
@@ -212,7 +212,7 @@ fn main() {
                 cx.spawn(|cx| async move { restore_or_create_workspace(&app_state, cx).await })
                     .detach()
             } else {
-                cx.dispatch_global_action(OpenPaths { paths });
+                workspace::open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx);
             }
         } else {
             if let Ok(Some(connection)) = cli_connections_rx.try_next() {
@@ -267,11 +267,9 @@ fn main() {
 
 async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
     if let Some(location) = workspace::last_opened_workspace_paths().await {
-        cx.update(|cx| {
-            cx.dispatch_global_action(OpenPaths {
-                paths: location.paths().as_ref().clone(),
-            })
-        });
+        cx.update(|cx| workspace::open_paths(location.paths().as_ref(), app_state, None, cx))
+            .await
+            .log_err();
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_experience(app_state, cx));
     } else {
