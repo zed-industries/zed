@@ -1,13 +1,10 @@
 mod toggle_dock_button;
 
-use serde::Deserialize;
-
 use collections::HashMap;
 use gpui::{
     actions,
     elements::{ChildView, Empty, MouseEventHandler, ParentElement, Side, Stack},
     geometry::vector::Vector2F,
-    impl_internal_actions,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Border, Element, SizeConstraint, ViewContext, ViewHandle,
 };
@@ -16,12 +13,6 @@ use theme::Theme;
 
 use crate::{sidebar::SidebarSide, BackgroundActions, ItemHandle, Pane, Workspace};
 pub use toggle_dock_button::ToggleDockButton;
-
-#[derive(PartialEq, Clone, Deserialize)]
-pub struct MoveDock(pub DockAnchor);
-
-#[derive(PartialEq, Clone)]
-pub struct AddDefaultItemToDock;
 
 actions!(
     dock,
@@ -35,16 +26,10 @@ actions!(
         RemoveTabFromDock,
     ]
 );
-impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(Dock::focus_dock);
     cx.add_action(Dock::hide_dock);
-    cx.add_action(
-        |workspace: &mut Workspace, &MoveDock(dock_anchor), cx: &mut ViewContext<Workspace>| {
-            Dock::move_dock(workspace, dock_anchor, true, cx);
-        },
-    );
     cx.add_action(
         |workspace: &mut Workspace, _: &AnchorDockRight, cx: &mut ViewContext<Workspace>| {
             Dock::move_dock(workspace, DockAnchor::Right, true, cx);
@@ -575,7 +560,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_toggle_dock_focus(cx: &mut TestAppContext) {
-        let cx = DockTestContext::new(cx).await;
+        let mut cx = DockTestContext::new(cx).await;
 
         cx.move_dock(DockAnchor::Right);
         cx.assert_dock_pane_active();
@@ -721,8 +706,8 @@ mod tests {
             })
         }
 
-        pub fn move_dock(&self, anchor: DockAnchor) {
-            self.cx.dispatch_action(self.window_id, MoveDock(anchor));
+        pub fn move_dock(&mut self, anchor: DockAnchor) {
+            self.update_workspace(|workspace, cx| Dock::move_dock(workspace, anchor, true, cx));
         }
 
         pub fn hide_dock(&self) {
