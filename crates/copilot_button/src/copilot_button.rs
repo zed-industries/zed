@@ -10,12 +10,13 @@ use gpui::{
     ViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
+use util::ResultExt;
 use workspace::{
-    item::ItemHandle, notifications::simple_message_notification::OsOpen, DismissToast,
-    StatusItemView,
+    item::ItemHandle, notifications::simple_message_notification::OsOpen, StatusItemView, Toast,
+    Workspace,
 };
 
-use copilot::{Copilot, Reinstall, SignIn, SignOut, Status};
+use copilot::{Copilot, Reinstall, SignOut, Status};
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const COPILOT_STARTING_TOAST_ID: usize = 1337;
@@ -101,41 +102,43 @@ pub fn init(cx: &mut AppContext) {
 
         match status {
             Status::Starting { task } => {
-                cx.dispatch_action(workspace::Toast::new(
-                    COPILOT_STARTING_TOAST_ID,
-                    "Copilot is starting...",
-                ));
-                let window_id = cx.window_id();
-                let task = task.to_owned();
-                cx.spawn(|handle, mut cx| async move {
+                let Some(workspace) = cx.root_view().clone().downcast::<Workspace>() else {
+                    return;
+                };
+
+                workspace.update(cx, |workspace, cx| {
+                    workspace.show_toast(
+                        Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot is starting..."),
+                        cx,
+                    )
+                });
+                let workspace = workspace.downgrade();
+                cx.spawn(|_, mut cx| async move {
                     task.await;
-                    cx.update(|cx| {
-                        if let Some(copilot) = Copilot::global(cx) {
-                            let status = copilot.read(cx).status();
-                            match status {
-                                Status::Authorized => cx.dispatch_action_at(
-                                    window_id,
-                                    handle.id(),
-                                    workspace::Toast::new(
-                                        COPILOT_STARTING_TOAST_ID,
-                                        "Copilot has started!",
-                                    ),
+                    if let Some(copilot) = cx.read(Copilot::global) {
+                        workspace
+                            .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                                Status::Authorized => workspace.show_toast(
+                                    Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot has started!"),
+                                    cx,
                                 ),
                                 _ => {
-                                    cx.dispatch_action_at(
-                                        window_id,
-                                        handle.id(),
-                                        DismissToast::new(COPILOT_STARTING_TOAST_ID),
-                                    );
-                                    cx.dispatch_action_at(window_id, handle.id(), SignIn)
+                                    workspace.dismiss_toast(COPILOT_STARTING_TOAST_ID, cx);
+                                    copilot
+                                        .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                        .detach_and_log_err(cx);
                                 }
-                            }
-                        }
-                    })
+                            })
+                            .log_err();
+                    }
                 })
                 .detach();
             }
-            _ => cx.dispatch_action(SignIn),
+            _ => {
+                copilot
+                    .update(cx, |copilot, cx| copilot.sign_in(cx))
+                    .detach_and_log_err(cx);
+            }
         }
     })
 }
@@ -219,12 +222,22 @@ impl View for CopilotButton {
                     let status = status.clone();
                     move |_, _, cx| match status {
                         Status::Authorized => cx.dispatch_action(DeployCopilotMenu),
-                        Status::Error(ref e) => cx.dispatch_action(workspace::Toast::new_action(
-                            COPILOT_ERROR_TOAST_ID,
-                            format!("Copilot can't be started: {}", e),
-                            "Reinstall Copilot",
-                            Reinstall,
-                        )),
+                        Status::Error(ref e) => {
+                            if let Some(workspace) = cx.root_view().clone().downcast::<Workspace>()
+                            {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.show_toast(
+                                        Toast::new_action(
+                                            COPILOT_ERROR_TOAST_ID,
+                                            format!("Copilot can't be started: {}", e),
+                                            "Reinstall Copilot",
+                                            Reinstall,
+                                        ),
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
                         _ => cx.dispatch_action(DeployCopilotStartMenu),
                     }
                 })
