@@ -6,10 +6,9 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    platform::CursorStyle,
     text_layout::{Line, RunStyle, ShapedBoundary},
-    CursorRegion, Element, FontCache, MouseRegion, SceneBuilder, SizeConstraint, TextLayoutCache,
-    View, ViewContext,
+    AppContext, Element, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View,
+    ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -20,9 +19,9 @@ pub struct Text {
     style: TextStyle,
     soft_wrap: bool,
     highlights: Option<Box<[(Range<usize>, HighlightStyle)]>>,
-    mouse_runs: Option<(
+    custom_runs: Option<(
         Box<[Range<usize>]>,
-        Box<dyn FnMut(usize, RectF) -> MouseRegion>,
+        Box<dyn FnMut(usize, RectF, &mut SceneBuilder, &mut AppContext)>,
     )>,
 }
 
@@ -39,7 +38,7 @@ impl Text {
             style,
             soft_wrap: true,
             highlights: None,
-            mouse_runs: None,
+            custom_runs: None,
         }
     }
 
@@ -56,12 +55,12 @@ impl Text {
         self
     }
 
-    pub fn with_mouse_regions(
+    pub fn with_custom_runs(
         mut self,
         runs: impl Into<Box<[Range<usize>]>>,
-        build_mouse_region: impl 'static + FnMut(usize, RectF) -> MouseRegion,
+        callback: impl 'static + FnMut(usize, RectF, &mut SceneBuilder, &mut AppContext),
     ) -> Self {
-        self.mouse_runs = Some((runs.into(), Box::new(build_mouse_region)));
+        self.custom_runs = Some((runs.into(), Box::new(callback)));
         self
     }
 
@@ -176,17 +175,18 @@ impl<V: View> Element<V> for Text {
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();
+        let mut callback = |_, _, _: &mut SceneBuilder, _: &mut AppContext| {};
 
         let mouse_runs;
-        let mut build_mouse_region;
-        if let Some((runs, build_region)) = &mut self.mouse_runs {
+        let custom_run_callback;
+        if let Some((runs, build_region)) = &mut self.custom_runs {
             mouse_runs = runs.iter();
-            build_mouse_region = Some(build_region);
+            custom_run_callback = build_region.as_mut();
         } else {
             mouse_runs = [].iter();
-            build_mouse_region = None;
+            custom_run_callback = &mut callback;
         }
-        let mut mouse_runs = mouse_runs.enumerate().peekable();
+        let mut custom_runs = mouse_runs.enumerate().peekable();
 
         let mut offset = 0;
         for (ix, line) in layout.shaped_lines.iter().enumerate() {
@@ -214,13 +214,13 @@ impl<V: View> Element<V> for Text {
                 }
             }
 
-            // Add the mouse regions
+            // Paint any custom runs that intersect this line.
             let end_offset = offset + line.len();
-            if let Some((mut mouse_run_ix, mut mouse_run_range)) = mouse_runs.peek().cloned() {
-                if mouse_run_range.start < end_offset {
-                    let mut current_mouse_run = None;
-                    if mouse_run_range.start <= offset {
-                        current_mouse_run = Some((mouse_run_ix, origin));
+            if let Some((custom_run_ix, custom_run_range)) = custom_runs.peek().cloned() {
+                if custom_run_range.start < end_offset {
+                    let mut current_custom_run = None;
+                    if custom_run_range.start <= offset {
+                        current_custom_run = Some((custom_run_ix, custom_run_range.end, origin));
                     }
 
                     let mut glyph_origin = origin;
@@ -237,81 +237,67 @@ impl<V: View> Element<V> for Text {
                         glyph_origin.set_x(glyph_origin.x() + glyph.position.x() - prev_position);
                         prev_position = glyph.position.x();
 
+                        // If we've reached a soft wrap position, move down one line. If there
+                        // is a custom run in-progress, paint it.
                         if wrap_boundaries
                             .peek()
                             .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
                         {
-                            if let Some((mouse_run_ix, mouse_region_start)) = &mut current_mouse_run
-                            {
+                            if let Some((run_ix, _, run_origin)) = &mut current_custom_run {
                                 let bounds = RectF::from_points(
-                                    *mouse_region_start,
+                                    *run_origin,
                                     glyph_origin + vec2f(0., layout.line_height),
                                 );
-                                scene.push_cursor_region(CursorRegion {
-                                    bounds,
-                                    style: CursorStyle::PointingHand,
-                                });
-                                scene.push_mouse_region((build_mouse_region.as_mut().unwrap())(
-                                    *mouse_run_ix,
-                                    bounds,
-                                ));
-                                *mouse_region_start =
+                                custom_run_callback(*run_ix, bounds, scene, cx);
+                                *run_origin =
                                     vec2f(origin.x(), glyph_origin.y() + layout.line_height);
                             }
-
                             wrap_boundaries.next();
                             glyph_origin = vec2f(origin.x(), glyph_origin.y() + layout.line_height);
                         }
 
-                        if offset + glyph.index == mouse_run_range.start {
-                            current_mouse_run = Some((mouse_run_ix, glyph_origin));
-                        }
-                        if offset + glyph.index == mouse_run_range.end {
-                            if let Some((mouse_run_ix, mouse_region_start)) =
-                                current_mouse_run.take()
-                            {
+                        // If we've reached the end of the current custom run, paint it.
+                        if let Some((run_ix, run_end_offset, run_origin)) = current_custom_run {
+                            if offset + glyph.index == run_end_offset {
+                                current_custom_run.take();
                                 let bounds = RectF::from_points(
-                                    mouse_region_start,
+                                    run_origin,
                                     glyph_origin + vec2f(0., layout.line_height),
                                 );
-                                scene.push_cursor_region(CursorRegion {
-                                    bounds,
-                                    style: CursorStyle::PointingHand,
-                                });
-                                scene.push_mouse_region((build_mouse_region.as_mut().unwrap())(
-                                    mouse_run_ix,
-                                    bounds,
-                                ));
-                                mouse_runs.next();
+                                custom_run_callback(run_ix, bounds, scene, cx);
+                                custom_runs.next();
                             }
 
-                            if let Some(next) = mouse_runs.peek() {
-                                mouse_run_ix = next.0;
-                                mouse_run_range = next.1;
-                                if mouse_run_range.start >= end_offset {
+                            if let Some((_, run_range)) = custom_runs.peek() {
+                                if run_range.start >= end_offset {
                                     break;
                                 }
-                                if mouse_run_range.start == offset + glyph.index {
-                                    current_mouse_run = Some((mouse_run_ix, glyph_origin));
+                                if run_range.start == offset + glyph.index {
+                                    current_custom_run =
+                                        Some((run_ix, run_range.end, glyph_origin));
                                 }
+                            }
+                        }
+
+                        // If we've reached the start of a new custom run, start tracking it.
+                        if let Some((run_ix, run_range)) = custom_runs.peek() {
+                            if offset + glyph.index == run_range.start {
+                                current_custom_run = Some((*run_ix, run_range.end, glyph_origin));
                             }
                         }
                     }
 
-                    if let Some((mouse_run_ix, mouse_region_start)) = current_mouse_run {
+                    // If a custom run extends beyond the end of the line, paint it.
+                    if let Some((run_ix, run_end_offset, run_origin)) = current_custom_run {
                         let line_end = glyph_origin + vec2f(line.width() - prev_position, 0.);
                         let bounds = RectF::from_points(
-                            mouse_region_start,
+                            run_origin,
                             line_end + vec2f(0., layout.line_height),
                         );
-                        scene.push_cursor_region(CursorRegion {
-                            bounds,
-                            style: CursorStyle::PointingHand,
-                        });
-                        scene.push_mouse_region((build_mouse_region.as_mut().unwrap())(
-                            mouse_run_ix,
-                            bounds,
-                        ));
+                        custom_run_callback(run_ix, bounds, scene, cx);
+                        if end_offset == run_end_offset {
+                            custom_runs.next();
+                        }
                     }
                 }
             }
