@@ -2,18 +2,12 @@ use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     elements::*,
     geometry::rect::RectF,
-    impl_internal_actions,
     platform::{WindowBounds, WindowKind, WindowOptions},
     AnyElement, AnyViewHandle, AppContext, ClipboardItem, Element, Entity, View, ViewContext,
     ViewHandle,
 };
 use settings::Settings;
 use theme::ui::modal;
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-struct ClickedConnect;
-
-impl_internal_actions!(copilot_verification, [ClickedConnect]);
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 struct CopyUserCode;
@@ -68,12 +62,6 @@ pub fn init(cx: &mut AppContext) {
             }
         })
         .detach();
-
-        cx.add_action(
-            |code_verification: &mut CopilotCodeVerification, _: &ClickedConnect, _| {
-                code_verification.connect_clicked = true;
-            },
-        );
     }
 }
 
@@ -219,9 +207,9 @@ impl CopilotCodeVerification {
                 cx,
                 {
                     let verification_uri = data.verification_uri.clone();
-                    move |_, _, cx| {
+                    move |_, verification, cx| {
                         cx.platform().open_url(&verification_uri);
-                        cx.dispatch_action(ClickedConnect)
+                        verification.connect_clicked = true;
                     }
                 },
             ))
