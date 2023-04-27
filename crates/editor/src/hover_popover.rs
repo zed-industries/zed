@@ -1,12 +1,11 @@
 use futures::FutureExt;
 use gpui::{
     actions,
-    color::Color,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     fonts::{HighlightStyle, Underline, Weight},
     impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, ModelHandle, MouseRegion, Task, ViewContext,
+    AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
 use project::{HoverBlock, HoverBlockKind, Project};
@@ -275,8 +274,8 @@ fn render_blocks(
 ) -> RenderedInfo {
     let mut text = String::new();
     let mut highlights = Vec::new();
-    let mut link_ranges = Vec::new();
-    let mut link_urls = Vec::new();
+    let mut region_ranges = Vec::new();
+    let mut regions = Vec::new();
 
     for block in blocks {
         match &block.kind {
@@ -315,7 +314,12 @@ fn render_blocks(
                                 if italic_depth > 0 {
                                     style.italic = Some(true);
                                 }
-                                if link_url.is_some() {
+                                if let Some(link_url) = link_url.clone() {
+                                    region_ranges.push(prev_len..text.len());
+                                    regions.push(RenderedRegion {
+                                        link_url: Some(link_url),
+                                        code: false,
+                                    });
                                     style.underline = Some(Underline {
                                         thickness: 1.0.into(),
                                         ..Default::default()
@@ -338,13 +342,23 @@ fn render_blocks(
                         }
                         Event::Code(t) => {
                             text.push_str(t.as_ref());
-                            highlights.push((
-                                prev_len..text.len(),
-                                HighlightStyle {
-                                    color: Some(Color::red()),
-                                    ..Default::default()
-                                },
-                            ));
+                            region_ranges.push(prev_len..text.len());
+                            if link_url.is_some() {
+                                highlights.push((
+                                    prev_len..text.len(),
+                                    HighlightStyle {
+                                        underline: Some(Underline {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            regions.push(RenderedRegion {
+                                code: true,
+                                link_url: link_url.clone(),
+                            });
                         }
                         Event::Start(tag) => match tag {
                             Tag::Paragraph => new_paragraph(&mut text, &mut list_stack),
@@ -363,7 +377,7 @@ fn render_blocks(
                             }
                             Tag::Emphasis => italic_depth += 1,
                             Tag::Strong => bold_depth += 1,
-                            Tag::Link(_, url, _) => link_url = Some((prev_len, url)),
+                            Tag::Link(_, url, _) => link_url = Some(url.to_string()),
                             Tag::List(number) => {
                                 list_stack.push((number, false));
                             }
@@ -393,15 +407,8 @@ fn render_blocks(
                             Tag::CodeBlock(_) => current_language = None,
                             Tag::Emphasis => italic_depth -= 1,
                             Tag::Strong => bold_depth -= 1,
-                            Tag::Link(_, _, _) => {
-                                if let Some((start_offset, link_url)) = link_url.take() {
-                                    link_ranges.push(start_offset..text.len());
-                                    link_urls.push(link_url.to_string());
-                                }
-                            }
-                            Tag::List(_) => {
-                                list_stack.pop();
-                            }
+                            Tag::Link(_, _, _) => link_url = None,
+                            Tag::List(_) => drop(list_stack.pop()),
                             _ => {}
                         },
                         Event::HardBreak => text.push('\n'),
@@ -432,8 +439,8 @@ fn render_blocks(
         theme_id,
         text,
         highlights,
-        link_ranges,
-        link_urls,
+        region_ranges,
+        regions,
     }
 }
 
@@ -542,8 +549,14 @@ struct RenderedInfo {
     theme_id: usize,
     text: String,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
-    link_ranges: Vec<Range<usize>>,
-    link_urls: Vec<String>,
+    region_ranges: Vec<Range<usize>>,
+    regions: Vec<RenderedRegion>,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedRegion {
+    code: bool,
+    link_url: Option<String>,
 }
 
 impl InfoPopover {
@@ -571,22 +584,42 @@ impl InfoPopover {
             let mut region_id = 0;
             let view_id = cx.view_id();
 
-            let link_urls = rendered_content.link_urls.clone();
+            let code_span_background_color = style.document_highlight_read_background;
+            let regions = rendered_content.regions.clone();
             Flex::column()
                 .scrollable::<HoverBlock>(1, None, cx)
                 .with_child(
                     Text::new(rendered_content.text.clone(), style.text.clone())
                         .with_highlights(rendered_content.highlights.clone())
-                        .with_mouse_regions(
-                            rendered_content.link_ranges.clone(),
-                            move |ix, bounds| {
+                        .with_custom_runs(
+                            rendered_content.region_ranges.clone(),
+                            move |ix, bounds, scene, _| {
                                 region_id += 1;
-                                let url = link_urls[ix].clone();
-                                MouseRegion::new::<Self>(view_id, region_id, bounds)
-                                    .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
-                                        println!("clicked link {url}");
-                                        cx.platform().open_url(&url);
-                                    })
+                                let region = regions[ix].clone();
+                                if let Some(url) = region.link_url {
+                                    scene.push_cursor_region(CursorRegion {
+                                        bounds,
+                                        style: CursorStyle::PointingHand,
+                                    });
+                                    scene.push_mouse_region(
+                                        MouseRegion::new::<Self>(view_id, region_id, bounds)
+                                            .on_click::<Editor, _>(
+                                                MouseButton::Left,
+                                                move |_, _, cx| {
+                                                    println!("clicked link {url}");
+                                                    cx.platform().open_url(&url);
+                                                },
+                                            ),
+                                    );
+                                }
+                                if region.code {
+                                    scene.push_quad(gpui::Quad {
+                                        bounds,
+                                        background: Some(code_span_background_color),
+                                        border: Default::default(),
+                                        corner_radius: 2.0,
+                                    });
+                                }
                             },
                         )
                         .with_soft_wrap(true),
