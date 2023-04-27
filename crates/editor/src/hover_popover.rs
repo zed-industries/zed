@@ -378,6 +378,17 @@ impl DiagnosticPopover {
 
         let mut text_style = style.hover_popover.prose.clone();
         text_style.font_size = style.text.font_size;
+        let diagnostic_source_style = style.hover_popover.diagnostic_source_highlight.clone();
+
+        let text = match &self.local_diagnostic.diagnostic.source {
+            Some(source) => Text::new(
+                format!("{source}: {}", self.local_diagnostic.diagnostic.message),
+                text_style,
+            )
+            .with_highlights(vec![(0..source.len(), diagnostic_source_style)]),
+
+            None => Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style),
+        };
 
         let container_style = match self.local_diagnostic.diagnostic.severity {
             DiagnosticSeverity::HINT => style.hover_popover.info_container,
@@ -390,8 +401,7 @@ impl DiagnosticPopover {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
         MouseEventHandler::<DiagnosticPopover, _>::new(0, cx, |_, _| {
-            Text::new(self.local_diagnostic.diagnostic.message.clone(), text_style)
-                .with_soft_wrap(true)
+            text.with_soft_wrap(true)
                 .contained()
                 .with_style(container_style)
         })

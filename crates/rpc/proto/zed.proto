@@ -1049,14 +1049,15 @@ enum Bias {
 message Diagnostic {
     Anchor start = 1;
     Anchor end = 2;
-    Severity severity = 3;
-    string message = 4;
-    optional string code = 5;
-    uint64 group_id = 6;
-    bool is_primary = 7;
-    bool is_valid = 8;
-    bool is_disk_based = 9;
-    bool is_unnecessary = 10;
+    optional string source = 3;
+    Severity severity = 4;
+    string message = 5;
+    optional string code = 6;
+    uint64 group_id = 7;
+    bool is_primary = 8;
+    bool is_valid = 9;
+    bool is_disk_based = 10;
+    bool is_unnecessary = 11;
 
     enum Severity {
         None = 0;

@@ -206,10 +206,6 @@ impl LspAdapter for EsLintLspAdapter {
                         "shortenToSingleLine": false
                       },
                       "nodePath": null,
-                      "workspaceFolder": {
-                        "name": "testing_ts",
-                        "uri": "file:///Users/julia/Stuff/testing_ts"
-                      },
                       "codeAction": {
                         "disableRuleComment": {
                           "enable": true,
