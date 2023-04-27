@@ -281,7 +281,7 @@ fn render_blocks(
     for block in blocks {
         match &block.kind {
             HoverBlockKind::PlainText => {
-                new_paragraph(&mut text);
+                new_paragraph(&mut text, &mut Vec::new());
                 text.push_str(&block.text);
             }
             HoverBlockKind::Markdown => {
@@ -347,13 +347,13 @@ fn render_blocks(
                             ));
                         }
                         Event::Start(tag) => match tag {
-                            Tag::Paragraph => new_paragraph(&mut text),
+                            Tag::Paragraph => new_paragraph(&mut text, &mut list_stack),
                             Tag::Heading(_, _, _) => {
-                                new_paragraph(&mut text);
+                                new_paragraph(&mut text, &mut list_stack);
                                 bold_depth += 1;
                             }
                             Tag::CodeBlock(kind) => {
-                                new_paragraph(&mut text);
+                                new_paragraph(&mut text, &mut list_stack);
                                 if let CodeBlockKind::Fenced(language) = kind {
                                     current_language = language_registry
                                         .language_for_name(language.as_ref())
@@ -364,19 +364,25 @@ fn render_blocks(
                             Tag::Emphasis => italic_depth += 1,
                             Tag::Strong => bold_depth += 1,
                             Tag::Link(_, url, _) => link_url = Some((prev_len, url)),
-                            Tag::List(number) => list_stack.push(number),
+                            Tag::List(number) => {
+                                list_stack.push((number, false));
+                            }
                             Tag::Item => {
                                 let len = list_stack.len();
-                                if let Some(list_state) = list_stack.last_mut() {
-                                    new_paragraph(&mut text);
+                                if let Some((list_number, has_content)) = list_stack.last_mut() {
+                                    *has_content = false;
+                                    if !text.is_empty() && !text.ends_with('\n') {
+                                        text.push('\n');
+                                    }
                                     for _ in 0..len - 1 {
                                         text.push_str("  ");
                                     }
-                                    if let Some(number) = list_state {
+                                    if let Some(number) = list_number {
                                         text.push_str(&format!("{}. ", number));
                                         *number += 1;
+                                        *has_content = false;
                                     } else {
-                                        text.push_str("* ");
+                                        text.push_str("• ");
                                     }
                                 }
                             }
@@ -443,12 +449,22 @@ fn render_code(
     }
 }
 
-fn new_paragraph(text: &mut String) {
+fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
+    if let Some((_, has_content)) = list_stack.last_mut() {
+        if !*has_content {
+            *has_content = true;
+            return;
+        }
+    }
+
     if !text.is_empty() {
         if !text.ends_with('\n') {
             text.push('\n');
         }
         text.push('\n');
+    }
+    for _ in 0..list_stack.len().saturating_sub(1) {
+        text.push_str("  ");
     }
 }
 
