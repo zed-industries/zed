@@ -710,7 +710,7 @@ impl Workspace {
         let weak_handle = cx.weak_handle();
 
         let center_pane =
-            cx.add_view(|cx| Pane::new(weak_handle.id(), None, background_actions, cx));
+            cx.add_view(|cx| Pane::new(weak_handle.clone(), None, background_actions, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -718,12 +718,7 @@ impl Workspace {
         .detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(
-            weak_handle.id(),
-            dock_default_factory,
-            background_actions,
-            cx,
-        );
+        let dock = Dock::new(dock_default_factory, background_actions, cx);
         let dock_pane = dock.pane().clone();
 
         let fs = project.read(cx).fs().clone();
@@ -1562,7 +1557,7 @@ impl Workspace {
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
         let pane =
-            cx.add_view(|cx| Pane::new(self.weak_handle().id(), None, self.background_actions, cx));
+            cx.add_view(|cx| Pane::new(self.weak_handle(), None, self.background_actions, cx));
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)

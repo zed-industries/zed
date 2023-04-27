@@ -11,8 +11,7 @@ use project::ProjectEntryId;
 use settings::Settings;
 
 use crate::{
-    MoveItem, OpenProjectEntryInPane, Pane, SplitDirection, SplitWithItem, SplitWithProjectEntry,
-    Workspace,
+    OpenProjectEntryInPane, Pane, SplitDirection, SplitWithItem, SplitWithProjectEntry, Workspace,
 };
 
 use super::DraggedItem;
@@ -142,12 +141,16 @@ pub fn handle_dropped_item<V: View>(
         match action {
             Action::Move(from, item_id) => {
                 if pane != &from || allow_same_pane {
-                    cx.dispatch_action(MoveItem {
-                        item_id,
-                        from,
-                        to: pane.clone(),
-                        destination_index: index,
-                    })
+                    let pane = pane.clone();
+                    cx.window_context().defer(move |cx| {
+                        if let Some((from, to)) = from.upgrade(cx).zip(pane.upgrade(cx)) {
+                            if let Some(workspace) = from.read(cx).workspace.upgrade(cx) {
+                                workspace.update(cx, |workspace, cx| {
+                                    Pane::move_item(workspace, from, to, item_id, index, cx);
+                                })
+                            }
+                        }
+                    });
                 } else {
                     cx.propagate_event();
                 }
