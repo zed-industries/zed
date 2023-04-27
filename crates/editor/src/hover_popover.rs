@@ -382,7 +382,7 @@ fn render_blocks(
                                         *number += 1;
                                         *has_content = false;
                                     } else {
-                                        text.push_str("• ");
+                                        text.push_str("- ");
                                     }
                                 }
                             }
@@ -424,6 +424,10 @@ fn render_blocks(
         }
     }
 
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+
     RenderedInfo {
         theme_id,
         text,
@@ -450,8 +454,11 @@ fn render_code(
 }
 
 fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
+    let mut is_subsequent_paragraph_of_list = false;
     if let Some((_, has_content)) = list_stack.last_mut() {
-        if !*has_content {
+        if *has_content {
+            is_subsequent_paragraph_of_list = true;
+        } else {
             *has_content = true;
             return;
         }
@@ -464,6 +471,9 @@ fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
         text.push('\n');
     }
     for _ in 0..list_stack.len().saturating_sub(1) {
+        text.push_str("  ");
+    }
+    if is_subsequent_paragraph_of_list {
         text.push_str("  ");
     }
 }
@@ -664,6 +674,7 @@ mod tests {
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
+    use unindent::Unindent;
     use util::test::marked_text_ranges;
 
     #[gpui::test]
@@ -867,28 +878,99 @@ mod tests {
 
             struct Row {
                 blocks: Vec<HoverBlock>,
-                expected_marked_text: &'static str,
+                expected_marked_text: String,
                 expected_styles: Vec<HighlightStyle>,
             }
 
             let rows = &[
+                // Strong emphasis
                 Row {
                     blocks: vec![HoverBlock {
                         text: "one **two** three".to_string(),
                         kind: HoverBlockKind::Markdown,
                     }],
-                    expected_marked_text: "one «two» three",
+                    expected_marked_text: "one «two» three\n".to_string(),
                     expected_styles: vec![HighlightStyle {
                         weight: Some(Weight::BOLD),
                         ..Default::default()
                     }],
                 },
+                // Links
                 Row {
                     blocks: vec![HoverBlock {
                         text: "one [two](the-url) three".to_string(),
                         kind: HoverBlockKind::Markdown,
                     }],
-                    expected_marked_text: "one «two» three",
+                    expected_marked_text: "one «two» three\n".to_string(),
+                    expected_styles: vec![HighlightStyle {
+                        underline: Some(Underline {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
+                },
+                // Lists
+                Row {
+                    blocks: vec![HoverBlock {
+                        text: "
+                            lists:
+                            * one
+                                - a
+                                - b
+                            * two
+                                - [c](the-url)
+                                - d
+                        "
+                        .unindent(),
+                        kind: HoverBlockKind::Markdown,
+                    }],
+                    expected_marked_text: "
+                        lists:
+                        - one
+                          - a
+                          - b
+                        - two
+                          - «c»
+                          - d
+                    "
+                    .unindent(),
+                    expected_styles: vec![HighlightStyle {
+                        underline: Some(Underline {
+                            thickness: 1.0.into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
+                },
+                // Multi-paragraph list items
+                Row {
+                    blocks: vec![HoverBlock {
+                        text: "
+                            * one two
+                              three
+
+                            * four five
+                                * six seven
+                                  eight
+
+                                  nine
+                                * ten
+                            * six
+                        "
+                        .unindent(),
+                        kind: HoverBlockKind::Markdown,
+                    }],
+                    expected_marked_text: "
+                        - one two three
+                        - four five
+                          - six seven eight
+
+                            nine
+                          - ten
+                        - six
+                    "
+                    .unindent(),
                     expected_styles: vec![HighlightStyle {
                         underline: Some(Underline {
                             thickness: 1.0.into(),
@@ -903,7 +985,7 @@ mod tests {
                 blocks,
                 expected_marked_text,
                 expected_styles,
-            } in rows
+            } in &rows[0..]
             {
                 let rendered = render_blocks(0, &blocks, &Default::default(), &style);
 
@@ -913,7 +995,8 @@ mod tests {
                     .zip(expected_styles.iter().cloned())
                     .collect::<Vec<_>>();
                 assert_eq!(
-                    rendered.text, expected_text,
+                    rendered.text,
+                    dbg!(expected_text),
                     "wrong text for input {blocks:?}"
                 );
                 assert_eq!(
