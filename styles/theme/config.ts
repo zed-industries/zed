@@ -10,6 +10,8 @@ type License = "MIT" | "Apache-2.0" | "GPL-3.0" | "Unlicense"
 
 export type InputColor = string | string[]
 
+export type ThemeColor = "neutral" | "accent" | "error" | "info" | "warning" | "success"
+
 export interface ThemeConfig {
     name: string
     appearance: "light" | "dark"

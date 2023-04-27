@@ -56,8 +56,6 @@ export default function Page() {
         pressed: buttonStyles(button, 'pressed'),
     }
 
-    // console.log(b)
-
     return (
         <div>
             <div style={{ margin: 40, display: 'flex', gap: '8px' }}>

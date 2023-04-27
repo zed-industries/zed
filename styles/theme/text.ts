@@ -1,7 +1,8 @@
+import chroma from "chroma-js"
 import { useColors } from "./colors"
-import { Theme } from "./config"
+import { Theme, ThemeColor } from "./config"
 import { ContainedText, InteractiveContainer, buildIntensitiesForStates, container } from "./container"
-import { ElementIntensities, Intensity, resolveThemeColorIntensity, useElementIntensities } from "./intensity"
+import { ElementIntensities, Intensity, resolveThemeColorIntensity } from "./intensity"
 
 type Font = "Zed Mono" | "Zed Sans"
 
@@ -107,78 +108,110 @@ export interface TextStyle {
     lineHeight: number
 }
 
-const DEFAULT_TEXT_OPTIONS: Partial<TextStyle> = {
+/** Text options. Will be merged with DEFAULT_TEXT_OPTIONS */
+interface BuildTextOptions extends Partial<Omit<TextStyle, "color">> {
+    // The number relative font sizes are multiplied by to get the actual font size
+    baseSize: number
+    intensity: Intensity
+    /** A color family from the theme */
+    colorScale: ThemeColor
+}
+
+const DEFAULT_BASE_TEXT_SIZE = 13 as const
+
+const DEFAULT_TEXT_OPTIONS: BuildTextOptions = {
     family: family.sans,
+    baseSize: DEFAULT_BASE_TEXT_SIZE,
     size: size.md,
     weight: weight.regular,
+    colorScale: "neutral",
+    intensity: 100,
     lineHeight: 1,
 }
 
-const DEFAULT_BASE_TEXT_SIZE = 13
-const DEFAULT_TEXT_INTENSITY: Intensity = 100
 
-export function text(
+function buildText(
     theme: Theme,
-    intensity?: Intensity,
-    options?: Partial<TextStyle>,
+    options?: Partial<BuildTextOptions>
 ): TextStyle {
-
-    if (!intensity) {
-        intensity = DEFAULT_TEXT_INTENSITY
-    }
-
-    const themeColor = useColors(theme)
-    const resolvedColorIntensity = resolveThemeColorIntensity(theme, intensity)
-    const DEFAULT_COLOR = themeColor.neutral(resolvedColorIntensity)
-
-    // If options are provided, we use the provided color intensity
-    // Otherwise we use the default color intensity
-    const color = (options?.color && themeColor[options.color](intensity)) || DEFAULT_COLOR;
+    const themeColor = useColors(theme);
+    const defaultOptions = DEFAULT_TEXT_OPTIONS;
 
     const mergedOptions = {
-        ...DEFAULT_TEXT_OPTIONS,
+        ...defaultOptions,
         ...options,
-    }
-
-    const text: TextStyle = {
-        family: mergedOptions.family,
-        size: mergedOptions.size * DEFAULT_BASE_TEXT_SIZE,
-        weight: mergedOptions.weight,
-        color,
-        lineHeight: mergedOptions.lineHeight,
-    }
-
-    return text
-}
-
-export function interactiveText(
-    theme: Theme,
-    options?: Partial<TextStyle>,
-): InteractiveContainer<ContainedText> {
-
-    const DEFAULT_INTENSITIES: ElementIntensities = {
-        bg: DEFAULT_TEXT_INTENSITY,
-        border: DEFAULT_TEXT_INTENSITY,
-        fg: DEFAULT_TEXT_INTENSITY,
-    }
-
-    const fg = resolveThemeColorIntensity(theme, DEFAULT_INTENSITIES.fg);
-    const { color = 'neutral', ...mergedOptions } = options;
-    const { neutral, ...themeColor } = useColors(theme);
-    const states = buildIntensitiesForStates(theme, "interactiveText", DEFAULT_INTENSITIES);
-
-    const common = {
-        container: container.blank,
     };
 
-    const createText = (fgColor: Intensity): ContainedText => ({
-        ...common,
-        text: text(theme, fgColor, { ...mergedOptions, color: themeColor[color](fg) }),
-    });
+    const { family, weight, baseSize, lineHeight, colorScale, intensity } = mergedOptions;
+
+    const resolvedIntensity = resolveThemeColorIntensity(theme, intensity);
+    const color = themeColor[colorScale](resolvedIntensity);
+
+    // Calculate the final font size
+    const size = mergedOptions.size * baseSize;
+
+    // Ensture the color is valid
+    chroma.valid(color)
+
+    const text: TextStyle = {
+        family,
+        weight,
+        size,
+        lineHeight,
+        color,
+    }
+
+    return text;
+}
+
+export function useText(
+    theme: Theme,
+    options?: Partial<BuildTextOptions>
+): TextStyle {
+    return buildText(theme, options);
+}
+
+export function useInteractiveText(
+    theme: Theme,
+    options?: Partial<BuildTextOptions>
+): InteractiveContainer<ContainedText> {
+    const DEFAULT_INTENSITIES: ElementIntensities = {
+        bg: 1,
+        border: 15,
+        fg: 100,
+    } as const;
+
+    const states = buildIntensitiesForStates(
+        theme,
+        "interactiveText",
+        DEFAULT_INTENSITIES
+    );
+
+    const text = {
+        default: buildText(theme, {
+            ...options,
+            intensity: states.default.fg,
+        }),
+        hovered: buildText(theme, {
+            ...options,
+            intensity: states.hovered.fg,
+        }),
+        pressed: buildText(theme, {
+            ...options,
+            intensity: states.pressed.fg,
+        })
+    }
+
+    const buildContainedText = (text: TextStyle) => {
+        return {
+            container: container.blank,
+            text,
+        }
+    }
 
     return {
-        default: createText(states.default.fg),
-        hovered: createText(states.hovered.fg),
-        pressed: createText(states.pressed.fg),
+        default: buildContainedText(text.default),
+        hovered: buildContainedText(text.hovered),
+        pressed: buildContainedText(text.pressed),
     };
 }
