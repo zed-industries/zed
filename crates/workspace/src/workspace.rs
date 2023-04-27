@@ -164,12 +164,6 @@ pub struct SplitWithProjectEntry {
     project_entry: ProjectEntryId,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct OpenProjectEntryInPane {
-    pane: WeakViewHandle<Pane>,
-    project_entry: ProjectEntryId,
-}
-
 pub struct Toast {
     id: usize,
     msg: Cow<'static, str>,
@@ -232,7 +226,6 @@ impl_internal_actions!(
         RemoveWorktreeFromProject,
         SplitWithItem,
         SplitWithProjectEntry,
-        OpenProjectEntryInPane,
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -373,27 +366,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 
     cx.add_action(Workspace::split_pane_with_item);
     cx.add_async_action(Workspace::split_pane_with_project_entry);
-
-    cx.add_async_action(
-        |workspace: &mut Workspace,
-         OpenProjectEntryInPane {
-             pane,
-             project_entry,
-         }: &_,
-         cx| {
-            workspace
-                .project
-                .read(cx)
-                .path_for_entry(*project_entry, cx)
-                .map(|path| {
-                    let task = workspace.open_path(path, Some(pane.clone()), true, cx);
-                    cx.foreground().spawn(async move {
-                        task.await?;
-                        Ok(())
-                    })
-                })
-        },
-    );
 
     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
         cx.spawn(|workspace, mut cx| async move {
