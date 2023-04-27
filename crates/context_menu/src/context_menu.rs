@@ -37,6 +37,33 @@ pub enum ContextMenuItemLabel {
     Element(ContextMenuItemBuilder),
 }
 
+impl From<Cow<'static, str>> for ContextMenuItemLabel {
+    fn from(s: Cow<'static, str>) -> Self {
+        Self::String(s)
+    }
+}
+
+impl From<&'static str> for ContextMenuItemLabel {
+    fn from(s: &'static str) -> Self {
+        Self::String(s.into())
+    }
+}
+
+impl From<String> for ContextMenuItemLabel {
+    fn from(s: String) -> Self {
+        Self::String(s.into())
+    }
+}
+
+impl<T> From<T> for ContextMenuItemLabel
+where
+    T: 'static + Fn(&mut MouseState, &theme::ContextMenuItem) -> AnyElement<ContextMenu>,
+{
+    fn from(f: T) -> Self {
+        Self::Element(Box::new(f))
+    }
+}
+
 pub enum ContextMenuItem {
     Item {
         label: ContextMenuItemLabel,
@@ -47,16 +74,9 @@ pub enum ContextMenuItem {
 }
 
 impl ContextMenuItem {
-    pub fn element_item(label: ContextMenuItemBuilder, action: impl 'static + Action) -> Self {
+    pub fn item(label: impl Into<ContextMenuItemLabel>, action: impl 'static + Action) -> Self {
         Self::Item {
-            label: ContextMenuItemLabel::Element(label),
-            action: Box::new(action),
-        }
-    }
-
-    pub fn item(label: impl Into<Cow<'static, str>>, action: impl 'static + Action) -> Self {
-        Self::Item {
-            label: ContextMenuItemLabel::String(label.into()),
+            label: label.into(),
             action: Box::new(action),
         }
     }

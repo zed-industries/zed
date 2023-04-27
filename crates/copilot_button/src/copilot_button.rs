@@ -317,16 +317,14 @@ impl CopilotButton {
         menu_options.push(ContextMenuItem::Separator);
 
         let icon_style = settings.theme.copilot.out_link_icon.clone();
-        menu_options.push(ContextMenuItem::element_item(
-            Box::new(
-                move |state: &mut MouseState, style: &theme::ContextMenuItem| {
-                    Flex::row()
-                        .with_child(Label::new("Copilot Settings", style.label.clone()))
-                        .with_child(theme::ui::icon(icon_style.style_for(state, false)))
-                        .align_children_center()
-                        .into_any()
-                },
-            ),
+        menu_options.push(ContextMenuItem::item(
+            move |state: &mut MouseState, style: &theme::ContextMenuItem| {
+                Flex::row()
+                    .with_child(Label::new("Copilot Settings", style.label.clone()))
+                    .with_child(theme::ui::icon(icon_style.style_for(state, false)))
+                    .align_children_center()
+                    .into_any()
+            },
             OsOpen::new(COPILOT_SETTINGS_URL),
         ));
 
