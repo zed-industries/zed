@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, AnyViewHandle, AppContext, Axis, Entity, MouseState, Task, View, ViewContext,
     ViewHandle,
 };
-use menu::{Cancel, Confirm, SelectFirst, SelectIndex, SelectLast, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use parking_lot::Mutex;
 use std::{cmp, sync::Arc};
 use util::ResultExt;
@@ -104,8 +104,8 @@ impl<D: PickerDelegate> View for Picker<D> {
                                 // Capture mouse events
                                 .on_down(MouseButton::Left, |_, _, _| {})
                                 .on_up(MouseButton::Left, |_, _, _| {})
-                                .on_click(MouseButton::Left, move |_, _, cx| {
-                                    cx.dispatch_action(SelectIndex(ix))
+                                .on_click(MouseButton::Left, move |_, picker, cx| {
+                                    picker.select_index(ix, cx);
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .into_any()
@@ -151,7 +151,6 @@ impl<D: PickerDelegate> Picker<D> {
         cx.add_action(Self::select_last);
         cx.add_action(Self::select_next);
         cx.add_action(Self::select_prev);
-        cx.add_action(Self::select_index);
         cx.add_action(Self::confirm);
         cx.add_action(Self::cancel);
     }
@@ -265,8 +264,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
-    pub fn select_index(&mut self, action: &SelectIndex, cx: &mut ViewContext<Self>) {
-        let index = action.0;
+    pub fn select_index(&mut self, index: usize, cx: &mut ViewContext<Self>) {
         if self.delegate.match_count() > 0 {
             self.confirmed = true;
             self.delegate.set_selected_index(index, cx);

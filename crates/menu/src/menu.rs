@@ -1,6 +1,3 @@
-#[derive(Clone, PartialEq)]
-pub struct SelectIndex(pub usize);
-
 gpui::actions!(
     menu,
     [
@@ -12,5 +9,3 @@ gpui::actions!(
         SelectLast
     ]
 );
-
-gpui::impl_internal_actions!(menu, [SelectIndex]);
