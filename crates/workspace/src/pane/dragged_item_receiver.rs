@@ -69,9 +69,18 @@ where
             }))
     })
     .on_up(MouseButton::Left, {
-        move |event, _, cx| {
+        move |event, pane, cx| {
+            let workspace = pane.workspace.clone();
             let pane = cx.weak_handle();
-            handle_dropped_item(event, &pane, drop_index, allow_same_pane, split_margin, cx);
+            handle_dropped_item(
+                event,
+                workspace,
+                &pane,
+                drop_index,
+                allow_same_pane,
+                split_margin,
+                cx,
+            );
             cx.notify();
         }
     })
@@ -94,6 +103,7 @@ where
 
 pub fn handle_dropped_item<V: View>(
     event: MouseUp,
+    workspace: WeakViewHandle<Workspace>,
     pane: &WeakViewHandle<Pane>,
     index: usize,
     allow_same_pane: bool,
@@ -141,12 +151,14 @@ pub fn handle_dropped_item<V: View>(
                 if pane != &from || allow_same_pane {
                     let pane = pane.clone();
                     cx.window_context().defer(move |cx| {
-                        if let Some((from, to)) = from.upgrade(cx).zip(pane.upgrade(cx)) {
-                            if let Some(workspace) = from.read(cx).workspace.upgrade(cx) {
-                                workspace.update(cx, |workspace, cx| {
-                                    Pane::move_item(workspace, from, to, item_id, index, cx);
-                                })
-                            }
+                        if let Some(((workspace, from), to)) = workspace
+                            .upgrade(cx)
+                            .zip(from.upgrade(cx))
+                            .zip(pane.upgrade(cx))
+                        {
+                            workspace.update(cx, |workspace, cx| {
+                                Pane::move_item(workspace, from, to, item_id, index, cx);
+                            })
                         }
                     });
                 } else {
@@ -156,18 +168,16 @@ pub fn handle_dropped_item<V: View>(
             Action::Open(project_entry) => {
                 let pane = pane.clone();
                 cx.window_context().defer(move |cx| {
-                    if let Some(pane) = pane.upgrade(cx) {
-                        if let Some(workspace) = pane.read(cx).workspace.upgrade(cx) {
-                            workspace.update(cx, |workspace, cx| {
-                                if let Some(path) =
-                                    workspace.project.read(cx).path_for_entry(project_entry, cx)
-                                {
-                                    workspace
-                                        .open_path(path, Some(pane.downgrade()), true, cx)
-                                        .detach_and_log_err(cx);
-                                }
-                            });
-                        }
+                    if let Some(workspace) = workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            if let Some(path) =
+                                workspace.project.read(cx).path_for_entry(project_entry, cx)
+                            {
+                                workspace
+                                    .open_path(path, Some(pane), true, cx)
+                                    .detach_and_log_err(cx);
+                            }
+                        });
                     }
                 });
             }
