@@ -51,18 +51,18 @@ pub fn deploy_context_menu(
             position,
             AnchorCorner::TopLeft,
             vec![
-                ContextMenuItem::item("Rename Symbol", Rename),
-                ContextMenuItem::item("Go to Definition", GoToDefinition),
-                ContextMenuItem::item("Go to Type Definition", GoToTypeDefinition),
-                ContextMenuItem::item("Find All References", FindAllReferences),
-                ContextMenuItem::item(
+                ContextMenuItem::action("Rename Symbol", Rename),
+                ContextMenuItem::action("Go to Definition", GoToDefinition),
+                ContextMenuItem::action("Go to Type Definition", GoToTypeDefinition),
+                ContextMenuItem::action("Find All References", FindAllReferences),
+                ContextMenuItem::action(
                     "Code Actions",
                     ToggleCodeActions {
                         deployed_from_indicator: false,
                     },
                 ),
                 ContextMenuItem::Separator,
-                ContextMenuItem::item("Reveal in Finder", RevealInFinder),
+                ContextMenuItem::action("Reveal in Finder", RevealInFinder),
             ],
             cx,
         );

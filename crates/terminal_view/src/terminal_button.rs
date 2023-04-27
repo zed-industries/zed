@@ -134,7 +134,7 @@ impl TerminalButton {
         _action: &DeployTerminalMenu,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut menu_options = vec![ContextMenuItem::item("New Terminal", NewTerminal)];
+        let mut menu_options = vec![ContextMenuItem::action("New Terminal", NewTerminal)];
 
         if let Some(workspace) = self.workspace.upgrade(cx) {
             let project = workspace.read(cx).project().read(cx);
@@ -146,7 +146,7 @@ impl TerminalButton {
 
             for local_terminal_handle in local_terminal_handles {
                 if let Some(terminal) = local_terminal_handle.upgrade(cx) {
-                    menu_options.push(ContextMenuItem::item(
+                    menu_options.push(ContextMenuItem::action(
                         terminal.read(cx).title(),
                         FocusTerminal {
                             terminal_handle: local_terminal_handle.clone(),
