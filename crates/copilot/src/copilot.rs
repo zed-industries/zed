@@ -443,7 +443,7 @@ impl Copilot {
         }
     }
 
-    fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {

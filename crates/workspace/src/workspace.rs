@@ -220,17 +220,6 @@ impl Clone for Toast {
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct DismissToast {
-    id: usize,
-}
-
-impl DismissToast {
-    pub fn new(id: usize) -> Self {
-        DismissToast { id }
-    }
-}
-
 pub type WorkspaceId = i64;
 
 impl_internal_actions!(
@@ -244,8 +233,6 @@ impl_internal_actions!(
         SplitWithItem,
         SplitWithProjectEntry,
         OpenProjectEntryInPane,
-        Toast,
-        DismissToast
     ]
 );
 impl_actions!(workspace, [ActivatePane]);
@@ -429,24 +416,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
         })
         .detach();
-    });
-
-    cx.add_action(|workspace: &mut Workspace, alert: &Toast, cx| {
-        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
-        workspace.show_notification(alert.id, cx, |cx| {
-            cx.add_view(|_cx| match &alert.click {
-                Some((click_msg, action)) => MessageNotification::new_boxed_action(
-                    alert.msg.clone(),
-                    action.boxed_clone(),
-                    click_msg.clone(),
-                ),
-                None => MessageNotification::new_message(alert.msg.clone()),
-            })
-        })
-    });
-
-    cx.add_action(|workspace: &mut Workspace, alert: &DismissToast, cx| {
-        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
     });
 
     let client = &app_state.client;
