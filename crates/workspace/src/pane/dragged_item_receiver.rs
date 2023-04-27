@@ -10,9 +10,7 @@ use gpui::{
 use project::ProjectEntryId;
 use settings::Settings;
 
-use crate::{
-    OpenProjectEntryInPane, Pane, SplitDirection, SplitWithItem, SplitWithProjectEntry, Workspace,
-};
+use crate::{Pane, SplitDirection, SplitWithItem, SplitWithProjectEntry, Workspace};
 
 use super::DraggedItem;
 
@@ -155,10 +153,24 @@ pub fn handle_dropped_item<V: View>(
                     cx.propagate_event();
                 }
             }
-            Action::Open(project_entry) => cx.dispatch_action(OpenProjectEntryInPane {
-                pane: pane.clone(),
-                project_entry,
-            }),
+            Action::Open(project_entry) => {
+                let pane = pane.clone();
+                cx.window_context().defer(move |cx| {
+                    if let Some(pane) = pane.upgrade(cx) {
+                        if let Some(workspace) = pane.read(cx).workspace.upgrade(cx) {
+                            workspace.update(cx, |workspace, cx| {
+                                if let Some(path) =
+                                    workspace.project.read(cx).path_for_entry(project_entry, cx)
+                                {
+                                    workspace
+                                        .open_path(path, Some(pane.downgrade()), true, cx)
+                                        .detach_and_log_err(cx);
+                                }
+                            });
+                        }
+                    }
+                });
+            }
         }
     }
 }
