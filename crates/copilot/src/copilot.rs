@@ -24,6 +24,7 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
 };
 use util::{
@@ -271,6 +272,20 @@ pub struct Copilot {
 
 impl Entity for Copilot {
     type Event = ();
+
+    fn app_will_quit(
+        &mut self,
+        _: &mut AppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        match mem::replace(&mut self.server, CopilotServer::Disabled) {
+            CopilotServer::Running(server) => Some(Box::pin(async move {
+                if let Some(shutdown) = server.lsp.shutdown() {
+                    shutdown.await;
+                }
+            })),
+            _ => None,
+        }
+    }
 }
 
 impl Copilot {
