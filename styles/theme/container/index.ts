@@ -1,5 +1,4 @@
 import { Border, Theme } from "@/theme"
-import { TextStyle } from "@theme/text"
 import {
     ElementIntensities,
     Intensity,
@@ -7,6 +6,7 @@ import {
     useElementIntensities,
 } from "../intensity"
 import { Padding, Margin } from "@theme/properties"
+import { ContainedText, ContainedTextProps, containedText } from "./containedText"
 
 export interface ContainerStyle {
     background?: string
@@ -40,11 +40,6 @@ export enum BorderRadius {
 export interface IconStyle {
     color: string
     size: IconSize
-}
-
-export interface ContainedText {
-    container: ContainerStyle
-    text: TextStyle
 }
 
 export interface ContainedIcon {
@@ -163,3 +158,5 @@ export const checkContrast = (
         throw new Error(`Constrast on ${name} is too low: ${contrast}`)
     }
 }
+
+export { ContainedText, ContainedTextProps, containedText }

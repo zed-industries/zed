@@ -2,6 +2,7 @@ import {
     ElementIntensities,
     Intensity,
     addToElementIntensities,
+    addToIntensity,
     useElementIntensities,
 } from "@theme/intensity"
 import { ContainerStyle } from "@theme/container"
@@ -10,61 +11,93 @@ import { useColors } from "@theme/colors"
 import { border } from "@theme/border"
 import { buildSurfaceTokens } from "./tokens"
 
-export type SurfaceLevel = 0 | 1 | 2
+type SurfaceLevel = 0 | 1 | 2
+type SurfaceName = "background" | "panel" | "pane" | "popover" | "palette" | "tooltip"
 
-export function surfaceStyle(
-    theme: Theme,
-    level: SurfaceLevel,
-    intensity: ElementIntensities
-): Partial<ContainerStyle> {
-    const color = useColors(theme)
+type SurfaceLevels = Record<SurfaceName, SurfaceLevel>
 
-    const resolvedIntensity = useElementIntensities(theme, intensity)
+type Surface = keyof SurfaceLevels
 
-    // SInce we've already resolved the theme's appearance intensity above we can direclty cast ElementIntensities to <Intensity>
-    let surfaceIntensity: ElementIntensities<Intensity>
-
-    switch (level) {
-        case 1:
-            surfaceIntensity = addToElementIntensities(resolvedIntensity, 10)
-            break
-        case 2:
-            surfaceIntensity = addToElementIntensities(resolvedIntensity, 20)
-            break
-        default:
-            surfaceIntensity = resolvedIntensity
-    }
-
-    const borderIntensity = surfaceIntensity.border as Intensity
-
-    return {
-        background: color.neutral(surfaceIntensity.bg),
-        border: border(theme, borderIntensity),
-    }
+const surfaceLevel: SurfaceLevels = {
+    "background": 0,
+    "panel": 1,
+    "pane": 1,
+    "popover": 2,
+    "palette": 2,
+    "tooltip": 2,
 }
 
-export function buildSurfaceLevels(theme: Theme) {
-    const SURFACE_INTENSITY: ElementIntensities = {
+type SurfaceStyle = Partial<ContainerStyle>
+
+function useSurfaceIntensity(theme: Theme, surface: Surface): ElementIntensities<Intensity> {
+    const level = surfaceLevel[surface]
+
+    const BASE_SURFACE_INTENSITIES: ElementIntensities<Intensity> = {
         bg: 1,
         border: 12,
         fg: 100,
     }
 
-    const surfaceIntensities = useElementIntensities(theme, SURFACE_INTENSITY)
+    const intensity = useElementIntensities(theme, BASE_SURFACE_INTENSITIES)
 
+    switch (level) {
+        case 1:
+            return addToElementIntensities(intensity, 10)
+        case 2:
+            return addToElementIntensities(intensity, 20)
+        default:
+            return intensity
+    }
+}
+
+function buildSurfaceStyle(theme: Theme, surface: Surface): SurfaceStyle {
+    const color = useColors(theme)
+    const intensity = useSurfaceIntensity(theme, surface)
+
+    const borderIntensity = intensity.border as Intensity
+
+    return {
+        background: color.neutral(intensity.bg),
+        border: border(theme, borderIntensity),
+    }
+}
+
+function buildSurfaceLevels(theme: Theme) {
     const surface = {
-        background: surfaceStyle(theme, 0, surfaceIntensities),
-        panel: surfaceStyle(theme, 1, surfaceIntensities),
-        pane: surfaceStyle(theme, 1, surfaceIntensities),
-        popover: surfaceStyle(theme, 2, surfaceIntensities),
+        background: buildSurfaceStyle(theme, "background"),
+        panel: buildSurfaceStyle(theme, "panel"),
+        pane: buildSurfaceStyle(theme, "pane"),
+        popover: buildSurfaceStyle(theme, "popover"),
     }
 
     return surface
 }
 
-export function buildSurfaces(theme: Theme) {
-    const surfaces = buildSurfaceLevels(theme)
+const useSurfaceStyle = buildSurfaceStyle
+
+const surface = (theme: Theme) => {
     buildSurfaceTokens(theme)
 
-    return surfaces
+    return {
+        level: surfaceLevel,
+        style: buildSurfaceLevels(theme)
+    }
+}
+
+// Placeholder for defining element background intensity relative to surface logic
+// TODO: You should be able to specific adding or subtracting intensity
+function relativeIntensityToSurface(surfaceIntensity: Intensity, intensityChange: Intensity): Intensity {
+    // adjust background color based on the relative difference between surface intensity and intensityChange
+    const newIntensity: Intensity = addToIntensity(surfaceIntensity, intensityChange)
+
+    return newIntensity
+}
+
+export {
+    Surface,
+    SurfaceStyle,
+    useSurfaceIntensity,
+    useSurfaceStyle,
+    relativeIntensityToSurface,
+    surface,
 }
