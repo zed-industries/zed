@@ -20,11 +20,12 @@ use gpui::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
-    Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle,
-    MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
+    ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -74,14 +75,6 @@ actions!(
     ]
 );
 
-#[derive(Clone, PartialEq)]
-pub struct MoveItem {
-    pub item_id: usize,
-    pub from: WeakViewHandle<Pane>,
-    pub to: WeakViewHandle<Pane>,
-    pub destination_index: usize,
-}
-
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct GoBack {
     #[serde(skip_deserializing)]
@@ -94,36 +87,7 @@ pub struct GoForward {
     pub pane: Option<WeakViewHandle<Pane>>,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct DeploySplitMenu;
-
-#[derive(Clone, PartialEq)]
-pub struct DeployDockMenu;
-
-#[derive(Clone, PartialEq)]
-pub struct DeployNewMenu;
-
-#[derive(Clone, PartialEq)]
-pub struct DeployTabContextMenu {
-    pub position: Vector2F,
-    pub item_id: usize,
-    pub pane: WeakViewHandle<Pane>,
-}
-
 impl_actions!(pane, [GoBack, GoForward, ActivateItem]);
-impl_internal_actions!(
-    pane,
-    [
-        CloseItemById,
-        CloseItemsToTheLeftById,
-        CloseItemsToTheRightById,
-        DeployTabContextMenu,
-        DeploySplitMenu,
-        DeployNewMenu,
-        DeployDockMenu,
-        MoveItem
-    ]
-);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -148,68 +112,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_async_action(Pane::close_items_to_the_left);
     cx.add_async_action(Pane::close_items_to_the_right);
     cx.add_async_action(Pane::close_all_items);
-    cx.add_async_action(|workspace: &mut Workspace, action: &CloseItemById, cx| {
-        let pane = action.pane.upgrade(cx)?;
-        let task = Pane::close_item_by_id(workspace, pane, action.item_id, cx);
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
-    });
-    cx.add_async_action(
-        |workspace: &mut Workspace, action: &CloseItemsToTheLeftById, cx| {
-            let pane = action.pane.upgrade(cx)?;
-            let task = Pane::close_items_to_the_left_by_id(workspace, pane, action.item_id, cx);
-            Some(cx.foreground().spawn(async move {
-                task.await?;
-                Ok(())
-            }))
-        },
-    );
-    cx.add_async_action(
-        |workspace: &mut Workspace, action: &CloseItemsToTheRightById, cx| {
-            let pane = action.pane.upgrade(cx)?;
-            let task = Pane::close_items_to_the_right_by_id(workspace, pane, action.item_id, cx);
-            Some(cx.foreground().spawn(async move {
-                task.await?;
-                Ok(())
-            }))
-        },
-    );
-    cx.add_action(
-        |workspace,
-         MoveItem {
-             from,
-             to,
-             item_id,
-             destination_index,
-         },
-         cx| {
-            // Get item handle to move
-            let from = if let Some(from) = from.upgrade(cx) {
-                from
-            } else {
-                return;
-            };
-
-            // Add item to new pane at given index
-            let to = if let Some(to) = to.upgrade(cx) {
-                to
-            } else {
-                return;
-            };
-
-            Pane::move_item(workspace, from, to, *item_id, *destination_index, cx)
-        },
-    );
     cx.add_action(|pane: &mut Pane, _: &SplitLeft, cx| pane.split(SplitDirection::Left, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitUp, cx| pane.split(SplitDirection::Up, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitRight, cx| pane.split(SplitDirection::Right, cx));
     cx.add_action(|pane: &mut Pane, _: &SplitDown, cx| pane.split(SplitDirection::Down, cx));
-    cx.add_action(Pane::deploy_split_menu);
-    cx.add_action(Pane::deploy_dock_menu);
-    cx.add_action(Pane::deploy_new_menu);
-    cx.add_action(Pane::deploy_tab_context_menu);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
         Pane::reopen_closed_item(workspace, cx).detach();
     });
@@ -243,7 +149,7 @@ pub struct Pane {
     tab_context_menu: ViewHandle<ContextMenu>,
     docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
-    _workspace_id: usize,
+    workspace: WeakViewHandle<Workspace>,
 }
 
 pub struct ItemNavHistory {
@@ -315,7 +221,7 @@ impl TabBarContextMenu {
 
 impl Pane {
     pub fn new(
-        workspace_id: usize,
+        workspace: WeakViewHandle<Workspace>,
         docked: Option<DockAnchor>,
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
@@ -349,7 +255,7 @@ impl Pane {
             tab_context_menu: cx.add_view(ContextMenu::new),
             docked,
             _background_actions: background_actions,
-            _workspace_id: workspace_id,
+            workspace,
         }
     }
 
@@ -1223,7 +1129,7 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
-    fn deploy_split_menu(&mut self, _: &DeploySplitMenu, cx: &mut ViewContext<Self>) {
+    fn deploy_split_menu(&mut self, cx: &mut ViewContext<Self>) {
         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
                 Default::default(),
@@ -1241,7 +1147,7 @@ impl Pane {
         self.tab_bar_context_menu.kind = TabBarContextMenuKind::Split;
     }
 
-    fn deploy_dock_menu(&mut self, _: &DeployDockMenu, cx: &mut ViewContext<Self>) {
+    fn deploy_dock_menu(&mut self, cx: &mut ViewContext<Self>) {
         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
                 Default::default(),
@@ -1258,7 +1164,7 @@ impl Pane {
         self.tab_bar_context_menu.kind = TabBarContextMenuKind::Dock;
     }
 
-    fn deploy_new_menu(&mut self, _: &DeployNewMenu, cx: &mut ViewContext<Self>) {
+    fn deploy_new_menu(&mut self, cx: &mut ViewContext<Self>) {
         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
                 Default::default(),
@@ -1277,19 +1183,19 @@ impl Pane {
 
     fn deploy_tab_context_menu(
         &mut self,
-        action: &DeployTabContextMenu,
+        position: Vector2F,
+        target_item_id: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let target_item_id = action.item_id;
-        let target_pane = action.pane.clone();
         let active_item_id = self.items[self.active_item_index].id();
         let is_active_item = target_item_id == active_item_id;
+        let target_pane = cx.weak_handle();
 
         // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currenlty, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
 
         self.tab_context_menu.update(cx, |menu, cx| {
             menu.show(
-                action.position,
+                position,
                 AnchorCorner::TopLeft,
                 if is_active_item {
                     vec![
@@ -1303,29 +1209,60 @@ impl Pane {
                 } else {
                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
                     vec![
-                        ContextMenuItem::action(
-                            "Close Inactive Item",
-                            CloseItemById {
-                                item_id: target_item_id,
-                                pane: target_pane.clone(),
-                            },
-                        ),
+                        ContextMenuItem::handler("Close Inactive Item", {
+                            let workspace = self.workspace.clone();
+                            let pane = target_pane.clone();
+                            move |cx| {
+                                if let Some((workspace, pane)) =
+                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
+                                {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Self::close_item_by_id(workspace, pane, target_item_id, cx)
+                                            .detach_and_log_err(cx);
+                                    })
+                                }
+                            }
+                        }),
                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
-                        ContextMenuItem::action(
-                            "Close Items To The Left",
-                            CloseItemsToTheLeftById {
-                                item_id: target_item_id,
-                                pane: target_pane.clone(),
-                            },
-                        ),
-                        ContextMenuItem::action(
-                            "Close Items To The Right",
-                            CloseItemsToTheRightById {
-                                item_id: target_item_id,
-                                pane: target_pane.clone(),
-                            },
-                        ),
+                        ContextMenuItem::handler("Close Items To The Left", {
+                            let workspace = self.workspace.clone();
+                            let pane = target_pane.clone();
+                            move |cx| {
+                                if let Some((workspace, pane)) =
+                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
+                                {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Self::close_items_to_the_left_by_id(
+                                            workspace,
+                                            pane,
+                                            target_item_id,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    })
+                                }
+                            }
+                        }),
+                        ContextMenuItem::handler("Close Items To The Right", {
+                            let workspace = self.workspace.clone();
+                            let pane = target_pane.clone();
+                            move |cx| {
+                                if let Some((workspace, pane)) =
+                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
+                                {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Self::close_items_to_the_right_by_id(
+                                            workspace,
+                                            pane,
+                                            target_item_id,
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    })
+                                }
+                            }
+                        }),
                         ContextMenuItem::action("Close All Items", CloseAllItems),
                     ]
                 },
@@ -1407,24 +1344,28 @@ impl Pane {
                                     cx.dispatch_action(ActivateItem(ix));
                                 })
                                 .on_click(MouseButton::Middle, {
-                                    let item = item.clone();
-                                    let pane = pane.clone();
-                                    move |_, _, cx| {
-                                        cx.dispatch_action(CloseItemById {
-                                            item_id: item.id(),
-                                            pane: pane.clone(),
-                                        })
+                                    let item_id = item.id();
+                                    move |_, pane, cx| {
+                                        let workspace = pane.workspace.clone();
+                                        let pane = cx.weak_handle();
+                                        cx.window_context().defer(move |cx| {
+                                            if let Some((workspace, pane)) =
+                                                workspace.upgrade(cx).zip(pane.upgrade(cx))
+                                            {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    Self::close_item_by_id(
+                                                        workspace, pane, item_id, cx,
+                                                    )
+                                                    .detach_and_log_err(cx);
+                                                });
+                                            }
+                                        });
                                     }
                                 })
                                 .on_down(
                                     MouseButton::Right,
-                                    move |e, _, cx| {
-                                        let item = item.clone();
-                                        cx.dispatch_action(DeployTabContextMenu {
-                                            position: e.position,
-                                            item_id: item.id(),
-                                            pane: pane.clone(),
-                                        });
+                                    move |event, pane, cx| {
+                                        pane.deploy_tab_context_menu(event.position, item.id(), cx);
                                     },
                                 );
 
@@ -1622,10 +1563,17 @@ impl Pane {
                     .on_click(MouseButton::Left, {
                         let pane = pane.clone();
                         move |_, _, cx| {
-                            cx.dispatch_action(CloseItemById {
-                                item_id,
-                                pane: pane.clone(),
-                            })
+                            let pane = pane.clone();
+                            cx.window_context().defer(move |cx| {
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    if let Some(workspace) = pane.read(cx).workspace.upgrade(cx) {
+                                        workspace.update(cx, |workspace, cx| {
+                                            Self::close_item_by_id(workspace, pane, item_id, cx)
+                                                .detach_and_log_err(cx);
+                                        });
+                                    }
+                                }
+                            });
                         }
                     })
                     .into_any_named("close-tab-icon")
@@ -1654,7 +1602,7 @@ impl Pane {
                 0,
                 "icons/plus_12.svg",
                 cx,
-                DeployNewMenu,
+                |pane, cx| pane.deploy_new_menu(cx),
                 self.tab_bar_context_menu
                     .handle_if_kind(TabBarContextMenuKind::New),
             ))
@@ -1668,7 +1616,7 @@ impl Pane {
                             1,
                             dock_icon,
                             cx,
-                            DeployDockMenu,
+                            |pane, cx| pane.deploy_dock_menu(cx),
                             self.tab_bar_context_menu
                                 .handle_if_kind(TabBarContextMenuKind::Dock),
                         )
@@ -1679,17 +1627,22 @@ impl Pane {
                             2,
                             "icons/split_12.svg",
                             cx,
-                            DeploySplitMenu,
+                            |pane, cx| pane.deploy_split_menu(cx),
                             self.tab_bar_context_menu
                                 .handle_if_kind(TabBarContextMenuKind::Split),
                         )
                     }),
             )
             // Add the close dock button if this pane is a dock
-            .with_children(
-                self.docked
-                    .map(|_| render_tab_bar_button(3, "icons/x_mark_8.svg", cx, HideDock, None)),
-            )
+            .with_children(self.docked.map(|_| {
+                render_tab_bar_button(
+                    3,
+                    "icons/x_mark_8.svg",
+                    cx,
+                    |_, cx| cx.dispatch_action(HideDock),
+                    None,
+                )
+            }))
             .contained()
             .with_style(theme.workspace.tab_bar.pane_button_container)
             .flex(1., false)
@@ -1863,11 +1816,11 @@ impl View for Pane {
     }
 }
 
-fn render_tab_bar_button<A: Action + Clone>(
+fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
     index: usize,
     icon: &'static str,
     cx: &mut ViewContext<Pane>,
-    action: A,
+    on_click: F,
     context_menu: Option<ViewHandle<ContextMenu>>,
 ) -> AnyElement<Pane> {
     enum TabBarButton {}
@@ -1887,9 +1840,7 @@ fn render_tab_bar_button<A: Action + Clone>(
                     .with_height(style.button_width)
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, move |_, _, cx| {
-                cx.dispatch_action(action.clone());
-            }),
+            .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx)),
         )
         .with_children(
             context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
