@@ -296,38 +296,38 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let is_root = Some(entry) == worktree.root_entry();
             if !project.is_remote() {
-                menu_entries.push(ContextMenuItem::item(
+                menu_entries.push(ContextMenuItem::action(
                     "Add Folder to Project",
                     workspace::AddFolderToProject,
                 ));
                 if is_root {
-                    menu_entries.push(ContextMenuItem::item(
+                    menu_entries.push(ContextMenuItem::action(
                         "Remove from Project",
                         workspace::RemoveWorktreeFromProject(worktree_id),
                     ));
                 }
             }
-            menu_entries.push(ContextMenuItem::item("New File", NewFile));
-            menu_entries.push(ContextMenuItem::item("New Folder", NewDirectory));
+            menu_entries.push(ContextMenuItem::action("New File", NewFile));
+            menu_entries.push(ContextMenuItem::action("New Folder", NewDirectory));
             menu_entries.push(ContextMenuItem::Separator);
-            menu_entries.push(ContextMenuItem::item("Cut", Cut));
-            menu_entries.push(ContextMenuItem::item("Copy", Copy));
+            menu_entries.push(ContextMenuItem::action("Cut", Cut));
+            menu_entries.push(ContextMenuItem::action("Copy", Copy));
             menu_entries.push(ContextMenuItem::Separator);
-            menu_entries.push(ContextMenuItem::item("Copy Path", CopyPath));
-            menu_entries.push(ContextMenuItem::item(
+            menu_entries.push(ContextMenuItem::action("Copy Path", CopyPath));
+            menu_entries.push(ContextMenuItem::action(
                 "Copy Relative Path",
                 CopyRelativePath,
             ));
-            menu_entries.push(ContextMenuItem::item("Reveal in Finder", RevealInFinder));
+            menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
             if let Some(clipboard_entry) = self.clipboard_entry {
                 if clipboard_entry.worktree_id() == worktree.id() {
-                    menu_entries.push(ContextMenuItem::item("Paste", Paste));
+                    menu_entries.push(ContextMenuItem::action("Paste", Paste));
                 }
             }
             menu_entries.push(ContextMenuItem::Separator);
-            menu_entries.push(ContextMenuItem::item("Rename", Rename));
+            menu_entries.push(ContextMenuItem::action("Rename", Rename));
             if !is_root {
-                menu_entries.push(ContextMenuItem::item("Delete", Delete));
+                menu_entries.push(ContextMenuItem::action("Delete", Delete));
             }
         }
 

@@ -1229,10 +1229,10 @@ impl Pane {
                 Default::default(),
                 AnchorCorner::TopRight,
                 vec![
-                    ContextMenuItem::item("Split Right", SplitRight),
-                    ContextMenuItem::item("Split Left", SplitLeft),
-                    ContextMenuItem::item("Split Up", SplitUp),
-                    ContextMenuItem::item("Split Down", SplitDown),
+                    ContextMenuItem::action("Split Right", SplitRight),
+                    ContextMenuItem::action("Split Left", SplitLeft),
+                    ContextMenuItem::action("Split Up", SplitUp),
+                    ContextMenuItem::action("Split Down", SplitDown),
                 ],
                 cx,
             );
@@ -1247,9 +1247,9 @@ impl Pane {
                 Default::default(),
                 AnchorCorner::TopRight,
                 vec![
-                    ContextMenuItem::item("Anchor Dock Right", AnchorDockRight),
-                    ContextMenuItem::item("Anchor Dock Bottom", AnchorDockBottom),
-                    ContextMenuItem::item("Expand Dock", ExpandDock),
+                    ContextMenuItem::action("Anchor Dock Right", AnchorDockRight),
+                    ContextMenuItem::action("Anchor Dock Bottom", AnchorDockBottom),
+                    ContextMenuItem::action("Expand Dock", ExpandDock),
                 ],
                 cx,
             );
@@ -1264,9 +1264,9 @@ impl Pane {
                 Default::default(),
                 AnchorCorner::TopRight,
                 vec![
-                    ContextMenuItem::item("New File", NewFile),
-                    ContextMenuItem::item("New Terminal", NewTerminal),
-                    ContextMenuItem::item("New Search", NewSearch),
+                    ContextMenuItem::action("New File", NewFile),
+                    ContextMenuItem::action("New Terminal", NewTerminal),
+                    ContextMenuItem::action("New Search", NewSearch),
                 ],
                 cx,
             );
@@ -1293,40 +1293,40 @@ impl Pane {
                 AnchorCorner::TopLeft,
                 if is_active_item {
                     vec![
-                        ContextMenuItem::item("Close Active Item", CloseActiveItem),
-                        ContextMenuItem::item("Close Inactive Items", CloseInactiveItems),
-                        ContextMenuItem::item("Close Clean Items", CloseCleanItems),
-                        ContextMenuItem::item("Close Items To The Left", CloseItemsToTheLeft),
-                        ContextMenuItem::item("Close Items To The Right", CloseItemsToTheRight),
-                        ContextMenuItem::item("Close All Items", CloseAllItems),
+                        ContextMenuItem::action("Close Active Item", CloseActiveItem),
+                        ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
+                        ContextMenuItem::action("Close Clean Items", CloseCleanItems),
+                        ContextMenuItem::action("Close Items To The Left", CloseItemsToTheLeft),
+                        ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
+                        ContextMenuItem::action("Close All Items", CloseAllItems),
                     ]
                 } else {
                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
                     vec![
-                        ContextMenuItem::item(
+                        ContextMenuItem::action(
                             "Close Inactive Item",
                             CloseItemById {
                                 item_id: target_item_id,
                                 pane: target_pane.clone(),
                             },
                         ),
-                        ContextMenuItem::item("Close Inactive Items", CloseInactiveItems),
-                        ContextMenuItem::item("Close Clean Items", CloseCleanItems),
-                        ContextMenuItem::item(
+                        ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
+                        ContextMenuItem::action("Close Clean Items", CloseCleanItems),
+                        ContextMenuItem::action(
                             "Close Items To The Left",
                             CloseItemsToTheLeftById {
                                 item_id: target_item_id,
                                 pane: target_pane.clone(),
                             },
                         ),
-                        ContextMenuItem::item(
+                        ContextMenuItem::action(
                             "Close Items To The Right",
                             CloseItemsToTheRightById {
                                 item_id: target_item_id,
                                 pane: target_pane.clone(),
                             },
                         ),
-                        ContextMenuItem::item("Close All Items", CloseAllItems),
+                        ContextMenuItem::action("Close All Items", CloseAllItems),
                     ]
                 },
                 cx,

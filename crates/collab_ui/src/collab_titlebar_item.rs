@@ -301,13 +301,19 @@ impl CollabTitlebarItem {
                             .with_style(item_style.container)
                             .into_any()
                     })),
-                    ContextMenuItem::item("Sign out", SignOut),
-                    ContextMenuItem::item("Send Feedback", feedback::feedback_editor::GiveFeedback),
+                    ContextMenuItem::action("Sign out", SignOut),
+                    ContextMenuItem::action(
+                        "Send Feedback",
+                        feedback::feedback_editor::GiveFeedback,
+                    ),
                 ]
             } else {
                 vec![
-                    ContextMenuItem::item("Sign in", SignIn),
-                    ContextMenuItem::item("Send Feedback", feedback::feedback_editor::GiveFeedback),
+                    ContextMenuItem::action("Sign in", SignIn),
+                    ContextMenuItem::action(
+                        "Send Feedback",
+                        feedback::feedback_editor::GiveFeedback,
+                    ),
                 ]
             };
 

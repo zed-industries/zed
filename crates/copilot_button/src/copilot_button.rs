@@ -271,8 +271,8 @@ impl CopilotButton {
     ) {
         let mut menu_options = Vec::with_capacity(2);
 
-        menu_options.push(ContextMenuItem::item("Sign In", InitiateSignIn));
-        menu_options.push(ContextMenuItem::item("Disable Copilot", HideCopilot));
+        menu_options.push(ContextMenuItem::action("Sign In", InitiateSignIn));
+        menu_options.push(ContextMenuItem::action("Disable Copilot", HideCopilot));
 
         self.popup_menu.update(cx, |menu, cx| {
             menu.show(
@@ -292,7 +292,7 @@ impl CopilotButton {
         if let Some(language) = &self.language {
             let language_enabled = settings.show_copilot_suggestions(Some(language.as_ref()));
 
-            menu_options.push(ContextMenuItem::item(
+            menu_options.push(ContextMenuItem::action(
                 format!(
                     "{} Suggestions for {}",
                     if language_enabled { "Hide" } else { "Show" },
@@ -305,7 +305,7 @@ impl CopilotButton {
         }
 
         let globally_enabled = cx.global::<Settings>().show_copilot_suggestions(None);
-        menu_options.push(ContextMenuItem::item(
+        menu_options.push(ContextMenuItem::action(
             if globally_enabled {
                 "Hide Suggestions for All Files"
             } else {
@@ -317,7 +317,7 @@ impl CopilotButton {
         menu_options.push(ContextMenuItem::Separator);
 
         let icon_style = settings.theme.copilot.out_link_icon.clone();
-        menu_options.push(ContextMenuItem::item(
+        menu_options.push(ContextMenuItem::action(
             move |state: &mut MouseState, style: &theme::ContextMenuItem| {
                 Flex::row()
                     .with_child(Label::new("Copilot Settings", style.label.clone()))
@@ -328,7 +328,7 @@ impl CopilotButton {
             OsOpen::new(COPILOT_SETTINGS_URL),
         ));
 
-        menu_options.push(ContextMenuItem::item("Sign Out", SignOut));
+        menu_options.push(ContextMenuItem::action("Sign Out", SignOut));
 
         self.popup_menu.update(cx, |menu, cx| {
             menu.show(

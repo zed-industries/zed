@@ -10,7 +10,7 @@ use gpui::{
 };
 use menu::*;
 use settings::Settings;
-use std::{any::TypeId, borrow::Cow, time::Duration};
+use std::{any::TypeId, borrow::Cow, sync::Arc, time::Duration};
 
 #[derive(Copy, Clone, PartialEq)]
 struct Clicked;
@@ -64,20 +64,44 @@ where
     }
 }
 
+pub enum ContextMenuItemAction {
+    Action(Box<dyn Action>),
+    Handler(Arc<dyn Fn(&mut ViewContext<ContextMenu>)>),
+}
+
+impl Clone for ContextMenuItemAction {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Action(action) => Self::Action(action.boxed_clone()),
+            Self::Handler(handler) => Self::Handler(handler.clone()),
+        }
+    }
+}
+
 pub enum ContextMenuItem {
     Item {
         label: ContextMenuItemLabel,
-        action: Box<dyn Action>,
+        action: ContextMenuItemAction,
     },
     Static(StaticItem),
     Separator,
 }
 
 impl ContextMenuItem {
-    pub fn item(label: impl Into<ContextMenuItemLabel>, action: impl 'static + Action) -> Self {
+    pub fn action(label: impl Into<ContextMenuItemLabel>, action: impl 'static + Action) -> Self {
         Self::Item {
             label: label.into(),
-            action: Box::new(action),
+            action: ContextMenuItemAction::Action(Box::new(action)),
+        }
+    }
+
+    pub fn handler(
+        label: impl Into<ContextMenuItemLabel>,
+        handler: impl 'static + Fn(&mut ViewContext<ContextMenu>),
+    ) -> Self {
+        Self::Item {
+            label: label.into(),
+            action: ContextMenuItemAction::Handler(Arc::new(handler)),
         }
     }
 
@@ -91,7 +115,10 @@ impl ContextMenuItem {
 
     fn action_id(&self) -> Option<TypeId> {
         match self {
-            ContextMenuItem::Item { action, .. } => Some(action.id()),
+            ContextMenuItem::Item { action, .. } => match action {
+                ContextMenuItemAction::Action(action) => Some(action.id()),
+                ContextMenuItemAction::Handler(_) => None,
+            },
             ContextMenuItem::Static(..) | ContextMenuItem::Separator => None,
         }
     }
@@ -208,7 +235,17 @@ impl ContextMenu {
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.selected_index {
             if let Some(ContextMenuItem::Item { action, .. }) = self.items.get(ix) {
-                cx.dispatch_any_action(action.boxed_clone());
+                match action {
+                    ContextMenuItemAction::Action(action) => {
+                        let window_id = cx.window_id();
+                        cx.dispatch_any_action_at(
+                            window_id,
+                            self.parent_view_id,
+                            action.boxed_clone(),
+                        );
+                    }
+                    ContextMenuItemAction::Handler(handler) => handler(cx),
+                }
                 self.reset(cx);
             }
         }
@@ -351,13 +388,16 @@ impl ContextMenu {
                                     Some(ix) == self.selected_index,
                                 );
 
-                                KeystrokeLabel::new(
-                                    self.parent_view_id,
-                                    action.boxed_clone(),
-                                    style.keystroke.container,
-                                    style.keystroke.text.clone(),
-                                )
-                                .into_any()
+                                match action {
+                                    ContextMenuItemAction::Action(action) => KeystrokeLabel::new(
+                                        self.parent_view_id,
+                                        action.boxed_clone(),
+                                        style.keystroke.container,
+                                        style.keystroke.text.clone(),
+                                    )
+                                    .into_any(),
+                                    ContextMenuItemAction::Handler(_) => Empty::new().into_any(),
+                                }
                             }
 
                             ContextMenuItem::Static(_) => Empty::new().into_any(),
@@ -389,11 +429,23 @@ impl ContextMenu {
                 .with_children(self.items.iter().enumerate().map(|(ix, item)| {
                     match item {
                         ContextMenuItem::Item { label, action } => {
-                            let action = action.boxed_clone();
+                            let action = action.clone();
                             let view_id = self.parent_view_id;
                             MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);
+                                let keystroke = match &action {
+                                    ContextMenuItemAction::Action(action) => Some(
+                                        KeystrokeLabel::new(
+                                            view_id,
+                                            action.boxed_clone(),
+                                            style.keystroke.container,
+                                            style.keystroke.text.clone(),
+                                        )
+                                        .flex_float(),
+                                    ),
+                                    ContextMenuItemAction::Handler(_) => None,
+                                };
 
                                 Flex::row()
                                     .with_child(match label {
@@ -406,15 +458,7 @@ impl ContextMenu {
                                             element(state, style)
                                         }
                                     })
-                                    .with_child({
-                                        KeystrokeLabel::new(
-                                            view_id,
-                                            action.boxed_clone(),
-                                            style.keystroke.container,
-                                            style.keystroke.text.clone(),
-                                        )
-                                        .flex_float()
-                                    })
+                                    .with_children(keystroke)
                                     .contained()
                                     .with_style(style.container)
                             })
@@ -424,7 +468,16 @@ impl ContextMenu {
                             .on_click(MouseButton::Left, move |_, _, cx| {
                                 let window_id = cx.window_id();
                                 cx.dispatch_action(Clicked);
-                                cx.dispatch_any_action_at(window_id, view_id, action.boxed_clone());
+                                match &action {
+                                    ContextMenuItemAction::Action(action) => {
+                                        cx.dispatch_any_action_at(
+                                            window_id,
+                                            view_id,
+                                            action.boxed_clone(),
+                                        );
+                                    }
+                                    ContextMenuItemAction::Handler(handler) => handler(cx),
+                                }
                             })
                             .on_drag(MouseButton::Left, |_, _, _| {})
                             .into_any()
