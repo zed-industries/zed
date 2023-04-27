@@ -4,13 +4,20 @@ use gpui::{fonts, AssetSource, FontCache};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+};
 
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
     themes: Mutex<HashMap<String, Arc<Theme>>>,
     theme_data: Mutex<HashMap<String, Arc<Value>>>,
     font_cache: Arc<FontCache>,
+    next_theme_id: AtomicUsize,
 }
 
 impl ThemeRegistry {
@@ -19,6 +26,7 @@ impl ThemeRegistry {
             assets: Box::new(source),
             themes: Default::default(),
             theme_data: Default::default(),
+            next_theme_id: Default::default(),
             font_cache,
         })
     }
@@ -66,6 +74,7 @@ impl ThemeRegistry {
 
         // Reset name to be the file path, so that we can use it to access the stored themes
         theme.meta.name = name.into();
+        theme.meta.id = self.next_theme_id.fetch_add(1, SeqCst);
         let theme: Arc<Theme> = theme.into();
         self.themes.lock().insert(name.to_string(), theme.clone());
         Ok(theme)

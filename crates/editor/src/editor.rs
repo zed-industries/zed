@@ -463,6 +463,7 @@ pub struct EditorStyle {
     pub text: TextStyle,
     pub placeholder_text: Option<TextStyle>,
     pub theme: theme::Editor,
+    pub theme_id: usize,
 }
 
 type CompletionId = usize;
@@ -7310,6 +7311,7 @@ fn build_style(
 ) -> EditorStyle {
     let font_cache = cx.font_cache();
 
+    let theme_id = settings.theme.meta.id;
     let mut theme = settings.theme.editor.clone();
     let mut style = if let Some(get_field_editor_theme) = get_field_editor_theme {
         let field_editor_theme = get_field_editor_theme(&settings.theme);
@@ -7323,6 +7325,7 @@ fn build_style(
             text: field_editor_theme.text,
             placeholder_text: field_editor_theme.placeholder_text,
             theme,
+            theme_id,
         }
     } else {
         let font_family_id = settings.buffer_font_family;
@@ -7344,6 +7347,7 @@ fn build_style(
             },
             placeholder_text: None,
             theme,
+            theme_id,
         }
     };
 

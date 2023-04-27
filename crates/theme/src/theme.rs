@@ -46,6 +46,8 @@ pub struct Theme {
 
 #[derive(Deserialize, Default, Clone)]
 pub struct ThemeMeta {
+    #[serde(skip_deserializing)]
+    pub id: usize,
     pub name: String,
     pub is_light: bool,
 }

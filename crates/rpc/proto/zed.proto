@@ -633,6 +633,7 @@ message GetHoverResponse {
 message HoverBlock {
     string text = 1;
     optional string language = 2;
+    bool is_markdown = 3;
 }
 
 message ApplyCodeAction {

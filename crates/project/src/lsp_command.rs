@@ -1,5 +1,6 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, Location, LocationLink, Project, ProjectTransaction,
+    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, Location, LocationLink, Project,
+    ProjectTransaction,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -13,7 +14,6 @@ use language::{
     Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Unclipped,
 };
 use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
 #[async_trait(?Send)]
@@ -1092,76 +1092,49 @@ impl LspCommand for GetHover {
                 })
             });
 
-            let contents = cx.read(|_| match hover.contents {
-                lsp::HoverContents::Scalar(marked_string) => {
-                    HoverBlock::try_new(marked_string).map(|contents| vec![contents])
-                }
-                lsp::HoverContents::Array(marked_strings) => {
-                    let content: Vec<HoverBlock> = marked_strings
-                        .into_iter()
-                        .filter_map(HoverBlock::try_new)
-                        .collect();
-                    if content.is_empty() {
-                        None
-                    } else {
-                        Some(content)
-                    }
-                }
-                lsp::HoverContents::Markup(markup_content) => {
-                    let mut contents = Vec::new();
-                    let mut language = None;
-                    let mut current_text = String::new();
-                    for event in Parser::new_ext(&markup_content.value, Options::all()) {
-                        match event {
-                            Event::SoftBreak => {
-                                current_text.push(' ');
-                            }
-                            Event::Text(text) | Event::Code(text) => {
-                                current_text.push_str(&text.to_string());
-                            }
-                            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(new_language))) => {
-                                if !current_text.is_empty() {
-                                    let text = std::mem::take(&mut current_text).trim().to_string();
-                                    contents.push(HoverBlock { text, language });
-                                }
-
-                                language = if new_language.is_empty() {
-                                    None
-                                } else {
-                                    Some(new_language.to_string())
-                                };
-                            }
-                            Event::End(Tag::CodeBlock(_))
-                            | Event::End(Tag::Paragraph)
-                            | Event::End(Tag::Heading(_, _, _))
-                            | Event::End(Tag::BlockQuote)
-                            | Event::HardBreak => {
-                                if !current_text.is_empty() {
-                                    let text = std::mem::take(&mut current_text).trim().to_string();
-                                    contents.push(HoverBlock { text, language });
-                                }
-                                language = None;
-                            }
-                            _ => {}
+            fn hover_blocks_from_marked_string(
+                marked_string: lsp::MarkedString,
+            ) -> Option<HoverBlock> {
+                let block = match marked_string {
+                    lsp::MarkedString::String(content) => HoverBlock {
+                        text: content,
+                        kind: HoverBlockKind::Markdown,
+                    },
+                    lsp::MarkedString::LanguageString(lsp::LanguageString { language, value }) => {
+                        HoverBlock {
+                            text: value,
+                            kind: HoverBlockKind::Code { language },
                         }
                     }
-
-                    if !current_text.trim().is_empty() {
-                        contents.push(HoverBlock {
-                            text: current_text,
-                            language,
-                        });
-                    }
-
-                    if contents.is_empty() {
-                        None
-                    } else {
-                        Some(contents)
-                    }
+                };
+                if block.text.is_empty() {
+                    None
+                } else {
+                    Some(block)
                 }
+            }
+
+            let contents = cx.read(|_| match hover.contents {
+                lsp::HoverContents::Scalar(marked_string) => {
+                    hover_blocks_from_marked_string(marked_string)
+                        .into_iter()
+                        .collect()
+                }
+                lsp::HoverContents::Array(marked_strings) => marked_strings
+                    .into_iter()
+                    .filter_map(hover_blocks_from_marked_string)
+                    .collect(),
+                lsp::HoverContents::Markup(markup_content) => vec![HoverBlock {
+                    text: markup_content.value,
+                    kind: if markup_content.kind == lsp::MarkupKind::Markdown {
+                        HoverBlockKind::Markdown
+                    } else {
+                        HoverBlockKind::PlainText
+                    },
+                }],
             });
 
-            contents.map(|contents| Hover { contents, range })
+            Some(Hover { contents, range })
         }))
     }
 
@@ -1218,7 +1191,12 @@ impl LspCommand for GetHover {
                 .into_iter()
                 .map(|block| proto::HoverBlock {
                     text: block.text,
-                    language: block.language,
+                    is_markdown: block.kind == HoverBlockKind::Markdown,
+                    language: if let HoverBlockKind::Code { language } = block.kind {
+                        Some(language)
+                    } else {
+                        None
+                    },
                 })
                 .collect();
 
@@ -1255,7 +1233,13 @@ impl LspCommand for GetHover {
             .into_iter()
             .map(|block| HoverBlock {
                 text: block.text,
-                language: block.language,
+                kind: if let Some(language) = block.language {
+                    HoverBlockKind::Code { language }
+                } else if block.is_markdown {
+                    HoverBlockKind::Markdown
+                } else {
+                    HoverBlockKind::PlainText
+                },
             })
             .collect();
 
