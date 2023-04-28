@@ -47,6 +47,7 @@ pub struct Settings {
     pub editor_overrides: EditorSettings,
     pub git: GitSettings,
     pub git_overrides: GitSettings,
+    pub copilot: CopilotSettings,
     pub journal_defaults: JournalSettings,
     pub journal_overrides: JournalSettings,
     pub terminal_defaults: TerminalSettings,
@@ -59,29 +60,6 @@ pub struct Settings {
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
     pub base_keymap: BaseKeymap,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CopilotSettings {
-    #[default]
-    On,
-    Off,
-}
-
-impl From<CopilotSettings> for bool {
-    fn from(value: CopilotSettings) -> Self {
-        match value {
-            CopilotSettings::On => true,
-            CopilotSettings::Off => false,
-        }
-    }
-}
-
-impl CopilotSettings {
-    pub fn is_on(&self) -> bool {
-        <CopilotSettings as Into<bool>>::into(*self)
-    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
@@ -147,6 +125,29 @@ impl TelemetrySettings {
 
     pub fn set_diagnostics(&mut self, value: bool) {
         self.diagnostics = Some(value);
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CopilotSettings {
+    pub disabled_globs: Vec<glob::Pattern>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CopilotSettingsContent {
+    #[serde(default)]
+    disabled_globs: Vec<String>,
+}
+
+impl From<CopilotSettingsContent> for CopilotSettings {
+    fn from(value: CopilotSettingsContent) -> Self {
+        Self {
+            disabled_globs: value
+                .disabled_globs
+                .into_iter()
+                .filter_map(|p| glob::Pattern::new(&p).ok())
+                .collect(),
+        }
     }
 }
 
@@ -390,6 +391,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_features: Option<fonts::Features>,
     #[serde(default)]
+    pub copilot: Option<CopilotSettingsContent>,
+    #[serde(default)]
     pub active_pane_magnification: Option<f32>,
     #[serde(default)]
     pub cursor_blink: Option<bool>,
@@ -438,8 +441,7 @@ pub struct LspSettings {
     pub initialization_options: Option<Value>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Features {
     pub copilot: bool,
 }
@@ -506,6 +508,7 @@ impl Settings {
                 show_copilot_suggestions: required(defaults.editor.show_copilot_suggestions),
             },
             editor_overrides: Default::default(),
+            copilot: defaults.copilot.unwrap().into(),
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
             journal_defaults: defaults.journal,
@@ -576,6 +579,9 @@ impl Settings {
         merge(&mut self.base_keymap, data.base_keymap);
         merge(&mut self.features.copilot, data.features.copilot);
 
+        if let Some(copilot) = data.copilot.map(CopilotSettings::from) {
+            self.copilot = copilot;
+        }
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
         self.journal_overrides = data.journal;
@@ -751,6 +757,7 @@ impl Settings {
                 show_copilot_suggestions: Some(true),
             },
             editor_overrides: Default::default(),
+            copilot: Default::default(),
             journal_defaults: Default::default(),
             journal_overrides: Default::default(),
             terminal_defaults: Default::default(),

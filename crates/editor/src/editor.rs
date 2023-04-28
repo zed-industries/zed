@@ -2925,11 +2925,7 @@ impl Editor {
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
-        let language_name = snapshot.language_at(cursor).map(|language| language.name());
-        if !cx
-            .global::<Settings>()
-            .show_copilot_suggestions(language_name.as_deref())
-        {
+        if !self.is_copilot_enabled_at(cursor, &snapshot, cx) {
             self.clear_copilot_suggestions(cx);
             return None;
         }
@@ -3078,6 +3074,37 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn is_copilot_enabled_at(
+        &self,
+        location: Anchor,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let settings = cx.global::<Settings>();
+
+        let language_name = snapshot
+            .language_at(location)
+            .map(|language| language.name());
+        if !settings.show_copilot_suggestions(language_name.as_deref()) {
+            return false;
+        }
+
+        let file = snapshot.file_at(location);
+        if let Some(file) = file {
+            let path = file.path();
+            if settings
+                .copilot
+                .disabled_globs
+                .iter()
+                .any(|glob| glob.matches_path(path))
+            {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {

@@ -115,6 +115,13 @@
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files"
   },
+  "copilot": {
+    // The set of glob patterns for which copilot should be disabled
+    // in any matching file.
+    "disabled_globs": [
+      ".env"
+    ]
+  },
   // Settings specific to journaling
   "journal": {
     // The path of the directory where journal entries are stored

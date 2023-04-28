@@ -23,6 +23,7 @@ theme = { path = "../theme" }
 staff_mode = { path = "../staff_mode" }
 util = { path = "../util" }
 
+glob.workspace = true
 json_comments = "0.2"
 postage.workspace = true
 schemars = "0.8"

@@ -28,7 +28,6 @@ fs = { path = "../fs" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 git = { path = "../git" }
-glob = { version = "0.3.1" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
@@ -43,6 +42,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 backtrace = "0.3"
 futures.workspace = true
+glob.workspace = true
 ignore = "0.4"
 lazy_static.workspace = true
 log.workspace = true
