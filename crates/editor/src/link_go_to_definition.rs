@@ -8,8 +8,7 @@ use util::TryFutureExt;
 use workspace::Workspace;
 
 use crate::{
-    Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, Select,
-    SelectPhase,
+    Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, SelectPhase,
 };
 
 #[derive(Clone, PartialEq)]
@@ -334,11 +333,11 @@ fn go_to_fetched_definition_of_kind(
     } else {
         editor_handle.update(cx, |editor, cx| {
             editor.select(
-                &Select(SelectPhase::Begin {
+                SelectPhase::Begin {
                     position: point,
                     add: false,
                     click_count: 1,
-                }),
+                },
                 cx,
             );
         });
