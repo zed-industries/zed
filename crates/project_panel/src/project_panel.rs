@@ -301,10 +301,10 @@ impl ProjectPanel {
                     workspace::AddFolderToProject,
                 ));
                 if is_root {
-                    menu_entries.push(ContextMenuItem::action(
-                        "Remove from Project",
-                        workspace::RemoveWorktreeFromProject(worktree_id),
-                    ));
+                    let project = self.project.clone();
+                    menu_entries.push(ContextMenuItem::handler("Remove from Project", move |cx| {
+                        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+                    }));
                 }
             }
             menu_entries.push(ContextMenuItem::action("New File", NewFile));
