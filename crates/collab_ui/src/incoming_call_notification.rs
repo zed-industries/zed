@@ -6,7 +6,6 @@ use futures::StreamExt;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_internal_actions,
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
     AnyElement, AppContext, Entity, View, ViewContext,
 };
@@ -14,11 +13,7 @@ use settings::Settings;
 use util::ResultExt;
 use workspace::AppState;
 
-impl_internal_actions!(incoming_call_notification, [RespondToCall]);
-
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
-    cx.add_action(IncomingCallNotification::respond_to_call);
-
     let app_state = Arc::downgrade(app_state);
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
     cx.spawn(|mut cx| async move {
@@ -77,9 +72,9 @@ impl IncomingCallNotification {
         Self { call, app_state }
     }
 
-    fn respond_to_call(&mut self, action: &RespondToCall, cx: &mut ViewContext<Self>) {
+    fn respond(&mut self, accept: bool, cx: &mut ViewContext<Self>) {
         let active_call = ActiveCall::global(cx);
-        if action.accept {
+        if accept {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
@@ -183,8 +178,8 @@ impl IncomingCallNotification {
                         .with_style(theme.accept_button.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(RespondToCall { accept: true });
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    this.respond(true, cx);
                 })
                 .flex(1., true),
             )
@@ -197,8 +192,8 @@ impl IncomingCallNotification {
                         .with_style(theme.decline_button.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(RespondToCall { accept: false });
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    this.respond(false, cx);
                 })
                 .flex(1., true),
             )
