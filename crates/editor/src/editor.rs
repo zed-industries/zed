@@ -22,6 +22,7 @@ pub mod test;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
+use client::ClickhouseEvent;
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
@@ -1295,7 +1296,7 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
         }
 
-        this.report_event("open editor", cx);
+        this.report_editor_event("open", cx);
         this
     }
 
@@ -6819,7 +6820,7 @@ impl Editor {
             .collect()
     }
 
-    fn report_event(&self, name: &str, cx: &AppContext) {
+    fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
         if let Some((project, file)) = self.project.as_ref().zip(
             self.buffer
                 .read(cx)
@@ -6831,11 +6832,28 @@ impl Editor {
             let extension = Path::new(file.file_name(cx))
                 .extension()
                 .and_then(|e| e.to_str());
-            project.read(cx).client().report_event(
-                name,
-                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode  }),
+            let telemetry = project.read(cx).client().telemetry().clone();
+            telemetry.report_mixpanel_event(
+                match name {
+                    "open" => "open editor",
+                    "save" => "save editor",
+                    _ => name,
+                },
+                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode, "In Clickhouse": true  }),
                 settings.telemetry(),
             );
+            let event = ClickhouseEvent::Editor {
+                file_extension: extension.map(ToString::to_string),
+                vim_mode: settings.vim_mode,
+                operation: name,
+                copilot_enabled: settings.features.copilot,
+                copilot_enabled_for_language: settings.show_copilot_suggestions(
+                    self.language_at(0, cx)
+                        .map(|language| language.name())
+                        .as_deref(),
+                ),
+            };
+            telemetry.report_clickhouse_event(event, settings.telemetry())
         }
     }
 

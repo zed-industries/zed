@@ -23,6 +23,7 @@ test-support = [
 ]
 
 [dependencies]
+client = { path = "../client" }
 clock = { path = "../clock" }
 copilot = { path = "../copilot" }
 db = { path = "../db" }
