@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{impl_internal_actions, AppContext, Task, ViewContext};
+use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
 use project::LocationLink;
 use settings::Settings;
@@ -10,38 +10,6 @@ use workspace::Workspace;
 use crate::{
     Anchor, DisplayPoint, Editor, EditorSnapshot, GoToDefinition, GoToTypeDefinition, SelectPhase,
 };
-
-#[derive(Clone, PartialEq)]
-pub struct UpdateGoToDefinitionLink {
-    pub point: Option<DisplayPoint>,
-    pub cmd_held: bool,
-    pub shift_held: bool,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct GoToFetchedDefinition {
-    pub point: DisplayPoint,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct GoToFetchedTypeDefinition {
-    pub point: DisplayPoint,
-}
-
-impl_internal_actions!(
-    editor,
-    [
-        UpdateGoToDefinitionLink,
-        GoToFetchedDefinition,
-        GoToFetchedTypeDefinition
-    ]
-);
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(update_go_to_definition_link);
-    cx.add_action(go_to_fetched_definition);
-    cx.add_action(go_to_fetched_type_definition);
-}
 
 #[derive(Debug, Default)]
 pub struct LinkGoToDefinitionState {
@@ -54,11 +22,9 @@ pub struct LinkGoToDefinitionState {
 
 pub fn update_go_to_definition_link(
     editor: &mut Editor,
-    &UpdateGoToDefinitionLink {
-        point,
-        cmd_held,
-        shift_held,
-    }: &UpdateGoToDefinitionLink,
+    point: Option<DisplayPoint>,
+    cmd_held: bool,
+    shift_held: bool,
     cx: &mut ViewContext<Editor>,
 ) {
     let pending_nonempty_selection = editor.has_pending_nonempty_selection();
@@ -285,7 +251,7 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 
 pub fn go_to_fetched_definition(
     workspace: &mut Workspace,
-    &GoToFetchedDefinition { point }: &GoToFetchedDefinition,
+    point: DisplayPoint,
     cx: &mut ViewContext<Workspace>,
 ) {
     go_to_fetched_definition_of_kind(LinkDefinitionKind::Symbol, workspace, point, cx);
@@ -293,7 +259,7 @@ pub fn go_to_fetched_definition(
 
 pub fn go_to_fetched_type_definition(
     workspace: &mut Workspace,
-    &GoToFetchedTypeDefinition { point }: &GoToFetchedTypeDefinition,
+    point: DisplayPoint,
     cx: &mut ViewContext<Workspace>,
 ) {
     go_to_fetched_definition_of_kind(LinkDefinitionKind::Type, workspace, point, cx);
@@ -410,15 +376,7 @@ mod tests {
 
         // Press cmd+shift to trigger highlight
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: true,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, true, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -469,11 +427,7 @@ mod tests {
             });
 
         cx.update_workspace(|workspace, cx| {
-            go_to_fetched_type_definition(
-                workspace,
-                &GoToFetchedTypeDefinition { point: hover_point },
-                cx,
-            );
+            go_to_fetched_type_definition(workspace, hover_point, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -526,15 +480,7 @@ mod tests {
         });
 
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -568,15 +514,7 @@ mod tests {
             ])))
         });
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -598,15 +536,7 @@ mod tests {
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
             });
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -623,15 +553,7 @@ mod tests {
             fn do_work() { teˇst(); }
         "});
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: false,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), false, false, cx);
         });
         cx.foreground().run_until_parked();
 
@@ -690,15 +612,7 @@ mod tests {
 
         // Moving the mouse restores the highlights.
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
         });
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
@@ -712,15 +626,7 @@ mod tests {
             fn do_work() { tesˇt(); }
         "});
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
         });
         cx.foreground().run_until_parked();
         cx.assert_editor_text_highlights::<LinkGoToDefinitionState>(indoc! {"
@@ -730,7 +636,7 @@ mod tests {
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.update_workspace(|workspace, cx| {
-            go_to_fetched_definition(workspace, &GoToFetchedDefinition { point: hover_point }, cx);
+            go_to_fetched_definition(workspace, hover_point, cx);
         });
         // Assert selection moved to to definition
         cx.lsp
@@ -771,7 +677,7 @@ mod tests {
             ])))
         });
         cx.update_workspace(|workspace, cx| {
-            go_to_fetched_definition(workspace, &GoToFetchedDefinition { point: hover_point }, cx);
+            go_to_fetched_definition(workspace, hover_point, cx);
         });
         requests.next().await;
         cx.foreground().run_until_parked();
@@ -816,15 +722,7 @@ mod tests {
             });
         });
         cx.update_editor(|editor, cx| {
-            update_go_to_definition_link(
-                editor,
-                &UpdateGoToDefinitionLink {
-                    point: Some(hover_point),
-                    cmd_held: true,
-                    shift_held: false,
-                },
-                cx,
-            );
+            update_go_to_definition_link(editor, Some(hover_point), true, false, cx);
         });
         cx.foreground().run_until_parked();
         assert!(requests.try_next().is_err());
