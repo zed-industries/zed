@@ -8,7 +8,7 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
     AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -22,7 +22,6 @@ use theme::IconButton;
 use workspace::Workspace;
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
-impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactList::remove_contact);
@@ -31,17 +30,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactList::select_next);
     cx.add_action(ContactList::select_prev);
     cx.add_action(ContactList::confirm);
-    cx.add_action(ContactList::toggle_expanded);
-    cx.add_action(ContactList::call);
-}
-
-#[derive(Clone, PartialEq)]
-struct ToggleExpanded(Section);
-
-#[derive(Clone, PartialEq)]
-struct Call {
-    recipient_user_id: u64,
-    initial_project: Option<ModelHandle<Project>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -402,18 +390,11 @@ impl ContactList {
             if let Some(entry) = self.entries.get(selection) {
                 match entry {
                     ContactEntry::Header(section) => {
-                        let section = *section;
-                        self.toggle_expanded(&ToggleExpanded(section), cx);
+                        self.toggle_expanded(*section, cx);
                     }
                     ContactEntry::Contact { contact, calling } => {
                         if contact.online && !contact.busy && !calling {
-                            self.call(
-                                &Call {
-                                    recipient_user_id: contact.user.id,
-                                    initial_project: Some(self.project.clone()),
-                                },
-                                cx,
-                            );
+                            self.call(contact.user.id, Some(self.project.clone()), cx);
                         }
                     }
                     ContactEntry::ParticipantProject {
@@ -445,8 +426,7 @@ impl ContactList {
         }
     }
 
-    fn toggle_expanded(&mut self, action: &ToggleExpanded, cx: &mut ViewContext<Self>) {
-        let section = action.0;
+    fn toggle_expanded(&mut self, section: Section, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
             self.collapsed_sections.remove(ix);
         } else {
@@ -1061,8 +1041,8 @@ impl ContactList {
                 .with_style(header_style.container)
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(ToggleExpanded(section))
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_expanded(section, cx);
         })
         .into_any()
     }
@@ -1160,12 +1140,9 @@ impl ContactList {
                             .style_for(&mut Default::default(), is_selected),
                     )
             })
-            .on_click(MouseButton::Left, move |_, _, cx| {
+            .on_click(MouseButton::Left, move |_, this, cx| {
                 if online && !busy {
-                    cx.dispatch_action(Call {
-                        recipient_user_id: user_id,
-                        initial_project: Some(initial_project.clone()),
-                    });
+                    this.call(user_id, Some(initial_project.clone()), cx);
                 }
             });
 
@@ -1287,9 +1264,12 @@ impl ContactList {
             .into_any()
     }
 
-    fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
-        let recipient_user_id = action.recipient_user_id;
-        let initial_project = action.initial_project.clone();
+    fn call(
+        &mut self,
+        recipient_user_id: u64,
+        initial_project: Option<ModelHandle<Project>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| {
                 call.invite(recipient_user_id, initial_project, cx)
