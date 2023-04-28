@@ -38,9 +38,7 @@ use std::{
     },
 };
 use unindent::Unindent as _;
-use workspace::{
-    item::ItemHandle as _, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace,
-};
+use workspace::{item::ItemHandle as _, shared_screen::SharedScreen, SplitDirection, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -6119,9 +6117,7 @@ async fn test_basic_following(
     // When client B starts following client A, all visible view states are replicated to client B.
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_a), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_a, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6160,9 +6156,7 @@ async fn test_basic_following(
     // Client C also follows client A.
     workspace_c
         .update(cx_c, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_a), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_a, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6197,7 +6191,7 @@ async fn test_basic_following(
 
     // Client C unfollows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+        workspace.toggle_follow(peer_id_a, cx);
     });
 
     // All clients see that clients B is following client A.
@@ -6220,7 +6214,7 @@ async fn test_basic_following(
 
     // Client C re-follows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+        workspace.toggle_follow(peer_id_a, cx);
     });
 
     // All clients see that clients B and C are following client A.
@@ -6244,9 +6238,7 @@ async fn test_basic_following(
     // Client D follows client C.
     workspace_d
         .update(cx_d, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_c), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_c, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6436,9 +6428,7 @@ async fn test_basic_following(
     // Client A starts following client B.
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_b), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_b, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6707,9 +6697,7 @@ async fn test_following_tab_order(
     //Follow client B as client A
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(client_b_id), cx)
-                .unwrap()
+            workspace.toggle_follow(client_b_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6824,9 +6812,7 @@ async fn test_peers_following_each_other(
     workspace_a
         .update(cx_a, |workspace, cx| {
             let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
-            workspace
-                .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6840,9 +6826,7 @@ async fn test_peers_following_each_other(
     workspace_b
         .update(cx_b, |workspace, cx| {
             let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
-            workspace
-                .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6988,9 +6972,7 @@ async fn test_auto_unfollowing(
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -7015,9 +6997,7 @@ async fn test_auto_unfollowing(
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -7035,9 +7015,7 @@ async fn test_auto_unfollowing(
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -7057,9 +7035,7 @@ async fn test_auto_unfollowing(
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -7134,14 +7110,10 @@ async fn test_peers_simultaneously_following_each_other(
     });
 
     let a_follow_b = workspace_a.update(cx_a, |workspace, cx| {
-        workspace
-            .toggle_follow(&ToggleFollow(client_b_id), cx)
-            .unwrap()
+        workspace.toggle_follow(client_b_id, cx).unwrap()
     });
     let b_follow_a = workspace_b.update(cx_b, |workspace, cx| {
-        workspace
-            .toggle_follow(&ToggleFollow(client_a_id), cx)
-            .unwrap()
+        workspace.toggle_follow(client_a_id, cx).unwrap()
     });
 
     futures::try_join!(a_follow_b, b_follow_a).unwrap();

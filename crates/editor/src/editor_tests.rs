@@ -24,7 +24,7 @@ use util::{
 };
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
-    NavigationEntry, Pane, ViewId,
+    NavigationEntry, ViewId,
 };
 
 #[gpui::test]
@@ -486,12 +486,15 @@ fn test_clone(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_navigation_history(cx: &mut TestAppContext) {
+async fn test_navigation_history(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_global(Settings::test(cx)));
     cx.set_global(DragAndDrop::<Workspace>::default());
     use workspace::item::Item;
-    let (_, pane) = cx.add_window(|cx| Pane::new(0, None, || &[], cx));
 
+    let fs = FakeFs::new(cx.background());
+    let project = Project::test(fs, [], cx).await;
+    let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
     cx.add_view(&pane, |cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
         let mut editor = build_editor(buffer.clone(), cx);
@@ -5576,7 +5579,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     Settings::test_async(cx);
     let fs = FakeFs::new(cx.background());
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    let (_, pane) = cx.add_window(|cx| Pane::new(0, None, || &[], cx));
+    let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     let leader = pane.update(cx, |_, cx| {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));

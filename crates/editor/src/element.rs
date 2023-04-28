@@ -1,20 +1,19 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Select, SelectPhase, SoftWrap,
-    ToPoint, MAX_LINE_LEN,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, SelectPhase, SoftWrap, ToPoint,
+    MAX_LINE_LEN,
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
-        HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+        hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
+        MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
-        GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
+        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
     },
-    mouse_context_menu::DeployMouseContextMenu,
-    scroll::actions::Scroll,
-    EditorStyle, GutterHover, UnfoldAt,
+    mouse_context_menu, EditorStyle, GutterHover, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -115,9 +114,10 @@ impl EditorElement {
             )
             .on_down(MouseButton::Left, {
                 let position_map = position_map.clone();
-                move |e, _, cx| {
+                move |event, editor, cx| {
                     if !Self::mouse_down(
-                        e.platform_event,
+                        editor,
+                        event.platform_event,
                         position_map.as_ref(),
                         text_bounds,
                         gutter_bounds,
@@ -129,8 +129,9 @@ impl EditorElement {
             })
             .on_down(MouseButton::Right, {
                 let position_map = position_map.clone();
-                move |event, _, cx| {
+                move |event, editor, cx| {
                     if !Self::mouse_right_down(
+                        editor,
                         event.position,
                         position_map.as_ref(),
                         text_bounds,
@@ -144,12 +145,12 @@ impl EditorElement {
                 let position_map = position_map.clone();
                 move |event, editor, cx| {
                     if !Self::mouse_up(
+                        editor,
                         event.position,
                         event.cmd,
                         event.shift,
                         position_map.as_ref(),
                         text_bounds,
-                        editor,
                         cx,
                     ) {
                         cx.propagate_event()
@@ -160,10 +161,10 @@ impl EditorElement {
                 let position_map = position_map.clone();
                 move |event, editor, cx| {
                     if !Self::mouse_dragged(
+                        editor,
                         event.platform_event,
                         position_map.as_ref(),
                         text_bounds,
-                        editor,
                         cx,
                     ) {
                         cx.propagate_event()
@@ -172,24 +173,31 @@ impl EditorElement {
             })
             .on_move({
                 let position_map = position_map.clone();
-                move |e, _, cx| {
-                    if !Self::mouse_moved(e.platform_event, &position_map, text_bounds, cx) {
+                move |event, editor, cx| {
+                    if !Self::mouse_moved(
+                        editor,
+                        event.platform_event,
+                        &position_map,
+                        text_bounds,
+                        cx,
+                    ) {
                         cx.propagate_event()
                     }
                 }
             })
-            .on_move_out(move |_, _: &mut Editor, cx| {
+            .on_move_out(move |_, editor: &mut Editor, cx| {
                 if has_popovers {
-                    cx.dispatch_action(HideHover);
+                    hide_hover(editor, cx);
                 }
             })
             .on_scroll({
                 let position_map = position_map.clone();
-                move |e, _, cx| {
+                move |event, editor, cx| {
                     if !Self::scroll(
-                        e.position,
-                        *e.delta.raw(),
-                        e.delta.precise(),
+                        editor,
+                        event.position,
+                        *event.delta.raw(),
+                        event.delta.precise(),
                         &position_map,
                         bounds,
                         cx,
@@ -212,6 +220,7 @@ impl EditorElement {
     }
 
     fn mouse_down(
+        editor: &mut Editor,
         MouseButtonEvent {
             position,
             modifiers:
@@ -239,27 +248,37 @@ impl EditorElement {
         let (position, target_position) = position_map.point_for_position(text_bounds, position);
 
         if shift && alt {
-            cx.dispatch_action(Select(SelectPhase::BeginColumnar {
-                position,
-                goal_column: target_position.column(),
-            }));
+            editor.select(
+                SelectPhase::BeginColumnar {
+                    position,
+                    goal_column: target_position.column(),
+                },
+                cx,
+            );
         } else if shift && !ctrl && !alt && !cmd {
-            cx.dispatch_action(Select(SelectPhase::Extend {
-                position,
-                click_count,
-            }));
+            editor.select(
+                SelectPhase::Extend {
+                    position,
+                    click_count,
+                },
+                cx,
+            );
         } else {
-            cx.dispatch_action(Select(SelectPhase::Begin {
-                position,
-                add: alt,
-                click_count,
-            }));
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: alt,
+                    click_count,
+                },
+                cx,
+            );
         }
 
         true
     }
 
     fn mouse_right_down(
+        editor: &mut Editor,
         position: Vector2F,
         position_map: &PositionMap,
         text_bounds: RectF,
@@ -270,38 +289,45 @@ impl EditorElement {
         }
 
         let (point, _) = position_map.point_for_position(text_bounds, position);
-
-        cx.dispatch_action(DeployMouseContextMenu { position, point });
+        mouse_context_menu::deploy_context_menu(editor, position, point, cx);
         true
     }
 
     fn mouse_up(
+        editor: &mut Editor,
         position: Vector2F,
         cmd: bool,
         shift: bool,
         position_map: &PositionMap,
         text_bounds: RectF,
-        editor: &mut Editor,
         cx: &mut EventContext<Editor>,
     ) -> bool {
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
         if end_selection {
-            cx.dispatch_action(Select(SelectPhase::End));
+            editor.select(SelectPhase::End, cx);
         }
 
-        if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
+        if let Some(workspace) = editor
+            .workspace
+            .as_ref()
+            .and_then(|(workspace, _)| workspace.upgrade(cx))
+        {
+            if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
+                let (point, target_point) = position_map.point_for_position(text_bounds, position);
 
-            if point == target_point {
-                if shift {
-                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
-                } else {
-                    cx.dispatch_action(GoToFetchedDefinition { point });
+                if point == target_point {
+                    workspace.update(cx, |workspace, cx| {
+                        if shift {
+                            go_to_fetched_type_definition(workspace, point, cx);
+                        } else {
+                            go_to_fetched_definition(workspace, point, cx);
+                        }
+                    });
+
+                    return true;
                 }
-
-                return true;
             }
         }
 
@@ -309,6 +335,7 @@ impl EditorElement {
     }
 
     fn mouse_dragged(
+        editor: &mut Editor,
         MouseMovedEvent {
             modifiers: Modifiers { cmd, shift, .. },
             position,
@@ -316,7 +343,6 @@ impl EditorElement {
         }: MouseMovedEvent,
         position_map: &PositionMap,
         text_bounds: RectF,
-        editor: &mut Editor,
         cx: &mut EventContext<Editor>,
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
@@ -332,11 +358,7 @@ impl EditorElement {
             None
         };
 
-        cx.dispatch_action(UpdateGoToDefinitionLink {
-            point,
-            cmd_held: cmd,
-            shift_held: shift,
-        });
+        update_go_to_definition_link(editor, point, cmd, shift, cx);
 
         if editor.has_pending_selection() {
             let mut scroll_delta = Vector2F::zero();
@@ -368,22 +390,25 @@ impl EditorElement {
             let (position, target_position) =
                 position_map.point_for_position(text_bounds, position);
 
-            cx.dispatch_action(Select(SelectPhase::Update {
-                position,
-                goal_column: target_position.column(),
-                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                    .clamp(Vector2F::zero(), position_map.scroll_max),
-            }));
-
-            cx.dispatch_action(HoverAt { point });
+            editor.select(
+                SelectPhase::Update {
+                    position,
+                    goal_column: target_position.column(),
+                    scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                        .clamp(Vector2F::zero(), position_map.scroll_max),
+                },
+                cx,
+            );
+            hover_at(editor, point, cx);
             true
         } else {
-            cx.dispatch_action(HoverAt { point });
+            hover_at(editor, point, cx);
             false
         }
     }
 
     fn mouse_moved(
+        editor: &mut Editor,
         MouseMovedEvent {
             modifiers: Modifiers { shift, cmd, .. },
             position,
@@ -397,18 +422,14 @@ impl EditorElement {
         // Don't trigger hover popover if mouse is hovering over context menu
         let point = position_to_display_point(position, text_bounds, position_map);
 
-        cx.dispatch_action(UpdateGoToDefinitionLink {
-            point,
-            cmd_held: cmd,
-            shift_held: shift,
-        });
-
-        cx.dispatch_action(HoverAt { point });
+        update_go_to_definition_link(editor, point, cmd, shift, cx);
+        hover_at(editor, point, cx);
 
         true
     }
 
     fn scroll(
+        editor: &mut Editor,
         position: Vector2F,
         mut delta: Vector2F,
         precise: bool,
@@ -436,11 +457,7 @@ impl EditorElement {
         let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
         let y = (scroll_position.y() * line_height - delta.y()) / line_height;
         let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), position_map.scroll_max);
-
-        cx.dispatch_action(Scroll {
-            scroll_position,
-            axis,
-        });
+        editor.scroll(scroll_position, axis, cx);
 
         true
     }
@@ -1421,18 +1438,15 @@ impl EditorElement {
                 } => {
                     let id = *id;
                     let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-                        let jump_position = range
+                        let jump_path = ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path.clone(),
+                        };
+                        let jump_anchor = range
                             .primary
                             .as_ref()
                             .map_or(range.context.start, |primary| primary.start);
-                        let jump_action = crate::Jump {
-                            path: ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            },
-                            position: language::ToPoint::to_point(&jump_position, buffer),
-                            anchor: jump_position,
-                        };
+                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
                         enum JumpIcon {}
                         MouseEventHandler::<JumpIcon, _>::new(id.into(), cx, |state, _| {
@@ -1449,8 +1463,22 @@ impl EditorElement {
                                 .with_height(style.button_width)
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(jump_action.clone())
+                        .on_click(MouseButton::Left, move |_, editor, cx| {
+                            if let Some(workspace) = editor
+                                .workspace
+                                .as_ref()
+                                .and_then(|(workspace, _)| workspace.upgrade(cx))
+                            {
+                                workspace.update(cx, |workspace, cx| {
+                                    Editor::jump(
+                                        workspace,
+                                        jump_path.clone(),
+                                        jump_position,
+                                        jump_anchor,
+                                        cx,
+                                    );
+                                });
+                            }
                         })
                         .with_tooltip::<JumpIcon>(
                             id.into(),

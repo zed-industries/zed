@@ -1,9 +1,7 @@
-use std::{any::TypeId, ops::DerefMut};
-
+use crate::{Toast, Workspace};
 use collections::HashSet;
 use gpui::{AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle};
-
-use crate::Workspace;
+use std::{any::TypeId, ops::DerefMut};
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
@@ -111,6 +109,28 @@ impl Workspace {
         let type_id = TypeId::of::<V>();
 
         self.dismiss_notification_internal(type_id, id, cx)
+    }
+
+    pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
+        self.show_notification(toast.id, cx, |cx| {
+            cx.add_view(|_cx| match &toast.click {
+                Some((click_msg, action)) => {
+                    simple_message_notification::MessageNotification::new_boxed_action(
+                        toast.msg.clone(),
+                        action.boxed_clone(),
+                        click_msg.clone(),
+                    )
+                }
+                None => {
+                    simple_message_notification::MessageNotification::new_message(toast.msg.clone())
+                }
+            })
+        })
+    }
+
+    pub fn dismiss_toast(&mut self, id: usize, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification::<simple_message_notification::MessageNotification>(id, cx);
     }
 
     fn dismiss_notification_internal(

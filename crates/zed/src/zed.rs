@@ -31,7 +31,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::Settings;
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
-use terminal_view::terminal_button::{self, TerminalButton};
+use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
@@ -73,7 +73,6 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
-    terminal_button::init(cx);
     cx.add_action(about);
     cx.add_global_action(|_: &Hide, cx: &mut gpui::AppContext| {
         cx.platform().hide();
@@ -261,7 +260,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     activity_indicator::init(cx);
-    copilot_button::init(cx);
     lsp_log::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
@@ -302,8 +300,9 @@ pub fn initialize_workspace(
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
     cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
 
-    let collab_titlebar_item =
-        cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, &app_state.user_store, cx));
+    let collab_titlebar_item = cx.add_view(|cx| {
+        CollabTitlebarItem::new(&workspace_handle, app_state.user_store.clone(), cx)
+    });
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);

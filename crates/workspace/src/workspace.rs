@@ -25,7 +25,6 @@ use client::{
 use collections::{hash_map, HashMap, HashSet};
 use dock::{Dock, DockDefaultItemFactory, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
-use fs::{self, Fs};
 use futures::{
     channel::{mpsc, oneshot},
     future::try_join_all,
@@ -38,7 +37,7 @@ use gpui::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{
         CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
@@ -135,41 +134,6 @@ pub struct OpenPaths {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, PartialEq)]
-pub struct ToggleFollow(pub PeerId);
-
-#[derive(Clone, PartialEq)]
-pub struct JoinProject {
-    pub project_id: u64,
-    pub follow_user_id: u64,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct OpenSharedScreen {
-    pub peer_id: PeerId,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct SplitWithItem {
-    pane_to_split: WeakViewHandle<Pane>,
-    split_direction: SplitDirection,
-    from: WeakViewHandle<Pane>,
-    item_id_to_move: usize,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct SplitWithProjectEntry {
-    pane_to_split: WeakViewHandle<Pane>,
-    split_direction: SplitDirection,
-    project_entry: ProjectEntryId,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct OpenProjectEntryInPane {
-    pane: WeakViewHandle<Pane>,
-    project_entry: ProjectEntryId,
-}
-
 pub struct Toast {
     id: usize,
     msg: Cow<'static, str>,
@@ -220,34 +184,8 @@ impl Clone for Toast {
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct DismissToast {
-    id: usize,
-}
-
-impl DismissToast {
-    pub fn new(id: usize) -> Self {
-        DismissToast { id }
-    }
-}
-
 pub type WorkspaceId = i64;
 
-impl_internal_actions!(
-    workspace,
-    [
-        OpenPaths,
-        ToggleFollow,
-        JoinProject,
-        OpenSharedScreen,
-        RemoveWorktreeFromProject,
-        SplitWithItem,
-        SplitWithProjectEntry,
-        OpenProjectEntryInPane,
-        Toast,
-        DismissToast
-    ]
-);
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
@@ -255,81 +193,53 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     dock::init(cx);
     notifications::init(cx);
 
-    cx.add_global_action(|_: &Open, cx: &mut AppContext| {
-        let mut paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        });
-
-        cx.spawn(|mut cx| async move {
-            if let Some(paths) = paths.recv().await.flatten() {
-                cx.update(|cx| cx.dispatch_global_action(OpenPaths { paths }));
-            }
-        })
-        .detach();
-    });
-    cx.add_action(|_, _: &Open, cx: &mut ViewContext<Workspace>| {
-        let mut paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        });
-
-        let handle = cx.handle().downgrade();
-        cx.spawn(|_, mut cx| async move {
-            if let Some(paths) = paths.recv().await.flatten() {
-                cx.update(|cx| {
-                    cx.dispatch_action_at(handle.window_id(), handle.id(), OpenPaths { paths })
-                })
-            }
-        })
-        .detach();
-    });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
-        move |action: &OpenPaths, cx: &mut AppContext| {
+        move |_: &Open, cx: &mut AppContext| {
+            let mut paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            });
+
             if let Some(app_state) = app_state.upgrade() {
-                open_paths(&action.paths, &app_state, None, cx).detach();
-            }
-        }
-    });
-    cx.add_async_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |workspace, action: &OpenPaths, cx: &mut ViewContext<Workspace>| {
-            if !workspace.project().read(cx).is_local() {
-                cx.propagate_action();
-                return None;
-            }
-
-            let app_state = app_state.upgrade()?;
-            let window_id = cx.window_id();
-            let action = action.clone();
-            let is_remote = workspace.project.read(cx).is_remote();
-            let has_worktree = workspace.project.read(cx).worktrees(cx).next().is_some();
-            let has_dirty_items = workspace.items(cx).any(|item| item.is_dirty(cx));
-            let close_task = if is_remote || has_worktree || has_dirty_items {
-                None
-            } else {
-                Some(workspace.prepare_to_close(false, cx))
-            };
-
-            Some(cx.spawn(|_, mut cx| async move {
-                let window_id_to_replace = if let Some(close_task) = close_task {
-                    if !close_task.await? {
-                        return Ok(());
+                cx.spawn(move |mut cx| async move {
+                    if let Some(paths) = paths.recv().await.flatten() {
+                        cx.update(|cx| {
+                            open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx)
+                        });
                     }
-                    Some(window_id)
-                } else {
-                    None
-                };
-                cx.update(|cx| open_paths(&action.paths, &app_state, window_id_to_replace, cx))
-                    .await?;
-                Ok(())
-            }))
+                })
+                .detach();
+            }
         }
     });
+    cx.add_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_, _: &Open, cx: &mut ViewContext<Workspace>| {
+            let mut paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+            });
 
+            if let Some(app_state) = app_state.upgrade() {
+                cx.spawn(|this, mut cx| async move {
+                    if let Some(paths) = paths.recv().await.flatten() {
+                        if let Some(task) = this
+                            .update(&mut cx, |this, cx| {
+                                this.open_workspace_for_paths(paths, app_state, cx)
+                            })
+                            .log_err()
+                        {
+                            task.await.log_err();
+                        }
+                    }
+                })
+                .detach();
+            }
+        }
+    });
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut AppContext| {
@@ -347,14 +257,11 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         }
     });
 
-    cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
     cx.add_global_action(Workspace::close_global);
     cx.add_async_action(Workspace::save_all);
-    cx.add_action(Workspace::open_shared_screen);
     cx.add_action(Workspace::add_folder_to_project);
-    cx.add_action(Workspace::remove_folder_from_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -384,30 +291,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
-    cx.add_action(Workspace::split_pane_with_item);
-    cx.add_async_action(Workspace::split_pane_with_project_entry);
-
-    cx.add_async_action(
-        |workspace: &mut Workspace,
-         OpenProjectEntryInPane {
-             pane,
-             project_entry,
-         }: &_,
-         cx| {
-            workspace
-                .project
-                .read(cx)
-                .path_for_entry(*project_entry, cx)
-                .map(|path| {
-                    let task = workspace.open_path(path, Some(pane.clone()), true, cx);
-                    cx.foreground().spawn(async move {
-                        task.await?;
-                        Ok(())
-                    })
-                })
-        },
-    );
-
     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
         cx.spawn(|workspace, mut cx| async move {
             let err = install_cli::install_cli(&cx)
@@ -429,24 +312,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             })
         })
         .detach();
-    });
-
-    cx.add_action(|workspace: &mut Workspace, alert: &Toast, cx| {
-        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
-        workspace.show_notification(alert.id, cx, |cx| {
-            cx.add_view(|_cx| match &alert.click {
-                Some((click_msg, action)) => MessageNotification::new_boxed_action(
-                    alert.msg.clone(),
-                    action.boxed_clone(),
-                    click_msg.clone(),
-                ),
-                None => MessageNotification::new_message(alert.msg.clone()),
-            })
-        })
-    });
-
-    cx.add_action(|workspace: &mut Workspace, alert: &DismissToast, cx| {
-        workspace.dismiss_notification::<MessageNotification>(alert.id, cx);
     });
 
     let client = &app_state.client;
@@ -617,10 +482,7 @@ pub enum Event {
 
 pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
-    client: Arc<Client>,
-    user_store: ModelHandle<client::UserStore>,
     remote_entity_subscription: Option<client::Subscription>,
-    fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_sidebar: ViewHandle<Sidebar>,
@@ -641,7 +503,7 @@ pub struct Workspace {
     active_call: Option<(ModelHandle<ActiveCall>, Vec<gpui::Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
-    background_actions: BackgroundActions,
+    app_state: Arc<AppState>,
     _window_subscriptions: [Subscription; 3],
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
@@ -671,8 +533,7 @@ impl Workspace {
         serialized_workspace: Option<SerializedWorkspace>,
         workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
-        dock_default_factory: DockDefaultItemFactory,
-        background_actions: BackgroundActions,
+        app_state: Arc<AppState>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -709,8 +570,8 @@ impl Workspace {
 
         let weak_handle = cx.weak_handle();
 
-        let center_pane =
-            cx.add_view(|cx| Pane::new(weak_handle.id(), None, background_actions, cx));
+        let center_pane = cx
+            .add_view(|cx| Pane::new(weak_handle.clone(), None, app_state.background_actions, cx));
         let pane_id = center_pane.id();
         cx.subscribe(&center_pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -719,18 +580,14 @@ impl Workspace {
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
         let dock = Dock::new(
-            weak_handle.id(),
-            dock_default_factory,
-            background_actions,
+            app_state.dock_default_item_factory,
+            app_state.background_actions,
             cx,
         );
         let dock_pane = dock.pane().clone();
 
-        let fs = project.read(cx).fs().clone();
-        let user_store = project.read(cx).user_store();
-        let client = project.read(cx).client();
-        let mut current_user = user_store.read(cx).watch_current_user();
-        let mut connection_status = client.status();
+        let mut current_user = app_state.user_store.read(cx).watch_current_user();
+        let mut connection_status = app_state.client.status();
         let _observe_current_user = cx.spawn(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
@@ -823,10 +680,7 @@ impl Workspace {
             status_bar,
             titlebar_item: None,
             notifications: Default::default(),
-            client,
             remote_entity_subscription: None,
-            user_store,
-            fs,
             left_sidebar,
             right_sidebar,
             project: project.clone(),
@@ -836,7 +690,7 @@ impl Workspace {
             window_edited: false,
             active_call,
             database_id: workspace_id,
-            background_actions,
+            app_state,
             _observe_current_user,
             _apply_leader_updates,
             leader_updates_tx,
@@ -925,8 +779,7 @@ impl Workspace {
                         serialized_workspace,
                         workspace_id,
                         project_handle.clone(),
-                        app_state.dock_default_item_factory,
-                        app_state.background_actions,
+                        app_state.clone(),
                         cx,
                     );
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
@@ -1036,8 +889,12 @@ impl Workspace {
         &self.status_bar
     }
 
+    pub fn app_state(&self) -> &Arc<AppState> {
+        &self.app_state
+    }
+
     pub fn user_store(&self) -> &ModelHandle<UserStore> {
-        &self.user_store
+        &self.app_state.user_store
     }
 
     pub fn project(&self) -> &ModelHandle<Project> {
@@ -1045,7 +902,7 @@ impl Workspace {
     }
 
     pub fn client(&self) -> &Client {
-        &self.client
+        &self.app_state.client
     }
 
     pub fn set_titlebar_item(&mut self, item: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -1243,6 +1100,37 @@ impl Workspace {
         })
     }
 
+    pub fn open_workspace_for_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        app_state: Arc<AppState>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let window_id = cx.window_id();
+        let is_remote = self.project.read(cx).is_remote();
+        let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
+        let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
+        let close_task = if is_remote || has_worktree || has_dirty_items {
+            None
+        } else {
+            Some(self.prepare_to_close(false, cx))
+        };
+
+        cx.spawn(|_, mut cx| async move {
+            let window_id_to_replace = if let Some(close_task) = close_task {
+                if !close_task.await? {
+                    return Ok(());
+                }
+                Some(window_id)
+            } else {
+                None
+            };
+            cx.update(|cx| open_paths(&paths, &app_state, window_id_to_replace, cx))
+                .await?;
+            Ok(())
+        })
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn open_paths(
         &mut self,
@@ -1250,7 +1138,7 @@ impl Workspace {
         visible: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
-        let fs = self.fs.clone();
+        let fs = self.app_state.fs.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
@@ -1317,15 +1205,6 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-    }
-
-    fn remove_folder_from_project(
-        &mut self,
-        RemoveWorktreeFromProject(worktree_id): &RemoveWorktreeFromProject,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.project
-            .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
     }
 
     fn project_path_for_path(
@@ -1561,8 +1440,14 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane =
-            cx.add_view(|cx| Pane::new(self.weak_handle().id(), None, self.background_actions, cx));
+        let pane = cx.add_view(|cx| {
+            Pane::new(
+                self.weak_handle(),
+                None,
+                self.app_state.background_actions,
+                cx,
+            )
+        });
         let pane_id = pane.id();
         cx.subscribe(&pane, move |this, _, event, cx| {
             this.handle_pane_event(pane_id, event, cx)
@@ -1678,10 +1563,8 @@ impl Workspace {
         item
     }
 
-    pub fn open_shared_screen(&mut self, action: &OpenSharedScreen, cx: &mut ViewContext<Self>) {
-        if let Some(shared_screen) =
-            self.shared_screen_for_peer(action.peer_id, &self.active_pane, cx)
-        {
+    pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
             let pane = self.active_pane.clone();
             Pane::add_item(self, &pane, Box::new(shared_screen), false, true, None, cx);
         }
@@ -1755,7 +1638,7 @@ impl Workspace {
             proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
                 id: self.active_item(cx).and_then(|item| {
                     item.to_followable_item_handle(cx)?
-                        .remote_id(&self.client, cx)
+                        .remote_id(&self.app_state.client, cx)
                         .map(|id| id.to_proto())
                 }),
                 leader_id: self.leader_for_pane(&pane),
@@ -1833,35 +1716,37 @@ impl Workspace {
         maybe_pane_handle
     }
 
-    pub fn split_pane_with_item(&mut self, action: &SplitWithItem, cx: &mut ViewContext<Self>) {
-        let Some(pane_to_split) = action.pane_to_split.upgrade(cx) else { return; };
-        let Some(from) = action.from.upgrade(cx) else { return; };
+    pub fn split_pane_with_item(
+        &mut self,
+        pane_to_split: WeakViewHandle<Pane>,
+        split_direction: SplitDirection,
+        from: WeakViewHandle<Pane>,
+        item_id_to_move: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(pane_to_split) = pane_to_split.upgrade(cx) else { return; };
+        let Some(from) = from.upgrade(cx) else { return; };
         if &pane_to_split == self.dock_pane() {
             warn!("Can't split dock pane.");
             return;
         }
 
         let new_pane = self.add_pane(cx);
-        Pane::move_item(
-            self,
-            from.clone(),
-            new_pane.clone(),
-            action.item_id_to_move,
-            0,
-            cx,
-        );
+        Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
         self.center
-            .split(&pane_to_split, &new_pane, action.split_direction)
+            .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
         cx.notify();
     }
 
     pub fn split_pane_with_project_entry(
         &mut self,
-        action: &SplitWithProjectEntry,
+        pane_to_split: WeakViewHandle<Pane>,
+        split_direction: SplitDirection,
+        project_entry: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_to_split = action.pane_to_split.upgrade(cx)?;
+        let pane_to_split = pane_to_split.upgrade(cx)?;
         if &pane_to_split == self.dock_pane() {
             warn!("Can't split dock pane.");
             return None;
@@ -1869,13 +1754,10 @@ impl Workspace {
 
         let new_pane = self.add_pane(cx);
         self.center
-            .split(&pane_to_split, &new_pane, action.split_direction)
+            .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
 
-        let path = self
-            .project
-            .read(cx)
-            .path_for_entry(action.project_entry, cx)?;
+        let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
         let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
         Some(cx.foreground().spawn(async move {
             task.await?;
@@ -1924,8 +1806,11 @@ impl Workspace {
 
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
         if let Some(remote_id) = remote_id {
-            self.remote_entity_subscription =
-                Some(self.client.add_view_for_remote_entity(remote_id, cx));
+            self.remote_entity_subscription = Some(
+                self.app_state
+                    .client
+                    .add_view_for_remote_entity(remote_id, cx),
+            );
         } else {
             self.remote_entity_subscription.take();
         }
@@ -1945,10 +1830,9 @@ impl Workspace {
 
     pub fn toggle_follow(
         &mut self,
-        ToggleFollow(leader_id): &ToggleFollow,
+        leader_id: PeerId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let leader_id = *leader_id;
         let pane = self.active_pane().clone();
 
         if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
@@ -1966,7 +1850,7 @@ impl Workspace {
         cx.notify();
 
         let project_id = self.project.read(cx).remote_id()?;
-        let request = self.client.request(proto::Follow {
+        let request = self.app_state.client.request(proto::Follow {
             project_id,
             leader_id: Some(leader_id),
         });
@@ -2027,7 +1911,7 @@ impl Workspace {
 
         next_leader_id
             .or_else(|| collaborators.keys().copied().next())
-            .and_then(|leader_id| self.toggle_follow(&ToggleFollow(leader_id), cx))
+            .and_then(|leader_id| self.toggle_follow(leader_id, cx))
     }
 
     pub fn unfollow(
@@ -2045,7 +1929,8 @@ impl Workspace {
                 if states_by_pane.is_empty() {
                     self.follower_states_by_leader.remove(&leader_id);
                     if let Some(project_id) = self.project.read(cx).remote_id() {
-                        self.client
+                        self.app_state
+                            .client
                             .send(proto::Unfollow {
                                 project_id,
                                 leader_id: Some(leader_id),
@@ -2226,7 +2111,7 @@ impl Workspace {
         mut cx: AsyncAppContext,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
-            let client = &this.client;
+            let client = &this.app_state.client;
             this.leader_state
                 .followers
                 .insert(envelope.original_sender_id()?);
@@ -2434,7 +2319,8 @@ impl Workspace {
     ) -> Option<()> {
         let project_id = self.project.read(cx).remote_id()?;
         if !self.leader_state.followers.is_empty() {
-            self.client
+            self.app_state
+                .client
                 .send(proto::UpdateFollowers {
                     project_id,
                     follower_ids: self.leader_state.followers.iter().copied().collect(),
@@ -2766,7 +2652,18 @@ impl Workspace {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
-        Self::new(None, 0, project, |_, _| None, || &[], cx)
+        let app_state = Arc::new(AppState {
+            languages: project.read(cx).languages().clone(),
+            themes: ThemeRegistry::new((), cx.font_cache().clone()),
+            client: project.read(cx).client(),
+            user_store: project.read(cx).user_store(),
+            fs: project.read(cx).fs().clone(),
+            build_window_options: |_, _, _| Default::default(),
+            initialize_workspace: |_, _, _| {},
+            dock_default_item_factory: |_, _| None,
+            background_actions: || &[],
+        });
+        Self::new(None, 0, project, app_state, cx)
     }
 }
 
@@ -2852,6 +2749,7 @@ impl View for Workspace {
                                                         &self.follower_states_by_leader,
                                                         self.active_call(),
                                                         self.active_pane(),
+                                                        &self.app_state,
                                                         cx,
                                                     ))
                                                     .flex(1., true),
@@ -3083,6 +2981,87 @@ pub fn open_new(
     })
 }
 
+pub fn join_remote_project(
+    project_id: u64,
+    follow_user_id: u64,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|mut cx| async move {
+        let existing_workspace = cx.update(|cx| {
+            cx.window_ids()
+                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+                .find(|workspace| {
+                    workspace.read(cx).project().read(cx).remote_id() == Some(project_id)
+                })
+        });
+
+        let workspace = if let Some(existing_workspace) = existing_workspace {
+            existing_workspace.downgrade()
+        } else {
+            let active_call = cx.read(ActiveCall::global);
+            let room = active_call
+                .read_with(&cx, |call, _| call.room().cloned())
+                .ok_or_else(|| anyhow!("not in a call"))?;
+            let project = room
+                .update(&mut cx, |room, cx| {
+                    room.join_project(
+                        project_id,
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        cx,
+                    )
+                })
+                .await?;
+
+            let (_, workspace) = cx.add_window(
+                (app_state.build_window_options)(None, None, cx.platform().as_ref()),
+                |cx| {
+                    let mut workspace =
+                        Workspace::new(Default::default(), 0, project, app_state.clone(), cx);
+                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                    workspace
+                },
+            );
+            workspace.downgrade()
+        };
+
+        cx.activate_window(workspace.window_id());
+        cx.platform().activate(true);
+
+        workspace.update(&mut cx, |workspace, cx| {
+            if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+                let follow_peer_id = room
+                    .read(cx)
+                    .remote_participants()
+                    .iter()
+                    .find(|(_, participant)| participant.user.id == follow_user_id)
+                    .map(|(_, p)| p.peer_id)
+                    .or_else(|| {
+                        // If we couldn't follow the given user, follow the host instead.
+                        let collaborator = workspace
+                            .project()
+                            .read(cx)
+                            .collaborators()
+                            .values()
+                            .find(|collaborator| collaborator.replica_id == 0)?;
+                        Some(collaborator.peer_id)
+                    });
+
+                if let Some(follow_peer_id) = follow_peer_id {
+                    if !workspace.is_being_followed(follow_peer_id) {
+                        workspace
+                            .toggle_follow(follow_peer_id, cx)
+                            .map(|follow| follow.detach_and_log_err(cx));
+                    }
+                }
+            }
+        })?;
+
+        anyhow::Ok(())
+    })
+}
+
 fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
     let mut parts = value.split(',');
     let width: usize = parts.next()?.parse().ok()?;
@@ -3109,16 +3088,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| None,
-                || &[],
-                cx,
-            )
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
         let item1 = cx.add_view(&workspace, |_| {
@@ -3182,16 +3152,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| None,
-                || &[],
-                cx,
-            )
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3281,16 +3242,7 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(
-                Default::default(),
-                0,
-                project.clone(),
-                |_, _| None,
-                || &[],
-                cx,
-            )
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
         let item1 = cx.add_view(&workspace, |_| TestItem::new());
@@ -3325,9 +3277,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let item1 = cx.add_view(&workspace, |cx| {
             TestItem::new()
@@ -3434,9 +3384,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         // Create several workspace items with single project entries, and two
         // workspace items with multiple project entries.
@@ -3543,9 +3491,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
-        });
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let item = cx.add_view(&workspace, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3662,9 +3608,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| {
-            Workspace::new(Default::default(), 0, project, |_, _| None, || &[], cx)
-        });
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let item = cx.add_view(&workspace, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])

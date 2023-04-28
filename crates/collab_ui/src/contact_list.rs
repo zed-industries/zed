@@ -1,4 +1,3 @@
-use super::collab_titlebar_item::LeaveCall;
 use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
@@ -8,10 +7,10 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -19,10 +18,9 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{mem, sync::Arc};
 use theme::IconButton;
-use workspace::{JoinProject, OpenSharedScreen};
+use workspace::Workspace;
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
-impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactList::remove_contact);
@@ -31,17 +29,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ContactList::select_next);
     cx.add_action(ContactList::select_prev);
     cx.add_action(ContactList::confirm);
-    cx.add_action(ContactList::toggle_expanded);
-    cx.add_action(ContactList::call);
-}
-
-#[derive(Clone, PartialEq)]
-struct ToggleExpanded(Section);
-
-#[derive(Clone, PartialEq)]
-struct Call {
-    recipient_user_id: u64,
-    initial_project: Option<ModelHandle<Project>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -161,6 +148,7 @@ pub struct ContactList {
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState<Self>,
     project: ModelHandle<Project>,
+    workspace: WeakViewHandle<Workspace>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
@@ -169,11 +157,7 @@ pub struct ContactList {
 }
 
 impl ContactList {
-    pub fn new(
-        project: ModelHandle<Project>,
-        user_store: ModelHandle<UserStore>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
@@ -278,6 +262,7 @@ impl ContactList {
         });
 
         let active_call = ActiveCall::global(cx);
+        let user_store = workspace.read(cx).user_store().clone();
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
@@ -290,7 +275,8 @@ impl ContactList {
             match_candidates: Default::default(),
             filter_editor,
             _subscriptions: subscriptions,
-            project,
+            project: workspace.read(cx).project().clone(),
+            workspace: workspace.downgrade(),
             user_store,
         };
         this.update_entries(cx);
@@ -403,18 +389,11 @@ impl ContactList {
             if let Some(entry) = self.entries.get(selection) {
                 match entry {
                     ContactEntry::Header(section) => {
-                        let section = *section;
-                        self.toggle_expanded(&ToggleExpanded(section), cx);
+                        self.toggle_expanded(*section, cx);
                     }
                     ContactEntry::Contact { contact, calling } => {
                         if contact.online && !contact.busy && !calling {
-                            self.call(
-                                &Call {
-                                    recipient_user_id: contact.user.id,
-                                    initial_project: Some(self.project.clone()),
-                                },
-                                cx,
-                            );
+                            self.call(contact.user.id, Some(self.project.clone()), cx);
                         }
                     }
                     ContactEntry::ParticipantProject {
@@ -422,13 +401,23 @@ impl ContactList {
                         host_user_id,
                         ..
                     } => {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id: *project_id,
-                            follow_user_id: *host_user_id,
-                        });
+                        if let Some(workspace) = self.workspace.upgrade(cx) {
+                            let app_state = workspace.read(cx).app_state().clone();
+                            workspace::join_remote_project(
+                                *project_id,
+                                *host_user_id,
+                                app_state,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
                     }
                     ContactEntry::ParticipantScreen { peer_id, .. } => {
-                        cx.dispatch_action(OpenSharedScreen { peer_id: *peer_id });
+                        if let Some(workspace) = self.workspace.upgrade(cx) {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.open_shared_screen(*peer_id, cx)
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -436,8 +425,7 @@ impl ContactList {
         }
     }
 
-    fn toggle_expanded(&mut self, action: &ToggleExpanded, cx: &mut ViewContext<Self>) {
-        let section = action.0;
+    fn toggle_expanded(&mut self, section: Section, cx: &mut ViewContext<Self>) {
         if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
             self.collapsed_sections.remove(ix);
         } else {
@@ -798,6 +786,8 @@ impl ContactList {
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        enum JoinProject {}
+
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -873,12 +863,13 @@ impl ContactList {
         } else {
             CursorStyle::Arrow
         })
-        .on_click(MouseButton::Left, move |_, _, cx| {
+        .on_click(MouseButton::Left, move |_, this, cx| {
             if !is_current {
-                cx.dispatch_global_action(JoinProject {
-                    project_id,
-                    follow_user_id: host_user_id,
-                });
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    let app_state = workspace.read(cx).app_state().clone();
+                    workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+                        .detach_and_log_err(cx);
+                }
             }
         })
         .into_any()
@@ -891,6 +882,8 @@ impl ContactList {
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        enum OpenSharedScreen {}
+
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -971,8 +964,12 @@ impl ContactList {
             },
         )
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(OpenSharedScreen { peer_id });
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            if let Some(workspace) = this.workspace.upgrade(cx) {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_shared_screen(peer_id, cx)
+                });
+            }
         })
         .into_any()
     }
@@ -1004,7 +1001,11 @@ impl ContactList {
                         .contained()
                         .with_style(style.container)
                 })
-                .on_click(MouseButton::Left, |_, _, cx| cx.dispatch_action(LeaveCall))
+                .on_click(MouseButton::Left, |_, _, cx| {
+                    ActiveCall::global(cx)
+                        .update(cx, |call, cx| call.hang_up(cx))
+                        .detach_and_log_err(cx);
+                })
                 .aligned(),
             )
         } else {
@@ -1043,8 +1044,8 @@ impl ContactList {
                 .with_style(header_style.container)
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(ToggleExpanded(section))
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_expanded(section, cx);
         })
         .into_any()
     }
@@ -1142,12 +1143,9 @@ impl ContactList {
                             .style_for(&mut Default::default(), is_selected),
                     )
             })
-            .on_click(MouseButton::Left, move |_, _, cx| {
+            .on_click(MouseButton::Left, move |_, this, cx| {
                 if online && !busy {
-                    cx.dispatch_action(Call {
-                        recipient_user_id: user_id,
-                        initial_project: Some(initial_project.clone()),
-                    });
+                    this.call(user_id, Some(initial_project.clone()), cx);
                 }
             });
 
@@ -1269,9 +1267,12 @@ impl ContactList {
             .into_any()
     }
 
-    fn call(&mut self, action: &Call, cx: &mut ViewContext<Self>) {
-        let recipient_user_id = action.recipient_user_id;
-        let initial_project = action.initial_project.clone();
+    fn call(
+        &mut self,
+        recipient_user_id: u64,
+        initial_project: Option<ModelHandle<Project>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| {
                 call.invite(recipient_user_id, initial_project, cx)

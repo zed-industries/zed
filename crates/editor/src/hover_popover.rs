@@ -3,7 +3,6 @@ use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     fonts::{HighlightStyle, Underline, Weight},
-    impl_internal_actions,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
@@ -25,21 +24,10 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const HOVER_POPOVER_GAP: f32 = 10.;
 
-#[derive(Clone, PartialEq)]
-pub struct HoverAt {
-    pub point: Option<DisplayPoint>,
-}
-
-#[derive(Copy, Clone, PartialEq)]
-pub struct HideHover;
-
 actions!(editor, [Hover]);
-impl_internal_actions!(editor, [HoverAt, HideHover]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(hover);
-    cx.add_action(hover_at);
-    cx.add_action(hide_hover);
 }
 
 /// Bindable action which uses the most recent selection head to trigger a hover
@@ -50,12 +38,12 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
-pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Editor>) {
+pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewContext<Editor>) {
     if cx.global::<Settings>().hover_popover_enabled {
-        if let Some(point) = action.point {
+        if let Some(point) = point {
             show_hover(editor, point, false, cx);
         } else {
-            hide_hover(editor, &HideHover, cx);
+            hide_hover(editor, cx);
         }
     }
 }
@@ -63,7 +51,7 @@ pub fn hover_at(editor: &mut Editor, action: &HoverAt, cx: &mut ViewContext<Edit
 /// Hides the type information popup.
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
-pub fn hide_hover(editor: &mut Editor, _: &HideHover, cx: &mut ViewContext<Editor>) -> bool {
+pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
     let did_hide = editor.hover_state.info_popover.take().is_some()
         | editor.hover_state.diagnostic_popover.take().is_some();
 
@@ -130,7 +118,7 @@ fn show_hover(
                 // Hover triggered from same location as last time. Don't show again.
                 return;
             } else {
-                hide_hover(editor, &HideHover, cx);
+                hide_hover(editor, cx);
             }
         }
     }
@@ -736,15 +724,7 @@ mod tests {
             fn test() { printˇln!(); }
         "});
 
-        cx.update_editor(|editor, cx| {
-            hover_at(
-                editor,
-                &HoverAt {
-                    point: Some(hover_point),
-                },
-                cx,
-            )
-        });
+        cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
         assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
 
         // After delay, hover should be visible.
@@ -783,15 +763,7 @@ mod tests {
         let mut request = cx
             .lsp
             .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
-        cx.update_editor(|editor, cx| {
-            hover_at(
-                editor,
-                &HoverAt {
-                    point: Some(hover_point),
-                },
-                cx,
-            )
-        });
+        cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
         cx.foreground()
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         request.next().await;

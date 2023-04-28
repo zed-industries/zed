@@ -10,8 +10,8 @@ use editor::{
     Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
-    AppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
+    ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -37,8 +37,6 @@ use workspace::{
 };
 
 actions!(diagnostics, [Deploy]);
-
-impl_internal_actions!(diagnostics, [Jump]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
@@ -549,6 +547,11 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn is_singleton(&self, _: &AppContext) -> bool {
         false
+    }
+
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {

@@ -6,11 +6,11 @@ use crate::{
 use client::UserStore;
 use gpui::{
     actions, elements::*, platform::MouseButton, AppContext, Entity, ModelHandle, View,
-    ViewContext, ViewHandle,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use picker::PickerEvent;
-use project::Project;
 use settings::Settings;
+use workspace::Workspace;
 
 actions!(contacts_popover, [ToggleContactFinder]);
 
@@ -29,23 +29,17 @@ enum Child {
 
 pub struct ContactsPopover {
     child: Child,
-    project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
+    workspace: WeakViewHandle<Workspace>,
     _subscription: Option<gpui::Subscription>,
 }
 
 impl ContactsPopover {
-    pub fn new(
-        project: ModelHandle<Project>,
-        user_store: ModelHandle<UserStore>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         let mut this = Self {
-            child: Child::ContactList(
-                cx.add_view(|cx| ContactList::new(project.clone(), user_store.clone(), cx)),
-            ),
-            project,
-            user_store,
+            child: Child::ContactList(cx.add_view(|cx| ContactList::new(workspace, cx))),
+            user_store: workspace.read(cx).user_store().clone(),
+            workspace: workspace.downgrade(),
             _subscription: None,
         };
         this.show_contact_list(String::new(), cx);
@@ -74,16 +68,16 @@ impl ContactsPopover {
     }
 
     fn show_contact_list(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
-        let child = cx.add_view(|cx| {
-            ContactList::new(self.project.clone(), self.user_store.clone(), cx)
-                .with_editor_text(editor_text, cx)
-        });
-        cx.focus(&child);
-        self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
-            crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),
-        }));
-        self.child = Child::ContactList(child);
-        cx.notify();
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            let child = cx
+                .add_view(|cx| ContactList::new(&workspace, cx).with_editor_text(editor_text, cx));
+            cx.focus(&child);
+            self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
+                crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),
+            }));
+            self.child = Child::ContactList(child);
+            cx.notify();
+        }
     }
 }
 

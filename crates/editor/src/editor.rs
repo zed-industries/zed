@@ -37,7 +37,7 @@ use gpui::{
     executor,
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::Vector2F,
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
@@ -45,7 +45,7 @@ use gpui::{
     ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
-use hover_popover::{hide_hover, HideHover, HoverState};
+use hover_popover::{hide_hover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -86,7 +86,7 @@ use std::{
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
+use workspace::{ItemNavHistory, ViewId, Workspace};
 
 use crate::git::diff_hunk_to_display;
 
@@ -102,16 +102,6 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct Select(pub SelectPhase);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Jump {
-    path: ProjectPath,
-    position: Point,
-    anchor: language::Anchor,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -285,8 +275,6 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Select, Jump]);
-
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -299,7 +287,6 @@ pub enum Direction {
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::new_file);
-    cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
     cx.add_action(Editor::newline_above);
@@ -381,7 +368,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
-    cx.add_action(Editor::jump);
     cx.add_action(Editor::toggle_soft_wrap);
     cx.add_action(Editor::reveal_in_finder);
     cx.add_action(Editor::copy_path);
@@ -400,8 +386,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::copilot_suggest);
 
     hover_popover::init(cx);
-    link_go_to_definition::init(cx);
-    mouse_context_menu::init(cx);
     scroll::actions::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
@@ -509,7 +493,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    workspace_id: Option<WorkspaceId>,
+    workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
@@ -1282,7 +1266,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
-            workspace_id: None,
+            workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
             read_only: false,
@@ -1495,7 +1479,7 @@ impl Editor {
                 }
             }
 
-            hide_hover(self, &HideHover, cx);
+            hide_hover(self, cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -1563,7 +1547,7 @@ impl Editor {
         });
     }
 
-    fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
+    fn select(&mut self, phase: SelectPhase, cx: &mut ViewContext<Self>) {
         self.hide_context_menu(cx);
 
         match phase {
@@ -1571,20 +1555,20 @@ impl Editor {
                 position,
                 add,
                 click_count,
-            } => self.begin_selection(*position, *add, *click_count, cx),
+            } => self.begin_selection(position, add, click_count, cx),
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
-            } => self.begin_columnar_selection(*position, *goal_column, cx),
+            } => self.begin_columnar_selection(position, goal_column, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
-            } => self.extend_selection(*position, *click_count, cx),
+            } => self.extend_selection(position, click_count, cx),
             SelectPhase::Update {
                 position,
                 goal_column,
                 scroll_position,
-            } => self.update_selection(*position, *goal_column, *scroll_position, cx),
+            } => self.update_selection(position, goal_column, scroll_position, cx),
             SelectPhase::End => self.end_selection(cx),
         }
     }
@@ -1879,7 +1863,7 @@ impl Editor {
             return;
         }
 
-        if hide_hover(self, &HideHover, cx) {
+        if hide_hover(self, cx) {
             return;
         }
 
@@ -6756,10 +6740,14 @@ impl Editor {
         });
     }
 
-    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
-        let editor = workspace.open_path(action.path.clone(), None, true, cx);
-        let position = action.position;
-        let anchor = action.anchor;
+    fn jump(
+        workspace: &mut Workspace,
+        path: ProjectPath,
+        position: Point,
+        anchor: language::Anchor,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let editor = workspace.open_path(path, None, true, cx);
         cx.spawn(|_, mut cx| async move {
             let editor = editor
                 .await?
@@ -7025,7 +7013,7 @@ impl View for Editor {
 
         if font_changed {
             cx.defer(move |editor, cx: &mut ViewContext<Editor>| {
-                hide_hover(editor, &HideHover, cx);
+                hide_hover(editor, cx);
                 hide_link_definition(editor, cx);
             });
         }
@@ -7074,7 +7062,7 @@ impl View for Editor {
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
-        hide_hover(self, &HideHover, cx);
+        hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }

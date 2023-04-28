@@ -1,13 +1,10 @@
 mod toggle_dock_button;
 
-use serde::Deserialize;
-
 use collections::HashMap;
 use gpui::{
     actions,
     elements::{ChildView, Empty, MouseEventHandler, ParentElement, Side, Stack},
     geometry::vector::Vector2F,
-    impl_internal_actions,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Border, Element, SizeConstraint, ViewContext, ViewHandle,
 };
@@ -16,12 +13,6 @@ use theme::Theme;
 
 use crate::{sidebar::SidebarSide, BackgroundActions, ItemHandle, Pane, Workspace};
 pub use toggle_dock_button::ToggleDockButton;
-
-#[derive(PartialEq, Clone, Deserialize)]
-pub struct MoveDock(pub DockAnchor);
-
-#[derive(PartialEq, Clone)]
-pub struct AddDefaultItemToDock;
 
 actions!(
     dock,
@@ -35,16 +26,10 @@ actions!(
         RemoveTabFromDock,
     ]
 );
-impl_internal_actions!(dock, [MoveDock, AddDefaultItemToDock]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(Dock::focus_dock);
     cx.add_action(Dock::hide_dock);
-    cx.add_action(
-        |workspace: &mut Workspace, &MoveDock(dock_anchor), cx: &mut ViewContext<Workspace>| {
-            Dock::move_dock(workspace, dock_anchor, true, cx);
-        },
-    );
     cx.add_action(
         |workspace: &mut Workspace, _: &AnchorDockRight, cx: &mut ViewContext<Workspace>| {
             Dock::move_dock(workspace, DockAnchor::Right, true, cx);
@@ -182,21 +167,14 @@ pub struct Dock {
 
 impl Dock {
     pub fn new(
-        workspace_id: usize,
         default_item_factory: DockDefaultItemFactory,
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Workspace>,
     ) -> Self {
         let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
-
-        let pane = cx.add_view(|cx| {
-            Pane::new(
-                workspace_id,
-                Some(position.anchor()),
-                background_actions,
-                cx,
-            )
-        });
+        let workspace = cx.weak_handle();
+        let pane =
+            cx.add_view(|cx| Pane::new(workspace, Some(position.anchor()), background_actions, cx));
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
@@ -426,11 +404,13 @@ mod tests {
     use std::{
         ops::{Deref, DerefMut},
         path::PathBuf,
+        sync::Arc,
     };
 
     use gpui::{AppContext, BorrowWindowContext, TestAppContext, ViewContext, WindowContext};
     use project::{FakeFs, Project};
     use settings::Settings;
+    use theme::ThemeRegistry;
 
     use super::*;
     use crate::{
@@ -441,7 +421,7 @@ mod tests {
         },
         register_deserializable_item,
         sidebar::Sidebar,
-        ItemHandle, Workspace,
+        AppState, ItemHandle, Workspace,
     };
 
     pub fn default_item_factory(
@@ -489,8 +469,17 @@ mod tests {
                 Some(serialized_workspace),
                 0,
                 project.clone(),
-                default_item_factory,
-                || &[],
+                Arc::new(AppState {
+                    languages: project.read(cx).languages().clone(),
+                    themes: ThemeRegistry::new((), cx.font_cache().clone()),
+                    client: project.read(cx).client(),
+                    user_store: project.read(cx).user_store(),
+                    fs: project.read(cx).fs().clone(),
+                    build_window_options: |_, _, _| Default::default(),
+                    initialize_workspace: |_, _, _| {},
+                    dock_default_item_factory: default_item_factory,
+                    background_actions: || &[],
+                }),
                 cx,
             )
         });
@@ -582,7 +571,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_toggle_dock_focus(cx: &mut TestAppContext) {
-        let cx = DockTestContext::new(cx).await;
+        let mut cx = DockTestContext::new(cx).await;
 
         cx.move_dock(DockAnchor::Right);
         cx.assert_dock_pane_active();
@@ -620,11 +609,20 @@ mod tests {
             let project = Project::test(fs, [], cx).await;
             let (window_id, workspace) = cx.add_window(|cx| {
                 Workspace::new(
-                    Default::default(),
+                    None,
                     0,
-                    project,
-                    default_item_factory,
-                    || &[],
+                    project.clone(),
+                    Arc::new(AppState {
+                        languages: project.read(cx).languages().clone(),
+                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
+                        client: project.read(cx).client(),
+                        user_store: project.read(cx).user_store(),
+                        fs: project.read(cx).fs().clone(),
+                        build_window_options: |_, _, _| Default::default(),
+                        initialize_workspace: |_, _, _| {},
+                        dock_default_item_factory: default_item_factory,
+                        background_actions: || &[],
+                    }),
                     cx,
                 )
             });
@@ -728,8 +726,8 @@ mod tests {
             })
         }
 
-        pub fn move_dock(&self, anchor: DockAnchor) {
-            self.cx.dispatch_action(self.window_id, MoveDock(anchor));
+        pub fn move_dock(&mut self, anchor: DockAnchor) {
+            self.update_workspace(|workspace, cx| Dock::move_dock(workspace, anchor, true, cx));
         }
 
         pub fn hide_dock(&self) {

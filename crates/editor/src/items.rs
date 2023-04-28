@@ -794,7 +794,7 @@ impl Item for Editor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
         let item_id = cx.view_id();
-        self.workspace_id = Some(workspace_id);
+        self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
 
         fn serialize(
             buffer: ModelHandle<Buffer>,
@@ -819,9 +819,9 @@ impl Item for Editor {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
-                if let Some(workspace_id) = this.workspace_id {
+                if let Some((_, workspace_id)) = this.workspace.as_ref() {
                     if let language::Event::FileHandleChanged = event {
-                        serialize(buffer, workspace_id, cx.view_id(), cx);
+                        serialize(buffer, *workspace_id, cx.view_id(), cx);
                     }
                 }
             })

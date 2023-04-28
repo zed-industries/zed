@@ -365,7 +365,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 workspace.update_followers(
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item
-                            .remote_id(&workspace.client, cx)
+                            .remote_id(&workspace.app_state.client, cx)
                             .map(|id| id.to_proto()),
                         variant: Some(message),
                         leader_id: workspace.leader_for_pane(&pane),
@@ -421,7 +421,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                         proto::update_followers::Variant::UpdateView(
                                             proto::UpdateView {
                                                 id: item
-                                                    .remote_id(&this.client, cx)
+                                                    .remote_id(&this.app_state.client, cx)
                                                     .map(|id| id.to_proto()),
                                                 variant: pending_update.borrow_mut().take(),
                                                 leader_id,
