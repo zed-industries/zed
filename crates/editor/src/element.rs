@@ -11,7 +11,7 @@ use crate::{
         MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
-        GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
+        go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
     },
     mouse_context_menu::DeployMouseContextMenu,
     scroll::actions::Scroll,
@@ -309,17 +309,25 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
+        if let Some(workspace) = editor
+            .workspace
+            .as_ref()
+            .and_then(|(workspace, _)| workspace.upgrade(cx))
+        {
+            if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
+                let (point, target_point) = position_map.point_for_position(text_bounds, position);
 
-            if point == target_point {
-                if shift {
-                    cx.dispatch_action(GoToFetchedTypeDefinition { point });
-                } else {
-                    cx.dispatch_action(GoToFetchedDefinition { point });
+                if point == target_point {
+                    workspace.update(cx, |workspace, cx| {
+                        if shift {
+                            go_to_fetched_type_definition(workspace, point, cx);
+                        } else {
+                            go_to_fetched_definition(workspace, point, cx);
+                        }
+                    });
+
+                    return true;
                 }
-
-                return true;
             }
         }
 
@@ -350,11 +358,7 @@ impl EditorElement {
             None
         };
 
-        cx.dispatch_action(UpdateGoToDefinitionLink {
-            point,
-            cmd_held: cmd,
-            shift_held: shift,
-        });
+        update_go_to_definition_link(editor, point, cmd, shift, cx);
 
         if editor.has_pending_selection() {
             let mut scroll_delta = Vector2F::zero();
@@ -418,11 +422,7 @@ impl EditorElement {
         // Don't trigger hover popover if mouse is hovering over context menu
         let point = position_to_display_point(position, text_bounds, position_map);
 
-        cx.dispatch_action(UpdateGoToDefinitionLink {
-            point,
-            cmd_held: cmd,
-            shift_held: shift,
-        });
+        update_go_to_definition_link(editor, point, cmd, shift, cx);
         hover_at(editor, point, cx);
 
         true
