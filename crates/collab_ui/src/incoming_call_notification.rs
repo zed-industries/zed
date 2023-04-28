@@ -1,3 +1,5 @@
+use std::sync::{Arc, Weak};
+
 use call::{ActiveCall, IncomingCall};
 use client::proto;
 use futures::StreamExt;
@@ -10,13 +12,14 @@ use gpui::{
 };
 use settings::Settings;
 use util::ResultExt;
-use workspace::JoinProject;
+use workspace::AppState;
 
 impl_internal_actions!(incoming_call_notification, [RespondToCall]);
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(IncomingCallNotification::respond_to_call);
 
+    let app_state = Arc::downgrade(app_state);
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
     cx.spawn(|mut cx| async move {
         let mut notification_windows = Vec::new();
@@ -48,7 +51,7 @@ pub fn init(cx: &mut AppContext) {
                             is_movable: false,
                             screen: Some(screen),
                         },
-                        |_| IncomingCallNotification::new(incoming_call.clone()),
+                        |_| IncomingCallNotification::new(incoming_call.clone(), app_state.clone()),
                     );
 
                     notification_windows.push(window_id);
@@ -66,11 +69,12 @@ struct RespondToCall {
 
 pub struct IncomingCallNotification {
     call: IncomingCall,
+    app_state: Weak<AppState>,
 }
 
 impl IncomingCallNotification {
-    pub fn new(call: IncomingCall) -> Self {
-        Self { call }
+    pub fn new(call: IncomingCall, app_state: Weak<AppState>) -> Self {
+        Self { call, app_state }
     }
 
     fn respond_to_call(&mut self, action: &RespondToCall, cx: &mut ViewContext<Self>) {
@@ -79,15 +83,20 @@ impl IncomingCallNotification {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 join.await?;
                 if let Some(project_id) = initial_project_id {
-                    cx.update(|cx| {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id,
-                            follow_user_id: caller_user_id,
-                        })
-                    });
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(app_state) = this.app_state.upgrade() {
+                            workspace::join_remote_project(
+                                project_id,
+                                caller_user_id,
+                                app_state,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
+                    })?;
                 }
                 anyhow::Ok(())
             })

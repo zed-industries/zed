@@ -1,4 +1,6 @@
-use crate::{FollowerStatesByLeader, JoinProject, Pane, Workspace};
+use std::sync::Arc;
+
+use crate::{AppState, FollowerStatesByLeader, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
@@ -70,6 +72,7 @@ impl PaneGroup {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
         self.root.render(
@@ -78,6 +81,7 @@ impl PaneGroup {
             follower_states,
             active_call,
             active_pane,
+            app_state,
             cx,
         )
     }
@@ -131,6 +135,7 @@ impl Member {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
         enum FollowIntoExternalProject {}
@@ -175,6 +180,7 @@ impl Member {
                             } else {
                                 let leader_user = leader.user.clone();
                                 let leader_user_id = leader.user.id;
+                                let app_state = Arc::downgrade(app_state);
                                 Some(
                                     MouseEventHandler::<FollowIntoExternalProject, _>::new(
                                         pane.id(),
@@ -199,10 +205,15 @@ impl Member {
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
                                     .on_click(MouseButton::Left, move |_, _, cx| {
-                                        cx.dispatch_action(JoinProject {
-                                            project_id: leader_project_id,
-                                            follow_user_id: leader_user_id,
-                                        })
+                                        if let Some(app_state) = app_state.upgrade() {
+                                            crate::join_remote_project(
+                                                leader_project_id,
+                                                leader_user_id,
+                                                app_state,
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                        }
                                     })
                                     .aligned()
                                     .bottom()
@@ -257,6 +268,7 @@ impl Member {
                 follower_states,
                 active_call,
                 active_pane,
+                app_state,
                 cx,
             ),
         }
@@ -360,6 +372,7 @@ impl PaneAxis {
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
         let last_member_ix = self.members.len() - 1;
@@ -370,8 +383,15 @@ impl PaneAxis {
                     flex = cx.global::<Settings>().active_pane_magnification;
                 }
 
-                let mut member =
-                    member.render(project, theme, follower_state, active_call, active_pane, cx);
+                let mut member = member.render(
+                    project,
+                    theme,
+                    follower_state,
+                    active_call,
+                    active_pane,
+                    app_state,
+                    cx,
+                );
                 if ix < last_member_ix {
                     let mut border = theme.workspace.pane_divider;
                     border.left = false;

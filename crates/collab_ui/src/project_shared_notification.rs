@@ -2,22 +2,17 @@ use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
 use gpui::{
-    actions,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
     AppContext, Entity, View, ViewContext,
 };
 use settings::Settings;
-use std::sync::Arc;
-use workspace::JoinProject;
+use std::sync::{Arc, Weak};
+use workspace::AppState;
 
-actions!(project_shared_notification, [DismissProject]);
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(ProjectSharedNotification::join);
-    cx.add_action(ProjectSharedNotification::dismiss);
-
+pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+    let app_state = Arc::downgrade(app_state);
     let active_call = ActiveCall::global(cx);
     let mut notification_windows = HashMap::default();
     cx.subscribe(&active_call, move |_, event, cx| match event {
@@ -50,6 +45,7 @@ pub fn init(cx: &mut AppContext) {
                             owner.clone(),
                             *project_id,
                             worktree_root_names.clone(),
+                            app_state.clone(),
                         )
                     },
                 );
@@ -82,23 +78,33 @@ pub struct ProjectSharedNotification {
     project_id: u64,
     worktree_root_names: Vec<String>,
     owner: Arc<User>,
+    app_state: Weak<AppState>,
 }
 
 impl ProjectSharedNotification {
-    fn new(owner: Arc<User>, project_id: u64, worktree_root_names: Vec<String>) -> Self {
+    fn new(
+        owner: Arc<User>,
+        project_id: u64,
+        worktree_root_names: Vec<String>,
+        app_state: Weak<AppState>,
+    ) -> Self {
         Self {
             project_id,
             worktree_root_names,
             owner,
+            app_state,
         }
     }
 
-    fn join(&mut self, _: &JoinProject, cx: &mut ViewContext<Self>) {
+    fn join(&mut self, cx: &mut ViewContext<Self>) {
         cx.remove_window();
-        cx.propagate_action();
+        if let Some(app_state) = self.app_state.upgrade() {
+            workspace::join_remote_project(self.project_id, self.owner.id, app_state, cx)
+                .detach_and_log_err(cx);
+        }
     }
 
-    fn dismiss(&mut self, _: &DismissProject, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
         cx.remove_window();
     }
 
@@ -161,9 +167,6 @@ impl ProjectSharedNotification {
         enum Open {}
         enum Dismiss {}
 
-        let project_id = self.project_id;
-        let owner_user_id = self.owner.id;
-
         Flex::column()
             .with_child(
                 MouseEventHandler::<Open, Self>::new(0, cx, |_, cx| {
@@ -174,12 +177,7 @@ impl ProjectSharedNotification {
                         .with_style(theme.open_button.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(JoinProject {
-                        project_id,
-                        follow_user_id: owner_user_id,
-                    });
-                })
+                .on_click(MouseButton::Left, move |_, this, cx| this.join(cx))
                 .flex(1., true),
             )
             .with_child(
@@ -191,8 +189,8 @@ impl ProjectSharedNotification {
                         .with_style(theme.dismiss_button.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(DismissProject);
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    this.dismiss(cx);
                 })
                 .flex(1., true),
             )
