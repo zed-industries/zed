@@ -33,7 +33,7 @@ use util::ResultExt;
 use std::{fmt::Debug, ops::RangeInclusive};
 use std::{mem, ops::Range};
 
-use crate::{DeployContextMenu, TerminalView};
+use crate::TerminalView;
 
 ///The information generated during layout that is nescessary for painting
 pub struct LayoutState {
@@ -429,19 +429,20 @@ impl TerminalElement {
                 ),
             )
             // Context menu
-            .on_click(MouseButton::Right, move |e, _: &mut TerminalView, cx| {
-                let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx) {
-                    conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(e.shift))
-                } else {
-                    // If we can't get the model handle, probably can't deploy the context menu
-                    true
-                };
-                if !mouse_mode {
-                    cx.dispatch_action(DeployContextMenu {
-                        position: e.position,
-                    });
-                }
-            })
+            .on_click(
+                MouseButton::Right,
+                move |event, view: &mut TerminalView, cx| {
+                    let mouse_mode = if let Some(conn_handle) = connection.upgrade(cx) {
+                        conn_handle.update(cx, |terminal, _cx| terminal.mouse_mode(event.shift))
+                    } else {
+                        // If we can't get the model handle, probably can't deploy the context menu
+                        true
+                    };
+                    if !mouse_mode {
+                        view.deploy_context_menu(event.position, cx);
+                    }
+                },
+            )
             .on_move(move |event, _: &mut TerminalView, cx| {
                 if cx.is_parent_view_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {

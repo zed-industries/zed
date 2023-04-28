@@ -9,7 +9,7 @@ use gpui::{
     actions,
     elements::{AnchorCorner, ChildView, Flex, Label, ParentElement, Stack},
     geometry::vector::Vector2F,
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::{KeymapContext, Keystroke},
     platform::KeyDownEvent,
     AnyElement, AnyViewHandle, AppContext, Element, Entity, ModelHandle, Task, View, ViewContext,
@@ -50,11 +50,6 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[derive(Clone, PartialEq)]
-pub struct DeployContextMenu {
-    pub position: Vector2F,
-}
-
 #[derive(Clone, Default, Deserialize, PartialEq)]
 pub struct SendText(String);
 
@@ -68,8 +63,6 @@ actions!(
 
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
-impl_internal_actions!(project_panel, [DeployContextMenu]);
-
 pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::deploy);
 
@@ -78,7 +71,6 @@ pub fn init(cx: &mut AppContext) {
     //Useful terminal views
     cx.add_action(TerminalView::send_text);
     cx.add_action(TerminalView::send_keystroke);
-    cx.add_action(TerminalView::deploy_context_menu);
     cx.add_action(TerminalView::copy);
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
@@ -197,14 +189,14 @@ impl TerminalView {
         cx.emit(Event::Wakeup);
     }
 
-    pub fn deploy_context_menu(&mut self, action: &DeployContextMenu, cx: &mut ViewContext<Self>) {
+    pub fn deploy_context_menu(&mut self, position: Vector2F, cx: &mut ViewContext<Self>) {
         let menu_entries = vec![
             ContextMenuItem::action("Clear", Clear),
             ContextMenuItem::action("Close", pane::CloseActiveItem),
         ];
 
         self.context_menu.update(cx, |menu, cx| {
-            menu.show(action.position, AnchorCorner::TopLeft, menu_entries, cx)
+            menu.show(position, AnchorCorner::TopLeft, menu_entries, cx)
         });
 
         cx.notify();
