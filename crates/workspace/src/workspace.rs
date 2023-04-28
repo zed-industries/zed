@@ -201,14 +201,7 @@ impl Clone for Toast {
 
 pub type WorkspaceId = i64;
 
-impl_internal_actions!(
-    workspace,
-    [
-        RemoveWorktreeFromProject,
-        SplitWithItem,
-        SplitWithProjectEntry,
-    ]
-);
+impl_internal_actions!(workspace, [SplitWithItem, SplitWithProjectEntry,]);
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
@@ -285,7 +278,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_global_action(Workspace::close_global);
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
-    cx.add_action(Workspace::remove_folder_from_project);
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();
@@ -1232,15 +1224,6 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-    }
-
-    fn remove_folder_from_project(
-        &mut self,
-        RemoveWorktreeFromProject(worktree_id): &RemoveWorktreeFromProject,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.project
-            .update(cx, |project, cx| project.remove_worktree(*worktree_id, cx));
     }
 
     fn project_path_for_path(
