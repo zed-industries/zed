@@ -10,8 +10,8 @@ use editor::{
     Editor, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, elements::*, fonts::TextStyle, impl_internal_actions, serde_json, AnyViewHandle,
-    AppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    actions, elements::*, fonts::TextStyle, serde_json, AnyViewHandle, AppContext, Entity,
+    ModelHandle, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
     Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
@@ -37,8 +37,6 @@ use workspace::{
 };
 
 actions!(diagnostics, [Deploy]);
-
-impl_internal_actions!(diagnostics, [Jump]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
