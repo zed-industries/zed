@@ -135,11 +135,6 @@ pub struct OpenPaths {
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, PartialEq)]
-pub struct OpenSharedScreen {
-    pub peer_id: PeerId,
-}
-
-#[derive(Clone, PartialEq)]
 pub struct SplitWithItem {
     pane_to_split: WeakViewHandle<Pane>,
     split_direction: SplitDirection,
@@ -209,7 +204,6 @@ pub type WorkspaceId = i64;
 impl_internal_actions!(
     workspace,
     [
-        OpenSharedScreen,
         RemoveWorktreeFromProject,
         SplitWithItem,
         SplitWithProjectEntry,
@@ -290,7 +284,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_async_action(Workspace::close);
     cx.add_global_action(Workspace::close_global);
     cx.add_async_action(Workspace::save_all);
-    cx.add_action(Workspace::open_shared_screen);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(Workspace::remove_folder_from_project);
     cx.add_action(
@@ -1606,10 +1599,8 @@ impl Workspace {
         item
     }
 
-    pub fn open_shared_screen(&mut self, action: &OpenSharedScreen, cx: &mut ViewContext<Self>) {
-        if let Some(shared_screen) =
-            self.shared_screen_for_peer(action.peer_id, &self.active_pane, cx)
-        {
+    pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
+        if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
             let pane = self.active_pane.clone();
             Pane::add_item(self, &pane, Box::new(shared_screen), false, true, None, cx);
         }
