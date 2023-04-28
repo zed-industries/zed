@@ -573,7 +573,7 @@ fn open_telemetry_log_file(
     workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
         cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                let path = app_state.client.telemetry_log_file_path()?;
+                let path = app_state.client.telemetry().log_file_path()?;
                 app_state.fs.load(&path).await.log_err()
             }
 
