@@ -1,6 +1,5 @@
-use std::sync::Arc;
-
 use context_menu::{ContextMenu, ContextMenuItem};
+use copilot::{Copilot, Reinstall, SignOut, Status};
 use editor::Editor;
 use gpui::{
     elements::*,
@@ -9,13 +8,12 @@ use gpui::{
     ViewHandle, WindowContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
+use std::sync::Arc;
 use util::ResultExt;
 use workspace::{
     item::ItemHandle, notifications::simple_message_notification::OsOpen, StatusItemView, Toast,
     Workspace,
 };
-
-use copilot::{Copilot, Reinstall, SignOut, Status};
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const COPILOT_STARTING_TOAST_ID: usize = 1337;
