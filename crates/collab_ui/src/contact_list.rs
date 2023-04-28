@@ -1,4 +1,3 @@
-use super::collab_titlebar_item::LeaveCall;
 use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
@@ -1002,7 +1001,11 @@ impl ContactList {
                         .contained()
                         .with_style(style.container)
                 })
-                .on_click(MouseButton::Left, |_, _, cx| cx.dispatch_action(LeaveCall))
+                .on_click(MouseButton::Left, |_, _, cx| {
+                    ActiveCall::global(cx)
+                        .update(cx, |call, cx| call.hang_up(cx))
+                        .detach_and_log_err(cx);
+                })
                 .aligned(),
             )
         } else {
