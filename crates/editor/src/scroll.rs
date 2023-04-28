@@ -308,13 +308,9 @@ impl Editor {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         hide_hover(self, &HideHover, cx);
-        self.scroll_manager.set_scroll_position(
-            scroll_position,
-            &map,
-            local,
-            self.workspace_id,
-            cx,
-        );
+        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
+        self.scroll_manager
+            .set_scroll_position(scroll_position, &map, local, workspace_id, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
@@ -324,12 +320,13 @@ impl Editor {
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
         hide_hover(self, &HideHover, cx);
+        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         let top_row = scroll_anchor
             .top_anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
         self.scroll_manager
-            .set_anchor(scroll_anchor, top_row, true, self.workspace_id, cx);
+            .set_anchor(scroll_anchor, top_row, true, workspace_id, cx);
     }
 
     pub(crate) fn set_scroll_anchor_remote(
@@ -338,12 +335,13 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         hide_hover(self, &HideHover, cx);
+        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         let top_row = scroll_anchor
             .top_anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
         self.scroll_manager
-            .set_anchor(scroll_anchor, top_row, false, self.workspace_id, cx);
+            .set_anchor(scroll_anchor, top_row, false, workspace_id, cx);
     }
 
     pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {
