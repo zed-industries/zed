@@ -24,18 +24,17 @@ impl LspAdapter for RustLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("rust-analyzer/rust-analyzer", http).await?;
+        let release = latest_github_release("rust-analyzer/rust-analyzer", false, http).await?;
         let asset_name = format!("rust-analyzer-{}-apple-darwin.gz", consts::ARCH);
         let asset = release
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
             .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
-        let version = GitHubLspBinaryVersion {
+        Ok(Box::new(GitHubLspBinaryVersion {
             name: release.name,
             url: asset.browser_download_url.clone(),
-        };
-        Ok(Box::new(version) as Box<_>)
+        }))
     }
 
     async fn fetch_server_binary(
@@ -77,6 +76,7 @@ impl LspAdapter for RustLspAdapter {
             while let Some(entry) = entries.next().await {
                 last = Some(entry?.path());
             }
+
             anyhow::Ok(LanguageServerBinary {
                 path: last.ok_or_else(|| anyhow!("no cached binary"))?,
                 arguments: Default::default(),

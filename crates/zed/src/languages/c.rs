@@ -23,7 +23,7 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("clangd/clangd", http).await?;
+        let release = latest_github_release("clangd/clangd", false, http).await?;
         let asset_name = format!("clangd-mac-{}.zip", release.name);
         let asset = release
             .assets
