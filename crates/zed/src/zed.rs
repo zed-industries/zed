@@ -261,7 +261,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     activity_indicator::init(cx);
-    copilot_button::init(cx);
     lsp_log::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
