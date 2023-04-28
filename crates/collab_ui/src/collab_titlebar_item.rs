@@ -23,7 +23,7 @@ use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
-use workspace::{FollowNextCollaborator, JoinProject, ToggleFollow, Workspace};
+use workspace::{FollowNextCollaborator, JoinProject, Workspace};
 
 actions!(
     collab,
@@ -746,14 +746,22 @@ impl CollabTitlebarItem {
 
         if let Some(location) = location {
             if let Some(replica_id) = replica_id {
+                enum ToggleFollow {}
+
                 content = MouseEventHandler::<ToggleFollow, Self>::new(
                     replica_id.into(),
                     cx,
                     move |_, _| content,
                 )
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(ToggleFollow(peer_id))
+                .on_click(MouseButton::Left, move |_, item, cx| {
+                    if let Some(workspace) = item.workspace.upgrade(cx) {
+                        if let Some(task) = workspace
+                            .update(cx, |workspace, cx| workspace.toggle_follow(peer_id, cx))
+                        {
+                            task.detach_and_log_err(cx);
+                        }
+                    }
                 })
                 .with_tooltip::<ToggleFollow>(
                     peer_id.as_u64() as usize,

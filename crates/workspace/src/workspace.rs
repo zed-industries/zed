@@ -136,9 +136,6 @@ pub struct OpenPaths {
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, PartialEq)]
-pub struct ToggleFollow(pub PeerId);
-
-#[derive(Clone, PartialEq)]
 pub struct JoinProject {
     pub project_id: u64,
     pub follow_user_id: u64,
@@ -219,7 +216,6 @@ pub type WorkspaceId = i64;
 impl_internal_actions!(
     workspace,
     [
-        ToggleFollow,
         JoinProject,
         OpenSharedScreen,
         RemoveWorktreeFromProject,
@@ -298,7 +294,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         }
     });
 
-    cx.add_async_action(Workspace::toggle_follow);
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
     cx.add_global_action(Workspace::close_global);
@@ -1883,10 +1878,9 @@ impl Workspace {
 
     pub fn toggle_follow(
         &mut self,
-        ToggleFollow(leader_id): &ToggleFollow,
+        leader_id: PeerId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let leader_id = *leader_id;
         let pane = self.active_pane().clone();
 
         if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
@@ -1965,7 +1959,7 @@ impl Workspace {
 
         next_leader_id
             .or_else(|| collaborators.keys().copied().next())
-            .and_then(|leader_id| self.toggle_follow(&ToggleFollow(leader_id), cx))
+            .and_then(|leader_id| self.toggle_follow(leader_id, cx))
     }
 
     pub fn unfollow(

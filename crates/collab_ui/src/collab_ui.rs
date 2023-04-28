@@ -15,7 +15,7 @@ use call::ActiveCall;
 pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
 use gpui::{actions, AppContext, Task};
 use std::sync::Arc;
-use workspace::{AppState, JoinProject, ToggleFollow, Workspace};
+use workspace::{AppState, JoinProject, Workspace};
 
 actions!(collab, [ToggleScreenSharing]);
 
@@ -121,7 +121,7 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut AppCont
                 if let Some(follow_peer_id) = follow_peer_id {
                     if !workspace.is_being_followed(follow_peer_id) {
                         workspace
-                            .toggle_follow(&ToggleFollow(follow_peer_id), cx)
+                            .toggle_follow(follow_peer_id, cx)
                             .map(|follow| follow.detach_and_log_err(cx));
                     }
                 }
