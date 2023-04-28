@@ -37,7 +37,7 @@ use gpui::{
     executor,
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::Vector2F,
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
@@ -86,7 +86,7 @@ use std::{
 pub use sum_tree::Bias;
 use theme::{DiagnosticStyle, Theme};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, ViewId, Workspace, WorkspaceId};
+use workspace::{ItemNavHistory, ViewId, Workspace};
 
 use crate::git::diff_hunk_to_display;
 
@@ -102,13 +102,6 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Jump {
-    path: ProjectPath,
-    position: Point,
-    anchor: language::Anchor,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -282,8 +275,6 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Jump]);
-
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -377,7 +368,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::toggle_code_actions);
     cx.add_action(Editor::open_excerpts);
-    cx.add_action(Editor::jump);
     cx.add_action(Editor::toggle_soft_wrap);
     cx.add_action(Editor::reveal_in_finder);
     cx.add_action(Editor::copy_path);
@@ -504,7 +494,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    workspace_id: Option<WorkspaceId>,
+    workspace: Option<(WeakViewHandle<Workspace>, i64)>,
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
@@ -1277,7 +1267,7 @@ impl Editor {
             searchable: true,
             override_text_style: None,
             cursor_shape: Default::default(),
-            workspace_id: None,
+            workspace: None,
             keymap_context_layers: Default::default(),
             input_enabled: true,
             read_only: false,
@@ -6751,10 +6741,14 @@ impl Editor {
         });
     }
 
-    fn jump(workspace: &mut Workspace, action: &Jump, cx: &mut ViewContext<Workspace>) {
-        let editor = workspace.open_path(action.path.clone(), None, true, cx);
-        let position = action.position;
-        let anchor = action.anchor;
+    fn jump(
+        workspace: &mut Workspace,
+        path: ProjectPath,
+        position: Point,
+        anchor: language::Anchor,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let editor = workspace.open_path(path, None, true, cx);
         cx.spawn(|_, mut cx| async move {
             let editor = editor
                 .await?

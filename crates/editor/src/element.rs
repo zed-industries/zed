@@ -1435,18 +1435,15 @@ impl EditorElement {
                 } => {
                     let id = *id;
                     let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-                        let jump_position = range
+                        let jump_path = ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path.clone(),
+                        };
+                        let jump_anchor = range
                             .primary
                             .as_ref()
                             .map_or(range.context.start, |primary| primary.start);
-                        let jump_action = crate::Jump {
-                            path: ProjectPath {
-                                worktree_id: file.worktree_id(cx),
-                                path: file.path.clone(),
-                            },
-                            position: language::ToPoint::to_point(&jump_position, buffer),
-                            anchor: jump_position,
-                        };
+                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
 
                         enum JumpIcon {}
                         MouseEventHandler::<JumpIcon, _>::new(id.into(), cx, |state, _| {
@@ -1463,8 +1460,22 @@ impl EditorElement {
                                 .with_height(style.button_width)
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(jump_action.clone())
+                        .on_click(MouseButton::Left, move |_, editor, cx| {
+                            if let Some(workspace) = editor
+                                .workspace
+                                .as_ref()
+                                .and_then(|(workspace, _)| workspace.upgrade(cx))
+                            {
+                                workspace.update(cx, |workspace, cx| {
+                                    Editor::jump(
+                                        workspace,
+                                        jump_path.clone(),
+                                        jump_position,
+                                        jump_anchor,
+                                        cx,
+                                    );
+                                });
+                            }
                         })
                         .with_tooltip::<JumpIcon>(
                             id.into(),

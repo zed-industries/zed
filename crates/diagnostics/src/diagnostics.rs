@@ -551,6 +551,11 @@ impl Item for ProjectDiagnosticsEditor {
         false
     }
 
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
+    }
+
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, cx))

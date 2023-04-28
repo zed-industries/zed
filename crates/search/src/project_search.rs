@@ -332,6 +332,11 @@ impl Item for ProjectSearchView {
         Some(Self::new(model, cx))
     }
 
+    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.results_editor
+            .update(cx, |editor, cx| editor.added_to_workspace(workspace, cx));
+    }
+
     fn set_nav_history(&mut self, nav_history: ItemNavHistory, cx: &mut ViewContext<Self>) {
         self.results_editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
