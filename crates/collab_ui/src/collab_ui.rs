@@ -20,7 +20,6 @@ actions!(collab, [ToggleScreenSharing]);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_titlebar_item::init(cx);
-    contact_notification::init(cx);
     contact_list::init(cx);
     contact_finder::init(cx);
     contacts_popover::init(cx);
