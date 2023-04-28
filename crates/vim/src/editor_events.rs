@@ -9,11 +9,18 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
+    if let Some(previously_active_editor) = Vim::read(cx).active_editor.clone() {
+        cx.update_window(previously_active_editor.window_id(), |cx| {
+            Vim::update(cx, |vim, cx| {
+                vim.update_active_editor(cx, |previously_active_editor, cx| {
+                    Vim::unhook_vim_settings(previously_active_editor, cx);
+                });
+            });
+        });
+    }
+
     cx.update_window(editor.window_id(), |cx| {
         Vim::update(cx, |vim, cx| {
-            vim.update_active_editor(cx, |previously_active_editor, cx| {
-                Vim::unhook_vim_settings(previously_active_editor, cx);
-            });
             vim.set_active_editor(editor.clone(), cx);
         });
     });
