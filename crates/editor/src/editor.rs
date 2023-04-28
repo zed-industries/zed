@@ -45,7 +45,7 @@ use gpui::{
     ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
-use hover_popover::{hide_hover, HideHover, HoverState};
+use hover_popover::{hide_hover, HoverState};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -1480,7 +1480,7 @@ impl Editor {
                 }
             }
 
-            hide_hover(self, &HideHover, cx);
+            hide_hover(self, cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -1864,7 +1864,7 @@ impl Editor {
             return;
         }
 
-        if hide_hover(self, &HideHover, cx) {
+        if hide_hover(self, cx) {
             return;
         }
 
@@ -7014,7 +7014,7 @@ impl View for Editor {
 
         if font_changed {
             cx.defer(move |editor, cx: &mut ViewContext<Editor>| {
-                hide_hover(editor, &HideHover, cx);
+                hide_hover(editor, cx);
                 hide_link_definition(editor, cx);
             });
         }
@@ -7063,7 +7063,7 @@ impl View for Editor {
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         self.hide_context_menu(cx);
-        hide_hover(self, &HideHover, cx);
+        hide_hover(self, cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }

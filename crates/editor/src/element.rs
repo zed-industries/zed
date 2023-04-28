@@ -7,7 +7,8 @@ use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
-        HideHover, HoverAt, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
+        hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
+        MIN_POPOVER_LINE_HEIGHT,
     },
     link_go_to_definition::{
         GoToFetchedDefinition, GoToFetchedTypeDefinition, UpdateGoToDefinitionLink,
@@ -173,15 +174,21 @@ impl EditorElement {
             })
             .on_move({
                 let position_map = position_map.clone();
-                move |event, _editor, cx| {
-                    if !Self::mouse_moved(event.platform_event, &position_map, text_bounds, cx) {
+                move |event, editor, cx| {
+                    if !Self::mouse_moved(
+                        editor,
+                        event.platform_event,
+                        &position_map,
+                        text_bounds,
+                        cx,
+                    ) {
                         cx.propagate_event()
                     }
                 }
             })
-            .on_move_out(move |_, _: &mut Editor, cx| {
+            .on_move_out(move |_, editor: &mut Editor, cx| {
                 if has_popovers {
-                    cx.dispatch_action(HideHover);
+                    hide_hover(editor, cx);
                 }
             })
             .on_scroll({
@@ -388,16 +395,16 @@ impl EditorElement {
                 },
                 cx,
             );
-
-            cx.dispatch_action(HoverAt { point });
+            hover_at(editor, point, cx);
             true
         } else {
-            cx.dispatch_action(HoverAt { point });
+            hover_at(editor, point, cx);
             false
         }
     }
 
     fn mouse_moved(
+        editor: &mut Editor,
         MouseMovedEvent {
             modifiers: Modifiers { shift, cmd, .. },
             position,
@@ -416,8 +423,7 @@ impl EditorElement {
             cmd_held: cmd,
             shift_held: shift,
         });
-
-        cx.dispatch_action(HoverAt { point });
+        hover_at(editor, point, cx);
 
         true
     }
