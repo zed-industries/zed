@@ -1,6 +1,4 @@
-use gpui::{
-    actions, geometry::vector::Vector2F, impl_internal_actions, AppContext, Axis, ViewContext,
-};
+use gpui::{actions, geometry::vector::Vector2F, AppContext, Axis, ViewContext};
 use language::Bias;
 
 use crate::{Editor, EditorMode};
@@ -23,17 +21,8 @@ actions!(
     ]
 );
 
-#[derive(Clone, PartialEq)]
-pub struct Scroll {
-    pub scroll_position: Vector2F,
-    pub axis: Option<Axis>,
-}
-
-impl_internal_actions!(editor, [Scroll]);
-
 pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::next_screen);
-    cx.add_action(Editor::scroll);
     cx.add_action(Editor::scroll_cursor_top);
     cx.add_action(Editor::scroll_cursor_center);
     cx.add_action(Editor::scroll_cursor_bottom);
@@ -75,9 +64,14 @@ impl Editor {
         Some(())
     }
 
-    fn scroll(&mut self, action: &Scroll, cx: &mut ViewContext<Self>) {
-        self.scroll_manager.update_ongoing_scroll(action.axis);
-        self.set_scroll_position(action.scroll_position, cx);
+    pub fn scroll(
+        &mut self,
+        scroll_position: Vector2F,
+        axis: Option<Axis>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.scroll_manager.update_ongoing_scroll(axis);
+        self.set_scroll_position(scroll_position, cx);
     }
 
     fn scroll_cursor_top(editor: &mut Editor, _: &ScrollCursorTop, cx: &mut ViewContext<Editor>) {
