@@ -24,7 +24,7 @@ impl LspAdapter for ElixirLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("elixir-lsp/elixir-ls", http).await?;
+        let release = latest_github_release("elixir-lsp/elixir-ls", false, http).await?;
         let asset_name = "elixir-ls.zip";
         let asset = release
             .assets
