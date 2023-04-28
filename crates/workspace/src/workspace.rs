@@ -135,14 +135,6 @@ pub struct OpenPaths {
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, PartialEq)]
-pub struct SplitWithItem {
-    pane_to_split: WeakViewHandle<Pane>,
-    split_direction: SplitDirection,
-    from: WeakViewHandle<Pane>,
-    item_id_to_move: usize,
-}
-
-#[derive(Clone, PartialEq)]
 pub struct SplitWithProjectEntry {
     pane_to_split: WeakViewHandle<Pane>,
     split_direction: SplitDirection,
@@ -201,7 +193,7 @@ impl Clone for Toast {
 
 pub type WorkspaceId = i64;
 
-impl_internal_actions!(workspace, [SplitWithItem, SplitWithProjectEntry,]);
+impl_internal_actions!(workspace, [SplitWithProjectEntry]);
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
@@ -307,7 +299,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
-    cx.add_action(Workspace::split_pane_with_item);
     cx.add_async_action(Workspace::split_pane_with_project_entry);
 
     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
@@ -1735,25 +1726,25 @@ impl Workspace {
         maybe_pane_handle
     }
 
-    pub fn split_pane_with_item(&mut self, action: &SplitWithItem, cx: &mut ViewContext<Self>) {
-        let Some(pane_to_split) = action.pane_to_split.upgrade(cx) else { return; };
-        let Some(from) = action.from.upgrade(cx) else { return; };
+    pub fn split_pane_with_item(
+        &mut self,
+        pane_to_split: WeakViewHandle<Pane>,
+        split_direction: SplitDirection,
+        from: WeakViewHandle<Pane>,
+        item_id_to_move: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(pane_to_split) = pane_to_split.upgrade(cx) else { return; };
+        let Some(from) = from.upgrade(cx) else { return; };
         if &pane_to_split == self.dock_pane() {
             warn!("Can't split dock pane.");
             return;
         }
 
         let new_pane = self.add_pane(cx);
-        Pane::move_item(
-            self,
-            from.clone(),
-            new_pane.clone(),
-            action.item_id_to_move,
-            0,
-            cx,
-        );
+        Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
         self.center
-            .split(&pane_to_split, &new_pane, action.split_direction)
+            .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
         cx.notify();
     }
