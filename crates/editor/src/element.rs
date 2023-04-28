@@ -13,7 +13,7 @@ use crate::{
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
     },
-    mouse_context_menu::DeployMouseContextMenu,
+    mouse_context_menu,
     scroll::actions::Scroll,
     EditorStyle, GutterHover, UnfoldAt,
 };
@@ -131,8 +131,9 @@ impl EditorElement {
             })
             .on_down(MouseButton::Right, {
                 let position_map = position_map.clone();
-                move |event, _editor, cx| {
+                move |event, editor, cx| {
                     if !Self::mouse_right_down(
+                        editor,
                         event.position,
                         position_map.as_ref(),
                         text_bounds,
@@ -278,6 +279,7 @@ impl EditorElement {
     }
 
     fn mouse_right_down(
+        editor: &mut Editor,
         position: Vector2F,
         position_map: &PositionMap,
         text_bounds: RectF,
@@ -288,8 +290,7 @@ impl EditorElement {
         }
 
         let (point, _) = position_map.point_for_position(text_bounds, position);
-
-        cx.dispatch_action(DeployMouseContextMenu { position, point });
+        mouse_context_menu::deploy_context_menu(editor, position, point, cx);
         true
     }
 
