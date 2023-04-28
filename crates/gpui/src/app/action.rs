@@ -66,24 +66,6 @@ macro_rules! impl_actions {
     };
 }
 
-/// Implement the `Action` trait for a set of existing types that are
-/// not intended to be constructed via a keymap file, but only dispatched
-/// internally.
-#[macro_export]
-macro_rules! impl_internal_actions {
-    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
-        $(
-            $crate::__impl_action! {
-                $namespace,
-                $name,
-                fn from_json_str(_: &str) -> $crate::anyhow::Result<Box<dyn $crate::Action>> {
-                    Err($crate::anyhow::anyhow!("internal action"))
-                }
-            }
-        )*
-    };
-}
-
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __impl_action {
