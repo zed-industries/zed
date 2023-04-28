@@ -10,7 +10,7 @@ use gpui::{
 use project::ProjectEntryId;
 use settings::Settings;
 
-use crate::{Pane, SplitDirection, SplitWithItem, SplitWithProjectEntry, Workspace};
+use crate::{Pane, SplitDirection, SplitWithProjectEntry, Workspace};
 
 use super::DraggedItem;
 
@@ -133,12 +133,21 @@ pub fn handle_dropped_item<V: View>(
     {
         let pane_to_split = pane.clone();
         match action {
-            Action::Move(from, item_id_to_move) => cx.dispatch_action(SplitWithItem {
-                from,
-                item_id_to_move,
-                pane_to_split,
-                split_direction,
-            }),
+            Action::Move(from, item_id_to_move) => {
+                cx.window_context().defer(move |cx| {
+                    if let Some(workspace) = workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.split_pane_with_item(
+                                pane_to_split,
+                                split_direction,
+                                from,
+                                item_id_to_move,
+                                cx,
+                            );
+                        })
+                    }
+                });
+            }
             Action::Open(project_entry) => cx.dispatch_action(SplitWithProjectEntry {
                 pane_to_split,
                 split_direction,
