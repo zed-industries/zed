@@ -1,7 +1,7 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, Select, SelectPhase, SoftWrap,
-    ToPoint, MAX_LINE_LEN,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSnapshot, SelectPhase, SoftWrap, ToPoint,
+    MAX_LINE_LEN,
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
@@ -115,9 +115,10 @@ impl EditorElement {
             )
             .on_down(MouseButton::Left, {
                 let position_map = position_map.clone();
-                move |e, _, cx| {
+                move |event, editor, cx| {
                     if !Self::mouse_down(
-                        e.platform_event,
+                        editor,
+                        event.platform_event,
                         position_map.as_ref(),
                         text_bounds,
                         gutter_bounds,
@@ -129,7 +130,7 @@ impl EditorElement {
             })
             .on_down(MouseButton::Right, {
                 let position_map = position_map.clone();
-                move |event, _, cx| {
+                move |event, _editor, cx| {
                     if !Self::mouse_right_down(
                         event.position,
                         position_map.as_ref(),
@@ -144,12 +145,12 @@ impl EditorElement {
                 let position_map = position_map.clone();
                 move |event, editor, cx| {
                     if !Self::mouse_up(
+                        editor,
                         event.position,
                         event.cmd,
                         event.shift,
                         position_map.as_ref(),
                         text_bounds,
-                        editor,
                         cx,
                     ) {
                         cx.propagate_event()
@@ -160,10 +161,10 @@ impl EditorElement {
                 let position_map = position_map.clone();
                 move |event, editor, cx| {
                     if !Self::mouse_dragged(
+                        editor,
                         event.platform_event,
                         position_map.as_ref(),
                         text_bounds,
-                        editor,
                         cx,
                     ) {
                         cx.propagate_event()
@@ -172,8 +173,8 @@ impl EditorElement {
             })
             .on_move({
                 let position_map = position_map.clone();
-                move |e, _, cx| {
-                    if !Self::mouse_moved(e.platform_event, &position_map, text_bounds, cx) {
+                move |event, _editor, cx| {
+                    if !Self::mouse_moved(event.platform_event, &position_map, text_bounds, cx) {
                         cx.propagate_event()
                     }
                 }
@@ -212,6 +213,7 @@ impl EditorElement {
     }
 
     fn mouse_down(
+        editor: &mut Editor,
         MouseButtonEvent {
             position,
             modifiers:
@@ -239,21 +241,30 @@ impl EditorElement {
         let (position, target_position) = position_map.point_for_position(text_bounds, position);
 
         if shift && alt {
-            cx.dispatch_action(Select(SelectPhase::BeginColumnar {
-                position,
-                goal_column: target_position.column(),
-            }));
+            editor.select(
+                SelectPhase::BeginColumnar {
+                    position,
+                    goal_column: target_position.column(),
+                },
+                cx,
+            );
         } else if shift && !ctrl && !alt && !cmd {
-            cx.dispatch_action(Select(SelectPhase::Extend {
-                position,
-                click_count,
-            }));
+            editor.select(
+                SelectPhase::Extend {
+                    position,
+                    click_count,
+                },
+                cx,
+            );
         } else {
-            cx.dispatch_action(Select(SelectPhase::Begin {
-                position,
-                add: alt,
-                click_count,
-            }));
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: alt,
+                    click_count,
+                },
+                cx,
+            );
         }
 
         true
@@ -276,19 +287,19 @@ impl EditorElement {
     }
 
     fn mouse_up(
+        editor: &mut Editor,
         position: Vector2F,
         cmd: bool,
         shift: bool,
         position_map: &PositionMap,
         text_bounds: RectF,
-        editor: &mut Editor,
         cx: &mut EventContext<Editor>,
     ) -> bool {
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
         if end_selection {
-            cx.dispatch_action(Select(SelectPhase::End));
+            editor.select(SelectPhase::End, cx);
         }
 
         if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
@@ -309,6 +320,7 @@ impl EditorElement {
     }
 
     fn mouse_dragged(
+        editor: &mut Editor,
         MouseMovedEvent {
             modifiers: Modifiers { cmd, shift, .. },
             position,
@@ -316,7 +328,6 @@ impl EditorElement {
         }: MouseMovedEvent,
         position_map: &PositionMap,
         text_bounds: RectF,
-        editor: &mut Editor,
         cx: &mut EventContext<Editor>,
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
@@ -368,12 +379,15 @@ impl EditorElement {
             let (position, target_position) =
                 position_map.point_for_position(text_bounds, position);
 
-            cx.dispatch_action(Select(SelectPhase::Update {
-                position,
-                goal_column: target_position.column(),
-                scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
-                    .clamp(Vector2F::zero(), position_map.scroll_max),
-            }));
+            editor.select(
+                SelectPhase::Update {
+                    position,
+                    goal_column: target_position.column(),
+                    scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
+                        .clamp(Vector2F::zero(), position_map.scroll_max),
+                },
+                cx,
+            );
 
             cx.dispatch_action(HoverAt { point });
             true

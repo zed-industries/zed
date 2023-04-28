@@ -104,9 +104,6 @@ pub struct SelectNext {
     pub replace_newest: bool,
 }
 
-#[derive(Clone, PartialEq)]
-pub struct Select(pub SelectPhase);
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Jump {
     path: ProjectPath,
@@ -285,7 +282,7 @@ impl_actions!(
     ]
 );
 
-impl_internal_actions!(editor, [Select, Jump]);
+impl_internal_actions!(editor, [Jump]);
 
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -299,7 +296,6 @@ pub enum Direction {
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::new_file);
-    cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
     cx.add_action(Editor::newline_above);
@@ -1562,7 +1558,7 @@ impl Editor {
         });
     }
 
-    fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
+    fn select(&mut self, phase: SelectPhase, cx: &mut ViewContext<Self>) {
         self.hide_context_menu(cx);
 
         match phase {
@@ -1570,20 +1566,20 @@ impl Editor {
                 position,
                 add,
                 click_count,
-            } => self.begin_selection(*position, *add, *click_count, cx),
+            } => self.begin_selection(position, add, click_count, cx),
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
-            } => self.begin_columnar_selection(*position, *goal_column, cx),
+            } => self.begin_columnar_selection(position, goal_column, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
-            } => self.extend_selection(*position, *click_count, cx),
+            } => self.extend_selection(position, click_count, cx),
             SelectPhase::Update {
                 position,
                 goal_column,
                 scroll_position,
-            } => self.update_selection(*position, *goal_column, *scroll_position, cx),
+            } => self.update_selection(position, goal_column, scroll_position, cx),
             SelectPhase::End => self.end_selection(cx),
         }
     }
