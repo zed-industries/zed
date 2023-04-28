@@ -172,8 +172,8 @@ fn main() {
         })
         .detach();
 
-        client.start_telemetry();
-        client.report_event(
+        client.telemetry().start();
+        client.telemetry().report_mixpanel_event(
             "start app",
             Default::default(),
             cx.global::<Settings>().telemetry(),

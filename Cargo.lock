@@ -1972,6 +1972,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "client",
  "clock",
  "collections",
  "context_menu",
