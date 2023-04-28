@@ -31,7 +31,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::Settings;
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
-use terminal_view::terminal_button::{self, TerminalButton};
+use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
@@ -73,7 +73,6 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
-    terminal_button::init(cx);
     cx.add_action(about);
     cx.add_global_action(|_: &Hide, cx: &mut gpui::AppContext| {
         cx.platform().hide();
