@@ -1,29 +1,14 @@
-use context_menu::ContextMenuItem;
-use gpui::{
-    elements::AnchorCorner, geometry::vector::Vector2F, impl_internal_actions, AppContext,
-    ViewContext,
-};
-
 use crate::{
     DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToTypeDefinition,
     Rename, RevealInFinder, SelectMode, ToggleCodeActions,
 };
-
-#[derive(Clone, PartialEq)]
-pub struct DeployMouseContextMenu {
-    pub position: Vector2F,
-    pub point: DisplayPoint,
-}
-
-impl_internal_actions!(editor, [DeployMouseContextMenu]);
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(deploy_context_menu);
-}
+use context_menu::ContextMenuItem;
+use gpui::{elements::AnchorCorner, geometry::vector::Vector2F, ViewContext};
 
 pub fn deploy_context_menu(
     editor: &mut Editor,
-    &DeployMouseContextMenu { position, point }: &DeployMouseContextMenu,
+    position: Vector2F,
+    point: DisplayPoint,
     cx: &mut ViewContext<Editor>,
 ) {
     if !editor.focused {
@@ -98,16 +83,7 @@ mod tests {
                 do_wˇork();
             }
         "});
-        cx.update_editor(|editor, cx| {
-            deploy_context_menu(
-                editor,
-                &DeployMouseContextMenu {
-                    position: Default::default(),
-                    point,
-                },
-                cx,
-            )
-        });
+        cx.update_editor(|editor, cx| deploy_context_menu(editor, Default::default(), point, cx));
 
         cx.assert_editor_state(indoc! {"
             fn test() {

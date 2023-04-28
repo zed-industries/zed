@@ -386,7 +386,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::copilot_suggest);
 
     hover_popover::init(cx);
-    mouse_context_menu::init(cx);
     scroll::actions::init(cx);
 
     workspace::register_project_item::<Editor>(cx);
