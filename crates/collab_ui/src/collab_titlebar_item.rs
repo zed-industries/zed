@@ -134,9 +134,12 @@ impl View for CollabTitlebarItem {
 }
 
 impl CollabTitlebarItem {
-    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: &ViewHandle<Workspace>,
+        user_store: ModelHandle<UserStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let active_call = ActiveCall::global(cx);
-        let user_store = workspace.read(cx).user_store().clone();
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
