@@ -4,10 +4,9 @@ use context_menu::{ContextMenu, ContextMenuItem};
 use editor::Editor;
 use gpui::{
     elements::*,
-    impl_internal_actions,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Element, Entity, MouseState, Subscription, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WindowContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
 use util::ResultExt;
@@ -21,127 +20,6 @@ use copilot::{Copilot, Reinstall, SignOut, Status};
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const COPILOT_STARTING_TOAST_ID: usize = 1337;
 const COPILOT_ERROR_TOAST_ID: usize = 1338;
-
-#[derive(Clone, PartialEq)]
-pub struct DeployCopilotMenu;
-
-#[derive(Clone, PartialEq)]
-pub struct DeployCopilotStartMenu;
-
-#[derive(Clone, PartialEq)]
-pub struct HideCopilot;
-
-#[derive(Clone, PartialEq)]
-pub struct InitiateSignIn;
-
-#[derive(Clone, PartialEq)]
-pub struct ToggleCopilotForLanguage {
-    language: Arc<str>,
-}
-
-#[derive(Clone, PartialEq)]
-pub struct ToggleCopilotGlobally;
-
-// TODO: Make the other code path use `get_or_insert` logic for this modal
-#[derive(Clone, PartialEq)]
-pub struct DeployCopilotModal;
-
-impl_internal_actions!(
-    copilot,
-    [
-        DeployCopilotMenu,
-        DeployCopilotStartMenu,
-        HideCopilot,
-        InitiateSignIn,
-        DeployCopilotModal,
-        ToggleCopilotForLanguage,
-        ToggleCopilotGlobally,
-    ]
-);
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(CopilotButton::deploy_copilot_menu);
-    cx.add_action(CopilotButton::deploy_copilot_start_menu);
-    cx.add_action(
-        |_: &mut CopilotButton, action: &ToggleCopilotForLanguage, cx| {
-            let language = action.language.clone();
-            let show_copilot_suggestions = cx
-                .global::<Settings>()
-                .show_copilot_suggestions(Some(&language));
-
-            SettingsFile::update(cx, move |file_contents| {
-                file_contents.languages.insert(
-                    language,
-                    settings::EditorSettings {
-                        show_copilot_suggestions: Some((!show_copilot_suggestions).into()),
-                        ..Default::default()
-                    },
-                );
-            })
-        },
-    );
-
-    cx.add_action(|_: &mut CopilotButton, _: &ToggleCopilotGlobally, cx| {
-        let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None);
-        SettingsFile::update(cx, move |file_contents| {
-            file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
-        })
-    });
-
-    cx.add_action(|_: &mut CopilotButton, _: &HideCopilot, cx| {
-        SettingsFile::update(cx, move |file_contents| {
-            file_contents.features.copilot = Some(false)
-        })
-    });
-
-    cx.add_action(|_: &mut CopilotButton, _: &InitiateSignIn, cx| {
-        let Some(copilot) = Copilot::global(cx) else {
-            return;
-        };
-        let status = copilot.read(cx).status();
-
-        match status {
-            Status::Starting { task } => {
-                let Some(workspace) = cx.root_view().clone().downcast::<Workspace>() else {
-                    return;
-                };
-
-                workspace.update(cx, |workspace, cx| {
-                    workspace.show_toast(
-                        Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot is starting..."),
-                        cx,
-                    )
-                });
-                let workspace = workspace.downgrade();
-                cx.spawn(|_, mut cx| async move {
-                    task.await;
-                    if let Some(copilot) = cx.read(Copilot::global) {
-                        workspace
-                            .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
-                                Status::Authorized => workspace.show_toast(
-                                    Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot has started!"),
-                                    cx,
-                                ),
-                                _ => {
-                                    workspace.dismiss_toast(COPILOT_STARTING_TOAST_ID, cx);
-                                    copilot
-                                        .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                        .detach_and_log_err(cx);
-                                }
-                            })
-                            .log_err();
-                    }
-                })
-                .detach();
-            }
-            _ => {
-                copilot
-                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                    .detach_and_log_err(cx);
-            }
-        }
-    })
-}
 
 pub struct CopilotButton {
     popup_menu: ViewHandle<ContextMenu>,
@@ -220,8 +98,8 @@ impl View for CopilotButton {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, {
                     let status = status.clone();
-                    move |_, _, cx| match status {
-                        Status::Authorized => cx.dispatch_action(DeployCopilotMenu),
+                    move |_, this, cx| match status {
+                        Status::Authorized => this.deploy_copilot_menu(cx),
                         Status::Error(ref e) => {
                             if let Some(workspace) = cx.root_view().clone().downcast::<Workspace>()
                             {
@@ -238,7 +116,7 @@ impl View for CopilotButton {
                                 });
                             }
                         }
-                        _ => cx.dispatch_action(DeployCopilotStartMenu),
+                        _ => this.deploy_copilot_start_menu(cx),
                     }
                 })
                 .with_tooltip::<Self>(
@@ -277,15 +155,15 @@ impl CopilotButton {
         }
     }
 
-    pub fn deploy_copilot_start_menu(
-        &mut self,
-        _: &DeployCopilotStartMenu,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn deploy_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) {
         let mut menu_options = Vec::with_capacity(2);
 
-        menu_options.push(ContextMenuItem::action("Sign In", InitiateSignIn));
-        menu_options.push(ContextMenuItem::action("Disable Copilot", HideCopilot));
+        menu_options.push(ContextMenuItem::handler("Sign In", |cx| {
+            initiate_sign_in(cx)
+        }));
+        menu_options.push(ContextMenuItem::handler("Disable Copilot", |cx| {
+            hide_copilot(cx)
+        }));
 
         self.popup_menu.update(cx, |menu, cx| {
             menu.show(
@@ -297,34 +175,31 @@ impl CopilotButton {
         });
     }
 
-    pub fn deploy_copilot_menu(&mut self, _: &DeployCopilotMenu, cx: &mut ViewContext<Self>) {
+    pub fn deploy_copilot_menu(&mut self, cx: &mut ViewContext<Self>) {
         let settings = cx.global::<Settings>();
 
         let mut menu_options = Vec::with_capacity(6);
 
-        if let Some(language) = &self.language {
+        if let Some(language) = self.language.clone() {
             let language_enabled = settings.show_copilot_suggestions(Some(language.as_ref()));
-
-            menu_options.push(ContextMenuItem::action(
+            menu_options.push(ContextMenuItem::handler(
                 format!(
                     "{} Suggestions for {}",
                     if language_enabled { "Hide" } else { "Show" },
                     language
                 ),
-                ToggleCopilotForLanguage {
-                    language: language.to_owned(),
-                },
+                move |cx| toggle_copilot_for_language(language.clone(), cx),
             ));
         }
 
         let globally_enabled = cx.global::<Settings>().show_copilot_suggestions(None);
-        menu_options.push(ContextMenuItem::action(
+        menu_options.push(ContextMenuItem::handler(
             if globally_enabled {
                 "Hide Suggestions for All Files"
             } else {
                 "Show Suggestions for All Files"
             },
-            ToggleCopilotGlobally,
+            |cx| toggle_copilot_globally(cx),
         ));
 
         menu_options.push(ContextMenuItem::Separator);
@@ -384,5 +259,82 @@ impl StatusItemView for CopilotButton {
             self.editor_enabled = None;
         }
         cx.notify();
+    }
+}
+
+fn toggle_copilot_globally(cx: &mut AppContext) {
+    let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None);
+    SettingsFile::update(cx, move |file_contents| {
+        file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
+    });
+}
+
+fn toggle_copilot_for_language(language: Arc<str>, cx: &mut AppContext) {
+    let show_copilot_suggestions = cx
+        .global::<Settings>()
+        .show_copilot_suggestions(Some(&language));
+
+    SettingsFile::update(cx, move |file_contents| {
+        file_contents.languages.insert(
+            language,
+            settings::EditorSettings {
+                show_copilot_suggestions: Some((!show_copilot_suggestions).into()),
+                ..Default::default()
+            },
+        );
+    })
+}
+
+fn hide_copilot(cx: &mut AppContext) {
+    SettingsFile::update(cx, move |file_contents| {
+        file_contents.features.copilot = Some(false)
+    })
+}
+
+fn initiate_sign_in(cx: &mut WindowContext) {
+    let Some(copilot) = Copilot::global(cx) else {
+        return;
+    };
+    let status = copilot.read(cx).status();
+
+    match status {
+        Status::Starting { task } => {
+            let Some(workspace) = cx.root_view().clone().downcast::<Workspace>() else {
+                return;
+            };
+
+            workspace.update(cx, |workspace, cx| {
+                workspace.show_toast(
+                    Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot is starting..."),
+                    cx,
+                )
+            });
+            let workspace = workspace.downgrade();
+            cx.spawn(|mut cx| async move {
+                task.await;
+                if let Some(copilot) = cx.read(Copilot::global) {
+                    workspace
+                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                            Status::Authorized => workspace.show_toast(
+                                Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot has started!"),
+                                cx,
+                            ),
+                            _ => {
+                                workspace.dismiss_toast(COPILOT_STARTING_TOAST_ID, cx);
+                                copilot
+                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                    .detach_and_log_err(cx);
+                            }
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
+        }
+        _ => {
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .detach_and_log_err(cx);
+        }
     }
 }
