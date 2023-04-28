@@ -302,8 +302,7 @@ pub fn initialize_workspace(
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
     cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
 
-    let collab_titlebar_item =
-        cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, &app_state.user_store, cx));
+    let collab_titlebar_item = cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, cx));
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);

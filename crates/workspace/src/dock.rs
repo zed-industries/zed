@@ -404,11 +404,13 @@ mod tests {
     use std::{
         ops::{Deref, DerefMut},
         path::PathBuf,
+        sync::Arc,
     };
 
     use gpui::{AppContext, BorrowWindowContext, TestAppContext, ViewContext, WindowContext};
     use project::{FakeFs, Project};
     use settings::Settings;
+    use theme::ThemeRegistry;
 
     use super::*;
     use crate::{
@@ -419,7 +421,7 @@ mod tests {
         },
         register_deserializable_item,
         sidebar::Sidebar,
-        ItemHandle, Workspace,
+        AppState, ItemHandle, Workspace,
     };
 
     pub fn default_item_factory(
@@ -467,8 +469,17 @@ mod tests {
                 Some(serialized_workspace),
                 0,
                 project.clone(),
-                default_item_factory,
-                || &[],
+                Arc::new(AppState {
+                    languages: project.read(cx).languages().clone(),
+                    themes: ThemeRegistry::new((), cx.font_cache().clone()),
+                    client: project.read(cx).client(),
+                    user_store: project.read(cx).user_store(),
+                    fs: project.read(cx).fs().clone(),
+                    build_window_options: |_, _, _| Default::default(),
+                    initialize_workspace: |_, _, _| {},
+                    dock_default_item_factory: default_item_factory,
+                    background_actions: || &[],
+                }),
                 cx,
             )
         });
@@ -598,11 +609,20 @@ mod tests {
             let project = Project::test(fs, [], cx).await;
             let (window_id, workspace) = cx.add_window(|cx| {
                 Workspace::new(
-                    Default::default(),
+                    None,
                     0,
-                    project,
-                    default_item_factory,
-                    || &[],
+                    project.clone(),
+                    Arc::new(AppState {
+                        languages: project.read(cx).languages().clone(),
+                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
+                        client: project.read(cx).client(),
+                        user_store: project.read(cx).user_store(),
+                        fs: project.read(cx).fs().clone(),
+                        build_window_options: |_, _, _| Default::default(),
+                        initialize_workspace: |_, _, _| {},
+                        dock_default_item_factory: default_item_factory,
+                        background_actions: || &[],
+                    }),
                     cx,
                 )
             });

@@ -23,7 +23,7 @@ use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
-use workspace::{FollowNextCollaborator, JoinProject, Workspace};
+use workspace::{FollowNextCollaborator, Workspace};
 
 actions!(
     collab,
@@ -134,21 +134,18 @@ impl View for CollabTitlebarItem {
 }
 
 impl CollabTitlebarItem {
-    pub fn new(
-        workspace: &ViewHandle<Workspace>,
-        user_store: &ModelHandle<UserStore>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         let active_call = ActiveCall::global(cx);
+        let user_store = workspace.read(cx).user_store().clone();
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(|this, active, cx| {
             this.window_activation_changed(active, cx)
         }));
-        subscriptions.push(cx.observe(user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
         subscriptions.push(
-            cx.subscribe(user_store, move |this, user_store, event, cx| {
+            cx.subscribe(&user_store, move |this, user_store, event, cx| {
                 if let Some(workspace) = this.workspace.upgrade(cx) {
                     workspace.update(cx, |workspace, cx| {
                         if let client::Event::Contact { user, kind } = event {
@@ -257,9 +254,7 @@ impl CollabTitlebarItem {
     pub fn toggle_contacts_popover(&mut self, _: &ToggleContactsMenu, cx: &mut ViewContext<Self>) {
         if self.contacts_popover.take().is_none() {
             if let Some(workspace) = self.workspace.upgrade(cx) {
-                let project = workspace.read(cx).project().clone();
-                let user_store = workspace.read(cx).user_store().clone();
-                let view = cx.add_view(|cx| ContactsPopover::new(project, user_store, cx));
+                let view = cx.add_view(|cx| ContactsPopover::new(&workspace, cx));
                 cx.subscribe(&view, |this, _, event, cx| {
                     match event {
                         contacts_popover::Event::Dismissed => {
@@ -776,6 +771,8 @@ impl CollabTitlebarItem {
                 )
                 .into_any();
             } else if let ParticipantLocation::SharedProject { project_id } = location {
+                enum JoinProject {}
+
                 let user_id = user.id;
                 content = MouseEventHandler::<JoinProject, Self>::new(
                     peer_id.as_u64() as usize,
@@ -783,11 +780,12 @@ impl CollabTitlebarItem {
                     move |_, _| content,
                 )
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(JoinProject {
-                        project_id,
-                        follow_user_id: user_id,
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                        let app_state = workspace.read(cx).app_state().clone();
+                        workspace::join_remote_project(project_id, user_id, app_state, cx)
+                            .detach_and_log_err(cx);
+                    }
                 })
                 .with_tooltip::<JoinProject>(
                     peer_id.as_u64() as usize,

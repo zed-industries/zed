@@ -11,7 +11,7 @@ use gpui::{
     impl_actions, impl_internal_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
@@ -19,7 +19,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{mem, sync::Arc};
 use theme::IconButton;
-use workspace::{JoinProject, OpenSharedScreen};
+use workspace::{OpenSharedScreen, Workspace};
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
 impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
@@ -161,6 +161,7 @@ pub struct ContactList {
     match_candidates: Vec<StringMatchCandidate>,
     list_state: ListState<Self>,
     project: ModelHandle<Project>,
+    workspace: WeakViewHandle<Workspace>,
     user_store: ModelHandle<UserStore>,
     filter_editor: ViewHandle<Editor>,
     collapsed_sections: Vec<Section>,
@@ -169,11 +170,7 @@ pub struct ContactList {
 }
 
 impl ContactList {
-    pub fn new(
-        project: ModelHandle<Project>,
-        user_store: ModelHandle<UserStore>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
@@ -278,6 +275,7 @@ impl ContactList {
         });
 
         let active_call = ActiveCall::global(cx);
+        let user_store = workspace.read(cx).user_store().clone();
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
@@ -290,7 +288,8 @@ impl ContactList {
             match_candidates: Default::default(),
             filter_editor,
             _subscriptions: subscriptions,
-            project,
+            project: workspace.read(cx).project().clone(),
+            workspace: workspace.downgrade(),
             user_store,
         };
         this.update_entries(cx);
@@ -422,10 +421,16 @@ impl ContactList {
                         host_user_id,
                         ..
                     } => {
-                        cx.dispatch_global_action(JoinProject {
-                            project_id: *project_id,
-                            follow_user_id: *host_user_id,
-                        });
+                        if let Some(workspace) = self.workspace.upgrade(cx) {
+                            let app_state = workspace.read(cx).app_state().clone();
+                            workspace::join_remote_project(
+                                *project_id,
+                                *host_user_id,
+                                app_state,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        }
                     }
                     ContactEntry::ParticipantScreen { peer_id, .. } => {
                         cx.dispatch_action(OpenSharedScreen { peer_id: *peer_id });
@@ -798,6 +803,8 @@ impl ContactList {
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        enum JoinProject {}
+
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -873,12 +880,13 @@ impl ContactList {
         } else {
             CursorStyle::Arrow
         })
-        .on_click(MouseButton::Left, move |_, _, cx| {
+        .on_click(MouseButton::Left, move |_, this, cx| {
             if !is_current {
-                cx.dispatch_global_action(JoinProject {
-                    project_id,
-                    follow_user_id: host_user_id,
-                });
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    let app_state = workspace.read(cx).app_state().clone();
+                    workspace::join_remote_project(project_id, host_user_id, app_state, cx)
+                        .detach_and_log_err(cx);
+                }
             }
         })
         .into_any()
