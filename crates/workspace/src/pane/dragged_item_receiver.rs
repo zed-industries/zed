@@ -10,7 +10,7 @@ use gpui::{
 use project::ProjectEntryId;
 use settings::Settings;
 
-use crate::{Pane, SplitDirection, SplitWithProjectEntry, Workspace};
+use crate::{Pane, SplitDirection, Workspace};
 
 use super::DraggedItem;
 
@@ -148,11 +148,22 @@ pub fn handle_dropped_item<V: View>(
                     }
                 });
             }
-            Action::Open(project_entry) => cx.dispatch_action(SplitWithProjectEntry {
-                pane_to_split,
-                split_direction,
-                project_entry,
-            }),
+            Action::Open(project_entry) => {
+                cx.window_context().defer(move |cx| {
+                    if let Some(workspace) = workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            if let Some(task) = workspace.split_pane_with_project_entry(
+                                pane_to_split,
+                                split_direction,
+                                project_entry,
+                                cx,
+                            ) {
+                                task.detach_and_log_err(cx);
+                            }
+                        })
+                    }
+                });
+            }
         };
     } else {
         match action {

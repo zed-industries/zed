@@ -37,7 +37,7 @@ use gpui::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    impl_actions, impl_internal_actions,
+    impl_actions,
     keymap_matcher::KeymapContext,
     platform::{
         CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
@@ -134,13 +134,6 @@ pub struct OpenPaths {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, PartialEq)]
-pub struct SplitWithProjectEntry {
-    pane_to_split: WeakViewHandle<Pane>,
-    split_direction: SplitDirection,
-    project_entry: ProjectEntryId,
-}
-
 pub struct Toast {
     id: usize,
     msg: Cow<'static, str>,
@@ -193,7 +186,6 @@ impl Clone for Toast {
 
 pub type WorkspaceId = i64;
 
-impl_internal_actions!(workspace, [SplitWithProjectEntry]);
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
@@ -298,8 +290,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.toggle_sidebar(SidebarSide::Left, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
-
-    cx.add_async_action(Workspace::split_pane_with_project_entry);
 
     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
         cx.spawn(|workspace, mut cx| async move {
@@ -1751,10 +1741,12 @@ impl Workspace {
 
     pub fn split_pane_with_project_entry(
         &mut self,
-        action: &SplitWithProjectEntry,
+        pane_to_split: WeakViewHandle<Pane>,
+        split_direction: SplitDirection,
+        project_entry: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_to_split = action.pane_to_split.upgrade(cx)?;
+        let pane_to_split = pane_to_split.upgrade(cx)?;
         if &pane_to_split == self.dock_pane() {
             warn!("Can't split dock pane.");
             return None;
@@ -1762,13 +1754,10 @@ impl Workspace {
 
         let new_pane = self.add_pane(cx);
         self.center
-            .split(&pane_to_split, &new_pane, action.split_direction)
+            .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
 
-        let path = self
-            .project
-            .read(cx)
-            .path_for_entry(action.project_entry, cx)?;
+        let path = self.project.read(cx).path_for_entry(project_entry, cx)?;
         let task = self.open_path(path, Some(new_pane.downgrade()), true, cx);
         Some(cx.foreground().spawn(async move {
             task.await?;
