@@ -13,9 +13,7 @@ use crate::{
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
     },
-    mouse_context_menu,
-    scroll::actions::Scroll,
-    EditorStyle, GutterHover, UnfoldAt,
+    mouse_context_menu, EditorStyle, GutterHover, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -194,11 +192,12 @@ impl EditorElement {
             })
             .on_scroll({
                 let position_map = position_map.clone();
-                move |e, _, cx| {
+                move |event, editor, cx| {
                     if !Self::scroll(
-                        e.position,
-                        *e.delta.raw(),
-                        e.delta.precise(),
+                        editor,
+                        event.position,
+                        *event.delta.raw(),
+                        event.delta.precise(),
                         &position_map,
                         bounds,
                         cx,
@@ -430,6 +429,7 @@ impl EditorElement {
     }
 
     fn scroll(
+        editor: &mut Editor,
         position: Vector2F,
         mut delta: Vector2F,
         precise: bool,
@@ -457,11 +457,7 @@ impl EditorElement {
         let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
         let y = (scroll_position.y() * line_height - delta.y()) / line_height;
         let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), position_map.scroll_max);
-
-        cx.dispatch_action(Scroll {
-            scroll_position,
-            axis,
-        });
+        editor.scroll(scroll_position, axis, cx);
 
         true
     }
