@@ -33,7 +33,7 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("golang/tools", http).await?;
+        let release = latest_github_release("golang/tools", false, http).await?;
         let version: Option<String> = release.name.strip_prefix("gopls/v").map(str::to_string);
         if version.is_none() {
             log::warn!(
