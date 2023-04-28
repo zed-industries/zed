@@ -13,7 +13,6 @@ use gpui::{
     color::Color,
     elements::*,
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
-    impl_internal_actions,
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
     AppContext, Entity, ImageData, ModelHandle, SceneBuilder, Subscription, View, ViewContext,
@@ -36,17 +35,11 @@ actions!(
     ]
 );
 
-impl_internal_actions!(collab, [LeaveCall]);
-
-#[derive(Copy, Clone, PartialEq)]
-pub(crate) struct LeaveCall;
-
 pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabTitlebarItem::toggle_collaborator_list_popover);
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);
     cx.add_action(CollabTitlebarItem::unshare_project);
-    cx.add_action(CollabTitlebarItem::leave_call);
     cx.add_action(CollabTitlebarItem::toggle_user_menu);
 }
 
@@ -317,12 +310,6 @@ impl CollabTitlebarItem {
 
             user_menu.show(Default::default(), AnchorCorner::TopRight, items, cx);
         });
-    }
-
-    fn leave_call(&mut self, _: &LeaveCall, cx: &mut ViewContext<Self>) {
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.hang_up(cx))
-            .detach_and_log_err(cx);
     }
 
     fn render_toggle_contacts_button(
