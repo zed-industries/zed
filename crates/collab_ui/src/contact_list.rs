@@ -19,7 +19,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{mem, sync::Arc};
 use theme::IconButton;
-use workspace::{OpenSharedScreen, Workspace};
+use workspace::Workspace;
 
 impl_actions!(contact_list, [RemoveContact, RespondToContactRequest]);
 impl_internal_actions!(contact_list, [ToggleExpanded, Call]);
@@ -433,7 +433,11 @@ impl ContactList {
                         }
                     }
                     ContactEntry::ParticipantScreen { peer_id, .. } => {
-                        cx.dispatch_action(OpenSharedScreen { peer_id: *peer_id });
+                        if let Some(workspace) = self.workspace.upgrade(cx) {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.open_shared_screen(*peer_id, cx)
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -899,6 +903,8 @@ impl ContactList {
         theme: &theme::ContactList,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        enum OpenSharedScreen {}
+
         let font_cache = cx.font_cache();
         let host_avatar_height = theme
             .contact_avatar
@@ -979,8 +985,12 @@ impl ContactList {
             },
         )
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(OpenSharedScreen { peer_id });
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            if let Some(workspace) = this.workspace.upgrade(cx) {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.open_shared_screen(peer_id, cx)
+                });
+            }
         })
         .into_any()
     }
