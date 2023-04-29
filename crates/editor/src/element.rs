@@ -309,25 +309,17 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if let Some(workspace) = editor
-            .workspace
-            .as_ref()
-            .and_then(|(workspace, _)| workspace.upgrade(cx))
-        {
-            if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-                let (point, target_point) = position_map.point_for_position(text_bounds, position);
+        if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
+            let (point, target_point) = position_map.point_for_position(text_bounds, position);
 
-                if point == target_point {
-                    workspace.update(cx, |workspace, cx| {
-                        if shift {
-                            go_to_fetched_type_definition(workspace, point, cx);
-                        } else {
-                            go_to_fetched_definition(workspace, point, cx);
-                        }
-                    });
-
-                    return true;
+            if point == target_point {
+                if shift {
+                    go_to_fetched_type_definition(editor, point, cx);
+                } else {
+                    go_to_fetched_definition(editor, point, cx);
                 }
+
+                return true;
             }
         }
 
