@@ -1331,6 +1331,10 @@ impl Editor {
         &self.buffer
     }
 
+    fn workspace(&self, cx: &AppContext) -> Option<ViewHandle<Workspace>> {
+        self.workspace.as_ref()?.0.upgrade(cx)
+    }
+
     pub fn title<'a>(&self, cx: &'a AppContext) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
@@ -5558,93 +5562,77 @@ impl Editor {
         }
     }
 
-    pub fn go_to_definition(
-        workspace: &mut Workspace,
-        _: &GoToDefinition,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        Self::go_to_definition_of_kind(GotoDefinitionKind::Symbol, workspace, cx);
+    pub fn go_to_definition(&mut self, _: &GoToDefinition, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, cx);
     }
 
-    pub fn go_to_type_definition(
-        workspace: &mut Workspace,
-        _: &GoToTypeDefinition,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        Self::go_to_definition_of_kind(GotoDefinitionKind::Type, workspace, cx);
+    pub fn go_to_type_definition(&mut self, _: &GoToTypeDefinition, cx: &mut ViewContext<Self>) {
+        self.go_to_definition_of_kind(GotoDefinitionKind::Type, cx);
     }
 
-    fn go_to_definition_of_kind(
-        kind: GotoDefinitionKind,
-        workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let active_item = workspace.active_item(cx);
-        let editor_handle = if let Some(editor) = active_item
-            .as_ref()
-            .and_then(|item| item.act_as::<Self>(cx))
-        {
-            editor
-        } else {
-            return;
-        };
-
-        let editor = editor_handle.read(cx);
-        let buffer = editor.buffer.read(cx);
-        let head = editor.selections.newest::<usize>(cx).head();
+    fn go_to_definition_of_kind(&mut self, kind: GotoDefinitionKind, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.workspace(cx) else { return };
+        let buffer = self.buffer.read(cx);
+        let head = self.selections.newest::<usize>(cx).head();
         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
             text_anchor
         } else {
             return;
         };
 
-        let project = workspace.project().clone();
+        let project = workspace.read(cx).project().clone();
         let definitions = project.update(cx, |project, cx| match kind {
             GotoDefinitionKind::Symbol => project.definition(&buffer, head, cx),
             GotoDefinitionKind::Type => project.type_definition(&buffer, head, cx),
         });
 
-        cx.spawn_labeled("Fetching Definition...", |workspace, mut cx| async move {
+        cx.spawn_labeled("Fetching Definition...", |editor, mut cx| async move {
             let definitions = definitions.await?;
-            workspace.update(&mut cx, |workspace, cx| {
-                Editor::navigate_to_definitions(workspace, editor_handle, definitions, cx);
+            editor.update(&mut cx, |editor, cx| {
+                editor.navigate_to_definitions(definitions, cx);
             })?;
-
             Ok::<(), anyhow::Error>(())
         })
         .detach_and_log_err(cx);
     }
 
     pub fn navigate_to_definitions(
-        workspace: &mut Workspace,
-        editor_handle: ViewHandle<Editor>,
-        definitions: Vec<LocationLink>,
-        cx: &mut ViewContext<Workspace>,
+        &mut self,
+        mut definitions: Vec<LocationLink>,
+        cx: &mut ViewContext<Editor>,
     ) {
-        let pane = workspace.active_pane().clone();
+        let Some(workspace) = self.workspace(cx) else { return };
+        let pane = workspace.read(cx).active_pane().clone();
         // If there is one definition, just open it directly
-        if let [definition] = definitions.as_slice() {
+        if definitions.len() == 1 {
+            let definition = definitions.pop().unwrap();
             let range = definition
                 .target
                 .range
                 .to_offset(definition.target.buffer.read(cx));
 
-            let target_editor_handle =
-                workspace.open_project_item(definition.target.buffer.clone(), cx);
-            target_editor_handle.update(cx, |target_editor, cx| {
-                // When selecting a definition in a different buffer, disable the nav history
-                // to avoid creating a history entry at the previous cursor location.
-                if editor_handle != target_editor_handle {
-                    pane.update(cx, |pane, _| pane.disable_history());
-                }
-                target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            if Some(&definition.target.buffer) == self.buffer.read(cx).as_singleton().as_ref() {
+                self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges([range]);
                 });
-
-                pane.update(cx, |pane, _| pane.enable_history());
-            });
+            } else {
+                cx.window_context().defer(move |cx| {
+                    let target_editor: ViewHandle<Self> = workspace.update(cx, |workspace, cx| {
+                        workspace.open_project_item(definition.target.buffer.clone(), cx)
+                    });
+                    target_editor.update(cx, |target_editor, cx| {
+                        // When selecting a definition in a different buffer, disable the nav history
+                        // to avoid creating a history entry at the previous cursor location.
+                        pane.update(cx, |pane, _| pane.disable_history());
+                        target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([range]);
+                        });
+                        pane.update(cx, |pane, _| pane.enable_history());
+                    });
+                });
+            }
         } else if !definitions.is_empty() {
-            let replica_id = editor_handle.read(cx).replica_id(cx);
+            let replica_id = self.replica_id(cx);
             let title = definitions
                 .iter()
                 .find(|definition| definition.origin.is_some())
@@ -5664,7 +5652,9 @@ impl Editor {
                 .into_iter()
                 .map(|definition| definition.target)
                 .collect();
-            Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
+            workspace.update(cx, |workspace, cx| {
+                Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
+            })
         }
     }
 
