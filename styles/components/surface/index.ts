@@ -5,7 +5,7 @@ import {
     addToIntensity,
     useElementIntensities,
 } from "@theme/intensity"
-import { ContainerStyle } from "@theme/container"
+import { ContainerStyle, State } from "@theme/container"
 import { Theme } from "@theme/config"
 import { useColors } from "@theme/colors"
 import { border } from "@theme/border"
@@ -27,7 +27,9 @@ const surfaceLevel: SurfaceLevels = {
     "tooltip": 2,
 }
 
-type SurfaceStyle = Partial<ContainerStyle>
+type SurfaceStyle = Pick<Required<ContainerStyle>, 'background' | 'border'>
+
+type InteractiveSurfaceStyles = Record<State, SurfaceStyle>
 
 function useSurfaceIntensity(theme: Theme, surface: Surface): ElementIntensities<Intensity> {
     const level = surfaceLevel[surface]
@@ -96,6 +98,7 @@ function relativeIntensityToSurface(surfaceIntensity: Intensity, intensityChange
 export {
     Surface,
     SurfaceStyle,
+    InteractiveSurfaceStyles,
     useSurfaceIntensity,
     useSurfaceStyle,
     relativeIntensityToSurface,

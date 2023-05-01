@@ -12,20 +12,16 @@ export type InputColor = string | string[]
 
 export type ThemeColor = "neutral" | "accent" | "error" | "info" | "warning" | "success"
 
+type ThemeConfigColors = Record<ThemeColor, InputColor>
+export type ThemeColors = Record<ThemeColor, string[]>
+
 export interface ThemeConfig {
     name: string
     appearance: "light" | "dark"
     author: string | Author
     url?: string
     license: License
-    colors: {
-        neutral: InputColor
-        accent: InputColor
-        error: InputColor
-        info: InputColor
-        warning: InputColor
-        success: InputColor
-    }
+    colors: ThemeConfigColors
     syntax?: Partial<InputSyntax>
 }
 
@@ -35,7 +31,7 @@ export interface CalculatedThemeProperties {
         max: number
         scaleFactor: number
     }
-    color: Record<keyof ThemeConfig["colors"], string[]>
+    color: ThemeColors
 }
 
 export type Theme = ThemeConfig & CalculatedThemeProperties

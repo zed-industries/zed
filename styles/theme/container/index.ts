@@ -7,6 +7,8 @@ import {
 } from "../intensity"
 import { Padding, Margin } from "@theme/properties"
 import { ContainedText, ContainedTextProps, containedText } from "./containedText"
+import { FlexStyle } from "@theme/element/flex"
+import { IconStyle } from "@theme/icon"
 
 export interface ContainerStyle {
     background?: string
@@ -27,19 +29,8 @@ export const container: Record<string, ContainerStyle> = {
     blank: blankContainer,
 }
 
-export enum IconSize {
-    "Small" = 7,
-    "Medium" = 11,
-    "Large" = 15,
-}
-
 export enum BorderRadius {
     "Medium" = 4,
-}
-
-export interface IconStyle {
-    color: string
-    size: IconSize
 }
 
 export interface ContainedIcon {
@@ -52,22 +43,25 @@ export interface ContainedTextWithIcon extends ContainedText {
 }
 
 export type InteractiveState =
+    | FlexStyle
+    | ContainerStyle
     | ContainedIcon
     | ContainedText
     | ContainedTextWithIcon
 
-export interface InteractiveContainer<T = InteractiveState> {
+export interface Interactive<T = InteractiveState> {
     default: T
     hovered: T
     pressed: T
+    dragged?: T
 }
 
-export interface InteractiveToggleableContainer<T = InteractiveContainer> {
+export interface InteractiveToggleableContainer<T = Interactive> {
     inactive: T
     active: T
 }
 
-type State = "default" | "hovered" | "pressed"
+export type State = "default" | "hovered" | "pressed"
 
 type ContainerColors = {
     bg: Intensity

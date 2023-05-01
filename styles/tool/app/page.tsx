@@ -1,13 +1,13 @@
 import { Spacing } from "@/theme/properties/spacing";
 import { useTheme } from "./useTheme";
-import { ContainedIcon, ContainedText, InteractiveContainer, InteractiveState } from "@/theme/container";
+import { ContainedIcon, ContainedText, Interactive, InteractiveState } from "@/theme/container";
 import { Button } from "@/components/button/build";
 
 const spacingToString = (spacing: Spacing) => {
     return `${spacing.top}px ${spacing.right}px ${spacing.bottom}px ${spacing.left}px`;
 }
 
-function buttonStyles(button: Button, state: keyof InteractiveContainer<InteractiveState>) {
+function buttonStyles(button: Button, state: keyof Interactive<InteractiveState>) {
     const s = button[state];
 
     const {

@@ -1,7 +1,7 @@
 import chroma from "chroma-js"
 import { useColors } from "./colors"
 import { Theme, ThemeColor } from "./config"
-import { ContainedText, InteractiveContainer, buildIntensitiesForStates, container } from "./container"
+import { ContainedText, Interactive, buildIntensitiesForStates, container } from "./container"
 import { ElementIntensities, Intensity, resolveThemeColorIntensity } from "./intensity"
 
 type Font = "Zed Mono" | "Zed Sans"
@@ -174,7 +174,7 @@ export function useText(
 export function useInteractiveText(
     theme: Theme,
     options?: Partial<BuildTextOptions>
-): InteractiveContainer<ContainedText> {
+): Interactive<ContainedText> {
     const DEFAULT_INTENSITIES: ElementIntensities = {
         bg: 1,
         border: 15,

@@ -8,17 +8,41 @@
         "preserveConstEnums": true,
         "sourceMap": true,
         "paths": {
-            "@components/*": ["./components/*"],
-            "@lib/*": ["./lib/*"],
-            "@theme/*": ["./theme/*"],
-            "@themes/*": ["./themes/*"],
-            "@system/*": ["./theme/system/*"],
-            "@ui/*": ["./ui/*"],
-            "@/*": ["./*"]
+            "@components/*": [
+                "./components/*"
+            ],
+            "@lib/*": [
+                "./lib/*"
+            ],
+            "@theme*": [
+                "./theme/index"
+            ],
+            "@theme/*": [
+                "./theme/*"
+            ],
+            "@themes": [
+                "./themes/index"
+            ],
+            "@themes/*": [
+                "./themes/*"
+            ],
+            "@system/*": [
+                "./theme/system/*"
+            ],
+            "@ui/*": [
+                "./ui/*"
+            ],
+            "@/*": [
+                "./*"
+            ]
         }
     },
-    "exclude": ["node_modules"],
+    "exclude": [
+        "node_modules"
+    ],
     "ts-node": {
-        "require": ["tsconfig-paths/register"]
+        "require": [
+            "tsconfig-paths/register"
+        ]
     }
 }

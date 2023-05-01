@@ -5,9 +5,7 @@ import {
     ContainedIcon,
     ContainedText,
     ContainerStyle,
-    IconSize,
-    IconStyle,
-    InteractiveContainer,
+    Interactive,
     StateIntensity,
     buildIntensitiesForStates,
 } from "@theme/container"
@@ -15,6 +13,7 @@ import { TextStyle } from "@theme/text"
 import { ElementIntensities, useElementIntensities } from "@theme/intensity"
 import { margin, padding } from "@theme/properties"
 import { useText } from "@theme/text"
+import { iconStyle } from "@theme/icon"
 
 type ButtonSizes = "small" | "medium" | "large"
 type ButtonSize = (typeof buttonSize)[keyof typeof buttonSize]
@@ -42,9 +41,7 @@ interface ButtonProps {
     size?: ButtonSize
 }
 
-export type Button =
-    | InteractiveContainer<ContainedIcon>
-    | InteractiveContainer<ContainedText>
+export type Button<T = ContainedIcon | ContainedText> = Interactive<T>
 
 type ButtonKind = "icon" | "label"
 
@@ -68,17 +65,16 @@ export function buildButton({
         height: size,
     }
 
-    let icon: IconStyle = {
-        color: color.neutral(resolvedIntensities.fg),
-        size: IconSize.Medium,
-    }
+    const icon = iconStyle({
+        theme,
+        intensity: resolvedIntensities.fg,
+        size: 'md'
+    })
 
     let text: TextStyle = useText(theme,
         { intensity: resolvedIntensities.fg })
 
     const states = buildIntensitiesForStates(theme, name, resolvedIntensities)
-
-    console.log(states)
 
     const buildStates = (intensities: StateIntensity) => {
         let updatedContainer = {
@@ -96,13 +92,6 @@ export function buildButton({
             ...text,
             color: color.neutral(intensities.fg),
         };
-
-        console.log(`
-            updatedContainer.background = ${updatedContainer.background}
-            updatedContainer.border = ${updatedContainer.border}
-            updatedIcon.color = ${updatedIcon.color}
-            updatedText.color = ${updatedText.color}
-            `);
 
         let stateStyle;
 
@@ -133,9 +122,9 @@ export function buildButton({
 
     switch (kind) {
         case "icon":
-            return button as InteractiveContainer<ContainedIcon>
+            return button as Button<ContainedIcon>
         case "label":
-            return button as InteractiveContainer<ContainedText>
+            return button as Button<ContainedText>
         default:
             throw new Error("Unhandled button kind")
     }
