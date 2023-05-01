@@ -51,7 +51,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeSet};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{paths::HOME, ResultExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -102,6 +102,7 @@ pub struct Snapshot {
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
+    repository_entries: TreeMap<RepositoryEntryKey, RepositoryEntry>,
 
     /// A number that increases every time the worktree begins scanning
     /// a set of paths from the filesystem. This scanning could be caused
@@ -116,8 +117,35 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct RepositoryEntry {
+    // Path to the actual .git folder.
+    // Note: if .git is a file, this points to the folder indicated by the .git file
+    pub(crate) git_dir_path: Arc<Path>,
+    pub(crate) git_dir_entry_id: ProjectEntryId,
+    pub(crate) scan_id: usize,
+    // TODO: pub(crate) head_ref: Arc<str>,
+}
+
+impl RepositoryEntry {
+    // Note that this path should be relative to the worktree root.
+    pub(crate) fn in_dot_git(&self, path: &Path) -> bool {
+        path.starts_with(self.git_dir_path.as_ref())
+    }
+}
+
+/// This path corresponds to the 'content path' (the folder that contains the .git)
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct RepositoryEntryKey(Arc<Path>);
+
+impl Default for RepositoryEntryKey {
+    fn default() -> Self {
+        RepositoryEntryKey(Arc::from(Path::new("")))
+    }
+}
+
 #[derive(Clone)]
-pub struct GitRepositoryEntry {
+pub struct LocalGitRepositoryEntry {
     pub(crate) repo: Arc<Mutex<dyn GitRepository>>,
 
     pub(crate) scan_id: usize,
@@ -128,7 +156,7 @@ pub struct GitRepositoryEntry {
     pub(crate) git_dir_path: Arc<Path>,
 }
 
-impl std::fmt::Debug for GitRepositoryEntry {
+impl std::fmt::Debug for LocalGitRepositoryEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GitRepositoryEntry")
             .field("content_path", &self.content_path)
@@ -137,25 +165,15 @@ impl std::fmt::Debug for GitRepositoryEntry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalSnapshot {
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    git_repositories: Vec<GitRepositoryEntry>,
+    git_repositories_old: Vec<LocalGitRepositoryEntry>,
+    // The ProjectEntryId corresponds to the entry for the .git dir
+    git_repositories: TreeMap<ProjectEntryId, Arc<Mutex<dyn GitRepository>>>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
-}
-
-impl Clone for LocalSnapshot {
-    fn clone(&self) -> Self {
-        Self {
-            ignores_by_parent_abs_path: self.ignores_by_parent_abs_path.clone(),
-            git_repositories: self.git_repositories.iter().cloned().collect(),
-            removed_entry_ids: self.removed_entry_ids.clone(),
-            next_entry_id: self.next_entry_id.clone(),
-            snapshot: self.snapshot.clone(),
-        }
-    }
 }
 
 impl Deref for LocalSnapshot {
@@ -191,7 +209,7 @@ struct ShareState {
 
 pub enum Event {
     UpdatedEntries(HashMap<Arc<Path>, PathChange>),
-    UpdatedGitRepositories(Vec<GitRepositoryEntry>),
+    UpdatedGitRepositories(Vec<LocalGitRepositoryEntry>),
 }
 
 impl Entity for Worktree {
@@ -222,8 +240,9 @@ impl Worktree {
 
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
-                git_repositories: Default::default(),
+                git_repositories_old: Default::default(),
                 removed_entry_ids: Default::default(),
+                git_repositories: Default::default(),
                 next_entry_id,
                 snapshot: Snapshot {
                     id: WorktreeId::from_usize(cx.model_id()),
@@ -232,6 +251,7 @@ impl Worktree {
                     root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
                     entries_by_path: Default::default(),
                     entries_by_id: Default::default(),
+                    repository_entries: Default::default(),
                     scan_id: 1,
                     completed_scan_id: 0,
                 },
@@ -330,6 +350,7 @@ impl Worktree {
                     .collect(),
                 entries_by_path: Default::default(),
                 entries_by_id: Default::default(),
+                repository_entries: Default::default(),
                 scan_id: 1,
                 completed_scan_id: 0,
             };
@@ -599,8 +620,8 @@ impl LocalWorktree {
 
     fn set_snapshot(&mut self, new_snapshot: LocalSnapshot, cx: &mut ModelContext<Worktree>) {
         let updated_repos = Self::changed_repos(
-            &self.snapshot.git_repositories,
-            &new_snapshot.git_repositories,
+            &self.snapshot.git_repositories_old,
+            &new_snapshot.git_repositories_old,
         );
         self.snapshot = new_snapshot;
 
@@ -614,13 +635,13 @@ impl LocalWorktree {
     }
 
     fn changed_repos(
-        old_repos: &[GitRepositoryEntry],
-        new_repos: &[GitRepositoryEntry],
-    ) -> Vec<GitRepositoryEntry> {
+        old_repos: &[LocalGitRepositoryEntry],
+        new_repos: &[LocalGitRepositoryEntry],
+    ) -> Vec<LocalGitRepositoryEntry> {
         fn diff<'a>(
-            a: &'a [GitRepositoryEntry],
-            b: &'a [GitRepositoryEntry],
-            updated: &mut HashMap<&'a Path, GitRepositoryEntry>,
+            a: &'a [LocalGitRepositoryEntry],
+            b: &'a [LocalGitRepositoryEntry],
+            updated: &mut HashMap<&'a Path, LocalGitRepositoryEntry>,
         ) {
             for a_repo in a {
                 let matched = b.iter().find(|b_repo| {
@@ -633,7 +654,7 @@ impl LocalWorktree {
             }
         }
 
-        let mut updated = HashMap::<&Path, GitRepositoryEntry>::default();
+        let mut updated = HashMap::<&Path, LocalGitRepositoryEntry>::default();
 
         diff(old_repos, new_repos, &mut updated);
         diff(new_repos, old_repos, &mut updated);
@@ -1002,9 +1023,10 @@ impl LocalWorktree {
                     let mut share_tx = Some(share_tx);
                     let mut prev_snapshot = LocalSnapshot {
                         ignores_by_parent_abs_path: Default::default(),
-                        git_repositories: Default::default(),
+                        git_repositories_old: Default::default(),
                         removed_entry_ids: Default::default(),
                         next_entry_id: Default::default(),
+                        git_repositories: Default::default(),
                         snapshot: Snapshot {
                             id: WorktreeId(worktree_id as usize),
                             abs_path: Path::new("").into(),
@@ -1012,6 +1034,7 @@ impl LocalWorktree {
                             root_char_bag: Default::default(),
                             entries_by_path: Default::default(),
                             entries_by_id: Default::default(),
+                            repository_entries: Default::default(),
                             scan_id: 0,
                             completed_scan_id: 0,
                         },
@@ -1409,8 +1432,8 @@ impl Snapshot {
 
 impl LocalSnapshot {
     // Gives the most specific git repository for a given path
-    pub(crate) fn repo_for(&self, path: &Path) -> Option<GitRepositoryEntry> {
-        self.git_repositories
+    pub(crate) fn repo_for(&self, path: &Path) -> Option<LocalGitRepositoryEntry> {
+        self.git_repositories_old
             .iter()
             .rev() //git_repository is ordered lexicographically
             .find(|repo| repo.manages(path))
@@ -1420,9 +1443,9 @@ impl LocalSnapshot {
     pub(crate) fn repo_with_dot_git_containing(
         &mut self,
         path: &Path,
-    ) -> Option<&mut GitRepositoryEntry> {
+    ) -> Option<&mut LocalGitRepositoryEntry> {
         // Git repositories cannot be nested, so we don't need to reverse the order
-        self.git_repositories
+        self.git_repositories_old
             .iter_mut()
             .find(|repo| repo.in_dot_git(path))
     }
@@ -1597,14 +1620,31 @@ impl LocalSnapshot {
         if parent_path.file_name() == Some(&DOT_GIT) {
             let abs_path = self.abs_path.join(&parent_path);
             let content_path: Arc<Path> = parent_path.parent().unwrap().into();
+
+            let key = RepositoryEntryKey(content_path.clone());
+            if self.repository_entries.get(&key).is_none() {
+                if let Some(repo) = fs.open_repo(abs_path.as_path()) {
+                    self.repository_entries.insert(
+                        key,
+                        RepositoryEntry {
+                            git_dir_path: parent_path.clone(),
+                            git_dir_entry_id: parent_entry.id,
+                            scan_id: 0,
+                        },
+                    );
+
+                    self.git_repositories.insert(parent_entry.id, repo)
+                }
+            }
+
             if let Err(ix) = self
-                .git_repositories
+                .git_repositories_old
                 .binary_search_by_key(&&content_path, |repo| &repo.content_path)
             {
                 if let Some(repo) = fs.open_repo(abs_path.as_path()) {
-                    self.git_repositories.insert(
+                    self.git_repositories_old.insert(
                         ix,
-                        GitRepositoryEntry {
+                        LocalGitRepositoryEntry {
                             repo,
                             scan_id: 0,
                             content_path,
@@ -1672,12 +1712,17 @@ impl LocalSnapshot {
                 *scan_id = self.snapshot.scan_id;
             }
         } else if path.file_name() == Some(&DOT_GIT) {
+            let repo_entry_key = RepositoryEntryKey(path.parent().unwrap().into());
+            self.snapshot
+                .repository_entries
+                .update(&repo_entry_key, |repo| repo.scan_id = self.snapshot.scan_id);
+
             let parent_path = path.parent().unwrap();
             if let Ok(ix) = self
-                .git_repositories
-                .binary_search_by_key(&parent_path, |repo| repo.git_dir_path.as_ref())
+                .git_repositories_old
+                .binary_search_by_key(&parent_path, |repo| repo.content_path.as_ref())
             {
-                self.git_repositories[ix].scan_id = self.snapshot.scan_id;
+                self.git_repositories_old[ix].scan_id = self.snapshot.scan_id;
             }
         }
     }
@@ -1719,12 +1764,12 @@ impl LocalSnapshot {
         ignore_stack
     }
 
-    pub fn git_repo_entries(&self) -> &[GitRepositoryEntry] {
-        &self.git_repositories
+    pub fn git_repo_entries(&self) -> &[LocalGitRepositoryEntry] {
+        &self.git_repositories_old
     }
 }
 
-impl GitRepositoryEntry {
+impl LocalGitRepositoryEntry {
     // Note that these paths should be relative to the worktree root.
     pub(crate) fn manages(&self, path: &Path) -> bool {
         path.starts_with(self.content_path.as_ref())
@@ -2318,9 +2363,15 @@ impl BackgroundScanner {
         self.update_ignore_statuses().await;
 
         let mut snapshot = self.snapshot.lock();
-        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
+
+        let mut git_repositories = mem::take(&mut snapshot.git_repositories_old);
         git_repositories.retain(|repo| snapshot.entry_for_path(&repo.git_dir_path).is_some());
+        snapshot.git_repositories_old = git_repositories;
+
+        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
+        git_repositories.retain(|project_entry_id, _| snapshot.contains_entry(*project_entry_id));
         snapshot.git_repositories = git_repositories;
+
         snapshot.removed_entry_ids.clear();
         snapshot.completed_scan_id = snapshot.scan_id;
         drop(snapshot);
@@ -2607,9 +2658,20 @@ impl BackgroundScanner {
                     snapshot.insert_entry(fs_entry, self.fs.as_ref());
 
                     let scan_id = snapshot.scan_id;
+
                     if let Some(repo) = snapshot.repo_with_dot_git_containing(&path) {
                         repo.repo.lock().reload_index();
                         repo.scan_id = scan_id;
+                    }
+
+                    let repo_with_path_in_dotgit = snapshot
+                        .repository_entries
+                        .iter()
+                        .find_map(|(key, repo)| repo.in_dot_git(&path).then(|| key.clone()));
+                    if let Some(key) = repo_with_path_in_dotgit {
+                        snapshot
+                            .repository_entries
+                            .update(&key, |entry| entry.scan_id = scan_id);
                     }
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
@@ -3427,8 +3489,8 @@ mod tests {
 
     #[test]
     fn test_changed_repos() {
-        fn fake_entry(git_dir_path: impl AsRef<Path>, scan_id: usize) -> GitRepositoryEntry {
-            GitRepositoryEntry {
+        fn fake_entry(git_dir_path: impl AsRef<Path>, scan_id: usize) -> LocalGitRepositoryEntry {
+            LocalGitRepositoryEntry {
                 repo: Arc::new(Mutex::new(FakeGitRepository::default())),
                 scan_id,
                 content_path: git_dir_path.as_ref().parent().unwrap().into(),
@@ -3436,13 +3498,13 @@ mod tests {
             }
         }
 
-        let prev_repos: Vec<GitRepositoryEntry> = vec![
+        let prev_repos: Vec<LocalGitRepositoryEntry> = vec![
             fake_entry("/.git", 0),
             fake_entry("/a/.git", 0),
             fake_entry("/a/b/.git", 0),
         ];
 
-        let new_repos: Vec<GitRepositoryEntry> = vec![
+        let new_repos: Vec<LocalGitRepositoryEntry> = vec![
             fake_entry("/a/.git", 1),
             fake_entry("/a/b/.git", 0),
             fake_entry("/a/c/.git", 0),

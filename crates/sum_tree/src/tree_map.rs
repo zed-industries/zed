@@ -2,13 +2,13 @@ use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
     K: Clone + Debug + Default + Ord,
     V: Clone + Debug;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapEntry<K, V> {
     key: K,
     value: V,
@@ -71,6 +71,42 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         drop(cursor);
         self.0 = new_tree;
         removed
+    }
+
+    pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut V) -> T,
+    {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let key = MapKeyRef(Some(key));
+        let mut new_tree = cursor.slice(&key, Bias::Left, &());
+        let mut result = None;
+        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+            let mut updated = cursor.item().unwrap().clone();
+            result = Some(f(&mut updated.value));
+            new_tree.push(updated, &());
+            cursor.next(&());
+        }
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+        result
+    }
+
+    pub fn retain<F: FnMut(&K, &V) -> bool>(&mut self, mut predicate: F) {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        cursor.seek(&MapKeyRef(None), Bias::Left, &());
+
+        let mut new_map = SumTree::<MapEntry<K, V>>::default();
+        if let Some(item) = cursor.item() {
+            if predicate(&item.key, &item.value) {
+                new_map.push(item.clone(), &());
+            }
+            cursor.next(&());
+        }
+        drop(cursor);
+
+        self.0 = new_map;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {

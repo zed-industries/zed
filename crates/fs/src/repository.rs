@@ -15,6 +15,12 @@ pub trait GitRepository: Send {
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
 }
 
+impl std::fmt::Debug for dyn GitRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("dyn GitRepository<...>").finish()
+    }
+}
+
 #[async_trait::async_trait]
 impl GitRepository for LibGitRepository {
     fn reload_index(&self) {

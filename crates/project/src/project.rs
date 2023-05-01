@@ -4696,7 +4696,7 @@ impl Project {
     fn update_local_worktree_buffers_git_repos(
         &mut self,
         worktree: ModelHandle<Worktree>,
-        repos: &[GitRepositoryEntry],
+        repos: &[LocalGitRepositoryEntry],
         cx: &mut ModelContext<Self>,
     ) {
         for (_, buffer) in &self.opened_buffers {
