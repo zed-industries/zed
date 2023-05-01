@@ -196,7 +196,7 @@ impl CopilotCodeVerification {
                     .contained()
                     .with_style(style.auth.prompting.hint.container.clone()),
             )
-            .with_child(theme::ui::cta_button_with_click::<ConnectButton, _, _, _>(
+            .with_child(theme::ui::cta_button::<ConnectButton, _, _, _>(
                 if connect_clicked {
                     "Waiting for connection..."
                 } else {
@@ -250,7 +250,7 @@ impl CopilotCodeVerification {
                     .contained()
                     .with_style(enabled_style.hint.container),
             )
-            .with_child(theme::ui::cta_button_with_click::<DoneButton, _, _, _>(
+            .with_child(theme::ui::cta_button::<DoneButton, _, _, _>(
                 "Done",
                 style.auth.content_width,
                 &style.auth.cta_button,
@@ -304,7 +304,7 @@ impl CopilotCodeVerification {
                     .contained()
                     .with_style(unauthorized_style.warning.container),
             )
-            .with_child(theme::ui::cta_button_with_click::<Self, _, _, _>(
+            .with_child(theme::ui::cta_button::<Self, _, _, _>(
                 "Subscribe on GitHub",
                 style.auth.content_width,
                 &style.auth.cta_button,

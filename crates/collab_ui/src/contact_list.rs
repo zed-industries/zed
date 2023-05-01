@@ -1,4 +1,3 @@
-use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
 use editor::{Cancel, Editor};
@@ -140,6 +139,7 @@ pub struct RespondToContactRequest {
 }
 
 pub enum Event {
+    ToggleContactFinder,
     Dismissed,
 }
 
@@ -1116,11 +1116,14 @@ impl ContactList {
                         )
                         .with_padding(Padding::uniform(2.))
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(RemoveContact {
-                                user_id,
-                                github_login: github_login.clone(),
-                            })
+                        .on_click(MouseButton::Left, move |_, this, cx| {
+                            this.remove_contact(
+                                &RemoveContact {
+                                    user_id,
+                                    github_login: github_login.clone(),
+                                },
+                                cx,
+                            );
                         })
                         .flex_float(),
                     )
@@ -1203,11 +1206,14 @@ impl ContactList {
                     render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(RespondToContactRequest {
-                        user_id,
-                        accept: false,
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.respond_to_contact_request(
+                        &RespondToContactRequest {
+                            user_id,
+                            accept: false,
+                        },
+                        cx,
+                    );
                 })
                 .contained()
                 .with_margin_right(button_spacing),
@@ -1225,11 +1231,14 @@ impl ContactList {
                         .flex_float()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(RespondToContactRequest {
-                        user_id,
-                        accept: true,
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.respond_to_contact_request(
+                        &RespondToContactRequest {
+                            user_id,
+                            accept: true,
+                        },
+                        cx,
+                    );
                 }),
             );
         } else {
@@ -1246,11 +1255,14 @@ impl ContactList {
                 })
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(RemoveContact {
-                        user_id,
-                        github_login: github_login.clone(),
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.remove_contact(
+                        &RemoveContact {
+                            user_id,
+                            github_login: github_login.clone(),
+                        },
+                        cx,
+                    );
                 })
                 .flex_float(),
             );
@@ -1318,7 +1330,7 @@ impl View for ContactList {
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, |_, _, cx| {
-                            cx.dispatch_action(contacts_popover::ToggleContactFinder)
+                            cx.emit(Event::ToggleContactFinder)
                         })
                         .with_tooltip::<AddContact>(
                             0,

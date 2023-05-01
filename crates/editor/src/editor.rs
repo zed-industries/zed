@@ -809,10 +809,13 @@ impl CompletionsMenu {
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(ConfirmCompletion {
-                                item_ix: Some(item_ix),
-                            });
+                        .on_down(MouseButton::Left, move |_, this, cx| {
+                            this.confirm_completion(
+                                &ConfirmCompletion {
+                                    item_ix: Some(item_ix),
+                                },
+                                cx,
+                            );
                         })
                         .into_any(),
                     );
@@ -970,9 +973,23 @@ impl CodeActionsMenu {
                                 .with_style(item_style)
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(ConfirmCodeAction {
-                                item_ix: Some(item_ix),
+                        .on_down(MouseButton::Left, move |_, this, cx| {
+                            let workspace = this
+                                .workspace
+                                .as_ref()
+                                .and_then(|(workspace, _)| workspace.upgrade(cx));
+                            cx.window_context().defer(move |cx| {
+                                if let Some(workspace) = workspace {
+                                    workspace.update(cx, |workspace, cx| {
+                                        if let Some(task) = Editor::confirm_code_action(
+                                            workspace,
+                                            &Default::default(),
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx);
+                                        }
+                                    });
+                                }
                             });
                         })
                         .into_any(),
@@ -3138,10 +3155,13 @@ impl Editor {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
-                .on_down(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(ToggleCodeActions {
-                        deployed_from_indicator: true,
-                    });
+                .on_down(MouseButton::Left, |_, this, cx| {
+                    this.toggle_code_actions(
+                        &ToggleCodeActions {
+                            deployed_from_indicator: true,
+                        },
+                        cx,
+                    );
                 })
                 .into_any(),
             )
@@ -3199,11 +3219,13 @@ impl Editor {
                             .with_cursor_style(CursorStyle::PointingHand)
                             .with_padding(Padding::uniform(3.))
                             .on_click(MouseButton::Left, {
-                                move |_, _, cx| {
-                                    cx.dispatch_any_action(match fold_status {
-                                        FoldStatus::Folded => Box::new(UnfoldAt { buffer_row }),
-                                        FoldStatus::Foldable => Box::new(FoldAt { buffer_row }),
-                                    });
+                                move |_, editor, cx| match fold_status {
+                                    FoldStatus::Folded => {
+                                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                    }
+                                    FoldStatus::Foldable => {
+                                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                                    }
                                 }
                             })
                             .into_any()

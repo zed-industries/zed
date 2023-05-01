@@ -1,7 +1,6 @@
 use crate::{
-    collaborator_list_popover, collaborator_list_popover::CollaboratorListPopover,
     contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
-    ToggleScreenSharing,
+    toggle_screen_sharing, ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, ContactEventKind, SignIn, SignOut, User, UserStore};
@@ -27,7 +26,6 @@ use workspace::{FollowNextCollaborator, Workspace};
 actions!(
     collab,
     [
-        ToggleCollaboratorList,
         ToggleContactsMenu,
         ToggleUserMenu,
         ShareProject,
@@ -36,7 +34,6 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(CollabTitlebarItem::toggle_collaborator_list_popover);
     cx.add_action(CollabTitlebarItem::toggle_contacts_popover);
     cx.add_action(CollabTitlebarItem::share_project);
     cx.add_action(CollabTitlebarItem::unshare_project);
@@ -48,7 +45,6 @@ pub struct CollabTitlebarItem {
     user_store: ModelHandle<UserStore>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     user_menu: ViewHandle<ContextMenu>,
-    collaborator_list_popover: Option<ViewHandle<CollaboratorListPopover>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -172,7 +168,6 @@ impl CollabTitlebarItem {
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
-            collaborator_list_popover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -215,36 +210,6 @@ impl CollabTitlebarItem {
                 .update(cx, |call, cx| call.unshare_project(project, cx))
                 .log_err();
         }
-    }
-
-    pub fn toggle_collaborator_list_popover(
-        &mut self,
-        _: &ToggleCollaboratorList,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match self.collaborator_list_popover.take() {
-            Some(_) => {}
-            None => {
-                if let Some(workspace) = self.workspace.upgrade(cx) {
-                    let user_store = workspace.read(cx).user_store().clone();
-                    let view = cx.add_view(|cx| CollaboratorListPopover::new(user_store, cx));
-
-                    cx.subscribe(&view, |this, _, event, cx| {
-                        match event {
-                            collaborator_list_popover::Event::Dismissed => {
-                                this.collaborator_list_popover = None;
-                            }
-                        }
-
-                        cx.notify();
-                    })
-                    .detach();
-
-                    self.collaborator_list_popover = Some(view);
-                }
-            }
-        }
-        cx.notify();
     }
 
     pub fn toggle_contacts_popover(&mut self, _: &ToggleContactsMenu, cx: &mut ViewContext<Self>) {
@@ -357,8 +322,8 @@ impl CollabTitlebarItem {
                         .with_style(style.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(ToggleContactsMenu);
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.toggle_contacts_popover(&Default::default(), cx)
                 })
                 .with_tooltip::<ToggleContactsMenu>(
                     0,
@@ -405,7 +370,7 @@ impl CollabTitlebarItem {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(ToggleScreenSharing);
+            toggle_screen_sharing(&Default::default(), cx)
         })
         .with_tooltip::<ToggleScreenSharing>(
             0,
@@ -451,11 +416,11 @@ impl CollabTitlebarItem {
                             .with_style(style.container)
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, _, cx| {
+                    .on_click(MouseButton::Left, move |_, this, cx| {
                         if is_shared {
-                            cx.dispatch_action(UnshareProject);
+                            this.unshare_project(&Default::default(), cx);
                         } else {
-                            cx.dispatch_action(ShareProject);
+                            this.share_project(&Default::default(), cx);
                         }
                     })
                     .with_tooltip::<ShareUnshare>(
@@ -496,8 +461,8 @@ impl CollabTitlebarItem {
                         .with_style(style.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(ToggleUserMenu);
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.toggle_user_menu(&Default::default(), cx)
                 })
                 .with_tooltip::<ToggleUserMenu>(
                     0,
@@ -527,8 +492,13 @@ impl CollabTitlebarItem {
                 .with_style(style.container)
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(SignIn);
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            if let Some(workspace) = this.workspace.upgrade(cx) {
+                let client = workspace.read(cx).app_state().client.clone();
+                cx.app_context()
+                    .spawn(|cx| async move { client.authenticate_and_connect(true, &cx).await })
+                    .detach_and_log_err(cx);
+            }
         })
         .into_any()
     }
@@ -862,7 +832,7 @@ impl CollabTitlebarItem {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(auto_update::Check);
+                    auto_update::check(&Default::default(), cx);
                 })
                 .into_any(),
             ),

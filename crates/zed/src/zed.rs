@@ -20,7 +20,7 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{Platform, PromptLevel, TitlebarOptions, WindowBounds, WindowKind, WindowOptions},
-    AssetSource, ViewContext,
+    AppContext, AssetSource, ViewContext,
 };
 use language::Rope;
 pub use lsp;
@@ -35,7 +35,7 @@ use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
+use workspace::{open_new, sidebar::SidebarSide, AppState, NewFile, NewWindow, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -113,7 +113,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     cx.add_global_action(quit);
-    cx.add_global_action(restart);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         cx.update_global::<Settings, _, _>(|settings, cx| {
@@ -148,10 +147,9 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         })
         .detach_and_log_err(cx);
     });
-    cx.add_action({
-        let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&paths::SETTINGS, app_state.clone(), cx, || {
+    cx.add_action(
+        move |workspace: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            open_config_file(workspace, &paths::SETTINGS, cx, || {
                 str::from_utf8(
                     Assets
                         .load("settings/initial_user_settings.json")
@@ -161,73 +159,68 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
                 .unwrap()
                 .into()
             });
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
+        },
+    );
+    cx.add_action(
         move |workspace: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
-            open_log_file(workspace, app_state.clone(), cx);
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
+            open_log_file(workspace, cx);
+        },
+    );
+    cx.add_action(
+        move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
-                app_state.clone(),
+                workspace,
                 "licenses.md",
                 "Open Source License Attribution",
                 "Markdown",
                 cx,
             );
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
+        },
+    );
+    cx.add_action(
         move |workspace: &mut Workspace, _: &OpenTelemetryLog, cx: &mut ViewContext<Workspace>| {
-            open_telemetry_log_file(workspace, app_state.clone(), cx);
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&paths::KEYMAP, app_state.clone(), cx, Default::default);
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
+            open_telemetry_log_file(workspace, cx);
+        },
+    );
+    cx.add_action(
+        move |workspace: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
+            open_config_file(workspace, &paths::KEYMAP, cx, Default::default);
+        },
+    );
+    cx.add_action(
+        move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
-                app_state.clone(),
+                workspace,
                 "keymaps/default.json",
                 "Default Key Bindings",
                 "JSON",
                 cx,
             );
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &OpenDefaultSettings, cx: &mut ViewContext<Workspace>| {
+        },
+    );
+    cx.add_action(
+        move |workspace: &mut Workspace,
+              _: &OpenDefaultSettings,
+              cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
-                app_state.clone(),
+                workspace,
                 "settings/default.json",
                 "Default Settings",
                 "JSON",
                 cx,
             );
-        }
-    });
+        },
+    );
     cx.add_action({
-        let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
-            let app_state = app_state.clone();
+        move |workspace: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
+            let app_state = workspace.app_state().clone();
             let markdown = app_state.languages.language_for_name("JSON");
             let content = to_string_pretty(&cx.debug_elements()).unwrap();
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
                 workspace
                     .update(&mut cx, |workspace, cx| {
-                        workspace.with_local_workspace(&app_state, cx, move |workspace, cx| {
+                        workspace.with_local_workspace(cx, move |workspace, cx| {
                             let project = workspace.project().clone();
 
                             let buffer = project
@@ -259,6 +252,28 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
             workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
         },
     );
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewWindow, cx: &mut AppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            }
+        }
+    });
+    cx.add_global_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &NewFile, cx: &mut AppContext| {
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            }
+        }
+    });
     activity_indicator::init(cx);
     lsp_log::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -276,7 +291,7 @@ pub fn initialize_workspace(
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
                     pane.toolbar().update(cx, |toolbar, cx| {
-                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new());
+                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
                         toolbar.add_item(breadcrumbs, cx);
                         let buffer_search_bar = cx.add_view(BufferSearchBar::new);
                         toolbar.add_item(buffer_search_bar, cx);
@@ -305,7 +320,7 @@ pub fn initialize_workspace(
     });
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-    let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
+    let project_panel = ProjectPanel::new(workspace, cx);
     workspace.left_sidebar().update(cx, |sidebar, cx| {
         sidebar.add_item(
             "icons/folder_tree_16.svg",
@@ -318,12 +333,13 @@ pub fn initialize_workspace(
     let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
     let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
     let diagnostic_summary =
-        cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
+        cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
     let activity_indicator =
         activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
-    let active_buffer_language = cx.add_view(|_| language_selector::ActiveBufferLanguage::new());
+    let active_buffer_language =
+        cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
     let feedback_button =
-        cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new());
+        cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
     let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
@@ -368,58 +384,6 @@ pub fn build_window_options(
         bounds,
         screen,
     }
-}
-
-fn restart(_: &Restart, cx: &mut gpui::AppContext) {
-    let mut workspaces = cx
-        .window_ids()
-        .filter_map(|window_id| {
-            Some(
-                cx.root_view(window_id)?
-                    .clone()
-                    .downcast::<Workspace>()?
-                    .downgrade(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    // If multiple windows have unsaved changes, and need a save prompt,
-    // prompt in the active window before switching to a different window.
-    workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
-
-    let should_confirm = cx.global::<Settings>().confirm_quit;
-    cx.spawn(|mut cx| async move {
-        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
-            let answer = cx.prompt(
-                workspace.window_id(),
-                PromptLevel::Info,
-                "Are you sure you want to restart?",
-                &["Restart", "Cancel"],
-            );
-
-            if let Some(mut answer) = answer {
-                let answer = answer.next().await;
-                if answer != Some(0) {
-                    return Ok(());
-                }
-            }
-        }
-
-        // If the user cancels any save prompt, then keep the app open.
-        for workspace in workspaces {
-            if !workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.prepare_to_close(true, cx)
-                })?
-                .await?
-            {
-                return Ok(());
-            }
-        }
-        cx.platform().restart();
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
 }
 
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
@@ -481,13 +445,13 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
 }
 
 fn open_config_file(
+    workspace: &mut Workspace,
     path: &'static Path,
-    app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) {
+    let fs = workspace.app_state().fs.clone();
     cx.spawn(|workspace, mut cx| async move {
-        let fs = &app_state.fs;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
@@ -496,7 +460,7 @@ fn open_config_file(
 
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                workspace.with_local_workspace(cx, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 })
             })?
@@ -507,20 +471,15 @@ fn open_config_file(
     .detach_and_log_err(cx)
 }
 
-fn open_log_file(
-    workspace: &mut Workspace,
-    app_state: Arc<AppState>,
-    cx: &mut ViewContext<Workspace>,
-) {
+fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     const MAX_LINES: usize = 1000;
 
     workspace
-        .with_local_workspace(&app_state.clone(), cx, move |_, cx| {
+        .with_local_workspace(cx, move |workspace, cx| {
+            let fs = workspace.app_state().fs.clone();
             cx.spawn(|workspace, mut cx| async move {
-                let (old_log, new_log) = futures::join!(
-                    app_state.fs.load(&paths::OLD_LOG),
-                    app_state.fs.load(&paths::LOG)
-                );
+                let (old_log, new_log) =
+                    futures::join!(fs.load(&paths::OLD_LOG), fs.load(&paths::LOG));
 
                 let mut lines = VecDeque::with_capacity(MAX_LINES);
                 for line in old_log
@@ -565,12 +524,9 @@ fn open_log_file(
         .detach();
 }
 
-fn open_telemetry_log_file(
-    workspace: &mut Workspace,
-    app_state: Arc<AppState>,
-    cx: &mut ViewContext<Workspace>,
-) {
-    workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
+fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    workspace.with_local_workspace(cx, move |workspace, cx| {
+        let app_state = workspace.app_state().clone();
         cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
                 let path = app_state.client.telemetry().log_file_path()?;
@@ -626,18 +582,18 @@ fn open_telemetry_log_file(
 }
 
 fn open_bundled_file(
-    app_state: Arc<AppState>,
+    workspace: &mut Workspace,
     asset_path: &'static str,
     title: &'static str,
     language: &'static str,
     cx: &mut ViewContext<Workspace>,
 ) {
-    let language = app_state.languages.language_for_name(language);
+    let language = workspace.app_state().languages.language_for_name(language);
     cx.spawn(|workspace, mut cx| async move {
         let language = language.await.log_err();
         workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, |project, cx| {
                         let text = Assets::get(asset_path)
@@ -868,8 +824,12 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
         let app_state = init(cx);
-        cx.update(|cx| open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)))
-            .await;
+        cx.update(|cx| {
+            open_new(&app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+        })
+        .await;
 
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx

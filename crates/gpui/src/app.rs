@@ -309,6 +309,20 @@ impl AsyncAppContext {
         self.0.borrow_mut().update_window(window_id, callback)
     }
 
+    pub fn dispatch_action(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Result<()> {
+        self.0
+            .borrow_mut()
+            .update_window(window_id, |window| {
+                window.handle_dispatch_action_from_effect(Some(view_id), action);
+            })
+            .ok_or_else(|| anyhow!("window not found"))
+    }
+
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,
@@ -1048,10 +1062,6 @@ impl AppContext {
         }
     }
 
-    pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
-        self.dispatch_global_action_any(&action);
-    }
-
     fn dispatch_global_action_any(&mut self, action: &dyn Action) -> bool {
         self.update(|this| {
             if let Some((name, mut handler)) = this.global_actions.remove_entry(&action.id()) {
@@ -1619,17 +1629,7 @@ impl AppContext {
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
-                        Effect::DispatchActionFrom {
-                            window_id,
-                            view_id,
-                            action,
-                        } => {
-                            self.handle_dispatch_action_from_effect(
-                                window_id,
-                                Some(view_id),
-                                action.as_ref(),
-                            );
-                        }
+
                         Effect::ActionDispatchNotification { action_id } => {
                             self.handle_action_dispatch_notification_effect(action_id)
                         }
@@ -1743,23 +1743,6 @@ impl AppContext {
 
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
-    }
-
-    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: impl Action) {
-        self.dispatch_any_action_at(window_id, view_id, Box::new(action));
-    }
-
-    pub fn dispatch_any_action_at(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        action: Box<dyn Action>,
-    ) {
-        self.pending_effects.push_back(Effect::DispatchActionFrom {
-            window_id,
-            view_id,
-            action,
-        });
     }
 
     fn perform_window_refresh(&mut self) {
@@ -1917,17 +1900,6 @@ impl AppContext {
                 let mut subscriptions = cx.focus_observations.clone();
                 subscriptions.emit(focused_id, |callback| callback(true, cx));
             }
-        });
-    }
-
-    fn handle_dispatch_action_from_effect(
-        &mut self,
-        window_id: usize,
-        view_id: Option<usize>,
-        action: &dyn Action,
-    ) {
-        self.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(view_id, action)
         });
     }
 
@@ -2159,11 +2131,6 @@ pub enum Effect {
         result: MatchResult,
     },
     RefreshWindows,
-    DispatchActionFrom {
-        window_id: usize,
-        view_id: usize,
-        action: Box<dyn Action>,
-    },
     ActionDispatchNotification {
         action_id: TypeId,
     },
@@ -2251,13 +2218,6 @@ impl Debug for Effect {
                 .debug_struct("Effect::FocusObservation")
                 .field("view_id", view_id)
                 .field("subscription_id", subscription_id)
-                .finish(),
-            Effect::DispatchActionFrom {
-                window_id, view_id, ..
-            } => f
-                .debug_struct("Effect::DispatchActionFrom")
-                .field("window_id", window_id)
-                .field("view_id", view_id)
                 .finish(),
             Effect::ActionDispatchNotification { action_id, .. } => f
                 .debug_struct("Effect::ActionDispatchNotification")
@@ -3187,20 +3147,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         let window_id = self.window_id;
         let view_id = self.view_id;
         self.window_context.notify_view(window_id, view_id);
-    }
-
-    pub fn dispatch_action(&mut self, action: impl Action) {
-        let window_id = self.window_id;
-        let view_id = self.view_id;
-        self.window_context
-            .dispatch_action_at(window_id, view_id, action)
-    }
-
-    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
-        let window_id = self.window_id;
-        let view_id = self.view_id;
-        self.window_context
-            .dispatch_any_action_at(window_id, view_id, action)
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
