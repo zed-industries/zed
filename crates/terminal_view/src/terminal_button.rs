@@ -1,32 +1,13 @@
+use crate::TerminalView;
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*,
-    impl_internal_actions,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, Entity, View, ViewContext, ViewHandle, WeakModelHandle,
-    WeakViewHandle,
+    AnyElement, Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::any::TypeId;
-use terminal::Terminal;
 use workspace::{dock::FocusDock, item::ItemHandle, NewTerminal, StatusItemView, Workspace};
-
-use crate::TerminalView;
-
-#[derive(Clone, PartialEq)]
-pub struct DeployTerminalMenu;
-
-#[derive(Clone, PartialEq)]
-pub struct FocusTerminal {
-    terminal_handle: WeakModelHandle<Terminal>,
-}
-
-impl_internal_actions!(terminal, [FocusTerminal, DeployTerminalMenu]);
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(TerminalButton::deploy_terminal_menu);
-    cx.add_action(TerminalButton::focus_terminal);
-}
 
 pub struct TerminalButton {
     workspace: WeakViewHandle<Workspace>,
@@ -94,9 +75,9 @@ impl View for TerminalButton {
                     }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
+                .on_click(MouseButton::Left, move |_, this, cx| {
                     if has_terminals {
-                        cx.dispatch_action(DeployTerminalMenu);
+                        this.deploy_terminal_menu(cx);
                     } else {
                         if !active {
                             cx.dispatch_action(FocusDock);
@@ -129,12 +110,8 @@ impl TerminalButton {
         }
     }
 
-    pub fn deploy_terminal_menu(
-        &mut self,
-        _action: &DeployTerminalMenu,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let mut menu_options = vec![ContextMenuItem::item("New Terminal", NewTerminal)];
+    pub fn deploy_terminal_menu(&mut self, cx: &mut ViewContext<Self>) {
+        let mut menu_options = vec![ContextMenuItem::action("New Terminal", NewTerminal)];
 
         if let Some(workspace) = self.workspace.upgrade(cx) {
             let project = workspace.read(cx).project().read(cx);
@@ -146,10 +123,24 @@ impl TerminalButton {
 
             for local_terminal_handle in local_terminal_handles {
                 if let Some(terminal) = local_terminal_handle.upgrade(cx) {
-                    menu_options.push(ContextMenuItem::item(
+                    let workspace = self.workspace.clone();
+                    let local_terminal_handle = local_terminal_handle.clone();
+                    menu_options.push(ContextMenuItem::handler(
                         terminal.read(cx).title(),
-                        FocusTerminal {
-                            terminal_handle: local_terminal_handle.clone(),
+                        move |cx| {
+                            if let Some(workspace) = workspace.upgrade(cx) {
+                                workspace.update(cx, |workspace, cx| {
+                                    let terminal = workspace
+                                        .items_of_type::<TerminalView>(cx)
+                                        .find(|terminal| {
+                                            terminal.read(cx).model().downgrade()
+                                                == local_terminal_handle
+                                        });
+                                    if let Some(terminal) = terminal {
+                                        workspace.activate_item(&terminal, cx);
+                                    }
+                                });
+                            }
                         },
                     ))
                 }
@@ -164,21 +155,6 @@ impl TerminalButton {
                 cx,
             );
         });
-    }
-
-    pub fn focus_terminal(&mut self, action: &FocusTerminal, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            workspace.update(cx, |workspace, cx| {
-                let terminal = workspace
-                    .items_of_type::<TerminalView>(cx)
-                    .find(|terminal| {
-                        terminal.read(cx).model().downgrade() == action.terminal_handle
-                    });
-                if let Some(terminal) = terminal {
-                    workspace.activate_item(&terminal, cx);
-                }
-            });
-        }
     }
 }
 

@@ -19,18 +19,18 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-anyhow = "1.0"
-futures = "0.3"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
-postage = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
-smallvec = { workspace = true }
-smol = "1.2"
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+postage.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+smallvec.workspace = true
+smol.workspace = true
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-serde_json = { workspace = true }
+serde_json.workspace = true
 workspace = { path = "../workspace", features = ["test-support"] }
-unindent = "0.1"
+unindent.workspace = true

@@ -163,7 +163,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn_weak(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -187,17 +187,15 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .await
             };
 
-            if let Some(this) = this.upgrade(&cx) {
-                this.update(&mut cx, |this, cx| {
-                    let delegate = this.delegate_mut();
-                    delegate.matches = matches;
-                    delegate.selected_index = delegate
-                        .selected_index
-                        .min(delegate.matches.len().saturating_sub(1));
-                    delegate.show_selected_theme(cx);
-                })
-                .log_err();
-            }
+            this.update(&mut cx, |this, cx| {
+                let delegate = this.delegate_mut();
+                delegate.matches = matches;
+                delegate.selected_index = delegate
+                    .selected_index
+                    .min(delegate.matches.len().saturating_sub(1));
+                delegate.show_selected_theme(cx);
+            })
+            .log_err();
         })
     }
 

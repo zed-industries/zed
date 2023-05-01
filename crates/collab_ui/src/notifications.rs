@@ -2,7 +2,7 @@ use client::User;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AnyElement, Element, View, ViewContext,
+    AnyElement, Element, View, ViewContext,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -10,14 +10,18 @@ use std::sync::Arc;
 enum Dismiss {}
 enum Button {}
 
-pub fn render_user_notification<V: View, A: Action + Clone>(
+pub fn render_user_notification<F, V>(
     user: Arc<User>,
     title: &'static str,
     body: Option<&'static str>,
-    dismiss_action: A,
-    buttons: Vec<(&'static str, Box<dyn Action>)>,
+    on_dismiss: F,
+    buttons: Vec<(&'static str, Box<dyn Fn(&mut V, &mut ViewContext<V>)>)>,
     cx: &mut ViewContext<V>,
-) -> AnyElement<V> {
+) -> AnyElement<V>
+where
+    F: 'static + Fn(&mut V, &mut ViewContext<V>),
+    V: View,
+{
     let theme = cx.global::<Settings>().theme.clone();
     let theme = &theme.contact_notification;
 
@@ -64,9 +68,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
                     .with_padding(Padding::uniform(5.))
-                    .on_click(MouseButton::Left, move |_, _, cx| {
-                        cx.dispatch_any_action(dismiss_action.boxed_clone())
-                    })
+                    .on_click(MouseButton::Left, move |_, view, cx| on_dismiss(view, cx))
                     .aligned()
                     .constrained()
                     .with_height(
@@ -90,7 +92,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
             Some(
                 Flex::row()
                     .with_children(buttons.into_iter().enumerate().map(
-                        |(ix, (message, action))| {
+                        |(ix, (message, handler))| {
                             MouseEventHandler::<Button, V>::new(ix, cx, |state, _| {
                                 let button = theme.button.style_for(state, false);
                                 Label::new(message, button.text.clone())
@@ -98,9 +100,7 @@ pub fn render_user_notification<V: View, A: Action + Clone>(
                                     .with_style(button.container)
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(MouseButton::Left, move |_, _, cx| {
-                                cx.dispatch_any_action(action.boxed_clone())
-                            })
+                            .on_click(MouseButton::Left, move |_, view, cx| handler(view, cx))
                         },
                     ))
                     .aligned()

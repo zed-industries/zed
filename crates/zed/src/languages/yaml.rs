@@ -61,7 +61,7 @@ impl LspAdapter for YamlLspAdapter {
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
-                .npm_install_packages([("yaml-language-server", version.as_str())], &container_dir)
+                .npm_install_packages(&container_dir, [("yaml-language-server", version.as_str())])
                 .await?;
         }
 

@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use editor::test::{
     editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
 };
-use gpui::{AppContext, ContextHandle};
+use gpui::ContextHandle;
 use search::{BufferSearchBar, ProjectSearchBar};
 
 use crate::{state::Operator, *};
@@ -45,7 +45,7 @@ impl<'a> VimTestContext<'a> {
 
     pub fn workspace<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&Workspace, &AppContext) -> T,
+        F: FnOnce(&Workspace, &ViewContext<Workspace>) -> T,
     {
         self.cx.workspace.read_with(self.cx.cx.cx, read)
     }

@@ -57,8 +57,8 @@ impl LspAdapter for HtmlLspAdapter {
         if fs::metadata(&server_path).await.is_err() {
             self.node
                 .npm_install_packages(
-                    [("vscode-langservers-extracted", version.as_str())],
                     &container_dir,
+                    [("vscode-langservers-extracted", version.as_str())],
                 )
                 .await?;
         }

@@ -67,9 +67,17 @@ impl View for ToggleDockButton {
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_up(MouseButton::Left, move |event, _, cx| {
+        .on_up(MouseButton::Left, move |event, this, cx| {
             let drop_index = dock_pane.read(cx).items_len() + 1;
-            handle_dropped_item(event, &dock_pane.downgrade(), drop_index, false, None, cx);
+            handle_dropped_item(
+                event,
+                this.workspace.clone(),
+                &dock_pane.downgrade(),
+                drop_index,
+                false,
+                None,
+                cx,
+            );
         });
 
         if dock_position.is_visible() {

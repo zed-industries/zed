@@ -10,17 +10,17 @@ path = "src/live_kit_server.rs"
 doctest = false
 
 [dependencies]
-anyhow = "1.0.38"
-async-trait = "0.1"
-futures = "0.3"
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
 hmac = "0.12"
-log = "0.4"
+log.workspace = true
 jwt = "0.16"
 prost = "0.8"
 prost-types = "0.8"
 reqwest = "0.11"
-serde = { workspace = true }
-serde_derive = { workspace = true }
+serde.workspace = true
+serde_derive.workspace = true
 sha2 = "0.10"
 
 [build-dependencies]

@@ -39,12 +39,13 @@ settings = { path = "../settings" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
-anyhow = "1.0"
-futures = "0.3"
-log = "0.4"
-postage = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
+
+anyhow.workspace = true
+futures.workspace = true
+log.workspace = true
+postage.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

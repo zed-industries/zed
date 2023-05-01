@@ -3,7 +3,7 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
@@ -67,6 +67,7 @@ impl FollowableItem for Editor {
                 .collect::<Vec<_>>()
         });
 
+        let pane = pane.downgrade();
         Some(cx.spawn(|mut cx| async move {
             let mut buffers = futures::future::try_join_all(buffers).await?;
             let editor = pane.read_with(&cx, |pane, cx| {
@@ -78,7 +79,7 @@ impl FollowableItem for Editor {
                             == editor.read(cx).buffer.read(cx).as_singleton().as_ref();
                     ids_match || singleton_buffer_matches
                 })
-            });
+            })?;
 
             let editor = if let Some(editor) = editor {
                 editor
@@ -127,7 +128,7 @@ impl FollowableItem for Editor {
             };
 
             update_editor_from_message(
-                editor.clone(),
+                editor.downgrade(),
                 project,
                 proto::update_view::Editor {
                     selections: state.selections,
@@ -301,7 +302,7 @@ impl FollowableItem for Editor {
 }
 
 async fn update_editor_from_message(
-    this: ViewHandle<Editor>,
+    this: WeakViewHandle<Editor>,
     project: ModelHandle<Project>,
     message: proto::update_view::Editor,
     cx: &mut AsyncAppContext,
@@ -635,7 +636,7 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.report_event("save editor", cx);
+        self.report_editor_event("save", cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
@@ -793,7 +794,7 @@ impl Item for Editor {
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
         let workspace_id = workspace.database_id();
         let item_id = cx.view_id();
-        self.workspace_id = Some(workspace_id);
+        self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
 
         fn serialize(
             buffer: ModelHandle<Buffer>,
@@ -818,9 +819,9 @@ impl Item for Editor {
             serialize(buffer.clone(), workspace_id, item_id, cx);
 
             cx.subscribe(&buffer, |this, buffer, event, cx| {
-                if let Some(workspace_id) = this.workspace_id {
+                if let Some((_, workspace_id)) = this.workspace.as_ref() {
                     if let language::Event::FileHandleChanged = event {
-                        serialize(buffer, workspace_id, cx.view_id(), cx);
+                        serialize(buffer, *workspace_id, cx.view_id(), cx);
                     }
                 }
             })
@@ -863,7 +864,9 @@ impl Item for Editor {
                     let buffer = project_item
                         .downcast::<Buffer>()
                         .context("Project item at stored path was not a buffer")?;
-
+                    let pane = pane
+                        .upgrade(&cx)
+                        .ok_or_else(|| anyhow!("pane was dropped"))?;
                     Ok(cx.update(|cx| {
                         cx.add_view(&pane, |cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);

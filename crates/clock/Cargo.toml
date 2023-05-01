@@ -9,4 +9,4 @@ path = "src/clock.rs"
 doctest = false
 
 [dependencies]
-smallvec = { workspace = true }
+smallvec.workspace = true

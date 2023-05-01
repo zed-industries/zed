@@ -22,7 +22,7 @@ test-support = [
 client = { path = "../client" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
-log = "0.4"
+log.workspace = true
 live_kit_client = { path = "../live_kit_client" }
 fs = { path = "../fs" }
 language = { path = "../language" }
@@ -31,10 +31,10 @@ project = { path = "../project" }
 settings = { path = "../settings" }
 util = { path = "../util" }
 
-anyhow = "1.0.38"
+anyhow.workspace = true
 async-broadcast = "0.4"
-futures = "0.3"
-postage = { workspace = true }
+futures.workspace = true
+postage.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

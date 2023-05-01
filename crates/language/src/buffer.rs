@@ -138,6 +138,7 @@ pub struct GroupId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
+    pub source: Option<String>,
     pub code: Option<String>,
     pub severity: DiagnosticSeverity,
     pub message: String,
@@ -2881,6 +2882,7 @@ impl operation_queue::Operation for Operation {
 impl Default for Diagnostic {
     fn default() -> Self {
         Self {
+            source: Default::default(),
             code: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),

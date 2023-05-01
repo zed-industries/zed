@@ -31,7 +31,7 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::Settings;
 use std::{borrow::Cow, env, path::Path, str, sync::Arc};
-use terminal_view::terminal_button::{self, TerminalButton};
+use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
@@ -73,7 +73,6 @@ actions!(
 const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
-    terminal_button::init(cx);
     cx.add_action(about);
     cx.add_global_action(|_: &Hide, cx: &mut gpui::AppContext| {
         cx.platform().hide();
@@ -261,7 +260,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     activity_indicator::init(cx);
-    copilot_button::init(cx);
+    lsp_log::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     settings::KeymapFileContent::load_defaults(cx);
 }
@@ -273,7 +272,7 @@ pub fn initialize_workspace(
 ) {
     let workspace_handle = cx.handle();
     cx.subscribe(&workspace_handle, {
-        move |_, _, event, cx| {
+        move |workspace, _, event, cx| {
             if let workspace::Event::PaneAdded(pane) = event {
                 pane.update(cx, |pane, cx| {
                     pane.toolbar().update(cx, |toolbar, cx| {
@@ -287,6 +286,10 @@ pub fn initialize_workspace(
                         toolbar.add_item(submit_feedback_button, cx);
                         let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
                         toolbar.add_item(feedback_info_text, cx);
+                        let lsp_log_item = cx.add_view(|_| {
+                            lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
+                        });
+                        toolbar.add_item(lsp_log_item, cx);
                     })
                 });
             }
@@ -297,8 +300,9 @@ pub fn initialize_workspace(
     cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
     cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
 
-    let collab_titlebar_item =
-        cx.add_view(|cx| CollabTitlebarItem::new(&workspace_handle, &app_state.user_store, cx));
+    let collab_titlebar_item = cx.add_view(|cx| {
+        CollabTitlebarItem::new(&workspace_handle, app_state.user_store.clone(), cx)
+    });
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
     let project_panel = ProjectPanel::new(workspace.project().clone(), cx);
@@ -369,7 +373,14 @@ pub fn build_window_options(
 fn restart(_: &Restart, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+        .filter_map(|window_id| {
+            Some(
+                cx.root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()?
+                    .downgrade(),
+            )
+        })
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -414,7 +425,14 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
     let mut workspaces = cx
         .window_ids()
-        .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+        .filter_map(|window_id| {
+            Some(
+                cx.root_view(window_id)?
+                    .clone()
+                    .downcast::<Workspace>()?
+                    .downgrade(),
+            )
+        })
         .collect::<Vec<_>>();
 
     // If multiple windows have unsaved changes, and need a save prompt,
@@ -498,49 +516,49 @@ fn open_log_file(
 
     workspace
         .with_local_workspace(&app_state.clone(), cx, move |_, cx| {
-            cx.spawn_weak(|workspace, mut cx| async move {
+            cx.spawn(|workspace, mut cx| async move {
                 let (old_log, new_log) = futures::join!(
                     app_state.fs.load(&paths::OLD_LOG),
                     app_state.fs.load(&paths::LOG)
                 );
 
-                if let Some(workspace) = workspace.upgrade(&cx) {
-                    let mut lines = VecDeque::with_capacity(MAX_LINES);
-                    for line in old_log
-                        .iter()
-                        .flat_map(|log| log.lines())
-                        .chain(new_log.iter().flat_map(|log| log.lines()))
-                    {
-                        if lines.len() == MAX_LINES {
-                            lines.pop_front();
-                        }
-                        lines.push_back(line);
+                let mut lines = VecDeque::with_capacity(MAX_LINES);
+                for line in old_log
+                    .iter()
+                    .flat_map(|log| log.lines())
+                    .chain(new_log.iter().flat_map(|log| log.lines()))
+                {
+                    if lines.len() == MAX_LINES {
+                        lines.pop_front();
                     }
-                    let log = lines
-                        .into_iter()
-                        .flat_map(|line| [line, "\n"])
-                        .collect::<String>();
-
-                    workspace
-                        .update(&mut cx, |workspace, cx| {
-                            let project = workspace.project().clone();
-                            let buffer = project
-                                .update(cx, |project, cx| project.create_buffer("", None, cx))
-                                .expect("creating buffers on a local workspace always succeeds");
-                            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
-
-                            let buffer = cx.add_model(|cx| {
-                                MultiBuffer::singleton(buffer, cx).with_title("Log".into())
-                            });
-                            workspace.add_item(
-                                Box::new(cx.add_view(|cx| {
-                                    Editor::for_multibuffer(buffer, Some(project), cx)
-                                })),
-                                cx,
-                            );
-                        })
-                        .log_err();
+                    lines.push_back(line);
                 }
+                let log = lines
+                    .into_iter()
+                    .flat_map(|line| [line, "\n"])
+                    .collect::<String>();
+
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        let project = workspace.project().clone();
+                        let buffer = project
+                            .update(cx, |project, cx| project.create_buffer("", None, cx))
+                            .expect("creating buffers on a local workspace always succeeds");
+                        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, log)], None, cx));
+
+                        let buffer = cx.add_model(|cx| {
+                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
+                        });
+                        workspace.add_item(
+                            Box::new(
+                                cx.add_view(|cx| {
+                                    Editor::for_multibuffer(buffer, Some(project), cx)
+                                }),
+                            ),
+                            cx,
+                        );
+                    })
+                    .log_err();
             })
             .detach();
         })
@@ -553,11 +571,9 @@ fn open_telemetry_log_file(
     cx: &mut ViewContext<Workspace>,
 ) {
     workspace.with_local_workspace(&app_state.clone(), cx, move |_, cx| {
-        cx.spawn_weak(|workspace, mut cx| async move {
-            let workspace = workspace.upgrade(&cx)?;
-
+        cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                let path = app_state.client.telemetry_log_file_path()?;
+                let path = app_state.client.telemetry().log_file_path()?;
                 app_state.fs.load(&path).await.log_err()
             }
 

@@ -23,7 +23,7 @@ use language::{
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
-use project::{search::SearchQuery, DiagnosticSummary, Project, ProjectPath};
+use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
 use settings::{Formatter, Settings};
@@ -32,12 +32,13 @@ use std::{
     env, future, mem,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
 };
 use unindent::Unindent as _;
-use workspace::{
-    item::ItemHandle as _, shared_screen::SharedScreen, SplitDirection, ToggleFollow, Workspace,
-};
+use workspace::{item::ItemHandle as _, shared_screen::SharedScreen, SplitDirection, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -3637,6 +3638,141 @@ async fn test_collaborating_with_diagnostics(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    // Set up a fake language server.
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            disk_based_diagnostics_progress_token: Some("the-disk-based-token".into()),
+            disk_based_diagnostics_sources: vec!["the-disk-based-diagnostics-source".into()],
+            ..Default::default()
+        }))
+        .await;
+    client_a.language_registry.add(Arc::new(language));
+
+    let file_names = &["one.rs", "two.rs", "three.rs", "four.rs", "five.rs"];
+    client_a
+        .fs
+        .insert_tree(
+            "/test",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = 2;",
+                "three.rs": "const THREE: usize = 3;",
+                "four.rs": "const FOUR: usize = 3;",
+                "five.rs": "const FIVE: usize = 3;",
+            }),
+        )
+        .await;
+
+    let (project_a, worktree_id) = client_a.build_local_project("/test", cx_a).await;
+
+    // Share a project as client A
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Join the project as client B and open all three files.
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let guest_buffers = futures::future::try_join_all(file_names.iter().map(|file_name| {
+        project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, file_name), cx))
+    }))
+    .await
+    .unwrap();
+
+    // Simulate a language server reporting errors for a file.
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server
+        .request::<lsp::request::WorkDoneProgressCreate>(lsp::WorkDoneProgressCreateParams {
+            token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
+        })
+        .await
+        .unwrap();
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
+        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
+            lsp::WorkDoneProgressBegin {
+                title: "Progress Began".into(),
+                ..Default::default()
+            },
+        )),
+    });
+    for file_name in file_names {
+        fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
+                version: None,
+                diagnostics: vec![lsp::Diagnostic {
+                    severity: Some(lsp::DiagnosticSeverity::WARNING),
+                    source: Some("the-disk-based-diagnostics-source".into()),
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                    message: "message one".to_string(),
+                    ..Default::default()
+                }],
+            },
+        );
+    }
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
+        value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
+            lsp::WorkDoneProgressEnd { message: None },
+        )),
+    });
+
+    // When the "disk base diagnostics finished" message is received, the buffers'
+    // diagnostics are expected to be present.
+    let disk_based_diagnostics_finished = Arc::new(AtomicBool::new(false));
+    project_b.update(cx_b, {
+        let project_b = project_b.clone();
+        let disk_based_diagnostics_finished = disk_based_diagnostics_finished.clone();
+        move |_, cx| {
+            cx.subscribe(&project_b, move |_, _, event, cx| {
+                if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
+                    disk_based_diagnostics_finished.store(true, SeqCst);
+                    for buffer in &guest_buffers {
+                        assert_eq!(
+                            buffer
+                                .read(cx)
+                                .snapshot()
+                                .diagnostics_in_range::<_, usize>(0..5, false)
+                                .count(),
+                            1,
+                            "expected a diagnostic for buffer {:?}",
+                            buffer.read(cx).file().unwrap().path(),
+                        );
+                    }
+                }
+            })
+            .detach();
+        }
+    });
+
+    deterministic.run_until_parked();
+    assert!(disk_based_diagnostics_finished.load(SeqCst));
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_collaborating_with_completion(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -4555,11 +4691,13 @@ async fn test_lsp_hover(
             vec![
                 project::HoverBlock {
                     text: "Test hover content.".to_string(),
-                    language: None,
+                    kind: HoverBlockKind::Markdown,
                 },
                 project::HoverBlock {
                     text: "let foo = 42;".to_string(),
-                    language: Some("Rust".to_string()),
+                    kind: HoverBlockKind::Code {
+                        language: "Rust".to_string()
+                    },
                 }
             ]
         );
@@ -5979,9 +6117,7 @@ async fn test_basic_following(
     // When client B starts following client A, all visible view states are replicated to client B.
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_a), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_a, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6020,9 +6156,7 @@ async fn test_basic_following(
     // Client C also follows client A.
     workspace_c
         .update(cx_c, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_a), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_a, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6057,7 +6191,7 @@ async fn test_basic_following(
 
     // Client C unfollows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+        workspace.toggle_follow(peer_id_a, cx);
     });
 
     // All clients see that clients B is following client A.
@@ -6080,7 +6214,7 @@ async fn test_basic_following(
 
     // Client C re-follows client A.
     workspace_c.update(cx_c, |workspace, cx| {
-        workspace.toggle_follow(&ToggleFollow(peer_id_a), cx);
+        workspace.toggle_follow(peer_id_a, cx);
     });
 
     // All clients see that clients B and C are following client A.
@@ -6104,9 +6238,7 @@ async fn test_basic_following(
     // Client D follows client C.
     workspace_d
         .update(cx_d, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_c), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_c, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6296,9 +6428,7 @@ async fn test_basic_following(
     // Client A starts following client B.
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(peer_id_b), cx)
-                .unwrap()
+            workspace.toggle_follow(peer_id_b, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6567,9 +6697,7 @@ async fn test_following_tab_order(
     //Follow client B as client A
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(client_b_id), cx)
-                .unwrap()
+            workspace.toggle_follow(client_b_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6684,9 +6812,7 @@ async fn test_peers_following_each_other(
     workspace_a
         .update(cx_a, |workspace, cx| {
             let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
-            workspace
-                .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6700,9 +6826,7 @@ async fn test_peers_following_each_other(
     workspace_b
         .update(cx_b, |workspace, cx| {
             let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
-            workspace
-                .toggle_follow(&workspace::ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6848,9 +6972,7 @@ async fn test_auto_unfollowing(
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6875,9 +6997,7 @@ async fn test_auto_unfollowing(
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6895,9 +7015,7 @@ async fn test_auto_unfollowing(
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6917,9 +7035,7 @@ async fn test_auto_unfollowing(
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(&ToggleFollow(leader_id), cx)
-                .unwrap()
+            workspace.toggle_follow(leader_id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -6994,14 +7110,10 @@ async fn test_peers_simultaneously_following_each_other(
     });
 
     let a_follow_b = workspace_a.update(cx_a, |workspace, cx| {
-        workspace
-            .toggle_follow(&ToggleFollow(client_b_id), cx)
-            .unwrap()
+        workspace.toggle_follow(client_b_id, cx).unwrap()
     });
     let b_follow_a = workspace_b.update(cx_b, |workspace, cx| {
-        workspace
-            .toggle_follow(&ToggleFollow(client_a_id), cx)
-            .unwrap()
+        workspace.toggle_follow(client_a_id, cx).unwrap()
     });
 
     futures::try_join!(a_follow_b, b_follow_a).unwrap();

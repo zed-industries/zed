@@ -17,7 +17,7 @@ use workspace::WorkspaceId;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    hover_popover::{hide_hover, HideHover},
+    hover_popover::hide_hover,
     persistence::DB,
     Anchor, DisplayPoint, Editor, EditorMode, Event, MultiBufferSnapshot, ToPoint,
 };
@@ -245,16 +245,14 @@ impl ScrollManager {
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn_weak(|editor, mut cx| async move {
+            self.hide_scrollbar_task = Some(cx.spawn(|editor, mut cx| async move {
                 cx.background().timer(SCROLLBAR_SHOW_INTERVAL).await;
-                if let Some(editor) = editor.upgrade(&cx) {
-                    editor
-                        .update(&mut cx, |editor, cx| {
-                            editor.scroll_manager.show_scrollbars = false;
-                            cx.notify();
-                        })
-                        .log_err();
-                }
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.scroll_manager.show_scrollbars = false;
+                        cx.notify();
+                    })
+                    .log_err();
             }));
         } else {
             self.hide_scrollbar_task = None;
@@ -309,14 +307,10 @@ impl Editor {
     ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        hide_hover(self, &HideHover, cx);
-        self.scroll_manager.set_scroll_position(
-            scroll_position,
-            &map,
-            local,
-            self.workspace_id,
-            cx,
-        );
+        hide_hover(self, cx);
+        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
+        self.scroll_manager
+            .set_scroll_position(scroll_position, &map, local, workspace_id, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
@@ -325,13 +319,14 @@ impl Editor {
     }
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
-        hide_hover(self, &HideHover, cx);
+        hide_hover(self, cx);
+        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         let top_row = scroll_anchor
             .top_anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
         self.scroll_manager
-            .set_anchor(scroll_anchor, top_row, true, self.workspace_id, cx);
+            .set_anchor(scroll_anchor, top_row, true, workspace_id, cx);
     }
 
     pub(crate) fn set_scroll_anchor_remote(
@@ -339,13 +334,14 @@ impl Editor {
         scroll_anchor: ScrollAnchor,
         cx: &mut ViewContext<Self>,
     ) {
-        hide_hover(self, &HideHover, cx);
+        hide_hover(self, cx);
+        let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         let top_row = scroll_anchor
             .top_anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
         self.scroll_manager
-            .set_anchor(scroll_anchor, top_row, false, self.workspace_id, cx);
+            .set_anchor(scroll_anchor, top_row, false, workspace_id, cx);
     }
 
     pub fn scroll_screen(&mut self, amount: &ScrollAmount, cx: &mut ViewContext<Self>) {

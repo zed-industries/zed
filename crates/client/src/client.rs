@@ -17,9 +17,9 @@ use futures::{
 use gpui::{
     actions,
     platform::AppVersion,
-    serde_json::{self, Value},
-    AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext,
-    AsyncAppContext, Entity, ModelHandle, Task, View, ViewContext, ViewHandle,
+    serde_json::{self},
+    AnyModelHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
+    ModelHandle, Task, View, ViewContext, WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -27,7 +27,7 @@ use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use serde::Deserialize;
-use settings::{Settings, TelemetrySettings};
+use settings::Settings;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -47,6 +47,7 @@ use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
+pub use telemetry::ClickhouseEvent;
 pub use user::*;
 
 lazy_static! {
@@ -221,7 +222,7 @@ enum WeakSubscriber {
 
 enum Subscriber {
     Model(AnyModelHandle),
-    View(AnyViewHandle),
+    View(AnyWeakViewHandle),
 }
 
 #[derive(Clone, Debug)]
@@ -567,7 +568,7 @@ impl Client {
         H: 'static
             + Send
             + Sync
-            + Fn(ViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+            + Fn(WeakViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<()>>,
     {
         self.add_entity_message_handler::<M, E, _, _>(move |handle, message, client, cx| {
@@ -666,7 +667,7 @@ impl Client {
         H: 'static
             + Send
             + Sync
-            + Fn(ViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+            + Fn(WeakViewHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
         F: 'static + Future<Output = Result<M::Response>>,
     {
         self.add_view_message_handler(move |entity, envelope, client, cx| {
@@ -736,7 +737,7 @@ impl Client {
             read_from_keychain = credentials.is_some();
             if read_from_keychain {
                 cx.read(|cx| {
-                    self.report_event(
+                    self.telemetry().report_mixpanel_event(
                         "read credentials from keychain",
                         Default::default(),
                         cx.global::<Settings>().telemetry(),
@@ -1116,7 +1117,7 @@ impl Client {
                 .context("failed to decrypt access token")?;
             platform.activate(true);
 
-            telemetry.report_event(
+            telemetry.report_mixpanel_event(
                 "authenticate with browser",
                 Default::default(),
                 metrics_enabled,
@@ -1273,7 +1274,15 @@ impl Client {
                     pending.push(message);
                     return;
                 }
-                Some(weak_subscriber @ _) => subscriber = weak_subscriber.upgrade(cx),
+                Some(weak_subscriber @ _) => match weak_subscriber {
+                    WeakSubscriber::Model(handle) => {
+                        subscriber = handle.upgrade(cx).map(Subscriber::Model);
+                    }
+                    WeakSubscriber::View(handle) => {
+                        subscriber = Some(Subscriber::View(handle.clone()));
+                    }
+                    WeakSubscriber::Pending(_) => {}
+                },
                 _ => {}
             }
         }
@@ -1330,40 +1339,8 @@ impl Client {
         }
     }
 
-    pub fn start_telemetry(&self) {
-        self.telemetry.start();
-    }
-
-    pub fn report_event(
-        &self,
-        kind: &str,
-        properties: Value,
-        telemetry_settings: TelemetrySettings,
-    ) {
-        self.telemetry
-            .report_event(kind, properties.clone(), telemetry_settings);
-    }
-
-    pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {
-        self.telemetry.log_file_path()
-    }
-
-    pub fn metrics_id(&self) -> Option<Arc<str>> {
-        self.telemetry.metrics_id()
-    }
-
-    pub fn is_staff(&self) -> Option<bool> {
-        self.telemetry.is_staff()
-    }
-}
-
-impl WeakSubscriber {
-    fn upgrade(&self, cx: &AsyncAppContext) -> Option<Subscriber> {
-        match self {
-            WeakSubscriber::Model(handle) => handle.upgrade(cx).map(Subscriber::Model),
-            WeakSubscriber::View(handle) => handle.upgrade(cx).map(Subscriber::View),
-            WeakSubscriber::Pending(_) => None,
-        }
+    pub fn telemetry(&self) -> &Arc<Telemetry> {
+        &self.telemetry
     }
 }
 

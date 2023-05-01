@@ -124,11 +124,10 @@ impl FeedbackEditor {
             &["Yes, Submit!", "No"],
         );
 
-        let this = cx.handle();
         let client = cx.global::<Arc<Client>>().clone();
         let specs = self.system_specs.clone();
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let answer = answer.recv().await;
 
             if answer == Some(0) {
@@ -165,8 +164,9 @@ impl FeedbackEditor {
     ) -> anyhow::Result<()> {
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
 
-        let metrics_id = zed_client.metrics_id();
-        let is_staff = zed_client.is_staff();
+        let telemetry = zed_client.telemetry();
+        let metrics_id = telemetry.metrics_id();
+        let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
 
         let request = FeedbackRequestBody {

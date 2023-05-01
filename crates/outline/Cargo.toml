@@ -17,6 +17,6 @@ picker = { path = "../picker" }
 settings = { path = "../settings" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
-ordered-float = "2.1.1"
-postage = { workspace = true }
-smol = "1.2"
+ordered-float.workspace = true
+postage.workspace = true
+smol.workspace = true

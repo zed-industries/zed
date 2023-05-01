@@ -1,3 +1,4 @@
+use crate::{ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     executor::Background,
@@ -35,20 +36,56 @@ struct TelemetryState {
     release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
-    queue: Vec<MixpanelEvent>,
-    next_event_id: usize,
-    flush_task: Option<Task<()>>,
+    mixpanel_events_queue: Vec<MixpanelEvent>, // Mixpanel mixed events - will hopefully die soon
+    clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
+    next_mixpanel_event_id: usize,
+    flush_mixpanel_events_task: Option<Task<()>>,
+    flush_clickhouse_events_task: Option<Task<()>>,
     log_file: Option<NamedTempFile>,
     is_staff: Option<bool>,
 }
 
 const MIXPANEL_EVENTS_URL: &'static str = "https://api.mixpanel.com/track";
 const MIXPANEL_ENGAGE_URL: &'static str = "https://api.mixpanel.com/engage#profile-set";
+const CLICKHOUSE_EVENTS_URL_PATH: &'static str = "/api/events";
 
 lazy_static! {
     static ref MIXPANEL_TOKEN: Option<String> = std::env::var("ZED_MIXPANEL_TOKEN")
         .ok()
         .or_else(|| option_env!("ZED_MIXPANEL_TOKEN").map(|key| key.to_string()));
+    static ref CLICKHOUSE_EVENTS_URL: String =
+        format!("{}{}", *ZED_SERVER_URL, CLICKHOUSE_EVENTS_URL_PATH);
+}
+
+#[derive(Serialize, Debug)]
+struct ClickhouseEventRequestBody {
+    token: &'static str,
+    installation_id: Option<Arc<str>>,
+    app_version: Option<Arc<str>>,
+    os_name: &'static str,
+    os_version: Option<Arc<str>>,
+    release_channel: Option<&'static str>,
+    events: Vec<ClickhouseEventWrapper>,
+}
+
+#[derive(Serialize, Debug)]
+struct ClickhouseEventWrapper {
+    time: u128,
+    signed_in: bool,
+    #[serde(flatten)]
+    event: ClickhouseEvent,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type")]
+pub enum ClickhouseEvent {
+    Editor {
+        operation: &'static str,
+        file_extension: Option<String>,
+        vim_mode: bool,
+        copilot_enabled: bool,
+        copilot_enabled_for_language: bool,
+    },
 }
 
 #[derive(Serialize, Debug)]
@@ -121,9 +158,11 @@ impl Telemetry {
                 release_channel,
                 device_id: None,
                 metrics_id: None,
-                queue: Default::default(),
-                flush_task: Default::default(),
-                next_event_id: 0,
+                mixpanel_events_queue: Default::default(),
+                clickhouse_events_queue: Default::default(),
+                flush_mixpanel_events_task: Default::default(),
+                flush_clickhouse_events_task: Default::default(),
+                next_mixpanel_event_id: 0,
                 log_file: None,
                 is_staff: None,
             }),
@@ -168,15 +207,24 @@ impl Telemetry {
                     let device_id: Arc<str> = device_id.into();
                     let mut state = this.state.lock();
                     state.device_id = Some(device_id.clone());
-                    for event in &mut state.queue {
+
+                    for event in &mut state.mixpanel_events_queue {
                         event
                             .properties
                             .distinct_id
                             .get_or_insert_with(|| device_id.clone());
                     }
-                    if !state.queue.is_empty() {
-                        drop(state);
-                        this.flush();
+
+                    let has_mixpanel_events = !state.mixpanel_events_queue.is_empty();
+                    let has_clickhouse_events = !state.clickhouse_events_queue.is_empty();
+                    drop(state);
+
+                    if has_mixpanel_events {
+                        this.flush_mixpanel_events();
+                    }
+
+                    if has_clickhouse_events {
+                        this.flush_clickhouse_events();
                     }
 
                     anyhow::Ok(())
@@ -231,7 +279,42 @@ impl Telemetry {
         }
     }
 
-    pub fn report_event(
+    pub fn report_clickhouse_event(
+        self: &Arc<Self>,
+        event: ClickhouseEvent,
+        telemetry_settings: TelemetrySettings,
+    ) {
+        if !telemetry_settings.metrics() {
+            return;
+        }
+
+        let mut state = self.state.lock();
+        let signed_in = state.metrics_id.is_some();
+        state.clickhouse_events_queue.push(ClickhouseEventWrapper {
+            time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            signed_in,
+            event,
+        });
+
+        if state.device_id.is_some() {
+            if state.mixpanel_events_queue.len() >= MAX_QUEUE_LEN {
+                drop(state);
+                self.flush_clickhouse_events();
+            } else {
+                let this = self.clone();
+                let executor = self.executor.clone();
+                state.flush_clickhouse_events_task = Some(self.executor.spawn(async move {
+                    executor.timer(DEBOUNCE_INTERVAL).await;
+                    this.flush_clickhouse_events();
+                }));
+            }
+        }
+    }
+
+    pub fn report_mixpanel_event(
         self: &Arc<Self>,
         kind: &str,
         properties: Value,
@@ -243,7 +326,7 @@ impl Telemetry {
 
         let mut state = self.state.lock();
         let event = MixpanelEvent {
-            event: kind.to_string(),
+            event: kind.into(),
             properties: MixpanelEventProperties {
                 token: "",
                 time: SystemTime::now()
@@ -251,7 +334,7 @@ impl Telemetry {
                     .unwrap()
                     .as_millis(),
                 distinct_id: state.device_id.clone(),
-                insert_id: post_inc(&mut state.next_event_id),
+                insert_id: post_inc(&mut state.next_mixpanel_event_id),
                 event_properties: if let Value::Object(properties) = properties {
                     Some(properties)
                 } else {
@@ -264,17 +347,17 @@ impl Telemetry {
                 signed_in: state.metrics_id.is_some(),
             },
         };
-        state.queue.push(event);
+        state.mixpanel_events_queue.push(event);
         if state.device_id.is_some() {
-            if state.queue.len() >= MAX_QUEUE_LEN {
+            if state.mixpanel_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
-                self.flush();
+                self.flush_mixpanel_events();
             } else {
                 let this = self.clone();
                 let executor = self.executor.clone();
-                state.flush_task = Some(self.executor.spawn(async move {
+                state.flush_mixpanel_events_task = Some(self.executor.spawn(async move {
                     executor.timer(DEBOUNCE_INTERVAL).await;
-                    this.flush();
+                    this.flush_mixpanel_events();
                 }));
             }
         }
@@ -288,10 +371,10 @@ impl Telemetry {
         self.state.lock().is_staff
     }
 
-    fn flush(self: &Arc<Self>) {
+    fn flush_mixpanel_events(self: &Arc<Self>) {
         let mut state = self.state.lock();
-        let mut events = mem::take(&mut state.queue);
-        state.flush_task.take();
+        let mut events = mem::take(&mut state.mixpanel_events_queue);
+        state.flush_mixpanel_events_task.take();
         drop(state);
 
         if let Some(token) = MIXPANEL_TOKEN.as_ref() {
@@ -324,5 +407,54 @@ impl Telemetry {
                 )
                 .detach();
         }
+    }
+
+    fn flush_clickhouse_events(self: &Arc<Self>) {
+        let mut state = self.state.lock();
+        let mut events = mem::take(&mut state.clickhouse_events_queue);
+        state.flush_clickhouse_events_task.take();
+        drop(state);
+
+        let this = self.clone();
+        self.executor
+            .spawn(
+                async move {
+                    let mut json_bytes = Vec::new();
+
+                    if let Some(file) = &mut this.state.lock().log_file {
+                        let file = file.as_file_mut();
+                        for event in &mut events {
+                            json_bytes.clear();
+                            serde_json::to_writer(&mut json_bytes, event)?;
+                            file.write_all(&json_bytes)?;
+                            file.write(b"\n")?;
+                        }
+                    }
+
+                    {
+                        let state = this.state.lock();
+                        json_bytes.clear();
+                        serde_json::to_writer(
+                            &mut json_bytes,
+                            &ClickhouseEventRequestBody {
+                                token: ZED_SECRET_CLIENT_TOKEN,
+                                installation_id: state.device_id.clone(),
+                                app_version: state.app_version.clone(),
+                                os_name: state.os_name,
+                                os_version: state.os_version.clone(),
+                                release_channel: state.release_channel,
+                                events,
+                            },
+                        )?;
+                    }
+
+                    this.http_client
+                        .post_json(CLICKHOUSE_EVENTS_URL.as_str(), json_bytes.into())
+                        .await?;
+                    anyhow::Ok(())
+                }
+                .log_err(),
+            )
+            .detach();
     }
 }

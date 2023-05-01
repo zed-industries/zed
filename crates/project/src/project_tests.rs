@@ -1190,6 +1190,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticEntry {
                     range: Point::new(3, 9)..Point::new(3, 11),
                     diagnostic: Diagnostic {
+                        source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         is_disk_based: true,
@@ -1201,6 +1202,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticEntry {
                     range: Point::new(4, 9)..Point::new(4, 12),
                     diagnostic: Diagnostic {
+                        source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
                         is_disk_based: true,
@@ -1266,6 +1268,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticEntry {
                     range: Point::new(2, 9)..Point::new(2, 12),
                     diagnostic: Diagnostic {
+                        source: Some("disk".into()),
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
                         is_disk_based: true,
@@ -1277,6 +1280,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticEntry {
                     range: Point::new(2, 9)..Point::new(2, 10),
                     diagnostic: Diagnostic {
+                        source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         is_disk_based: true,
@@ -1356,6 +1360,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticEntry {
                     range: Point::new(2, 21)..Point::new(2, 22),
                     diagnostic: Diagnostic {
+                        source: Some("disk".into()),
                         severity: DiagnosticSeverity::WARNING,
                         message: "undefined variable 'A'".to_string(),
                         is_disk_based: true,
@@ -1367,6 +1372,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticEntry {
                     range: Point::new(3, 9)..Point::new(3, 14),
                     diagnostic: Diagnostic {
+                        source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         is_disk_based: true,

@@ -24,6 +24,7 @@ use std::{
     mem,
     ops::Range,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
 };
 use util::{
@@ -271,6 +272,20 @@ pub struct Copilot {
 
 impl Entity for Copilot {
     type Event = ();
+
+    fn app_will_quit(
+        &mut self,
+        _: &mut AppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        match mem::replace(&mut self.server, CopilotServer::Disabled) {
+            CopilotServer::Running(server) => Some(Box::pin(async move {
+                if let Some(shutdown) = server.lsp.shutdown() {
+                    shutdown.await;
+                }
+            })),
+            _ => None,
+        }
+    }
 }
 
 impl Copilot {
@@ -443,7 +458,7 @@ impl Copilot {
         }
     }
 
-    fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {
@@ -917,7 +932,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release = latest_github_release("zed-industries/copilot", http.clone()).await?;
+        let release = latest_github_release("zed-industries/copilot", false, http.clone()).await?;
 
         let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.name));
 

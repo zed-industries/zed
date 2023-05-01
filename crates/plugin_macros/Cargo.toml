@@ -11,6 +11,6 @@ proc-macro = true
 syn = { version = "1.0", features = ["full",  "extra-traits"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-serde = { workspace = true }
-serde_derive = { workspace = true }
+serde.workspace = true
+serde_derive.workspace = true
 bincode = "1.3"

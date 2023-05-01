@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-serde = { workspace = true }
-serde_derive = { workspace = true }
+serde.workspace = true
+serde_derive.workspace = true
 bincode = "1.3"
 plugin_macros = { path = "../plugin_macros" }

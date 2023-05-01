@@ -10,9 +10,9 @@ doctest = false
 
 [dependencies]
 arrayvec = "0.7.1"
-log = { version = "0.4.16", features = ["kv_unstable_serde"] }
+log.workspace = true
 
 [dev-dependencies]
-ctor = "0.1"
-env_logger = "0.9"
-rand = "0.8.3"
+ctor.workspace = true
+env_logger.workspace = true
+rand.workspace = true

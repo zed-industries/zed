@@ -4,15 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-anyhow = { version = "1.0.38", features = ["backtrace"] }
+anyhow.workspace = true
 indoc = "1.0.7"
 libsqlite3-sys = { version = "0.24", features = ["bundled"] }
-smol = "1.2"
+smol.workspace = true
 thread_local = "1.1.4"
-lazy_static = "1.4"
-parking_lot = "0.11.1"
-futures = "0.3"
+lazy_static.workspace = true
+parking_lot.workspace = true
+futures.workspace = true
 uuid = { version = "1.1.2", features = ["v4"] }
