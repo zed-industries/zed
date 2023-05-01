@@ -64,6 +64,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
+use sum_tree::TreeMap;
 use terminals::Terminals;
 
 use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
@@ -4696,7 +4697,7 @@ impl Project {
     fn update_local_worktree_buffers_git_repos(
         &mut self,
         worktree: ModelHandle<Worktree>,
-        repos: &[LocalGitRepositoryEntry],
+        repos: &TreeMap<RepositoryWorkDirectory, RepositoryEntry>,
         cx: &mut ModelContext<Self>,
     ) {
         for (_, buffer) in &self.opened_buffers {
@@ -4711,14 +4712,17 @@ impl Project {
 
                 let path = file.path().clone();
 
-                let repo = match repos.iter().find(|repo| repo.manages(&path)) {
-                    Some(repo) => repo.clone(),
+                let (work_directory, repo) = match repos
+                    .iter()
+                    .find(|(work_directory, _)| work_directory.contains(&path))
+                {
+                    Some((work_directory, repo)) => (work_directory, repo.clone()),
                     None => return,
                 };
 
-                let relative_repo = match path.strip_prefix(repo.content_path) {
-                    Ok(relative_repo) => relative_repo.to_owned(),
-                    Err(_) => return,
+                let relative_repo = match work_directory.relativize(&path) {
+                    Some(relative_repo) => relative_repo.to_owned(),
+                    None => return,
                 };
 
                 let remote_id = self.remote_id();

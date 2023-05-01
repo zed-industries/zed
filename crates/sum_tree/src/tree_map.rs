@@ -73,6 +73,15 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         removed
     }
 
+    /// Returns the key-value pair with the greatest key less than or equal to the given key.
+    pub fn closest(&self, key: &K) -> Option<(&K, &V)> {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let key = MapKeyRef(Some(key));
+        cursor.seek(&key, Bias::Right, &());
+        cursor.prev(&());
+        cursor.item().map(|item| (&item.key, &item.value))
+    }
+
     pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
     where
         F: FnOnce(&mut V) -> T,
@@ -111,6 +120,10 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
         self.0.iter().map(|entry| (&entry.key, &entry.value))
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.0.iter().map(|entry| &entry.value)
     }
 }
 
@@ -235,9 +248,15 @@ mod tests {
             vec![(&1, &"a"), (&2, &"b"), (&3, &"c")]
         );
 
+        assert_eq!(map.closest(&0), None);
+        assert_eq!(map.closest(&1), Some((&1, &"a")));
+        assert_eq!(map.closest(&10), Some((&3, &"c")));
+
         map.remove(&2);
         assert_eq!(map.get(&2), None);
         assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&1, &"a"), (&3, &"c")]);
+
+        assert_eq!(map.closest(&2), Some((&1, &"a")));
 
         map.remove(&3);
         assert_eq!(map.get(&3), None);
