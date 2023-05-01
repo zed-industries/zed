@@ -309,6 +309,20 @@ impl AsyncAppContext {
         self.0.borrow_mut().update_window(window_id, callback)
     }
 
+    pub fn dispatch_action(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Result<()> {
+        self.0
+            .borrow_mut()
+            .update_window(window_id, |window| {
+                window.handle_dispatch_action_from_effect(Some(view_id), action);
+            })
+            .ok_or_else(|| anyhow!("window not found"))
+    }
+
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
     where
         T: Entity,
@@ -1619,17 +1633,7 @@ impl AppContext {
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
-                        Effect::DispatchActionFrom {
-                            window_id,
-                            view_id,
-                            action,
-                        } => {
-                            self.handle_dispatch_action_from_effect(
-                                window_id,
-                                Some(view_id),
-                                action.as_ref(),
-                            );
-                        }
+
                         Effect::ActionDispatchNotification { action_id } => {
                             self.handle_action_dispatch_notification_effect(action_id)
                         }
@@ -1743,19 +1747,6 @@ impl AppContext {
 
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
-    }
-
-    pub fn dispatch_any_action_at(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        action: Box<dyn Action>,
-    ) {
-        self.pending_effects.push_back(Effect::DispatchActionFrom {
-            window_id,
-            view_id,
-            action,
-        });
     }
 
     fn perform_window_refresh(&mut self) {
@@ -2155,11 +2146,6 @@ pub enum Effect {
         result: MatchResult,
     },
     RefreshWindows,
-    DispatchActionFrom {
-        window_id: usize,
-        view_id: usize,
-        action: Box<dyn Action>,
-    },
     ActionDispatchNotification {
         action_id: TypeId,
     },
@@ -2247,13 +2233,6 @@ impl Debug for Effect {
                 .debug_struct("Effect::FocusObservation")
                 .field("view_id", view_id)
                 .field("subscription_id", subscription_id)
-                .finish(),
-            Effect::DispatchActionFrom {
-                window_id, view_id, ..
-            } => f
-                .debug_struct("Effect::DispatchActionFrom")
-                .field("window_id", window_id)
-                .field("view_id", view_id)
                 .finish(),
             Effect::ActionDispatchNotification { action_id, .. } => f
                 .debug_struct("Effect::ActionDispatchNotification")

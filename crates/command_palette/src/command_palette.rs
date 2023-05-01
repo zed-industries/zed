@@ -167,9 +167,11 @@ impl PickerDelegate for CommandPaletteDelegate {
             let focused_view_id = self.focused_view_id;
             let action_ix = self.matches[self.selected_ix].candidate_id;
             let action = self.actions.remove(action_ix).action;
-            cx.defer(move |_, cx| {
-                cx.dispatch_any_action_at(window_id, focused_view_id, action);
-            });
+            cx.app_context()
+                .spawn(move |mut cx| async move {
+                    cx.dispatch_action(window_id, focused_view_id, action.as_ref())
+                })
+                .detach_and_log_err(cx);
         }
         cx.emit(PickerEvent::Dismiss);
     }

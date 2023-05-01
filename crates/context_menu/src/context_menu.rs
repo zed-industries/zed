@@ -227,11 +227,13 @@ impl ContextMenu {
                 match action {
                     ContextMenuItemAction::Action(action) => {
                         let window_id = cx.window_id();
-                        cx.dispatch_any_action_at(
-                            window_id,
-                            self.parent_view_id,
-                            action.boxed_clone(),
-                        );
+                        let view_id = self.parent_view_id;
+                        let action = action.boxed_clone();
+                        cx.app_context()
+                            .spawn(|mut cx| async move {
+                                cx.dispatch_action(window_id, view_id, action.as_ref())
+                            })
+                            .detach_and_log_err(cx);
                     }
                     ContextMenuItemAction::Handler(handler) => handler(cx),
                 }
@@ -459,11 +461,16 @@ impl ContextMenu {
                                 let window_id = cx.window_id();
                                 match &action {
                                     ContextMenuItemAction::Action(action) => {
-                                        cx.dispatch_any_action_at(
-                                            window_id,
-                                            view_id,
-                                            action.boxed_clone(),
-                                        );
+                                        let action = action.boxed_clone();
+                                        cx.app_context()
+                                            .spawn(|mut cx| async move {
+                                                cx.dispatch_action(
+                                                    window_id,
+                                                    view_id,
+                                                    action.as_ref(),
+                                                )
+                                            })
+                                            .detach_and_log_err(cx);
                                     }
                                     ContextMenuItemAction::Handler(handler) => handler(cx),
                                 }
