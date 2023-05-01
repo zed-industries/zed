@@ -30,13 +30,13 @@ pub struct Telemetry {
 
 #[derive(Default)]
 struct TelemetryState {
-    metrics_id: Option<Arc<str>>,
-    device_id: Option<Arc<str>>,
+    metrics_id: Option<Arc<str>>,      // Per logged-in user
+    installation_id: Option<Arc<str>>, // Per app installation
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
-    mixpanel_events_queue: Vec<MixpanelEvent>, // Mixpanel mixed events - will hopefully die soon
+    mixpanel_events_queue: Vec<MixpanelEvent>,
     clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
     next_mixpanel_event_id: usize,
     flush_mixpanel_events_task: Option<Task<()>>,
@@ -100,7 +100,8 @@ struct MixpanelEventProperties {
     #[serde(skip_serializing_if = "str::is_empty")]
     token: &'static str,
     time: u128,
-    distinct_id: Option<Arc<str>>,
+    #[serde(rename = "distinct_id")]
+    installation_id: Option<Arc<str>>,
     #[serde(rename = "$insert_id")]
     insert_id: usize,
     // Custom fields
@@ -123,7 +124,7 @@ struct MixpanelEngageRequest {
     #[serde(rename = "$token")]
     token: &'static str,
     #[serde(rename = "$distinct_id")]
-    distinct_id: Arc<str>,
+    installation_id: Arc<str>,
     #[serde(rename = "$set")]
     set: Value,
 }
@@ -156,7 +157,7 @@ impl Telemetry {
                 os_name: platform.os_name().into(),
                 app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 release_channel,
-                device_id: None,
+                installation_id: None,
                 metrics_id: None,
                 mixpanel_events_queue: Default::default(),
                 clickhouse_events_queue: Default::default(),
@@ -193,26 +194,26 @@ impl Telemetry {
         self.executor
             .spawn(
                 async move {
-                    let device_id =
-                        if let Ok(Some(device_id)) = KEY_VALUE_STORE.read_kvp("device_id") {
-                            device_id
+                    let installation_id =
+                        if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp("device_id") {
+                            installation_id
                         } else {
-                            let device_id = Uuid::new_v4().to_string();
+                            let installation_id = Uuid::new_v4().to_string();
                             KEY_VALUE_STORE
-                                .write_kvp("device_id".to_string(), device_id.clone())
+                                .write_kvp("device_id".to_string(), installation_id.clone())
                                 .await?;
-                            device_id
+                            installation_id
                         };
 
-                    let device_id: Arc<str> = device_id.into();
+                    let installation_id: Arc<str> = installation_id.into();
                     let mut state = this.state.lock();
-                    state.device_id = Some(device_id.clone());
+                    state.installation_id = Some(installation_id.clone());
 
                     for event in &mut state.mixpanel_events_queue {
                         event
                             .properties
-                            .distinct_id
-                            .get_or_insert_with(|| device_id.clone());
+                            .installation_id
+                            .get_or_insert_with(|| installation_id.clone());
                     }
 
                     let has_mixpanel_events = !state.mixpanel_events_queue.is_empty();
@@ -248,19 +249,19 @@ impl Telemetry {
 
         let this = self.clone();
         let mut state = self.state.lock();
-        let device_id = state.device_id.clone();
+        let installation_id = state.installation_id.clone();
         let metrics_id: Option<Arc<str>> = metrics_id.map(|id| id.into());
         state.metrics_id = metrics_id.clone();
         state.is_staff = Some(is_staff);
         drop(state);
 
-        if let Some((token, device_id)) = MIXPANEL_TOKEN.as_ref().zip(device_id) {
+        if let Some((token, installation_id)) = MIXPANEL_TOKEN.as_ref().zip(installation_id) {
             self.executor
                 .spawn(
                     async move {
                         let json_bytes = serde_json::to_vec(&[MixpanelEngageRequest {
                             token,
-                            distinct_id: device_id,
+                            installation_id,
                             set: json!({
                                 "Staff": is_staff,
                                 "ID": metrics_id,
@@ -299,7 +300,7 @@ impl Telemetry {
             event,
         });
 
-        if state.device_id.is_some() {
+        if state.installation_id.is_some() {
             if state.mixpanel_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_clickhouse_events();
@@ -333,7 +334,7 @@ impl Telemetry {
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_millis(),
-                distinct_id: state.device_id.clone(),
+                installation_id: state.installation_id.clone(),
                 insert_id: post_inc(&mut state.next_mixpanel_event_id),
                 event_properties: if let Value::Object(properties) = properties {
                     Some(properties)
@@ -348,7 +349,7 @@ impl Telemetry {
             },
         };
         state.mixpanel_events_queue.push(event);
-        if state.device_id.is_some() {
+        if state.installation_id.is_some() {
             if state.mixpanel_events_queue.len() >= MAX_QUEUE_LEN {
                 drop(state);
                 self.flush_mixpanel_events();
@@ -365,6 +366,10 @@ impl Telemetry {
 
     pub fn metrics_id(self: &Arc<Self>) -> Option<Arc<str>> {
         self.state.lock().metrics_id.clone()
+    }
+
+    pub fn installation_id(self: &Arc<Self>) -> Option<Arc<str>> {
+        self.state.lock().installation_id.clone()
     }
 
     pub fn is_staff(self: &Arc<Self>) -> Option<bool> {
@@ -438,7 +443,7 @@ impl Telemetry {
                             &mut json_bytes,
                             &ClickhouseEventRequestBody {
                                 token: ZED_SECRET_CLIENT_TOKEN,
-                                installation_id: state.device_id.clone(),
+                                installation_id: state.installation_id.clone(),
                                 app_version: state.app_version.clone(),
                                 os_name: state.os_name,
                                 os_version: state.os_version.clone(),
