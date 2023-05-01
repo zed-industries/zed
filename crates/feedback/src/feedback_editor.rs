@@ -47,6 +47,7 @@ pub fn init(cx: &mut AppContext) {
 struct FeedbackRequestBody<'a> {
     feedback_text: &'a str,
     metrics_id: Option<Arc<str>>,
+    installation_id: Option<Arc<str>>,
     system_specs: SystemSpecs,
     is_staff: bool,
     token: &'a str,
@@ -152,12 +153,14 @@ impl FeedbackEditor {
 
         let telemetry = zed_client.telemetry();
         let metrics_id = telemetry.metrics_id();
+        let installation_id = telemetry.installation_id();
         let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
 
         let request = FeedbackRequestBody {
             feedback_text: &feedback_text,
             metrics_id,
+            installation_id,
             system_specs,
             is_staff: is_staff.unwrap_or(false),
             token: ZED_SECRET_CLIENT_TOKEN,
