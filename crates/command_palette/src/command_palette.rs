@@ -268,9 +268,11 @@ impl std::fmt::Debug for Command {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use editor::Editor;
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
     use project::Project;
     use workspace::{AppState, Workspace};
 
@@ -291,7 +293,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_command_palette(cx: &mut TestAppContext) {
+    async fn test_command_palette(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        deterministic.forbid_parking();
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -333,7 +336,7 @@ mod tests {
             assert_eq!(palette.delegate().matches[0].string, "editor: backspace");
             palette.confirm(&Default::default(), cx);
         });
-
+        deterministic.run_until_parked();
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.text(cx), "ab");
         });
