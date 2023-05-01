@@ -31,7 +31,6 @@ pub struct Telemetry {
 #[derive(Default)]
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,
-    // TODO METRICS: Change this to installation_id at some point
     installation_id: Option<Arc<str>>,
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
