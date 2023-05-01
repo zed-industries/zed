@@ -30,13 +30,13 @@ pub struct Telemetry {
 
 #[derive(Default)]
 struct TelemetryState {
-    metrics_id: Option<Arc<str>>,
-    installation_id: Option<Arc<str>>,
+    metrics_id: Option<Arc<str>>,      // Per logged-in user
+    installation_id: Option<Arc<str>>, // Per app installation
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_version: Option<Arc<str>>,
     os_name: &'static str,
-    mixpanel_events_queue: Vec<MixpanelEvent>, // Mixpanel mixed events - will hopefully die soon
+    mixpanel_events_queue: Vec<MixpanelEvent>,
     clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
     next_mixpanel_event_id: usize,
     flush_mixpanel_events_task: Option<Task<()>>,
