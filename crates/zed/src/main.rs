@@ -29,8 +29,16 @@ use settings::{
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
-    env, ffi::OsStr, fs::OpenOptions, io::Write as _, os::unix::prelude::OsStrExt, panic,
-    path::PathBuf, sync::Arc, thread, time::Duration,
+    env,
+    ffi::OsStr,
+    fs::OpenOptions,
+    io::Write as _,
+    os::unix::prelude::OsStrExt,
+    panic,
+    path::PathBuf,
+    sync::{Arc, Weak},
+    thread,
+    time::Duration,
 };
 use terminal_view::{get_working_directory, TerminalView};
 use util::http::{self, HttpClient};
@@ -104,7 +112,13 @@ fn main() {
                 .log_err();
         }
     })
-    .on_reopen(move |cx| cx.dispatch_global_action(NewFile));
+    .on_reopen(move |cx| {
+        if cx.has_global::<Weak<AppState>>() {
+            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+                workspace::open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
+            }
+        }
+    });
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
@@ -190,6 +204,7 @@ fn main() {
             dock_default_item_factory,
             background_actions,
         });
+        cx.set_global(Arc::downgrade(&app_state));
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
@@ -274,7 +289,7 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         cx.update(|cx| show_welcome_experience(app_state, cx));
     } else {
         cx.update(|cx| {
-            cx.dispatch_global_action(NewFile);
+            workspace::open_new(app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
         });
     }
 }

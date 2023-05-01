@@ -1048,7 +1048,7 @@ impl AppContext {
         }
     }
 
-    pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
+    fn dispatch_global_action<A: Action>(&mut self, action: A) {
         self.dispatch_global_action_any(&action);
     }
 
