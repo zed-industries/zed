@@ -1,5 +1,5 @@
 use context_menu::{ContextMenu, ContextMenuItem};
-use copilot::{Copilot, Reinstall, SignOut, Status};
+use copilot::{Copilot, SignOut, Status};
 use editor::Editor;
 use gpui::{
     elements::*,
@@ -103,11 +103,21 @@ impl View for CopilotButton {
                             {
                                 workspace.update(cx, |workspace, cx| {
                                     workspace.show_toast(
-                                        Toast::new_action(
+                                        Toast::new(
                                             COPILOT_ERROR_TOAST_ID,
                                             format!("Copilot can't be started: {}", e),
+                                        )
+                                        .on_click(
                                             "Reinstall Copilot",
-                                            Reinstall,
+                                            |cx| {
+                                                if let Some(copilot) = Copilot::global(cx) {
+                                                    copilot
+                                                        .update(cx, |copilot, cx| {
+                                                            copilot.reinstall(cx)
+                                                        })
+                                                        .detach();
+                                                }
+                                            },
                                         ),
                                         cx,
                                     );

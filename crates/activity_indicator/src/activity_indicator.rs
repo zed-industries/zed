@@ -5,7 +5,7 @@ use gpui::{
     actions, anyhow,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Action, AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
+    AppContext, Entity, ModelHandle, View, ViewContext, ViewHandle,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
@@ -45,7 +45,7 @@ struct PendingWork<'a> {
 struct Content {
     icon: Option<&'static str>,
     message: String,
-    action: Option<Box<dyn Action>>,
+    on_click: Option<Arc<dyn Fn(&mut ActivityIndicator, &mut ViewContext<ActivityIndicator>)>>,
 }
 
 pub fn init(cx: &mut AppContext) {
@@ -199,7 +199,7 @@ impl ActivityIndicator {
             return Content {
                 icon: None,
                 message,
-                action: None,
+                on_click: None,
             };
         }
 
@@ -230,7 +230,7 @@ impl ActivityIndicator {
                     downloading.join(", "),
                     if downloading.len() > 1 { "s" } else { "" }
                 ),
-                action: None,
+                on_click: None,
             };
         } else if !checking_for_update.is_empty() {
             return Content {
@@ -244,7 +244,7 @@ impl ActivityIndicator {
                         ""
                     }
                 ),
-                action: None,
+                on_click: None,
             };
         } else if !failed.is_empty() {
             return Content {
@@ -254,7 +254,9 @@ impl ActivityIndicator {
                     failed.join(", "),
                     if failed.len() > 1 { "s" } else { "" }
                 ),
-                action: Some(Box::new(ShowErrorMessage)),
+                on_click: Some(Arc::new(|this, cx| {
+                    this.show_error_message(&Default::default(), cx)
+                })),
             };
         }
 
@@ -264,27 +266,31 @@ impl ActivityIndicator {
                 AutoUpdateStatus::Checking => Content {
                     icon: Some(DOWNLOAD_ICON),
                     message: "Checking for Zed updates…".to_string(),
-                    action: None,
+                    on_click: None,
                 },
                 AutoUpdateStatus::Downloading => Content {
                     icon: Some(DOWNLOAD_ICON),
                     message: "Downloading Zed update…".to_string(),
-                    action: None,
+                    on_click: None,
                 },
                 AutoUpdateStatus::Installing => Content {
                     icon: Some(DOWNLOAD_ICON),
                     message: "Installing Zed update…".to_string(),
-                    action: None,
+                    on_click: None,
                 },
                 AutoUpdateStatus::Updated => Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    action: Some(Box::new(workspace::Restart)),
+                    on_click: Some(Arc::new(|_, cx| {
+                        workspace::restart(&Default::default(), cx)
+                    })),
                 },
                 AutoUpdateStatus::Errored => Content {
                     icon: Some(WARNING_ICON),
                     message: "Auto update failed".to_string(),
-                    action: Some(Box::new(DismissErrorMessage)),
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&Default::default(), cx)
+                    })),
                 },
                 AutoUpdateStatus::Idle => Default::default(),
             };
@@ -294,7 +300,7 @@ impl ActivityIndicator {
             return Content {
                 icon: None,
                 message: most_recent_active_task.to_string(),
-                action: None,
+                on_click: None,
             };
         }
 
@@ -315,7 +321,7 @@ impl View for ActivityIndicator {
         let Content {
             icon,
             message,
-            action,
+            on_click,
         } = self.content_to_render(cx);
 
         let mut element = MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
@@ -325,7 +331,7 @@ impl View for ActivityIndicator {
                 .workspace
                 .status_bar
                 .lsp_status;
-            let style = if state.hovered() && action.is_some() {
+            let style = if state.hovered() && on_click.is_some() {
                 theme.hover.as_ref().unwrap_or(&theme.default)
             } else {
                 &theme.default
@@ -353,12 +359,10 @@ impl View for ActivityIndicator {
                 .aligned()
         });
 
-        if let Some(action) = action {
+        if let Some(on_click) = on_click.clone() {
             element = element
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_any_action(action.boxed_clone())
-                });
+                .on_click(MouseButton::Left, move |_, this, cx| on_click(this, cx));
         }
 
         element.into_any()

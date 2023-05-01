@@ -1745,7 +1745,7 @@ impl AppContext {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
-    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: impl Action) {
+    fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: impl Action) {
         self.dispatch_any_action_at(window_id, view_id, Box::new(action));
     }
 
@@ -3194,13 +3194,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         let view_id = self.view_id;
         self.window_context
             .dispatch_action_at(window_id, view_id, action)
-    }
-
-    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
-        let window_id = self.window_id;
-        let view_id = self.view_id;
-        self.window_context
-            .dispatch_any_action_at(window_id, view_id, action)
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {

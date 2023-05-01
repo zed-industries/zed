@@ -61,7 +61,7 @@ fn toggle(app_state: Weak<AppState>, cx: &mut ViewContext<Workspace>) -> Option<
                 });
             } else {
                 workspace.show_notification(0, cx, |cx| {
-                    cx.add_view(|_| MessageNotification::new_message("No recent projects to open."))
+                    cx.add_view(|_| MessageNotification::new("No recent projects to open."))
                 })
             }
         })?;

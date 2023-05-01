@@ -560,7 +560,7 @@ impl Copilot {
         }
     }
 
-    fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    pub fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
