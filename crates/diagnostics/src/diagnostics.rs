@@ -697,8 +697,18 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 icon.constrained()
                     .with_width(icon_width)
                     .aligned()
-                    .contained(),
+                    .contained()
+                    .with_margin_right(cx.gutter_padding),
             )
+            .with_children(diagnostic.source.as_ref().map(|source| {
+                Label::new(
+                    format!("{source}: "),
+                    style.source.label.clone().with_font_size(font_size),
+                )
+                .contained()
+                .with_style(style.message.container)
+                .aligned()
+            }))
             .with_child(
                 Label::new(
                     message.clone(),
@@ -707,7 +717,6 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                 .with_highlights(highlights.clone())
                 .contained()
                 .with_style(style.message.container)
-                .with_margin_left(cx.gutter_padding)
                 .aligned(),
             )
             .with_children(diagnostic.code.clone().map(|code| {

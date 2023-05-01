@@ -176,6 +176,9 @@ export default function editor(colorScheme: ColorScheme) {
                     left: 10,
                 },
             },
+            source: {
+                text: text(colorScheme.middle, "sans", { size: "sm", weight: "bold", }),
+            },
             message: {
                 highlightText: text(colorScheme.middle, "sans", {
                     size: "sm",

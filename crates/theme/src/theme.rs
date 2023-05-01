@@ -659,6 +659,7 @@ pub struct DiagnosticPathHeader {
 pub struct DiagnosticHeader {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub source: ContainedLabel,
     pub message: ContainedLabel,
     pub code: ContainedText,
     pub text_scale_factor: f32,
