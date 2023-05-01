@@ -271,11 +271,11 @@ impl Dock {
         }
     }
 
-    fn focus_dock(workspace: &mut Workspace, _: &FocusDock, cx: &mut ViewContext<Workspace>) {
+    pub fn focus_dock(workspace: &mut Workspace, _: &FocusDock, cx: &mut ViewContext<Workspace>) {
         Self::set_dock_position(workspace, workspace.dock.position.show(), true, cx);
     }
 
-    fn hide_dock(workspace: &mut Workspace, _: &HideDock, cx: &mut ViewContext<Workspace>) {
+    pub fn hide_dock(workspace: &mut Workspace, _: &HideDock, cx: &mut ViewContext<Workspace>) {
         Self::set_dock_position(workspace, workspace.dock.position.hide(), true, cx);
     }
 
@@ -374,8 +374,8 @@ impl Dock {
                                     .with_background_color(style.wash_color)
                             })
                             .capture_all()
-                            .on_down(MouseButton::Left, |_, _, cx| {
-                                cx.dispatch_action(HideDock);
+                            .on_down(MouseButton::Left, |_, workspace, cx| {
+                                Dock::hide_dock(workspace, &Default::default(), cx)
                             })
                             .with_cursor_style(CursorStyle::Arrow),
                         )

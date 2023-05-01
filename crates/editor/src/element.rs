@@ -211,10 +211,13 @@ impl EditorElement {
         enum GutterHandlers {}
         scene.push_mouse_region(
             MouseRegion::new::<GutterHandlers>(cx.view_id(), cx.view_id() + 1, gutter_bounds)
-                .on_hover(|hover, _: &mut Editor, cx| {
-                    cx.dispatch_action(GutterHover {
-                        hovered: hover.started,
-                    })
+                .on_hover(|hover, editor: &mut Editor, cx| {
+                    editor.gutter_hover(
+                        &GutterHover {
+                            hovered: hover.started,
+                        },
+                        cx,
+                    );
                 }),
         )
     }
@@ -754,8 +757,8 @@ impl EditorElement {
 
                 scene.push_mouse_region(
                     MouseRegion::new::<FoldMarkers>(cx.view_id(), *id as usize, bound)
-                        .on_click(MouseButton::Left, move |_, _: &mut Editor, cx| {
-                            cx.dispatch_action(UnfoldAt { buffer_row })
+                        .on_click(MouseButton::Left, move |_, editor: &mut Editor, cx| {
+                            editor.unfold_at(&UnfoldAt { buffer_row }, cx)
                         })
                         .with_notify_on_hover(true)
                         .with_notify_on_click(true),

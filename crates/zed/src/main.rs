@@ -10,6 +10,7 @@ use cli::{
 };
 use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -51,8 +52,7 @@ use staff_mode::StaffMode;
 use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,
-    Workspace,
+    self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace,
 };
 use zed::{self, build_window_options, initialize_workspace, languages, menus, OpenSettings};
 
@@ -115,7 +115,10 @@ fn main() {
     .on_reopen(move |cx| {
         if cx.has_global::<Weak<AppState>>() {
             if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-                workspace::open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
+                workspace::open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
             }
         }
     });
@@ -208,14 +211,14 @@ fn main() {
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
-        recent_projects::init(cx, Arc::downgrade(&app_state));
+        recent_projects::init(cx);
 
         journal::init(app_state.clone(), cx);
-        language_selector::init(app_state.clone(), cx);
-        theme_selector::init(app_state.clone(), cx);
+        language_selector::init(cx);
+        theme_selector::init(cx);
         zed::init(&app_state, cx);
         collab_ui::init(&app_state, cx);
-        feedback::init(app_state.clone(), cx);
+        feedback::init(cx);
         welcome::init(cx);
 
         cx.set_menus(menus::menus());
@@ -289,7 +292,10 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         cx.update(|cx| show_welcome_experience(app_state, cx));
     } else {
         cx.update(|cx| {
-            workspace::open_new(app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
+            workspace::open_new(app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
         });
     }
 }

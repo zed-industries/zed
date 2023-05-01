@@ -1,7 +1,6 @@
 use crate::{
     contact_finder::{build_contact_finder, ContactFinder},
     contact_list::ContactList,
-    ToggleContactsMenu,
 };
 use client::UserStore;
 use gpui::{
@@ -72,8 +71,11 @@ impl ContactsPopover {
             let child = cx
                 .add_view(|cx| ContactList::new(&workspace, cx).with_editor_text(editor_text, cx));
             cx.focus(&child);
-            self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
+            self._subscription = Some(cx.subscribe(&child, |this, _, event, cx| match event {
                 crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),
+                crate::contact_list::Event::ToggleContactFinder => {
+                    this.toggle_contact_finder(&Default::default(), cx)
+                }
             }));
             self.child = Child::ContactList(child);
             cx.notify();
@@ -106,9 +108,7 @@ impl View for ContactsPopover {
                 .with_width(theme.contacts_popover.width)
                 .with_height(theme.contacts_popover.height)
         })
-        .on_down_out(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(ToggleContactsMenu);
-        })
+        .on_down_out(MouseButton::Left, move |_, _, cx| cx.emit(Event::Dismissed))
         .into_any()
     }
 

@@ -485,7 +485,11 @@ impl ContextMenu {
                 .contained()
                 .with_style(style.container)
         })
-        .on_down_out(MouseButton::Left, |_, _, cx| cx.dispatch_action(Cancel))
-        .on_down_out(MouseButton::Right, |_, _, cx| cx.dispatch_action(Cancel))
+        .on_down_out(MouseButton::Left, |_, this, cx| {
+            this.cancel(&Default::default(), cx);
+        })
+        .on_down_out(MouseButton::Right, |_, this, cx| {
+            this.cancel(&Default::default(), cx);
+        })
     }
 }

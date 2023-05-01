@@ -11,21 +11,18 @@ use project::Project;
 use settings::Settings;
 use std::sync::Arc;
 use util::ResultExt;
-use workspace::{AppState, Workspace};
+use workspace::Workspace;
 
 actions!(language_selector, [Toggle]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     Picker::<LanguageSelectorDelegate>::init(cx);
-    cx.add_action({
-        let language_registry = app_state.languages.clone();
-        move |workspace, _: &Toggle, cx| toggle(workspace, language_registry.clone(), cx)
-    });
+    cx.add_action(toggle);
 }
 
-fn toggle(
+pub fn toggle(
     workspace: &mut Workspace,
-    registry: Arc<LanguageRegistry>,
+    _: &Toggle,
     cx: &mut ViewContext<Workspace>,
 ) -> Option<()> {
     let (_, buffer, _) = workspace
@@ -34,6 +31,7 @@ fn toggle(
         .read(cx)
         .active_excerpt(cx)?;
     workspace.toggle_modal(cx, |workspace, cx| {
+        let registry = workspace.app_state().languages.clone();
         cx.add_view(|cx| {
             Picker::new(
                 LanguageSelectorDelegate::new(buffer, workspace.project().clone(), registry),

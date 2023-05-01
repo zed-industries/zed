@@ -208,48 +208,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             }
         }
     });
-    cx.add_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_, _: &Open, cx: &mut ViewContext<Workspace>| {
-            let mut paths = cx.prompt_for_paths(PathPromptOptions {
-                files: true,
-                directories: true,
-                multiple: true,
-            });
-
-            if let Some(app_state) = app_state.upgrade() {
-                cx.spawn(|this, mut cx| async move {
-                    if let Some(paths) = paths.recv().await.flatten() {
-                        if let Some(task) = this
-                            .update(&mut cx, |this, cx| {
-                                this.open_workspace_for_paths(paths, app_state, cx)
-                            })
-                            .log_err()
-                        {
-                            task.await.log_err();
-                        }
-                    }
-                })
-                .detach();
-            }
-        }
-    });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &NewWindow, cx: &mut AppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
-            }
-        }
-    });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &NewFile, cx: &mut AppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
-            }
-        }
-    });
+    cx.add_async_action(Workspace::open);
 
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
@@ -913,7 +872,6 @@ impl Workspace {
     /// to the callback. Otherwise, a new empty window will be created.
     pub fn with_local_workspace<T, F>(
         &mut self,
-        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Self>,
         callback: F,
     ) -> Task<Result<T>>
@@ -924,7 +882,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), None, cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -1093,10 +1051,29 @@ impl Workspace {
         })
     }
 
+    pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let mut paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        });
+
+        Some(cx.spawn(|this, mut cx| async move {
+            if let Some(paths) = paths.recv().await.flatten() {
+                if let Some(task) = this
+                    .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
+                    .log_err()
+                {
+                    task.await?
+                }
+            }
+            Ok(())
+        }))
+    }
+
     pub fn open_workspace_for_paths(
         &mut self,
         paths: Vec<PathBuf>,
-        app_state: Arc<AppState>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let window_id = cx.window_id();
@@ -1108,6 +1085,7 @@ impl Workspace {
         } else {
             Some(self.prepare_to_close(false, cx))
         };
+        let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
             let window_id_to_replace = if let Some(close_task) = close_task {

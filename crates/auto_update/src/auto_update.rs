@@ -51,9 +51,8 @@ impl Entity for AutoUpdater {
 
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
-        let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
-            let updater = AutoUpdater::new(version, http_client, server_url.clone());
+            let updater = AutoUpdater::new(version, http_client, server_url);
 
             let mut update_subscription = cx
                 .global::<Settings>()
@@ -74,22 +73,29 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
             updater
         });
         cx.set_global(Some(auto_updater));
-        cx.add_global_action(|_: &Check, cx| {
-            if let Some(updater) = AutoUpdater::get(cx) {
-                updater.update(cx, |updater, cx| updater.poll(cx));
-            }
-        });
-        cx.add_global_action(move |_: &ViewReleaseNotes, cx| {
-            let latest_release_url = if cx.has_global::<ReleaseChannel>()
-                && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
-            {
-                format!("{server_url}/releases/preview/latest")
-            } else {
-                format!("{server_url}/releases/latest")
-            };
-            cx.platform().open_url(&latest_release_url);
-        });
+        cx.add_global_action(check);
+        cx.add_global_action(view_release_notes);
         cx.add_action(UpdateNotification::dismiss);
+    }
+}
+
+pub fn check(_: &Check, cx: &mut AppContext) {
+    if let Some(updater) = AutoUpdater::get(cx) {
+        updater.update(cx, |updater, cx| updater.poll(cx));
+    }
+}
+
+fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
+    if let Some(auto_updater) = AutoUpdater::get(cx) {
+        let server_url = &auto_updater.read(cx).server_url;
+        let latest_release_url = if cx.has_global::<ReleaseChannel>()
+            && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
+        {
+            format!("{server_url}/releases/preview/latest")
+        } else {
+            format!("{server_url}/releases/latest")
+        };
+        cx.platform().open_url(&latest_release_url);
     }
 }
 

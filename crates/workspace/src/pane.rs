@@ -2,7 +2,7 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, ExpandDock, HideDock},
+    dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, Dock, ExpandDock},
     item::WeakItemHandle,
     toolbar::Toolbar,
     Item, NewFile, NewSearch, NewTerminal, Workspace,
@@ -257,6 +257,10 @@ impl Pane {
             _background_actions: background_actions,
             workspace,
         }
+    }
+
+    pub(crate) fn workspace(&self) -> &WeakViewHandle<Workspace> {
+        &self.workspace
     }
 
     pub fn is_active(&self) -> bool {
@@ -1340,8 +1344,8 @@ impl Pane {
                                         cx,
                                     )
                                 })
-                                .on_down(MouseButton::Left, move |_, _, cx| {
-                                    cx.dispatch_action(ActivateItem(ix));
+                                .on_down(MouseButton::Left, move |_, this, cx| {
+                                    this.activate_item(ix, true, true, cx);
                                 })
                                 .on_click(MouseButton::Middle, {
                                     let item_id = item.id();
@@ -1639,7 +1643,13 @@ impl Pane {
                     3,
                     "icons/x_mark_8.svg",
                     cx,
-                    |_, cx| cx.dispatch_action(HideDock),
+                    |this, cx| {
+                        if let Some(workspace) = this.workspace.upgrade(cx) {
+                            workspace.update(cx, |workspace, cx| {
+                                Dock::hide_dock(workspace, &Default::default(), cx)
+                            })
+                        }
+                    },
                     None,
                 )
             }))
@@ -1693,8 +1703,8 @@ impl View for Pane {
                             })
                             .on_down(
                                 MouseButton::Left,
-                                move |_, _, cx| {
-                                    cx.dispatch_action(ActivateItem(active_item_index));
+                                move |_, this, cx| {
+                                    this.activate_item(active_item_index, true, true, cx);
                                 },
                             ),
                         );
@@ -1759,15 +1769,27 @@ impl View for Pane {
         })
         .on_down(
             MouseButton::Navigate(NavigationDirection::Back),
-            move |_, _, cx| {
-                let pane = cx.weak_handle();
-                cx.dispatch_action(GoBack { pane: Some(pane) });
+            move |_, pane, cx| {
+                if let Some(workspace) = pane.workspace.upgrade(cx) {
+                    let pane = cx.weak_handle();
+                    cx.window_context().defer(move |cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            Pane::go_back(workspace, Some(pane), cx).detach_and_log_err(cx)
+                        })
+                    })
+                }
             },
         )
         .on_down(MouseButton::Navigate(NavigationDirection::Forward), {
-            move |_, _, cx| {
-                let pane = cx.weak_handle();
-                cx.dispatch_action(GoForward { pane: Some(pane) })
+            move |_, pane, cx| {
+                if let Some(workspace) = pane.workspace.upgrade(cx) {
+                    let pane = cx.weak_handle();
+                    cx.window_context().defer(move |cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            Pane::go_forward(workspace, Some(pane), cx).detach_and_log_err(cx)
+                        })
+                    })
+                }
             }
         })
         .into_any_named("pane")

@@ -130,8 +130,20 @@ impl View for Toolbar {
                         tooltip_style.clone(),
                         enable_go_backward,
                         spacing,
-                        super::GoBack {
-                            pane: Some(pane.clone()),
+                        {
+                            let pane = pane.clone();
+                            move |toolbar, cx| {
+                                if let Some(workspace) = toolbar
+                                    .pane
+                                    .upgrade(cx)
+                                    .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
+                                {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Pane::go_back(workspace, Some(pane.clone()), cx)
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                            }
                         },
                         super::GoBack { pane: None },
                         "Go Back",
@@ -143,7 +155,21 @@ impl View for Toolbar {
                         tooltip_style,
                         enable_go_forward,
                         spacing,
-                        super::GoForward { pane: Some(pane) },
+                        {
+                            let pane = pane.clone();
+                            move |toolbar, cx| {
+                                if let Some(workspace) = toolbar
+                                    .pane
+                                    .upgrade(cx)
+                                    .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
+                                {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Pane::go_forward(workspace, Some(pane.clone()), cx)
+                                            .detach_and_log_err(cx);
+                                    });
+                                }
+                            }
+                        },
                         super::GoForward { pane: None },
                         "Go Forward",
                         cx,
@@ -161,13 +187,13 @@ impl View for Toolbar {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn nav_button<A: Action + Clone>(
+fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
     svg_path: &'static str,
     style: theme::Interactive<theme::IconButton>,
     tooltip_style: TooltipStyle,
     enabled: bool,
     spacing: f32,
-    action: A,
+    on_click: F,
     tooltip_action: A,
     action_name: &str,
     cx: &mut ViewContext<Toolbar>,
@@ -195,8 +221,8 @@ fn nav_button<A: Action + Clone>(
     } else {
         CursorStyle::default()
     })
-    .on_click(MouseButton::Left, move |_, _, cx| {
-        cx.dispatch_action(action.clone())
+    .on_click(MouseButton::Left, move |_, toolbar, cx| {
+        on_click(toolbar, cx)
     })
     .with_tooltip::<A>(
         0,

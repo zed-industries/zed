@@ -278,8 +278,8 @@ pub mod simple_message_notification {
                                         .with_height(style.button_width)
                                 })
                                 .with_padding(Padding::uniform(5.))
-                                .on_click(MouseButton::Left, move |_, _, cx| {
-                                    cx.dispatch_action(CancelMessageNotification)
+                                .on_click(MouseButton::Left, move |_, this, cx| {
+                                    this.dismiss(&Default::default(), cx);
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .aligned()

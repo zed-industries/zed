@@ -2,27 +2,23 @@ use editor::Editor;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Entity, Subscription, View, ViewContext, ViewHandle,
+    Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
 use std::sync::Arc;
-use workspace::{item::ItemHandle, StatusItemView};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<Arc<str>>>,
+    workspace: WeakViewHandle<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }
 
-impl Default for ActiveBufferLanguage {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ActiveBufferLanguage {
-    pub fn new() -> Self {
+    pub fn new(workspace: &Workspace) -> Self {
         Self {
             active_language: None,
+            workspace: workspace.weak_handle(),
             _observe_active_editor: None,
         }
     }
@@ -66,8 +62,12 @@ impl View for ActiveBufferLanguage {
                     .with_style(style.container)
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, _, cx| {
-                cx.dispatch_action(crate::Toggle)
+            .on_click(MouseButton::Left, |_, this, cx| {
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    workspace.update(cx, |workspace, cx| {
+                        crate::toggle(workspace, &Default::default(), cx)
+                    });
+                }
             })
             .into_any()
         } else {

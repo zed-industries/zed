@@ -5,7 +5,7 @@ use std::{borrow::Cow, sync::Arc};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
-    AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext,
+    AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext, WeakViewHandle,
 };
 use settings::{settings_file::SettingsFile, Settings};
 
@@ -20,7 +20,7 @@ pub const FIRST_OPEN: &str = "first_open";
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
-        let welcome_page = cx.add_view(WelcomePage::new);
+        let welcome_page = cx.add_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item(Box::new(welcome_page), cx)
     });
 
@@ -30,7 +30,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
         workspace.toggle_sidebar(SidebarSide::Left, cx);
-        let welcome_page = cx.add_view(|cx| WelcomePage::new(cx));
+        let welcome_page = cx.add_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus(&welcome_page);
         cx.notify();
@@ -43,6 +43,7 @@ pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut AppContext) {
 }
 
 pub struct WelcomePage {
+    workspace: WeakViewHandle<Workspace>,
     _settings_subscription: Subscription,
 }
 
@@ -97,26 +98,46 @@ impl View for WelcomePage {
                 )
                 .with_child(
                     Flex::column()
-                        .with_child(theme::ui::cta_button(
+                        .with_child(theme::ui::cta_button::<theme_selector::Toggle, _, _, _>(
                             "Choose a theme",
-                            theme_selector::Toggle,
                             width,
                             &theme.welcome.button,
                             cx,
+                            |_, this, cx| {
+                                if let Some(workspace) = this.workspace.upgrade(cx) {
+                                    workspace.update(cx, |workspace, cx| {
+                                        theme_selector::toggle(workspace, &Default::default(), cx)
+                                    })
+                                }
+                            },
                         ))
-                        .with_child(theme::ui::cta_button(
+                        .with_child(theme::ui::cta_button::<ToggleBaseKeymapSelector, _, _, _>(
                             "Choose a keymap",
-                            ToggleBaseKeymapSelector,
                             width,
                             &theme.welcome.button,
                             cx,
+                            |_, this, cx| {
+                                if let Some(workspace) = this.workspace.upgrade(cx) {
+                                    workspace.update(cx, |workspace, cx| {
+                                        base_keymap_picker::toggle(
+                                            workspace,
+                                            &Default::default(),
+                                            cx,
+                                        )
+                                    })
+                                }
+                            },
                         ))
-                        .with_child(theme::ui::cta_button(
+                        .with_child(theme::ui::cta_button::<install_cli::Install, _, _, _>(
                             "Install the CLI",
-                            install_cli::Install,
                             width,
                             &theme.welcome.button,
                             cx,
+                            |_, _, cx| {
+                                cx.app_context()
+                                    .spawn(|cx| async move { install_cli::install_cli(&cx).await })
+                                    .detach_and_log_err(cx);
+                            },
                         ))
                         .contained()
                         .with_style(theme.welcome.button_group)
@@ -190,8 +211,9 @@ impl View for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         WelcomePage {
+            workspace: workspace.weak_handle(),
             _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
         }
     }
@@ -220,11 +242,15 @@ impl Item for WelcomePage {
     fn show_toolbar(&self) -> bool {
         false
     }
+
     fn clone_on_split(
         &self,
         _workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Self> {
-        Some(WelcomePage::new(cx))
+        Some(WelcomePage {
+            workspace: self.workspace.clone(),
+            _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
+        })
     }
 }
