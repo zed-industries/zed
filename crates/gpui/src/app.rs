@@ -1062,10 +1062,6 @@ impl AppContext {
         }
     }
 
-    fn dispatch_global_action<A: Action>(&mut self, action: A) {
-        self.dispatch_global_action_any(&action);
-    }
-
     fn dispatch_global_action_any(&mut self, action: &dyn Action) -> bool {
         self.update(|this| {
             if let Some((name, mut handler)) = this.global_actions.remove_entry(&action.id()) {
@@ -1904,17 +1900,6 @@ impl AppContext {
                 let mut subscriptions = cx.focus_observations.clone();
                 subscriptions.emit(focused_id, |callback| callback(true, cx));
             }
-        });
-    }
-
-    fn handle_dispatch_action_from_effect(
-        &mut self,
-        window_id: usize,
-        view_id: Option<usize>,
-        action: &dyn Action,
-    ) {
-        self.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(view_id, action)
         });
     }
 
