@@ -138,10 +138,13 @@ impl View for Toolbar {
                                     .upgrade(cx)
                                     .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
                                 {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Pane::go_back(workspace, Some(pane.clone()), cx)
-                                            .detach_and_log_err(cx);
-                                    });
+                                    let pane = pane.clone();
+                                    cx.window_context().defer(move |cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            Pane::go_back(workspace, Some(pane.clone()), cx)
+                                                .detach_and_log_err(cx);
+                                        });
+                                    })
                                 }
                             }
                         },
@@ -163,9 +166,12 @@ impl View for Toolbar {
                                     .upgrade(cx)
                                     .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
                                 {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Pane::go_forward(workspace, Some(pane.clone()), cx)
-                                            .detach_and_log_err(cx);
+                                    let pane = pane.clone();
+                                    cx.window_context().defer(move |cx| {
+                                        workspace.update(cx, |workspace, cx| {
+                                            Pane::go_forward(workspace, Some(pane.clone()), cx)
+                                                .detach_and_log_err(cx);
+                                        });
                                     });
                                 }
                             }

@@ -1645,9 +1645,11 @@ impl Pane {
                     cx,
                     |this, cx| {
                         if let Some(workspace) = this.workspace.upgrade(cx) {
-                            workspace.update(cx, |workspace, cx| {
-                                Dock::hide_dock(workspace, &Default::default(), cx)
-                            })
+                            cx.window_context().defer(move |cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    Dock::hide_dock(workspace, &Default::default(), cx)
+                                })
+                            });
                         }
                     },
                     None,
