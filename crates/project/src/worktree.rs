@@ -722,19 +722,24 @@ impl LocalWorktree {
         let fs = self.fs.clone();
         let snapshot = self.snapshot();
 
+        let mut index_task = None;
+
+        if let Some(repo) = snapshot.repo_for(&path) {
+            let repo_path = repo.work_directory.relativize(&path).unwrap();
+            if let Some(repo) = self.git_repositories.get(&repo.git_dir_entry_id) {
+                let repo = repo.to_owned();
+                index_task = Some(
+                    cx.background()
+                        .spawn(async move { repo.lock().load_index_text(&repo_path) }),
+                );
+            }
+        }
+
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let diff_base = if let Some((work_directory, repo)) = snapshot.repo_for_metadata(&path)
-            {
-                if let Ok(repo_relative) = path.strip_prefix(&work_directory) {
-                    let repo_relative = repo_relative.to_owned();
-                    cx.background()
-                        .spawn(async move { repo.lock().load_index_text(&repo_relative) })
-                        .await
-                } else {
-                    None
-                }
+            let diff_base = if let Some(index_task) = index_task {
+                index_task.await
             } else {
                 None
             };
@@ -1466,6 +1471,12 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    pub(crate) fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
+        dbg!(&self.repository_entries)
+            .closest(&RepositoryWorkDirectory(path.into()))
+            .map(|(_, entry)| entry.to_owned())
+    }
+
     pub(crate) fn repo_for_metadata(
         &self,
         path: &Path,
@@ -3429,37 +3440,27 @@ mod tests {
             .await;
         tree.flush_fs_events(cx).await;
 
-        fn entry(key: &RepositoryWorkDirectory, tree: &LocalWorktree) -> RepositoryEntry {
-            tree.repository_entries.get(key).unwrap().to_owned()
-        }
-
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for_metadata("c.txt".as_ref()).is_none());
+            assert!(tree.repo_for("c.txt".as_ref()).is_none());
 
-            let (work_directory, _repo_entry) =
-                tree.repo_for_metadata("dir1/src/b.txt".as_ref()).unwrap();
-            assert_eq!(work_directory.0.as_ref(), Path::new("dir1"));
-            assert_eq!(
-                entry(&work_directory, &tree).git_dir_path.as_ref(),
-                Path::new("dir1/.git")
-            );
+            let entry = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
+            assert_eq!(entry.work_directory.0.as_ref(), Path::new("dir1"));
+            assert_eq!(entry.git_dir_path.as_ref(), Path::new("dir1/.git"));
 
-            let _repo = tree
-                .repo_for_metadata("dir1/deps/dep1/src/a.txt".as_ref())
-                .unwrap();
-            assert_eq!(work_directory.deref(), Path::new("dir1/deps/dep1"));
+            let entry = tree.repo_for("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
+            assert_eq!(entry.work_directory.deref(), Path::new("dir1/deps/dep1"));
             assert_eq!(
-                entry(&work_directory, &tree).git_dir_path.as_ref(),
+                entry.git_dir_path.as_ref(),
                 Path::new("dir1/deps/dep1/.git"),
             );
         });
 
         let original_scan_id = tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
-            let (key, _) = tree.repo_for_metadata("dir1/src/b.txt".as_ref()).unwrap();
-            entry(&key, &tree).scan_id
+            let entry = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
+            entry.scan_id
         });
 
         std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
@@ -3468,8 +3469,8 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
             let new_scan_id = {
-                let (key, _) = tree.repo_for_metadata("dir1/src/b.txt".as_ref()).unwrap();
-                entry(&key, &tree).scan_id
+                let entry = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
+                entry.scan_id
             };
             assert_ne!(
                 original_scan_id, new_scan_id,
@@ -3483,7 +3484,7 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for_metadata("dir1/src/b.txt".as_ref()).is_none());
+            assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
         });
     }
 

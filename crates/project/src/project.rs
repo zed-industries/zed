@@ -4700,6 +4700,8 @@ impl Project {
         repos: &Vec<RepositoryEntry>,
         cx: &mut ModelContext<Self>,
     ) {
+        debug_assert!(worktree.read(cx).is_local());
+
         for (_, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let file = match File::from_dyn(buffer.read(cx).file()) {
