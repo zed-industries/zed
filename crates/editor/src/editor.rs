@@ -7509,8 +7509,16 @@ impl Deref for EditorStyle {
 
 pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
     let mut highlighted_lines = Vec::new();
-    for line in diagnostic.message.lines() {
-        highlighted_lines.push(highlight_diagnostic_message(line));
+    for (index, line) in diagnostic.message.lines().enumerate() {
+        let line = match &diagnostic.source {
+            Some(source) if index == 0 => {
+                let source_highlight = Vec::from_iter(0..source.len());
+                highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
+            }
+
+            _ => highlight_diagnostic_message(Vec::new(), line),
+        };
+        highlighted_lines.push(line);
     }
 
     Arc::new(move |cx: &mut BlockContext| {
@@ -7534,11 +7542,14 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     })
 }
 
-pub fn highlight_diagnostic_message(message: &str) -> (String, Vec<usize>) {
+pub fn highlight_diagnostic_message(
+    inital_highlights: Vec<usize>,
+    message: &str,
+) -> (String, Vec<usize>) {
     let mut message_without_backticks = String::new();
     let mut prev_offset = 0;
     let mut inside_block = false;
-    let mut highlights = Vec::new();
+    let mut highlights = inital_highlights;
     for (match_ix, (offset, _)) in message
         .match_indices('`')
         .chain([(message.len(), "")])
