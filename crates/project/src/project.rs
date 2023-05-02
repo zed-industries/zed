@@ -64,7 +64,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use sum_tree::TreeMap;
+
 use terminals::Terminals;
 
 use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
@@ -4697,7 +4697,7 @@ impl Project {
     fn update_local_worktree_buffers_git_repos(
         &mut self,
         worktree: ModelHandle<Worktree>,
-        repos: &TreeMap<RepositoryWorkDirectory, RepositoryEntry>,
+        repos: &Vec<RepositoryEntry>,
         cx: &mut ModelContext<Self>,
     ) {
         for (_, buffer) in &self.opened_buffers {
@@ -4712,27 +4712,30 @@ impl Project {
 
                 let path = file.path().clone();
 
-                let (work_directory, repo) = match repos
+                let repo = match repos
                     .iter()
-                    .find(|(work_directory, _)| work_directory.contains(&path))
+                    .find(|entry| entry.work_directory.contains(&path))
                 {
-                    Some((work_directory, repo)) => (work_directory, repo.clone()),
+                    Some(repo) => repo.clone(),
                     None => return,
                 };
 
-                let relative_repo = match work_directory.relativize(&path) {
+                let relative_repo = match repo.work_directory.relativize(&path) {
                     Some(relative_repo) => relative_repo.to_owned(),
                     None => return,
                 };
 
                 let remote_id = self.remote_id();
                 let client = self.client.clone();
+                let diff_base_task = worktree.update(cx, move |worktree, cx| {
+                    worktree
+                        .as_local()
+                        .unwrap()
+                        .load_index_text(repo, relative_repo, cx)
+                });
 
                 cx.spawn(|_, mut cx| async move {
-                    let diff_base = cx
-                        .background()
-                        .spawn(async move { repo.repo.lock().load_index_text(&relative_repo) })
-                        .await;
+                    let diff_base = diff_base_task.await;
 
                     let buffer_id = buffer.update(&mut cx, |buffer, cx| {
                         buffer.set_diff_base(diff_base.clone(), cx);

@@ -123,6 +123,7 @@ pub struct RepositoryEntry {
     // Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) git_dir_path: Arc<Path>,
     pub(crate) git_dir_entry_id: ProjectEntryId,
+    pub(crate) work_directory: RepositoryWorkDirectory,
     pub(crate) scan_id: usize,
     // TODO: pub(crate) head_ref: Arc<str>,
 }
@@ -144,8 +145,41 @@ impl RepositoryWorkDirectory {
         path.starts_with(self.0.as_ref())
     }
 
-    pub(crate) fn relativize(&self, path: &Path) -> Option<&Path> {
-        path.strip_prefix(self.0.as_ref()).ok()
+    pub(crate) fn relativize(&self, path: &Path) -> Option<RepoPath> {
+        path.strip_prefix(self.0.as_ref())
+            .ok()
+            .map(move |path| RepoPath(path.to_owned()))
+    }
+}
+
+impl Deref for RepositoryWorkDirectory {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct RepoPath(PathBuf);
+
+impl AsRef<Path> for RepoPath {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
+    }
+}
+
+impl Deref for RepoPath {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for RepositoryWorkDirectory {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
     }
 }
 
@@ -628,7 +662,7 @@ impl LocalWorktree {
     ) -> Vec<RepositoryEntry> {
         fn diff<'a>(
             a: impl Iterator<Item = &'a RepositoryEntry>,
-            b: impl Iterator<Item = &'a RepositoryEntry>,
+            mut b: impl Iterator<Item = &'a RepositoryEntry>,
             updated: &mut HashMap<&'a Path, RepositoryEntry>,
         ) {
             for a_repo in a {
@@ -691,11 +725,12 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let text = fs.load(&abs_path).await?;
 
-            let diff_base = if let Some(repo) = snapshot.repo_for(&path) {
-                if let Ok(repo_relative) = path.strip_prefix(repo.content_path) {
+            let diff_base = if let Some((work_directory, repo)) = snapshot.repo_for_metadata(&path)
+            {
+                if let Ok(repo_relative) = path.strip_prefix(&work_directory) {
                     let repo_relative = repo_relative.to_owned();
                     cx.background()
-                        .spawn(async move { repo.repo.lock().load_index_text(&repo_relative) })
+                        .spawn(async move { repo.lock().load_index_text(&repo_relative) })
                         .await
                 } else {
                     None
@@ -1076,6 +1111,19 @@ impl LocalWorktree {
     pub fn is_shared(&self) -> bool {
         self.share.is_some()
     }
+
+    pub fn load_index_text(
+        &self,
+        repo: RepositoryEntry,
+        repo_path: RepoPath,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Option<String>> {
+        let Some(git_ptr) = self.git_repositories.get(&repo.git_dir_entry_id).map(|git_ptr| git_ptr.to_owned()) else {
+            return Task::Ready(Some(None))
+        };
+        cx.background()
+            .spawn(async move { git_ptr.lock().load_index_text(&repo_path) })
+    }
 }
 
 impl RemoteWorktree {
@@ -1418,21 +1466,22 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    // Gives the most specific git repository for a given path
-    pub(crate) fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
-        self.repository_entries
-            .closest(&RepositoryWorkDirectory(path.into()))
-            .map(|(_, entry)| entry.to_owned())
-    }
-
-    pub(crate) fn repo_with_dot_git_containing(
-        &mut self,
+    pub(crate) fn repo_for_metadata(
+        &self,
         path: &Path,
-    ) -> Option<&mut RepositoryEntry> {
-        // Git repositories cannot be nested, so we don't need to reverse the order
-        self.git_repositories_old
-            .iter_mut()
-            .find(|repo| repo.in_dot_git(path))
+    ) -> Option<(RepositoryWorkDirectory, Arc<Mutex<dyn GitRepository>>)> {
+        self.repository_entries
+            .iter()
+            .find(|(_, repo)| repo.in_dot_git(path))
+            .map(|(work_directory, entry)| {
+                (
+                    work_directory.to_owned(),
+                    self.git_repositories
+                        .get(&entry.git_dir_entry_id)
+                        .expect("These two data structures should be in sync")
+                        .to_owned(),
+                )
+            })
     }
 
     #[cfg(test)]
@@ -1610,10 +1659,11 @@ impl LocalSnapshot {
             if self.repository_entries.get(&key).is_none() {
                 if let Some(repo) = fs.open_repo(abs_path.as_path()) {
                     self.repository_entries.insert(
-                        key,
+                        key.clone(),
                         RepositoryEntry {
                             git_dir_path: parent_path.clone(),
                             git_dir_entry_id: parent_entry.id,
+                            work_directory: key,
                             scan_id: 0,
                         },
                     );
@@ -2599,16 +2649,10 @@ impl BackgroundScanner {
 
                     let scan_id = snapshot.scan_id;
 
-                    if let Some(repo) = snapshot.repo_with_dot_git_containing(&path) {
-                        repo.repo.lock().reload_index();
-                        repo.scan_id = scan_id;
-                    }
+                    let repo_with_path_in_dotgit = snapshot.repo_for_metadata(&path);
+                    if let Some((key, repo)) = repo_with_path_in_dotgit {
+                        repo.lock().reload_index();
 
-                    let repo_with_path_in_dotgit = snapshot
-                        .repository_entries
-                        .iter()
-                        .find_map(|(key, repo)| repo.in_dot_git(&path).then(|| key.clone()));
-                    if let Some(key) = repo_with_path_in_dotgit {
                         snapshot
                             .repository_entries
                             .update(&key, |entry| entry.scan_id = scan_id);
@@ -3123,7 +3167,6 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::repository::FakeGitRepository;
     use fs::{FakeFs, RealFs};
     use gpui::{executor::Deterministic, TestAppContext};
     use pretty_assertions::assert_eq;
@@ -3386,23 +3429,37 @@ mod tests {
             .await;
         tree.flush_fs_events(cx).await;
 
+        fn entry(key: &RepositoryWorkDirectory, tree: &LocalWorktree) -> RepositoryEntry {
+            tree.repository_entries.get(key).unwrap().to_owned()
+        }
+
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for("c.txt".as_ref()).is_none());
+            assert!(tree.repo_for_metadata("c.txt".as_ref()).is_none());
 
-            let repo = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
-            assert_eq!(repo.content_path.as_ref(), Path::new("dir1"));
-            assert_eq!(repo.git_dir_path.as_ref(), Path::new("dir1/.git"));
+            let (work_directory, _repo_entry) =
+                tree.repo_for_metadata("dir1/src/b.txt".as_ref()).unwrap();
+            assert_eq!(work_directory.0.as_ref(), Path::new("dir1"));
+            assert_eq!(
+                entry(&work_directory, &tree).git_dir_path.as_ref(),
+                Path::new("dir1/.git")
+            );
 
-            let repo = tree.repo_for("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
-            assert_eq!(repo.content_path.as_ref(), Path::new("dir1/deps/dep1"));
-            assert_eq!(repo.git_dir_path.as_ref(), Path::new("dir1/deps/dep1/.git"),);
+            let _repo = tree
+                .repo_for_metadata("dir1/deps/dep1/src/a.txt".as_ref())
+                .unwrap();
+            assert_eq!(work_directory.deref(), Path::new("dir1/deps/dep1"));
+            assert_eq!(
+                entry(&work_directory, &tree).git_dir_path.as_ref(),
+                Path::new("dir1/deps/dep1/.git"),
+            );
         });
 
         let original_scan_id = tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
-            tree.repo_for("dir1/src/b.txt".as_ref()).unwrap().scan_id
+            let (key, _) = tree.repo_for_metadata("dir1/src/b.txt".as_ref()).unwrap();
+            entry(&key, &tree).scan_id
         });
 
         std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
@@ -3410,7 +3467,10 @@ mod tests {
 
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
-            let new_scan_id = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap().scan_id;
+            let new_scan_id = {
+                let (key, _) = tree.repo_for_metadata("dir1/src/b.txt".as_ref()).unwrap();
+                entry(&key, &tree).scan_id
+            };
             assert_ne!(
                 original_scan_id, new_scan_id,
                 "original {original_scan_id}, new {new_scan_id}"
@@ -3423,7 +3483,7 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
+            assert!(tree.repo_for_metadata("dir1/src/b.txt".as_ref()).is_none());
         });
     }
 
@@ -3434,6 +3494,9 @@ mod tests {
                 scan_id,
                 git_dir_path: git_dir_path.as_ref().into(),
                 git_dir_entry_id: ProjectEntryId(0),
+                work_directory: RepositoryWorkDirectory(
+                    Path::new(&format!("don't-care-{}", scan_id)).into(),
+                ),
             }
         }
 
