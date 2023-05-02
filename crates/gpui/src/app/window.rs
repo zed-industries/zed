@@ -1,7 +1,7 @@
 use crate::{
     elements::AnyRootElement,
     geometry::rect::RectF,
-    json::{self, ToJson},
+    json::ToJson,
     keymap_matcher::{Binding, Keystroke, MatchResult},
     platform::{
         self, Appearance, CursorStyle, Event, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent,
@@ -975,17 +975,6 @@ impl<'a> WindowContext<'a> {
             .flatten()
     }
 
-    pub fn debug_elements(&self) -> Option<json::Value> {
-        let view = self.window.root_view();
-        Some(json!({
-            "root_view": view.debug_json(self),
-            "root_element": self.window.rendered_views.get(&view.id())
-                .and_then(|root_element| {
-                    root_element.debug(self).log_err()
-                })
-        }))
-    }
-
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
     }
@@ -1454,13 +1443,7 @@ impl<V: View> Element<V> for ChildView {
     ) -> serde_json::Value {
         json!({
             "type": "ChildView",
-            "view_id": self.view_id,
             "bounds": bounds.to_json(),
-            "view": if let Some(view) = cx.views.get(&(cx.window_id, self.view_id))  {
-                view.debug_json(cx)
-            } else {
-                json!(null)
-            },
             "child": if let Some(element) = cx.window.rendered_views.get(&self.view_id) {
                 element.debug(&cx.window_context).log_err().unwrap_or_else(|| json!(null))
             } else {

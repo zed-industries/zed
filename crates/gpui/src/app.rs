@@ -43,6 +43,7 @@ use window_input_handler::WindowInputHandler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
+    json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
         self, FontSystem, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
@@ -307,6 +308,14 @@ impl AsyncAppContext {
         callback: F,
     ) -> Option<T> {
         self.0.borrow_mut().update_window(window_id, callback)
+    }
+
+    pub fn debug_elements(&self, window_id: usize) -> Option<json::Value> {
+        self.0.borrow().read_window(window_id, |cx| {
+            let root_view = cx.window.root_view();
+            let root_element = cx.window.rendered_views.get(&root_view.id())?;
+            root_element.debug(cx).log_err()
+        })?
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>

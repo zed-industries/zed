@@ -11,6 +11,7 @@ use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
 
+use anyhow::anyhow;
 use feedback::{
     feedback_info_text::FeedbackInfoText, submit_feedback_button::SubmitFeedbackButton,
 };
@@ -223,9 +224,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |_: &mut Workspace, _: &DebugElements, cx: &mut ViewContext<Workspace>| {
             let app_state = app_state.clone();
             let markdown = app_state.languages.language_for_name("JSON");
-            let content = to_string_pretty(&cx.debug_elements()).unwrap();
+            let window_id = cx.window_id();
             cx.spawn(|workspace, mut cx| async move {
                 let markdown = markdown.await.log_err();
+                let content = to_string_pretty(
+                    &cx.debug_elements(window_id)
+                        .ok_or_else(|| anyhow!("could not debug elements for {window_id}"))?,
+                )
+                .unwrap();
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         workspace.with_local_workspace(&app_state, cx, move |workspace, cx| {
