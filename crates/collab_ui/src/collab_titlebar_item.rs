@@ -3,7 +3,7 @@ use crate::{
     toggle_screen_sharing, ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, ContactEventKind, SignIn, SignOut, User, UserStore};
+use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
 use clock::ReplicaId;
 use contacts_popover::ContactsPopover;
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -17,6 +17,7 @@ use gpui::{
     AppContext, Entity, ImageData, ModelHandle, SceneBuilder, Subscription, View, ViewContext,
     ViewHandle, WeakViewHandle,
 };
+use project::Project;
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
@@ -41,8 +42,10 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct CollabTitlebarItem {
-    workspace: WeakViewHandle<Workspace>,
+    project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
+    client: Arc<Client>,
+    workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     user_menu: ViewHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
@@ -64,7 +67,7 @@ impl View for CollabTitlebarItem {
             return Empty::new().into_any();
         };
 
-        let project = workspace.read(cx).project().read(cx);
+        let project = self.project.read(cx);
         let mut project_title = String::new();
         for (i, name) in project.worktree_root_names(cx).enumerate() {
             if i > 0 {
@@ -89,8 +92,8 @@ impl View for CollabTitlebarItem {
                 .left(),
         );
 
-        let user = workspace.read(cx).user_store().read(cx).current_user();
-        let peer_id = workspace.read(cx).client().peer_id();
+        let user = self.user_store.read(cx).current_user();
+        let peer_id = self.client.peer_id();
         if let Some(((user, peer_id), room)) = user
             .zip(peer_id)
             .zip(ActiveCall::global(cx).read(cx).room().cloned())
@@ -124,13 +127,16 @@ impl View for CollabTitlebarItem {
 
 impl CollabTitlebarItem {
     pub fn new(
-        workspace: &ViewHandle<Workspace>,
-        user_store: ModelHandle<UserStore>,
+        workspace: &Workspace,
+        workspace_handle: &ViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let project = workspace.project().clone();
+        let user_store = workspace.app_state().user_store.clone();
+        let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
-        subscriptions.push(cx.observe(workspace, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(workspace_handle, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(|this, active, cx| {
             this.window_activation_changed(active, cx)
@@ -160,8 +166,10 @@ impl CollabTitlebarItem {
         );
 
         Self {
-            workspace: workspace.downgrade(),
-            user_store: user_store.clone(),
+            workspace: workspace.weak_handle(),
+            project,
+            user_store,
+            client,
             contacts_popover: None,
             user_menu: cx.add_view(|cx| {
                 let mut menu = ContextMenu::new(cx);
@@ -173,16 +181,14 @@ impl CollabTitlebarItem {
     }
 
     fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            let project = if active {
-                Some(workspace.read(cx).project().clone())
-            } else {
-                None
-            };
-            ActiveCall::global(cx)
-                .update(cx, |call, cx| call.set_location(project.as_ref(), cx))
-                .detach_and_log_err(cx);
-        }
+        let project = if active {
+            Some(self.project.clone())
+        } else {
+            None
+        };
+        ActiveCall::global(cx)
+            .update(cx, |call, cx| call.set_location(project.as_ref(), cx))
+            .detach_and_log_err(cx);
     }
 
     fn active_call_changed(&mut self, cx: &mut ViewContext<Self>) {
@@ -193,41 +199,42 @@ impl CollabTitlebarItem {
     }
 
     fn share_project(&mut self, _: &ShareProject, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            let active_call = ActiveCall::global(cx);
-            let project = workspace.read(cx).project().clone();
-            active_call
-                .update(cx, |call, cx| call.share_project(project, cx))
-                .detach_and_log_err(cx);
-        }
+        let active_call = ActiveCall::global(cx);
+        let project = self.project.clone();
+        active_call
+            .update(cx, |call, cx| call.share_project(project, cx))
+            .detach_and_log_err(cx);
     }
 
     fn unshare_project(&mut self, _: &UnshareProject, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            let active_call = ActiveCall::global(cx);
-            let project = workspace.read(cx).project().clone();
-            active_call
-                .update(cx, |call, cx| call.unshare_project(project, cx))
-                .log_err();
-        }
+        let active_call = ActiveCall::global(cx);
+        let project = self.project.clone();
+        active_call
+            .update(cx, |call, cx| call.unshare_project(project, cx))
+            .log_err();
     }
 
     pub fn toggle_contacts_popover(&mut self, _: &ToggleContactsMenu, cx: &mut ViewContext<Self>) {
         if self.contacts_popover.take().is_none() {
-            if let Some(workspace) = self.workspace.upgrade(cx) {
-                let view = cx.add_view(|cx| ContactsPopover::new(&workspace, cx));
-                cx.subscribe(&view, |this, _, event, cx| {
-                    match event {
-                        contacts_popover::Event::Dismissed => {
-                            this.contacts_popover = None;
-                        }
+            let view = cx.add_view(|cx| {
+                ContactsPopover::new(
+                    self.project.clone(),
+                    self.user_store.clone(),
+                    self.workspace.clone(),
+                    cx,
+                )
+            });
+            cx.subscribe(&view, |this, _, event, cx| {
+                match event {
+                    contacts_popover::Event::Dismissed => {
+                        this.contacts_popover = None;
                     }
+                }
 
-                    cx.notify();
-                })
-                .detach();
-                self.contacts_popover = Some(view);
-            }
+                cx.notify();
+            })
+            .detach();
+            self.contacts_popover = Some(view);
         }
 
         cx.notify();
@@ -493,12 +500,10 @@ impl CollabTitlebarItem {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, this, cx| {
-            if let Some(workspace) = this.workspace.upgrade(cx) {
-                let client = workspace.read(cx).app_state().client.clone();
-                cx.app_context()
-                    .spawn(|cx| async move { client.authenticate_and_connect(true, &cx).await })
-                    .detach_and_log_err(cx);
-            }
+            let client = this.client.clone();
+            cx.app_context()
+                .spawn(|cx| async move { client.authenticate_and_connect(true, &cx).await })
+                .detach_and_log_err(cx);
         })
         .into_any()
     }

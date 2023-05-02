@@ -157,7 +157,12 @@ pub struct ContactList {
 }
 
 impl ContactList {
-    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        user_store: ModelHandle<UserStore>,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
@@ -262,7 +267,6 @@ impl ContactList {
         });
 
         let active_call = ActiveCall::global(cx);
-        let user_store = workspace.read(cx).user_store().clone();
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
@@ -275,8 +279,8 @@ impl ContactList {
             match_candidates: Default::default(),
             filter_editor,
             _subscriptions: subscriptions,
-            project: workspace.read(cx).project().clone(),
-            workspace: workspace.downgrade(),
+            project,
+            workspace,
             user_store,
         };
         this.update_entries(cx);
