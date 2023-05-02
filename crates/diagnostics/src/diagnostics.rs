@@ -677,7 +677,7 @@ impl Item for ProjectDiagnosticsEditor {
 }
 
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
-    let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
+    let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
     Arc::new(move |cx| {
         let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
