@@ -708,7 +708,12 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .ok_or_else(|| anyhow!("debug called on a root element for a dropped view"))?;
         let view = view.read(cx);
         let view_context = ViewContext::immutable(cx, self.view.id());
-        Ok(self.element.debug(view, &view_context))
+        Ok(serde_json::json!({
+            "view_id": self.view.id(),
+            "view_name": V::ui_name(),
+            "view": view.debug_json(cx),
+            "element": self.element.debug(view, &view_context)
+        }))
     }
 
     fn name(&self) -> Option<&str> {
