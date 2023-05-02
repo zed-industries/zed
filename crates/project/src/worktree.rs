@@ -506,6 +506,7 @@ impl LocalWorktree {
 
     pub(crate) fn load_buffer(
         &mut self,
+        id: u64,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
@@ -514,8 +515,12 @@ impl LocalWorktree {
             let (file, contents, diff_base) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
+            let text_buffer = cx
+                .background()
+                .spawn(async move { text::Buffer::new(0, id, contents) })
+                .await;
             Ok(cx.add_model(|cx| {
-                let mut buffer = Buffer::from_file(0, contents, diff_base, Arc::new(file), cx);
+                let mut buffer = Buffer::build(text_buffer, diff_base, Some(Arc::new(file)));
                 buffer.git_diff_recalc(cx);
                 buffer
             }))

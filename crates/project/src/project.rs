@@ -109,6 +109,7 @@ pub struct Project {
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
+    next_buffer_id: u64,
     opened_buffer: (watch::Sender<()>, watch::Receiver<()>),
     shared_buffers: HashMap<proto::PeerId, HashSet<u64>>,
     #[allow(clippy::type_complexity)]
@@ -441,6 +442,7 @@ impl Project {
                 worktrees: Default::default(),
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
+                next_buffer_id: 0,
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -509,6 +511,7 @@ impl Project {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
                 loading_buffers_by_path: Default::default(),
+                next_buffer_id: 0,
                 opened_buffer: watch::channel(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -1401,9 +1404,10 @@ impl Project {
         worktree: &ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
+        let buffer_id = post_inc(&mut self.next_buffer_id);
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(path, cx)
+            worktree.load_buffer(buffer_id, path, cx)
         });
         cx.spawn(|this, mut cx| async move {
             let buffer = load_buffer.await?;

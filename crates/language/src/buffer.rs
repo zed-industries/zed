@@ -357,20 +357,6 @@ impl Buffer {
         )
     }
 
-    pub fn from_file<T: Into<String>>(
-        replica_id: ReplicaId,
-        base_text: T,
-        diff_base: Option<T>,
-        file: Arc<dyn File>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
-            diff_base.map(|h| h.into().into_boxed_str().into()),
-            Some(file),
-        )
-    }
-
     pub fn from_proto(
         replica_id: ReplicaId,
         message: proto::BufferState,
@@ -460,7 +446,11 @@ impl Buffer {
         self
     }
 
-    fn build(buffer: TextBuffer, diff_base: Option<String>, file: Option<Arc<dyn File>>) -> Self {
+    pub fn build(
+        buffer: TextBuffer,
+        diff_base: Option<String>,
+        file: Option<Arc<dyn File>>,
+    ) -> Self {
         let saved_mtime = if let Some(file) = file.as_ref() {
             file.mtime()
         } else {
