@@ -4,9 +4,9 @@ use crate::{
     keymap_matcher::Keystroke,
     platform,
     platform::{Event, InputHandler, KeyDownEvent, Platform},
-    Action, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache,
-    Handle, ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakHandle, WindowContext,
+    Action, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache, Handle,
+    ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakHandle,
+    WindowContext,
 };
 use collections::BTreeMap;
 use futures::Future;
@@ -75,7 +75,7 @@ impl TestAppContext {
         self.cx
             .borrow_mut()
             .update_window(window_id, |window| {
-                window.handle_dispatch_action_from_effect(window.focused_view_id(), &action);
+                window.dispatch_action(window.focused_view_id(), &action);
             })
             .expect("window not found");
     }
@@ -153,12 +153,13 @@ impl TestAppContext {
         (window_id, view)
     }
 
-    pub fn add_view<T, F>(&mut self, parent_handle: &AnyViewHandle, build_view: F) -> ViewHandle<T>
+    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        self.cx.borrow_mut().add_view(parent_handle, build_view)
+        self.update_window(window_id, |cx| cx.add_view(build_view))
+            .expect("window not found")
     }
 
     pub fn observe_global<E, F>(&mut self, callback: F) -> Subscription

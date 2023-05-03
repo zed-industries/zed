@@ -146,7 +146,7 @@ impl Sidebar {
                 }
             }),
         ];
-        cx.reparent(&view);
+
         self.items.push(Item {
             icon_path,
             tooltip,

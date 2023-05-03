@@ -3118,10 +3118,10 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.add_view(&workspace, |_| {
+        let item1 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -3133,7 +3133,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.add_view(&workspace, |_| {
+        let item2 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -3147,7 +3147,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.add_view(&workspace, |_| {
+        let item3 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -3187,10 +3187,10 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.add_view(&workspace, |cx| {
+        let item1 = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.add_view(&workspace, |cx| {
+        let item2 = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
@@ -3275,15 +3275,15 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.add_view(&workspace, |_| TestItem::new());
+        let item1 = cx.add_view(window_id, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.add_view(&workspace, |_| TestItem::new().with_dirty(true));
-        let item3 = cx.add_view(&workspace, |cx| {
+        let item2 = cx.add_view(window_id, |_| TestItem::new().with_dirty(true));
+        let item3 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3309,24 +3309,24 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
-        let item1 = cx.add_view(&workspace, |cx| {
+        let item1 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
-        let item2 = cx.add_view(&workspace, |cx| {
+        let item2 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
         });
-        let item3 = cx.add_view(&workspace, |cx| {
+        let item3 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
-        let item4 = cx.add_view(&workspace, |cx| {
+        let item4 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
@@ -3420,7 +3420,7 @@ mod tests {
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.add_view(&workspace, |cx| {
+                cx.add_view(window_id, |cx| {
                     TestItem::new()
                         .with_dirty(true)
                         .with_project_items(&[TestProjectItem::new(
@@ -3431,7 +3431,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.add_view(&workspace, |cx| {
+        let item_2_3 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
@@ -3440,7 +3440,7 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.add_view(&workspace, |cx| {
+        let item_3_4 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
@@ -3523,7 +3523,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
-        let item = cx.add_view(&workspace, |cx| {
+        let item = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.id();
@@ -3638,9 +3638,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
-        let item = cx.add_view(&workspace, |cx| {
+        let item = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());

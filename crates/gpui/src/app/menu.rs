@@ -81,7 +81,7 @@ pub(crate) fn setup_menu_handlers(foreground_platform: &dyn ForegroundPlatform, 
                 let dispatched = cx
                     .update_window(main_window_id, |cx| {
                         if let Some(view_id) = cx.focused_view_id() {
-                            cx.handle_dispatch_action_from_effect(Some(view_id), action);
+                            cx.dispatch_action(Some(view_id), action);
                             true
                         } else {
                             false

@@ -3,7 +3,7 @@ use crate::{
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
 use gpui::{
@@ -864,16 +864,13 @@ impl Item for Editor {
                     let buffer = project_item
                         .downcast::<Buffer>()
                         .context("Project item at stored path was not a buffer")?;
-                    let pane = pane
-                        .upgrade(&cx)
-                        .ok_or_else(|| anyhow!("pane was dropped"))?;
-                    Ok(cx.update(|cx| {
-                        cx.add_view(&pane, |cx| {
+                    Ok(pane.update(&mut cx, |_, cx| {
+                        cx.add_view(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, cx);
                             editor
                         })
-                    }))
+                    })?)
                 })
             })
             .unwrap_or_else(|error| Task::ready(Err(error)))

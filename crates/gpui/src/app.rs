@@ -335,7 +335,7 @@ impl AsyncAppContext {
         self.0
             .borrow_mut()
             .update_window(window_id, |window| {
-                window.handle_dispatch_action_from_effect(Some(view_id), action);
+                window.dispatch_action(Some(view_id), action);
             })
             .ok_or_else(|| anyhow!("window not found"))
     }
@@ -440,7 +440,6 @@ type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> b
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
-    pub(crate) parents: HashMap<(usize, usize), ParentId>,
     windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
@@ -502,7 +501,6 @@ impl AppContext {
         Self {
             models: Default::default(),
             views: Default::default(),
-            parents: Default::default(),
             windows: Default::default(),
             globals: Default::default(),
             element_states: Default::default(),
@@ -1380,18 +1378,6 @@ impl AppContext {
         self.update_window(window_id, |cx| cx.replace_root_view(build_root_view))
     }
 
-    pub fn add_view<S, F>(&mut self, parent: &AnyViewHandle, build_view: F) -> ViewHandle<S>
-    where
-        S: View,
-        F: FnOnce(&mut ViewContext<S>) -> S,
-    {
-        self.update_window(parent.window_id, |cx| {
-            cx.build_and_insert_view(ParentId::View(parent.view_id), |cx| Some(build_view(cx)))
-                .unwrap()
-        })
-        .unwrap()
-    }
-
     pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
         if let Some(view) = self.views.get(&(handle.window_id, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
@@ -1451,6 +1437,7 @@ impl AppContext {
                 let mut view = self.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
                 let change_focus_to = self.windows.get_mut(&window_id).and_then(|window| {
+                    window.parents.remove(&view_id);
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
@@ -1462,10 +1449,12 @@ impl AppContext {
                         None
                     }
                 });
-                self.parents.remove(&(window_id, view_id));
 
                 if let Some(view_id) = change_focus_to {
-                    self.handle_focus_effect(window_id, Some(view_id));
+                    self.pending_effects.push_back(Effect::Focus {
+                        window_id,
+                        view_id: Some(view_id),
+                    });
                 }
 
                 self.pending_effects
@@ -1487,7 +1476,9 @@ impl AppContext {
 
             let mut refreshing = false;
             let mut updated_windows = HashSet::default();
+            let mut focused_views = HashMap::default();
             loop {
+                self.remove_dropped_entities();
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
                         Effect::Subscription {
@@ -1561,7 +1552,7 @@ impl AppContext {
                         }
 
                         Effect::Focus { window_id, view_id } => {
-                            self.handle_focus_effect(window_id, view_id);
+                            focused_views.insert(window_id, view_id);
                         }
 
                         Effect::FocusObservation {
@@ -1661,10 +1652,7 @@ impl AppContext {
                         ),
                     }
                     self.pending_notifications.clear();
-                    self.remove_dropped_entities();
                 } else {
-                    self.remove_dropped_entities();
-
                     for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
                         self.update_window(window_id, |cx| {
                             let invalidation = if refreshing {
@@ -1686,6 +1674,10 @@ impl AppContext {
                                 }
                             }
                         });
+                    }
+
+                    for (window_id, view_id) in focused_views.drain() {
+                        self.handle_focus_effect(window_id, view_id);
                     }
 
                     if self.pending_effects.is_empty() {
@@ -2880,38 +2872,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
                     .unwrap_or(true)
                 }),
             });
-    }
-
-    pub fn add_view<S, F>(&mut self, build_view: F) -> ViewHandle<S>
-    where
-        S: View,
-        F: FnOnce(&mut ViewContext<S>) -> S,
-    {
-        self.window_context
-            .build_and_insert_view(ParentId::View(self.view_id), |cx| Some(build_view(cx)))
-            .unwrap()
-    }
-
-    pub fn add_option_view<S, F>(&mut self, build_view: F) -> Option<ViewHandle<S>>
-    where
-        S: View,
-        F: FnOnce(&mut ViewContext<S>) -> Option<S>,
-    {
-        self.window_context
-            .build_and_insert_view(ParentId::View(self.view_id), build_view)
-    }
-
-    pub fn reparent(&mut self, view_handle: &AnyViewHandle) {
-        if self.window_id != view_handle.window_id {
-            panic!("Can't reparent view to a view from a different window");
-        }
-        self.parents
-            .remove(&(view_handle.window_id, view_handle.view_id));
-        let new_parent_id = self.view_id;
-        self.parents.insert(
-            (view_handle.window_id, view_handle.view_id),
-            ParentId::View(new_parent_id),
-        );
     }
 
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -4562,9 +4522,9 @@ mod tests {
             }
         }
 
-        let (_, root_view) = cx.add_window(|cx| View::new(None, cx));
-        let handle_1 = cx.add_view(&root_view, |cx| View::new(None, cx));
-        let handle_2 = cx.add_view(&root_view, |cx| View::new(Some(handle_1.clone()), cx));
+        let (window_id, _root_view) = cx.add_window(|cx| View::new(None, cx));
+        let handle_1 = cx.add_view(window_id, |cx| View::new(None, cx));
+        let handle_2 = cx.add_view(window_id, |cx| View::new(Some(handle_1.clone()), cx));
         assert_eq!(cx.read(|cx| cx.views.len()), 3);
 
         handle_1.update(cx, |view, cx| {
@@ -4724,8 +4684,8 @@ mod tests {
             type Event = String;
         }
 
-        let (_, handle_1) = cx.add_window(|_| TestView::default());
-        let handle_2 = cx.add_view(&handle_1, |_| TestView::default());
+        let (window_id, handle_1) = cx.add_window(|_| TestView::default());
+        let handle_2 = cx.add_view(window_id, |_| TestView::default());
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, cx| {
@@ -4951,9 +4911,9 @@ mod tests {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(|_| TestView::default());
-        let observing_view = cx.add_view(&root_view, |_| TestView::default());
-        let emitting_view = cx.add_view(&root_view, |_| TestView::default());
+        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
+        let observing_view = cx.add_view(window_id, |_| TestView::default());
+        let emitting_view = cx.add_view(window_id, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -5078,8 +5038,8 @@ mod tests {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(|_| TestView::default());
-        let observing_view = cx.add_view(&root_view, |_| TestView::default());
+        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
+        let observing_view = cx.add_view(window_id, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -5201,9 +5161,9 @@ mod tests {
             }
         }
 
-        let (_, root_view) = cx.add_window(|_| View);
-        let observing_view = cx.add_view(&root_view, |_| View);
-        let observed_view = cx.add_view(&root_view, |_| View);
+        let (window_id, _root_view) = cx.add_window(|_| View);
+        let observing_view = cx.add_view(window_id, |_| View);
+        let observed_view = cx.add_view(window_id, |_| View);
 
         let observation_count = Rc::new(RefCell::new(0));
         observing_view.update(cx, |_, cx| {
@@ -5252,6 +5212,7 @@ mod tests {
         struct View {
             name: String,
             events: Arc<Mutex<Vec<String>>>,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for View {
@@ -5259,8 +5220,11 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5284,11 +5248,22 @@ mod tests {
         let (window_id, view_1) = cx.add_window(|_| View {
             events: view_events.clone(),
             name: "view 1".to_string(),
+            child: None,
         });
-        let view_2 = cx.add_view(&view_1, |_| View {
-            events: view_events.clone(),
-            name: "view 2".to_string(),
-        });
+        let view_2 = cx
+            .update_window(window_id, |cx| {
+                let view_2 = cx.add_view(|_| View {
+                    events: view_events.clone(),
+                    name: "view 2".to_string(),
+                    child: None,
+                });
+                view_1.update(cx, |view_1, cx| {
+                    view_1.child = Some(view_2.clone().into_any());
+                    cx.notify();
+                });
+                view_2
+            })
+            .unwrap();
 
         let observed_events: Arc<Mutex<Vec<String>>> = Default::default();
         view_1.update(cx, |_, cx| {
@@ -5325,7 +5300,7 @@ mod tests {
         assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
 
         view_1.update(cx, |_, cx| {
-            // Ensure focus events are sent for all intermediate focuses
+            // Ensure only the last focus event is honored.
             cx.focus(&view_2);
             cx.focus(&view_1);
             cx.focus(&view_2);
@@ -5337,22 +5312,11 @@ mod tests {
         });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
-            [
-                "view 1 blurred",
-                "view 2 focused",
-                "view 2 blurred",
-                "view 1 focused",
-                "view 1 blurred",
-                "view 2 focused"
-            ],
+            ["view 1 blurred", "view 2 focused"],
         );
         assert_eq!(
             mem::take(&mut *observed_events.lock()),
             [
-                "view 2 observed view 1's blur",
-                "view 1 observed view 2's focus",
-                "view 1 observed view 2's blur",
-                "view 2 observed view 1's focus",
                 "view 2 observed view 1's blur",
                 "view 1 observed view 2's focus"
             ]
@@ -5388,7 +5352,11 @@ mod tests {
             ]
         );
 
-        view_1.update(cx, |_, _| drop(view_2));
+        println!("=====================");
+        view_1.update(cx, |view, _| {
+            drop(view_2);
+            view.child = None;
+        });
         assert_eq!(mem::take(&mut *view_events.lock()), ["view 1 focused"]);
         assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
     }
@@ -5433,6 +5401,7 @@ mod tests {
     fn test_dispatch_action(cx: &mut AppContext) {
         struct ViewA {
             id: usize,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for ViewA {
@@ -5440,8 +5409,11 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5451,6 +5423,7 @@ mod tests {
 
         struct ViewB {
             id: usize,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for ViewB {
@@ -5458,8 +5431,11 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5496,7 +5472,7 @@ mod tests {
                 if view.id != 1 {
                     cx.add_view(|cx| {
                         cx.propagate_action(); // Still works on a nested ViewContext
-                        ViewB { id: 5 }
+                        ViewB { id: 5, child: None }
                     });
                 }
                 actions.borrow_mut().push(format!("{} b", view.id));
@@ -5534,13 +5510,41 @@ mod tests {
         })
         .detach();
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
-        let view_2 = cx.add_view(&view_1, |_| ViewB { id: 2 });
-        let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
-        let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
+        let (window_id, view_1) =
+            cx.add_window(Default::default(), |_| ViewA { id: 1, child: None });
+        let view_2 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewB { id: 2, child: None });
+                view_1.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
+        let view_3 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewA { id: 3, child: None });
+                view_2.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
+        let view_4 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewB { id: 4, child: None });
+                view_3.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
 
         cx.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(Some(view_4.id()), &Action("bar".to_string()))
+            cx.dispatch_action(Some(view_4.id()), &Action("bar".to_string()))
         });
 
         assert_eq!(
@@ -5561,13 +5565,32 @@ mod tests {
 
         // Remove view_1, which doesn't propagate the action
 
-        let (window_id, view_2) = cx.add_window(Default::default(), |_| ViewB { id: 2 });
-        let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
-        let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
+        let (window_id, view_2) =
+            cx.add_window(Default::default(), |_| ViewB { id: 2, child: None });
+        let view_3 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewA { id: 3, child: None });
+                view_2.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
+        let view_4 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewB { id: 4, child: None });
+                view_3.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
 
         actions.borrow_mut().clear();
         cx.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(Some(view_4.id()), &Action("bar".to_string()))
+            cx.dispatch_action(Some(view_4.id()), &Action("bar".to_string()))
         });
 
         assert_eq!(
@@ -5599,6 +5622,7 @@ mod tests {
         struct View {
             id: usize,
             keymap_context: KeymapContext,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for View {
@@ -5606,8 +5630,11 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5624,6 +5651,7 @@ mod tests {
                 View {
                     id,
                     keymap_context: KeymapContext::default(),
+                    child: None,
                 }
             }
         }
@@ -5638,11 +5666,17 @@ mod tests {
         view_3.keymap_context.add_identifier("b");
         view_3.keymap_context.add_identifier("c");
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
-        let view_2 = cx.add_view(&view_1, |_| view_2);
-        let _view_3 = cx.add_view(&view_2, |cx| {
-            cx.focus_self();
-            view_3
+        let (window_id, _view_1) = cx.add_window(Default::default(), |cx| {
+            let view_2 = cx.add_view(|cx| {
+                let view_3 = cx.add_view(|cx| {
+                    cx.focus_self();
+                    view_3
+                });
+                view_2.child = Some(view_3.into_any());
+                view_2
+            });
+            view_1.child = Some(view_2.into_any());
+            view_1
         });
 
         // This binding only dispatches an action on view 2 because that view will have
@@ -5722,7 +5756,9 @@ mod tests {
     fn test_keystrokes_for_action(cx: &mut AppContext) {
         actions!(test, [Action1, Action2, GlobalAction]);
 
-        struct View1 {}
+        struct View1 {
+            child: ViewHandle<View2>,
+        }
         struct View2 {}
 
         impl Entity for View1 {
@@ -5733,8 +5769,8 @@ mod tests {
         }
 
         impl super::View for View1 {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                ChildView::new(&self.child, cx).into_any()
             }
             fn ui_name() -> &'static str {
                 "View1"
@@ -5749,11 +5785,14 @@ mod tests {
             }
         }
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| View1 {});
-        let view_2 = cx.add_view(&view_1, |cx| {
-            cx.focus_self();
-            View2 {}
+        let (window_id, view_1) = cx.add_window(Default::default(), |cx| {
+            let view_2 = cx.add_view(|cx| {
+                cx.focus_self();
+                View2 {}
+            });
+            View1 { child: view_2 }
         });
+        let view_2 = view_1.read(cx).child.clone();
 
         cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
         cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
@@ -5952,8 +5991,8 @@ mod tests {
     #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
     async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
-        let (_, root_view) = cx.add_window(|_| TestView::default());
-        let view = cx.add_view(&root_view, |_| TestView::default());
+        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
+        let view = cx.add_view(window_id, |_| TestView::default());
 
         let condition = view.condition(cx, |_, _| false);
         cx.update(|_| drop(view));
@@ -5986,10 +6025,12 @@ mod tests {
             );
         });
 
-        let view = cx.add_view(&root_view, |cx| {
-            cx.refresh_windows();
-            View(0)
-        });
+        let view = cx
+            .update_window(window_id, |cx| {
+                cx.refresh_windows();
+                cx.add_view(|_| View(0))
+            })
+            .unwrap();
 
         cx.update_window(window_id, |cx| {
             assert_eq!(

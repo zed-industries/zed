@@ -537,7 +537,6 @@ impl Pane {
             // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
                 if existing_item_index != insertion_index {
-                    cx.reparent(item.as_any());
                     let existing_item_is_active = existing_item_index == pane.active_item_index;
 
                     // If the caller didn't specify a destination and the added item is already
@@ -567,7 +566,6 @@ impl Pane {
             });
         } else {
             pane.update(cx, |pane, cx| {
-                cx.reparent(item.as_any());
                 pane.items.insert(insertion_index, item);
                 if insertion_index <= pane.active_item_index {
                     pane.active_item_index += 1;

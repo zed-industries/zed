@@ -462,8 +462,8 @@ impl TestClient {
         project: &ModelHandle<Project>,
         cx: &mut TestAppContext,
     ) -> ViewHandle<Workspace> {
-        let (_, root_view) = cx.add_window(|_| EmptyView);
-        cx.add_view(&root_view, |cx| Workspace::test_new(project.clone(), cx))
+        let (window_id, _) = cx.add_window(|_| EmptyView);
+        cx.add_view(window_id, |cx| Workspace::test_new(project.clone(), cx))
     }
 }
 

@@ -14,8 +14,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
-    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, ParentId, SceneBuilder,
-    Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
+    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, SceneBuilder, Subscription,
+    View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -39,6 +39,7 @@ use super::Reference;
 pub struct Window {
     pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
+    pub(crate) parents: HashMap<usize, usize>,
     pub(crate) is_active: bool,
     pub(crate) is_fullscreen: bool,
     pub(crate) invalidation: Option<WindowInvalidation>,
@@ -72,6 +73,7 @@ impl Window {
         let mut window = Self {
             root_view: None,
             focused_view_id: None,
+            parents: Default::default(),
             is_active: false,
             invalidation: None,
             is_fullscreen: false,
@@ -90,9 +92,7 @@ impl Window {
         };
 
         let mut window_context = WindowContext::mutable(cx, &mut window, window_id);
-        let root_view = window_context
-            .build_and_insert_view(ParentId::Root, |cx| Some(build_view(cx)))
-            .unwrap();
+        let root_view = window_context.add_view(|cx| build_view(cx));
         if let Some(invalidation) = window_context.window.invalidation.take() {
             window_context.invalidate(invalidation, appearance);
         }
@@ -471,8 +471,7 @@ impl<'a> WindowContext<'a> {
                 MatchResult::Pending => true,
                 MatchResult::Matches(matches) => {
                     for (view_id, action) in matches {
-                        if self.handle_dispatch_action_from_effect(Some(*view_id), action.as_ref())
-                        {
+                        if self.dispatch_action(Some(*view_id), action.as_ref()) {
                             self.keystroke_matcher.clear_pending();
                             handled_by = Some(action.boxed_clone());
                             break;
@@ -943,6 +942,7 @@ impl<'a> WindowContext<'a> {
             self,
         )?;
 
+        self.window.parents = new_parents;
         self.window
             .rendered_views
             .insert(root_view_id, rendered_root);
@@ -1017,14 +1017,11 @@ impl<'a> WindowContext<'a> {
         self.window.is_fullscreen
     }
 
-    pub(crate) fn handle_dispatch_action_from_effect(
-        &mut self,
-        view_id: Option<usize>,
-        action: &dyn Action,
-    ) -> bool {
+    pub(crate) fn dispatch_action(&mut self, view_id: Option<usize>, action: &dyn Action) -> bool {
         if let Some(view_id) = view_id {
             self.halt_action_dispatch = false;
             self.visit_dispatch_path(view_id, |view_id, capture_phase, cx| {
+                dbg!(view_id);
                 cx.update_any_view(view_id, |view, cx| {
                     let type_id = view.as_any().type_id();
                     if let Some((name, mut handlers)) = cx
@@ -1067,9 +1064,7 @@ impl<'a> WindowContext<'a> {
         std::iter::once(view_id)
             .into_iter()
             .chain(std::iter::from_fn(move || {
-                if let Some(ParentId::View(parent_id)) =
-                    self.parents.get(&(self.window_id, view_id))
-                {
+                if let Some(parent_id) = self.window.parents.get(&view_id) {
                     view_id = *parent_id;
                     Some(view_id)
                 } else {
@@ -1081,7 +1076,7 @@ impl<'a> WindowContext<'a> {
     /// Returns the id of the parent of the given view, or none if the given
     /// view is the root.
     pub(crate) fn parent(&self, view_id: usize) -> Option<usize> {
-        if let Some(ParentId::View(view_id)) = self.parents.get(&(self.window_id, view_id)) {
+        if let Some(view_id) = self.window.parents.get(&view_id) {
             Some(*view_id)
         } else {
             None
@@ -1170,27 +1165,27 @@ impl<'a> WindowContext<'a> {
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
-        let root_view = self
-            .build_and_insert_view(ParentId::Root, |cx| Some(build_root_view(cx)))
-            .unwrap();
+        let root_view = self.add_view(|cx| build_root_view(cx));
         self.window.root_view = Some(root_view.clone().into_any());
         self.window.focused_view_id = Some(root_view.id());
         root_view
     }
 
-    pub(crate) fn build_and_insert_view<T, F>(
-        &mut self,
-        parent_id: ParentId,
-        build_view: F,
-    ) -> Option<ViewHandle<T>>
+    pub fn add_view<T, F>(&mut self, build_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.add_option_view(|cx| Some(build_view(cx))).unwrap()
+    }
+
+    pub fn add_option_view<T, F>(&mut self, build_view: F) -> Option<ViewHandle<T>>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> Option<T>,
     {
         let window_id = self.window_id;
         let view_id = post_inc(&mut self.next_entity_id);
-        // Make sure we can tell child views about their parentu
-        self.parents.insert((window_id, view_id), parent_id);
         let mut cx = ViewContext::mutable(self, view_id);
         let handle = if let Some(view) = build_view(&mut cx) {
             self.views.insert((window_id, view_id), Box::new(view));
@@ -1201,7 +1196,6 @@ impl<'a> WindowContext<'a> {
                 .insert(view_id);
             Some(ViewHandle::new(window_id, view_id, &self.ref_counts))
         } else {
-            self.parents.remove(&(window_id, view_id));
             None
         };
         handle
@@ -1385,6 +1379,7 @@ impl<V: View> Element<V> for ChildView {
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
+            cx.new_parents.insert(self.view_id, cx.view_id());
             let size = rendered_view
                 .layout(
                     constraint,
