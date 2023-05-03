@@ -125,7 +125,7 @@ pub struct RepositoryEntry {
     pub(crate) git_dir_entry_id: ProjectEntryId,
     pub(crate) work_directory: RepositoryWorkDirectory,
     pub(crate) scan_id: usize,
-    // TODO: pub(crate) head_ref: Arc<str>,
+    pub(crate) branch: Option<Arc<str>>,
 }
 
 impl RepositoryEntry {
@@ -1687,6 +1687,7 @@ impl LocalSnapshot {
                             git_dir_entry_id: parent_entry.id,
                             work_directory: key,
                             scan_id: 0,
+                            branch: None,
                         },
                     );
 
@@ -2678,11 +2679,14 @@ impl BackgroundScanner {
 
                     let repo_with_path_in_dotgit = snapshot.repo_for_metadata(&path);
                     if let Some((key, repo)) = repo_with_path_in_dotgit {
-                        repo.lock().reload_index();
+                        let repo = repo.lock();
+                        repo.reload_index();
+                        let branch = repo.branch_name();
 
-                        snapshot
-                            .repository_entries
-                            .update(&key, |entry| entry.scan_id = scan_id);
+                        snapshot.repository_entries.update(&key, |entry| {
+                            entry.scan_id = scan_id;
+                            entry.branch = branch.map(Into::into)
+                        });
                     }
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
@@ -3514,6 +3518,7 @@ mod tests {
                 work_directory: RepositoryWorkDirectory(
                     Path::new(&format!("don't-care-{}", scan_id)).into(),
                 ),
+                branch: None,
             }
         }
 
