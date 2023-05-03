@@ -1,5 +1,6 @@
 mod keymap_file;
 pub mod settings_file;
+pub mod settings_store;
 pub mod watched_json;
 
 use anyhow::{bail, Result};
