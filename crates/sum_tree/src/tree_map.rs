@@ -103,11 +103,11 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
     }
 
     pub fn retain<F: FnMut(&K, &V) -> bool>(&mut self, mut predicate: F) {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
-        cursor.seek(&MapKeyRef(None), Bias::Left, &());
-
         let mut new_map = SumTree::<MapEntry<K, V>>::default();
-        if let Some(item) = cursor.item() {
+
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        cursor.next(&());
+        while let Some(item) = cursor.item() {
             if predicate(&item.key, &item.value) {
                 new_map.push(item.clone(), &());
             }
@@ -265,5 +265,11 @@ mod tests {
         map.remove(&1);
         assert_eq!(map.get(&1), None);
         assert_eq!(map.iter().collect::<Vec<_>>(), vec![]);
+
+        map.insert(4, "d");
+        map.insert(5, "e");
+        map.insert(6, "f");
+        map.retain(|key, _| *key % 2 == 0);
+        assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&4, &"d"), (&6, &"f")]);
     }
 }
