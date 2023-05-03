@@ -1484,10 +1484,6 @@ impl Snapshot {
     pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         self.entry_for_path(path.as_ref()).map(|e| e.inode)
     }
-
-    pub fn git_branch(&self) -> Option<String> {
-        Some("test".to_owned())
-    }
 }
 
 impl LocalSnapshot {
@@ -1700,6 +1696,7 @@ impl LocalSnapshot {
             let key = RepositoryWorkDirectory(content_path.clone());
             if self.repository_entries.get(&key).is_none() {
                 if let Some(repo) = fs.open_repo(abs_path.as_path()) {
+                    let repo_lock = repo.lock();
                     self.repository_entries.insert(
                         key.clone(),
                         RepositoryEntry {
@@ -1707,9 +1704,10 @@ impl LocalSnapshot {
                             git_dir_entry_id: parent_entry.id,
                             work_directory: key,
                             scan_id: 0,
-                            branch: None,
+                            branch: repo_lock.branch_name().map(Into::into),
                         },
                     );
+                    drop(repo_lock);
 
                     self.git_repositories.insert(parent_entry.id, repo)
                 }

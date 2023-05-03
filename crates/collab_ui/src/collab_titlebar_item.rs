@@ -178,7 +178,9 @@ impl CollabTitlebarItem {
         let branch = worktree
             .read(cx)
             .snapshot()
-            .git_branch()
+            .root_git_entry()
+            .and_then(|entry| entry.branch())
+            .map(|branch| branch.to_string())
             .unwrap_or_else(|| "".to_owned());
         format!("{} / {}", name, branch)
     }
@@ -206,7 +208,7 @@ impl CollabTitlebarItem {
 
         Label::new(title.to_owned(), text_style)
             .contained()
-            .with_margin_right(dbg!(item_spacing))
+            .with_margin_right(item_spacing)
             .aligned()
             .left()
             .into_any_named("title-with-git-information")
