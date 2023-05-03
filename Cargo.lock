@@ -1362,6 +1362,7 @@ name = "copilot_button"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "context_menu",
  "copilot",
  "editor",
@@ -1984,6 +1985,7 @@ dependencies = [
  "futures 0.3.25",
  "fuzzy",
  "git",
+ "glob",
  "gpui",
  "indoc",
  "itertools",
@@ -2155,6 +2157,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "smallvec",
  "sysinfo",
  "theme",
  "tree-sitter-markdown",
@@ -5965,8 +5968,10 @@ dependencies = [
  "collections",
  "fs",
  "futures 0.3.25",
+ "glob",
  "gpui",
  "json_comments",
+ "lazy_static",
  "postage",
  "pretty_assertions",
  "schemars",
@@ -8454,6 +8459,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "async-recursion 1.0.0",
  "bincode",
  "call",

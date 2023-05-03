@@ -52,8 +52,8 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
-    Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
-    Point, Selection, SelectionGoal, TransactionId,
+    Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
+    OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
@@ -1376,6 +1376,10 @@ impl Editor {
         cx: &'a AppContext,
     ) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
+    }
+
+    pub fn file_at<'a, T: ToOffset>(&self, point: T, cx: &'a AppContext) -> Option<Arc<dyn File>> {
+        self.buffer.read(cx).read(cx).file_at(point).cloned()
     }
 
     pub fn active_excerpt(
@@ -2947,11 +2951,7 @@ impl Editor {
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
-        let language_name = snapshot.language_at(cursor).map(|language| language.name());
-        if !cx
-            .global::<Settings>()
-            .show_copilot_suggestions(language_name.as_deref())
-        {
+        if !self.is_copilot_enabled_at(cursor, &snapshot, cx) {
             self.clear_copilot_suggestions(cx);
             return None;
         }
@@ -3100,6 +3100,25 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn is_copilot_enabled_at(
+        &self,
+        location: Anchor,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let settings = cx.global::<Settings>();
+
+        let path = snapshot.file_at(location).map(|file| file.path());
+        let language_name = snapshot
+            .language_at(location)
+            .map(|language| language.name());
+        if !settings.show_copilot_suggestions(language_name.as_deref(), path.map(|p| p.as_ref())) {
+            return false;
+        }
+
+        true
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
@@ -6862,6 +6881,9 @@ impl Editor {
                 copilot_enabled_for_language: settings.show_copilot_suggestions(
                     self.language_at(0, cx)
                         .map(|language| language.name())
+                        .as_deref(),
+                    self.file_at(0, cx)
+                        .map(|file| file.path().clone())
                         .as_deref(),
                 ),
             };

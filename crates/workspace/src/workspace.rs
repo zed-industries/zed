@@ -14,9 +14,8 @@ pub mod sidebar;
 mod status_bar;
 mod toolbar;
 
-pub use smallvec;
-
 use anyhow::{anyhow, Context, Result};
+use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
@@ -48,13 +47,14 @@ use gpui::{
     WindowContext,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
-use language::LanguageRegistry;
+use language::{LanguageRegistry, Rope};
 use std::{
     any::TypeId,
     borrow::Cow,
     cmp, env,
     future::Future,
     path::{Path, PathBuf},
+    str,
     sync::Arc,
     time::Duration,
 };
@@ -83,7 +83,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::ResultExt;
+use util::{paths, ResultExt};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -126,6 +126,8 @@ actions!(
         Welcome
     ]
 );
+
+actions!(zed, [OpenSettings]);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -265,6 +267,17 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
     });
+
+    cx.add_action(
+        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            create_and_open_local_file(&paths::SETTINGS, cx, || {
+                Settings::initial_user_settings_content(&Assets)
+                    .as_ref()
+                    .into()
+            })
+            .detach_and_log_err(cx);
+        },
+    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -2952,6 +2965,33 @@ pub fn open_new(
                 }
             })
             .log_err();
+    })
+}
+
+pub fn create_and_open_local_file(
+    path: &'static Path,
+    cx: &mut ViewContext<Workspace>,
+    default_content: impl 'static + Send + FnOnce() -> Rope,
+) -> Task<Result<Box<dyn ItemHandle>>> {
+    cx.spawn(|workspace, mut cx| async move {
+        let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
+        if !fs.is_file(path).await {
+            fs.create_file(path, Default::default()).await?;
+            fs.save(path, &default_content(), Default::default())
+                .await?;
+        }
+
+        let mut items = workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.with_local_workspace(cx, |workspace, cx| {
+                    workspace.open_paths(vec![path.to_path_buf()], false, cx)
+                })
+            })?
+            .await?
+            .await;
+
+        let item = items.pop().flatten();
+        item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
     })
 }
 
