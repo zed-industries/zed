@@ -52,13 +52,16 @@ fn join_project(action: &JoinProject, app_state: Arc<AppState>, cx: &mut AppCont
     let project_id = action.project_id;
     let follow_user_id = action.follow_user_id;
     cx.spawn(|mut cx| async move {
-        let existing_workspace = cx.update(|cx| {
-            cx.window_ids()
-                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
-                .find(|workspace| {
+        let existing_workspace = cx
+            .window_ids()
+            .into_iter()
+            .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+            .find(|workspace| {
+                cx.read_window(workspace.window_id(), |cx| {
                     workspace.read(cx).project().read(cx).remote_id() == Some(project_id)
                 })
-        });
+                .unwrap_or(false)
+            });
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace.downgrade()

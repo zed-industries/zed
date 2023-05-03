@@ -100,7 +100,7 @@ pub fn run_test(
                     test_fn(cx, foreground_platform.clone(), deterministic.clone(), seed);
                 });
 
-                cx.update(|cx| cx.remove_all_windows());
+                cx.remove_all_windows();
                 deterministic.run_until_parked();
                 cx.update(|cx| cx.clear_globals());
 

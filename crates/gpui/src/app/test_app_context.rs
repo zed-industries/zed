@@ -180,7 +180,11 @@ impl TestAppContext {
     }
 
     pub fn window_ids(&self) -> Vec<usize> {
-        self.cx.borrow().window_ids().collect()
+        self.cx.borrow().windows.keys().copied().collect()
+    }
+
+    pub fn remove_all_windows(&mut self) {
+        self.update(|cx| cx.windows.clear());
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {

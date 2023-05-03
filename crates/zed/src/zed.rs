@@ -378,24 +378,25 @@ pub fn build_window_options(
 }
 
 fn restart(_: &Restart, cx: &mut gpui::AppContext) {
-    let mut workspaces = cx
-        .window_ids()
-        .filter_map(|window_id| {
-            Some(
-                cx.root_view(window_id)?
-                    .clone()
-                    .downcast::<Workspace>()?
-                    .downgrade(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    // If multiple windows have unsaved changes, and need a save prompt,
-    // prompt in the active window before switching to a different window.
-    workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
-
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
+        let mut workspaces = cx
+            .window_ids()
+            .into_iter()
+            .filter_map(|window_id| {
+                Some(
+                    cx.root_view(window_id)?
+                        .clone()
+                        .downcast::<Workspace>()?
+                        .downgrade(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // If multiple windows have unsaved changes, and need a save prompt,
+        // prompt in the active window before switching to a different window.
+        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
             let answer = cx.prompt(
                 workspace.window_id(),
@@ -430,24 +431,25 @@ fn restart(_: &Restart, cx: &mut gpui::AppContext) {
 }
 
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
-    let mut workspaces = cx
-        .window_ids()
-        .filter_map(|window_id| {
-            Some(
-                cx.root_view(window_id)?
-                    .clone()
-                    .downcast::<Workspace>()?
-                    .downgrade(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    // If multiple windows have unsaved changes, and need a save prompt,
-    // prompt in the active window before switching to a different window.
-    workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
-
     let should_confirm = cx.global::<Settings>().confirm_quit;
     cx.spawn(|mut cx| async move {
+        let mut workspaces = cx
+            .window_ids()
+            .into_iter()
+            .filter_map(|window_id| {
+                Some(
+                    cx.root_view(window_id)?
+                        .clone()
+                        .downcast::<Workspace>()?
+                        .downgrade(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // If multiple windows have unsaved changes, and need a save prompt,
+        // prompt in the active window before switching to a different window.
+        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+
         if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
             let answer = cx.prompt(
                 workspace.window_id(),

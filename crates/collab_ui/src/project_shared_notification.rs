@@ -62,14 +62,14 @@ pub fn init(cx: &mut AppContext) {
         room::Event::RemoteProjectUnshared { project_id } => {
             if let Some(window_ids) = notification_windows.remove(&project_id) {
                 for window_id in window_ids {
-                    cx.remove_window(window_id);
+                    cx.update_window(window_id, |cx| cx.remove_window());
                 }
             }
         }
         room::Event::Left => {
             for (_, window_ids) in notification_windows.drain() {
                 for window_id in window_ids {
-                    cx.remove_window(window_id);
+                    cx.update_window(window_id, |cx| cx.remove_window());
                 }
             }
         }

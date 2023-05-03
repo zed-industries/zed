@@ -302,6 +302,14 @@ impl AsyncAppContext {
         self.0.borrow_mut().update(callback)
     }
 
+    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
+        &self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        self.0.borrow_mut().read_window(window_id, callback)
+    }
+
     pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
         window_id: usize,
@@ -316,6 +324,22 @@ impl AsyncAppContext {
             let root_element = cx.window.rendered_views.get(&root_view.id())?;
             root_element.debug(cx).log_err()
         })?
+    }
+
+    pub fn has_window(&self, window_id: usize) -> bool {
+        self.read(|cx| cx.windows.contains_key(&window_id))
+    }
+
+    pub fn window_is_active(&self, window_id: usize) -> bool {
+        self.read(|cx| cx.windows.get(&window_id).map_or(false, |w| w.is_active))
+    }
+
+    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+        self.read(|cx| cx.windows.get(&window_id).map(|w| w.root_view().clone()))
+    }
+
+    pub fn window_ids(&self) -> Vec<usize> {
+        self.read(|cx| cx.windows.keys().copied().collect())
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -339,7 +363,7 @@ impl AsyncAppContext {
     }
 
     pub fn remove_window(&mut self, window_id: usize) {
-        self.update(|cx| cx.remove_window(window_id))
+        self.update_window(window_id, |cx| cx.remove_window());
     }
 
     pub fn activate_window(&mut self, window_id: usize) {
@@ -538,7 +562,7 @@ impl AppContext {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
-    pub fn quit(&mut self) {
+    fn quit(&mut self) {
         let mut futures = Vec::new();
 
         self.update(|cx| {
@@ -555,7 +579,8 @@ impl AppContext {
             }
         });
 
-        self.remove_all_windows();
+        self.windows.clear();
+        self.flush_effects();
 
         let futures = futures::future::join_all(futures);
         if self
@@ -565,11 +590,6 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
-    }
-
-    pub fn remove_all_windows(&mut self) {
-        self.windows.clear();
-        self.flush_effects();
     }
 
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
@@ -686,24 +706,6 @@ impl AppContext {
                 type_name::<A>()
             );
         }
-    }
-
-    pub fn has_window(&self, window_id: usize) -> bool {
-        self.window_ids()
-            .find(|window| window == &window_id)
-            .is_some()
-    }
-
-    pub fn window_is_active(&self, window_id: usize) -> bool {
-        self.windows.get(&window_id).map_or(false, |w| w.is_active)
-    }
-
-    pub fn root_view(&self, window_id: usize) -> Option<&AnyViewHandle> {
-        self.windows.get(&window_id).map(|w| w.root_view())
-    }
-
-    pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.windows.keys().copied()
     }
 
     pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
@@ -1275,15 +1277,6 @@ impl AppContext {
         })
     }
 
-    pub fn remove_status_bar_item(&mut self, id: usize) {
-        self.remove_window(id);
-    }
-
-    pub fn remove_window(&mut self, window_id: usize) {
-        self.windows.remove(&window_id);
-        self.flush_effects();
-    }
-
     pub fn build_window<V, F>(
         &mut self,
         window_id: usize,
@@ -1342,7 +1335,7 @@ impl AppContext {
         {
             let mut app = self.upgrade();
             platform_window.on_close(Box::new(move || {
-                app.update(|cx| cx.remove_window(window_id));
+                app.update(|cx| cx.update_window(window_id, |cx| cx.remove_window()));
             }));
         }
 
@@ -4717,7 +4710,7 @@ mod tests {
         assert!(model_release_observed.get());
 
         drop(view);
-        cx.remove_window(window_id);
+        cx.update_window(window_id, |cx| cx.remove_window());
         assert!(view_released.get());
         assert!(view_release_observed.get());
     }

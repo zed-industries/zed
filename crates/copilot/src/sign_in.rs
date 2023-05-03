@@ -33,14 +33,13 @@ pub fn init(cx: &mut AppContext) {
                 crate::Status::SigningIn { prompt } => {
                     if let Some(code_verification_handle) = code_verification.as_mut() {
                         let window_id = code_verification_handle.window_id();
-                        if cx.has_window(window_id) {
-                            cx.update_window(window_id, |cx| {
-                                code_verification_handle.update(cx, |code_verification, cx| {
-                                    code_verification.set_status(status, cx)
-                                });
-                                cx.activate_window();
+                        let updated = cx.update_window(window_id, |cx| {
+                            code_verification_handle.update(cx, |code_verification, cx| {
+                                code_verification.set_status(status.clone(), cx)
                             });
-                        } else {
+                            cx.activate_window();
+                        });
+                        if updated.is_none() {
                             code_verification = Some(create_copilot_auth_window(cx, &status));
                         }
                     } else if let Some(_prompt) = prompt {
@@ -62,7 +61,7 @@ pub fn init(cx: &mut AppContext) {
                 }
                 _ => {
                     if let Some(code_verification) = code_verification.take() {
-                        cx.remove_window(code_verification.window_id());
+                        cx.update_window(code_verification.window_id(), |cx| cx.remove_window());
                     }
                 }
             }

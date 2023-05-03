@@ -1110,12 +1110,18 @@ impl Workspace {
     }
 
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
-        let id = cx.window_ids().find(|&id| cx.window_is_active(id));
-        if let Some(id) = id {
-            //This can only get called when the window's project connection has been lost
-            //so we don't need to prompt the user for anything and instead just close the window
-            cx.remove_window(id);
-        }
+        cx.spawn(|mut cx| async move {
+            let id = cx
+                .window_ids()
+                .into_iter()
+                .find(|&id| cx.window_is_active(id));
+            if let Some(id) = id {
+                //This can only get called when the window's project connection has been lost
+                //so we don't need to prompt the user for anything and instead just close the window
+                cx.remove_window(id);
+            }
+        })
+        .detach();
     }
 
     pub fn close(
@@ -1140,19 +1146,14 @@ impl Workspace {
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
         let window_id = cx.window_id();
-        let workspace_count = cx
-            .window_ids()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|window_id| {
-                cx.app_context()
-                    .root_view(window_id)?
-                    .clone()
-                    .downcast::<Workspace>()
-            })
-            .count();
 
         cx.spawn(|this, mut cx| async move {
+            let workspace_count = cx
+                .window_ids()
+                .into_iter()
+                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+                .count();
+
             if let Some(active_call) = active_call {
                 if !quitting
                     && workspace_count == 1
@@ -2979,10 +2980,10 @@ impl std::fmt::Debug for OpenPaths {
 pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 
 pub fn activate_workspace_for_project(
-    cx: &mut AppContext,
+    cx: &mut AsyncAppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
 ) -> Option<WeakViewHandle<Workspace>> {
-    for window_id in cx.window_ids().collect::<Vec<_>>() {
+    for window_id in cx.window_ids() {
         let handle = cx
             .update_window(window_id, |cx| {
                 if let Some(workspace_handle) = cx.root_view().clone().downcast::<Workspace>() {
@@ -3021,13 +3022,14 @@ pub fn open_paths(
 > {
     log::info!("open paths {:?}", abs_paths);
 
-    // Open paths in existing workspace if possible
-    let existing =
-        activate_workspace_for_project(cx, |project, cx| project.contains_paths(abs_paths, cx));
-
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
+        // Open paths in existing workspace if possible
+        let existing = activate_workspace_for_project(&mut cx, |project, cx| {
+            project.contains_paths(&abs_paths, cx)
+        });
+
         if let Some(existing) = existing {
             Ok((
                 existing.clone(),
