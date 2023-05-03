@@ -78,24 +78,26 @@ impl IncomingCallNotification {
             let join = active_call.update(cx, |active_call, cx| active_call.accept_incoming(cx));
             let caller_user_id = self.call.calling_user.id;
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
-            cx.spawn(|this, mut cx| async move {
-                join.await?;
-                if let Some(project_id) = initial_project_id {
-                    this.update(&mut cx, |this, cx| {
-                        if let Some(app_state) = this.app_state.upgrade() {
-                            workspace::join_remote_project(
-                                project_id,
-                                caller_user_id,
-                                app_state,
-                                cx,
-                            )
-                            .detach_and_log_err(cx);
-                        }
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            let app_state = self.app_state.clone();
+            cx.app_context()
+                .spawn(|mut cx| async move {
+                    join.await?;
+                    if let Some(project_id) = initial_project_id {
+                        cx.update(|cx| {
+                            if let Some(app_state) = app_state.upgrade() {
+                                workspace::join_remote_project(
+                                    project_id,
+                                    caller_user_id,
+                                    app_state,
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                            }
+                        });
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
         } else {
             active_call.update(cx, |active_call, _| {
                 active_call.decline_incoming().log_err();
