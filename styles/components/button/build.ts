@@ -12,7 +12,7 @@ import {
 import { TextStyle } from "@theme/text"
 import { ElementIntensities, useElementIntensities } from "@theme/intensity"
 import { margin, padding } from "@theme/properties"
-import { useText } from "@theme/text"
+import { textStyle } from "@theme/text"
 import { iconStyle } from "@theme/icon"
 
 type ButtonSizes = "small" | "medium" | "large"
@@ -71,7 +71,7 @@ export function buildButton({
         size: 'md'
     })
 
-    let text: TextStyle = useText(theme,
+    let text: TextStyle = textStyle(theme,
         { intensity: resolvedIntensities.fg })
 
     const states = buildIntensitiesForStates(theme, name, resolvedIntensities)

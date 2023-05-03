@@ -2,7 +2,7 @@ import { buildSurfaces } from "@components/surface"
 import { Theme } from "@theme/config"
 import { ContainedText, container } from "@theme/container"
 import { margin, padding } from "@theme/properties"
-import { useText } from "@theme/text"
+import { textStyle } from "@theme/text"
 
 export default function tooltip(theme: Theme) {
     const surface = buildSurfaces(theme)
@@ -14,7 +14,7 @@ export default function tooltip(theme: Theme) {
             padding: padding(8, 4),
             margin: margin(6),
         },
-        text: useText(theme)
+        text: textStyle(theme)
     }
 
     return {
@@ -24,13 +24,13 @@ export default function tooltip(theme: Theme) {
         margin: { top: 6, left: 6 },
         shadow: colorScheme.popoverShadow,
         cornerRadius: 6,
-        text: useText(layer, "sans", { size: "xs" }),
+        text: textStyle(layer, "sans", { size: "xs" }),
         keystroke: {
             background: background(layer, "on"),
             cornerRadius: 4,
             margin: { left: 6 },
             padding: { left: 4, right: 4 },
-            ...useText(layer, "mono", "on", { size: "xs", weight: "bold" }),
+            ...textStyle(layer, "mono", "on", { size: "xs", weight: "bold" }),
         },
         maxTextWidth: 200,
     }

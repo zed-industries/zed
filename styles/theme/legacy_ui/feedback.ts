@@ -1,10 +1,10 @@
 import { labelButton } from "@components/button"
 import { Theme } from "@theme/config"
-import { useInteractiveText, useText } from "@theme/text"
+import { useInteractiveText, textStyle } from "@theme/text"
 
 export default function feedback(theme: Theme) {
     const link_text = useInteractiveText(theme)
-    const info_text = useText(theme)
+    const info_text = textStyle(theme)
 
     const legacy_properties = {
         button_margin: 8,

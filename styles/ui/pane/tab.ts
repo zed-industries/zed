@@ -9,7 +9,7 @@ import { IconStyle, iconStyle } from "@theme/icon"
 import { addToElementIntensities, useElementIntensities } from "@theme/intensity"
 import { padding } from "@theme/properties"
 import { background } from "@theme/properties/background"
-import { TextStyle, useText } from "@theme/text"
+import { TextStyle, textStyle } from "@theme/text"
 
 interface TabProps {
     theme: Theme
@@ -63,7 +63,7 @@ function tabState({
         }
     }
 
-    const text = useText(theme, {
+    const text = textStyle(theme, {
         intensity: 70,
     })
 
@@ -95,7 +95,7 @@ function tabState({
             container: {
                 ...container.blank,
             },
-            text: useText(theme, {
+            text: textStyle(theme, {
                 intensity: 50,
             }),
         },

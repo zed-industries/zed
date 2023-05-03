@@ -9,6 +9,8 @@ import { Padding, Margin } from "@theme/properties"
 import { ContainedText, ContainedTextProps, containedText } from "./containedText"
 import { FlexStyle } from "@theme/element/flex"
 import { IconStyle } from "@theme/icon"
+import { Shadow } from "@theme/shadow"
+import { Surface, useSurfaceStyle } from "@components/surface"
 
 export interface ContainerStyle {
     background?: string
@@ -17,7 +19,8 @@ export interface ContainerStyle {
     borderRadius?: number
     border?: Border
     width: number | "auto"
-    height: number | "auto"
+    height: number | "auto",
+    shadow?: Shadow
 }
 
 const blankContainer: ContainerStyle = {
@@ -29,8 +32,30 @@ export const container: Record<string, ContainerStyle> = {
     blank: blankContainer,
 }
 
+// TODO: Move to a const, move to properties
 export enum BorderRadius {
     "Medium" = 4,
+}
+
+export type ContainerOptions = Partial<ContainerStyle>
+
+const DEFAULT_OPTIONS: ContainerOptions = {
+    borderRadius: 0,
+    width: "auto",
+    height: "auto"
+} as const
+
+export function containerStyle(options: ContainerOptions): ContainerStyle {
+    const mergedOptions = {
+        ...DEFAULT_OPTIONS,
+        ...options,
+    };
+
+    return {
+        width: mergedOptions.width,
+        height: mergedOptions.height,
+        ...mergedOptions
+    }
 }
 
 export interface ContainedIcon {

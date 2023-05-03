@@ -106,6 +106,7 @@ export interface TextStyle {
     weight: Weight
     color: string
     lineHeight: number
+    underline?: boolean
 }
 
 /** Text options. Will be merged with DEFAULT_TEXT_OPTIONS */
@@ -114,7 +115,7 @@ interface BuildTextOptions extends Partial<Omit<TextStyle, "color">> {
     baseSize: number
     intensity: Intensity
     /** A color family from the theme */
-    colorScale: ThemeColor
+    color: ThemeColor
 }
 
 const DEFAULT_BASE_TEXT_SIZE = 13 as const
@@ -124,7 +125,7 @@ const DEFAULT_TEXT_OPTIONS: BuildTextOptions = {
     baseSize: DEFAULT_BASE_TEXT_SIZE,
     size: size.md,
     weight: weight.regular,
-    colorScale: "neutral",
+    color: "neutral",
     intensity: 100,
     lineHeight: 1,
 }
@@ -142,7 +143,7 @@ function buildText(
         ...options,
     };
 
-    const { family, weight, baseSize, lineHeight, colorScale, intensity } = mergedOptions;
+    const { family, weight, baseSize, lineHeight, color: colorScale, intensity } = mergedOptions;
 
     const resolvedIntensity = resolveThemeColorIntensity(theme, intensity);
     const color = themeColor[colorScale](resolvedIntensity);
@@ -164,7 +165,7 @@ function buildText(
     return text;
 }
 
-export function useText(
+export function textStyle(
     theme: Theme,
     options?: Partial<BuildTextOptions>
 ): TextStyle {
