@@ -165,6 +165,7 @@ impl CollabTitlebarItem {
             }),
         );
 
+        let view_id = cx.view_id();
         Self {
             workspace: workspace.weak_handle(),
             project,
@@ -172,7 +173,7 @@ impl CollabTitlebarItem {
             client,
             contacts_popover: None,
             user_menu: cx.add_view(|cx| {
-                let mut menu = ContextMenu::new(cx);
+                let mut menu = ContextMenu::new(view_id, cx);
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),

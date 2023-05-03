@@ -226,8 +226,9 @@ impl Pane {
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let pane_view_id = cx.view_id();
         let handle = cx.weak_handle();
-        let context_menu = cx.add_view(ContextMenu::new);
+        let context_menu = cx.add_view(|cx| ContextMenu::new(pane_view_id, cx));
         context_menu.update(cx, |menu, _| {
             menu.set_position_mode(OverlayPositionMode::Local)
         });
@@ -252,7 +253,7 @@ impl Pane {
                 kind: TabBarContextMenuKind::New,
                 handle: context_menu,
             },
-            tab_context_menu: cx.add_view(ContextMenu::new),
+            tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
             docked,
             _background_actions: background_actions,
             workspace,

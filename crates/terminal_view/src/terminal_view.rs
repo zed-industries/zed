@@ -124,6 +124,7 @@ impl TerminalView {
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let view_id = cx.view_id();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, |this, _, event, cx| match event {
             Event::Wakeup => {
@@ -162,7 +163,7 @@ impl TerminalView {
             terminal,
             has_new_content: true,
             has_bell: false,
-            context_menu: cx.add_view(ContextMenu::new),
+            context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
             blink_state: true,
             blinking_on: false,
             blinking_paused: false,

@@ -1073,16 +1073,6 @@ impl<'a> WindowContext<'a> {
             }))
     }
 
-    /// Returns the id of the parent of the given view, or none if the given
-    /// view is the root.
-    pub(crate) fn parent(&self, view_id: usize) -> Option<usize> {
-        if let Some(view_id) = self.window.parents.get(&view_id) {
-            Some(*view_id)
-        } else {
-            None
-        }
-    }
-
     // Traverses the parent tree. Walks down the tree toward the passed
     // view calling visit with true. Then walks back up the tree calling visit with false.
     // If `visit` returns false this function will immediately return.

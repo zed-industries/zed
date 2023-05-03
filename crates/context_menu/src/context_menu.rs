@@ -127,7 +127,7 @@ pub struct ContextMenu {
     visible: bool,
     previously_focused_view_id: Option<usize>,
     clicked: bool,
-    parent_view_id: usize,
+    view_id: usize,
     _actions_observation: Subscription,
 }
 
@@ -178,9 +178,7 @@ impl View for ContextMenu {
 }
 
 impl ContextMenu {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let parent_view_id = cx.parent().unwrap();
-
+    pub fn new(view_id: usize, cx: &mut ViewContext<Self>) -> Self {
         Self {
             show_count: 0,
             anchor_position: Default::default(),
@@ -191,7 +189,7 @@ impl ContextMenu {
             visible: Default::default(),
             previously_focused_view_id: Default::default(),
             clicked: false,
-            parent_view_id,
+            view_id,
             _actions_observation: cx.observe_actions(Self::action_dispatched),
         }
     }
@@ -227,7 +225,7 @@ impl ContextMenu {
                 match action {
                     ContextMenuItemAction::Action(action) => {
                         let window_id = cx.window_id();
-                        let view_id = self.parent_view_id;
+                        let view_id = self.view_id;
                         let action = action.boxed_clone();
                         cx.app_context()
                             .spawn(|mut cx| async move {
@@ -381,7 +379,7 @@ impl ContextMenu {
 
                                 match action {
                                     ContextMenuItemAction::Action(action) => KeystrokeLabel::new(
-                                        self.parent_view_id,
+                                        self.view_id,
                                         action.boxed_clone(),
                                         style.keystroke.container,
                                         style.keystroke.text.clone(),
@@ -421,7 +419,7 @@ impl ContextMenu {
                     match item {
                         ContextMenuItem::Item { label, action } => {
                             let action = action.clone();
-                            let view_id = self.parent_view_id;
+                            let view_id = self.view_id;
                             MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
                                 let style =
                                     style.item.style_for(state, Some(ix) == self.selected_index);

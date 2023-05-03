@@ -2767,10 +2767,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
-    pub fn parent(&self) -> Option<usize> {
-        self.window_context.parent(self.view_id)
-    }
-
     pub fn window_id(&self) -> usize {
         self.window_id
     }

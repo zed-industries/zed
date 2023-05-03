@@ -142,8 +142,9 @@ impl View for CopilotButton {
 
 impl CopilotButton {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
+        let button_view_id = cx.view_id();
         let menu = cx.add_view(|cx| {
-            let mut menu = ContextMenu::new(cx);
+            let mut menu = ContextMenu::new(button_view_id, cx);
             menu.set_position_mode(OverlayPositionMode::Local);
             menu
         });
