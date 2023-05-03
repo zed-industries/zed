@@ -1,4 +1,5 @@
 import { InputSyntax } from "@/theme/syntax"
+import { Prettify } from "./types/utility"
 
 interface Author {
     name: string
@@ -15,7 +16,7 @@ export type ThemeColor = "neutral" | "accent" | "error" | "info" | "warning" | "
 type ThemeConfigColors = Record<ThemeColor, InputColor>
 export type ThemeColors = Record<ThemeColor, string[]>
 
-export interface ThemeConfig {
+export interface ThemeConfigProperties {
     name: string
     appearance: "light" | "dark"
     author: string | Author
@@ -24,6 +25,9 @@ export interface ThemeConfig {
     colors: ThemeConfigColors
     syntax?: Partial<InputSyntax>
 }
+
+// export type ThemeConfig = ThemeConfigProperties
+export type ThemeConfig = Prettify<ThemeConfigProperties>
 
 export interface CalculatedThemeProperties {
     intensity: {
@@ -34,4 +38,5 @@ export interface CalculatedThemeProperties {
     color: ThemeColors
 }
 
-export type Theme = ThemeConfig & CalculatedThemeProperties
+// export type Theme = ThemeConfig & CalculatedThemeProperties
+export type Theme = Prettify<ThemeConfig & CalculatedThemeProperties>

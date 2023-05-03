@@ -10,7 +10,6 @@ import { ContainedText, ContainedTextProps, containedText } from "./containedTex
 import { FlexStyle } from "@theme/element/flex"
 import { IconStyle } from "@theme/icon"
 import { Shadow } from "@theme/shadow"
-import { Surface, useSurfaceStyle } from "@components/surface"
 
 export interface ContainerStyle {
     background?: string
