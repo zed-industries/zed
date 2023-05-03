@@ -133,6 +133,10 @@ impl RepositoryEntry {
     pub(crate) fn in_dot_git(&self, path: &Path) -> bool {
         path.starts_with(self.git_dir_path.as_ref())
     }
+
+    pub fn branch(&self) -> Option<Arc<str>> {
+        self.branch.clone()
+    }
 }
 
 /// This path corresponds to the 'content path' (the folder that contains the .git)
@@ -157,6 +161,12 @@ impl Deref for RepositoryWorkDirectory {
 
     fn deref(&self) -> &Self::Target {
         self.0.as_ref()
+    }
+}
+
+impl<'a> From<&'a str> for RepositoryWorkDirectory {
+    fn from(value: &'a str) -> Self {
+        RepositoryWorkDirectory(Path::new(value).into())
     }
 }
 
@@ -1441,6 +1451,12 @@ impl Snapshot {
 
     pub fn root_name(&self) -> &str {
         &self.root_name
+    }
+
+    pub fn root_git_entry(&self) -> Option<RepositoryEntry> {
+        self.repository_entries
+            .get(&"".into())
+            .map(|entry| entry.to_owned())
     }
 
     pub fn scan_id(&self) -> usize {

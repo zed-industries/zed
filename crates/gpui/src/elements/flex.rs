@@ -66,6 +66,10 @@ impl<V: View> Flex<V> {
         self
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.children.is_empty()
+    }
+
     fn layout_flex_children(
         &mut self,
         layout_expanded: bool,
