@@ -37,9 +37,10 @@ use crate::{
     WindowContext,
 };
 use anyhow::{anyhow, Result};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use core::panic;
 use json::ToJson;
+use smallvec::SmallVec;
 use std::{
     any::Any,
     borrow::Cow,
@@ -648,7 +649,7 @@ pub trait AnyRootElement {
         &mut self,
         constraint: SizeConstraint,
         new_parents: &mut HashMap<usize, usize>,
-        views_to_notify_if_ancestors_change: &mut HashSet<usize>,
+        views_to_notify_if_ancestors_change: &mut HashMap<usize, SmallVec<[usize; 2]>>,
         refreshing: bool,
         cx: &mut WindowContext,
     ) -> Result<Vector2F>;
@@ -673,7 +674,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
         &mut self,
         constraint: SizeConstraint,
         new_parents: &mut HashMap<usize, usize>,
-        views_to_notify_if_ancestors_change: &mut HashSet<usize>,
+        views_to_notify_if_ancestors_change: &mut HashMap<usize, SmallVec<[usize; 2]>>,
         refreshing: bool,
         cx: &mut WindowContext,
     ) -> Result<Vector2F> {

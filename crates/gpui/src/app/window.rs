@@ -933,7 +933,7 @@ impl<'a> WindowContext<'a> {
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
         let mut new_parents = HashMap::default();
-        let mut views_to_notify_if_ancestors_change = HashSet::default();
+        let mut views_to_notify_if_ancestors_change = HashMap::default();
         rendered_root.layout(
             SizeConstraint::strict(window_size),
             &mut new_parents,
@@ -941,6 +941,25 @@ impl<'a> WindowContext<'a> {
             refreshing,
             self,
         )?;
+
+        for (view_id, view_ids_to_notify) in views_to_notify_if_ancestors_change {
+            let mut current_view_id = view_id;
+            loop {
+                let old_parent_id = self.window.parents.get(&current_view_id);
+                let new_parent_id = new_parents.get(&current_view_id);
+                if old_parent_id.is_none() && new_parent_id.is_none() {
+                    break;
+                } else if old_parent_id == new_parent_id {
+                    current_view_id = *old_parent_id.unwrap();
+                } else {
+                    let window_id = self.window_id;
+                    for view_id_to_notify in view_ids_to_notify {
+                        self.notify_view(window_id, view_id_to_notify);
+                    }
+                    break;
+                }
+            }
+        }
 
         self.window.parents = new_parents;
         self.window

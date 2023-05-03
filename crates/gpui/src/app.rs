@@ -25,6 +25,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postage::oneshot;
+use smallvec::SmallVec;
 use smol::prelude::*;
 use util::ResultExt;
 use uuid::Uuid;
@@ -3198,7 +3199,7 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
 pub struct LayoutContext<'a, 'b, 'c, V: View> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
-    views_to_notify_if_ancestors_change: &'c mut HashSet<usize>,
+    views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
     pub refreshing: bool,
 }
 
@@ -3206,7 +3207,7 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
     pub fn new(
         view_context: &'c mut ViewContext<'a, 'b, V>,
         new_parents: &'c mut HashMap<usize, usize>,
-        views_to_notify_if_ancestors_change: &'c mut HashSet<usize>,
+        views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
         refreshing: bool,
     ) -> Self {
         Self {
