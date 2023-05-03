@@ -60,7 +60,7 @@ pub trait Item: View {
         style: &theme::Tab,
         cx: &AppContext,
     ) -> AnyElement<V>;
-    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {}
+    fn for_each_project_item(&self, _: &AppContext, _: &mut dyn FnMut(usize, &dyn project::Item)) {} // (model id, Item)
     fn is_singleton(&self, _cx: &AppContext) -> bool {
         false
     }

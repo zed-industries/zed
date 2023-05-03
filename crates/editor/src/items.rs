@@ -704,10 +704,10 @@ impl Item for Editor {
             this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
-            buffer.update(&mut cx, |buffer, _| {
+            buffer.update(&mut cx, |buffer, cx| {
                 if let Some(transaction) = transaction {
                     if !buffer.is_singleton() {
-                        buffer.push_transaction(&transaction.0);
+                        buffer.push_transaction(&transaction.0, cx);
                     }
                 }
             });

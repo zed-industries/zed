@@ -125,7 +125,7 @@ pub struct Project {
     /// Used for re-issuing buffer requests when peers temporarily disconnect
     incomplete_remote_buffers: HashMap<u64, Option<ModelHandle<Buffer>>>,
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
-    buffers_being_formatted: HashSet<usize>,
+    buffers_being_formatted: HashSet<u64>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
@@ -3204,9 +3204,11 @@ impl Project {
             cx.spawn(|this, mut cx| async move {
                 // Do not allow multiple concurrent formatting requests for the
                 // same buffer.
-                this.update(&mut cx, |this, _| {
-                    buffers_with_paths_and_servers
-                        .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
+                this.update(&mut cx, |this, cx| {
+                    buffers_with_paths_and_servers.retain(|(buffer, _, _)| {
+                        this.buffers_being_formatted
+                            .insert(buffer.read(cx).remote_id())
+                    });
                 });
 
                 let _cleanup = defer({
@@ -3214,9 +3216,10 @@ impl Project {
                     let mut cx = cx.clone();
                     let buffers = &buffers_with_paths_and_servers;
                     move || {
-                        this.update(&mut cx, |this, _| {
+                        this.update(&mut cx, |this, cx| {
                             for (buffer, _, _) in buffers {
-                                this.buffers_being_formatted.remove(&buffer.id());
+                                this.buffers_being_formatted
+                                    .remove(&buffer.read(cx).remote_id());
                             }
                         });
                     }
