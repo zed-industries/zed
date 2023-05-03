@@ -33,9 +33,11 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle, WindowContext,
+    json, Action, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle,
+    WindowContext,
 };
 use anyhow::{anyhow, Result};
+use collections::{HashMap, HashSet};
 use core::panic;
 use json::ToJson;
 use std::{
@@ -54,7 +56,7 @@ pub trait Element<V: View>: 'static {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState);
 
     fn paint(
@@ -211,7 +213,7 @@ trait AnyElementState<V: View> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> Vector2F;
 
     fn paint(
@@ -263,7 +265,7 @@ impl<V: View, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> Vector2F {
         let result;
         *self = match mem::take(self) {
@@ -444,7 +446,7 @@ impl<V: View> AnyElement<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> Vector2F {
         self.state.layout(constraint, view, cx)
     }
@@ -505,7 +507,7 @@ impl<V: View> Element<V> for AnyElement<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.layout(constraint, view, cx);
         (size, ())
@@ -597,7 +599,7 @@ impl<V: View, C: Component<V>> Element<V> for ComponentHost<V, C> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, AnyElement<V>) {
         let mut element = self.component.render(view, cx);
         let size = element.layout(constraint, view, cx);
@@ -642,7 +644,14 @@ impl<V: View, C: Component<V>> Element<V> for ComponentHost<V, C> {
 }
 
 pub trait AnyRootElement {
-    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F>;
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        new_parents: &mut HashMap<usize, usize>,
+        views_to_notify_if_ancestors_change: &mut HashSet<usize>,
+        refreshing: bool,
+        cx: &mut WindowContext,
+    ) -> Result<Vector2F>;
     fn paint(
         &mut self,
         scene: &mut SceneBuilder,
@@ -660,12 +669,27 @@ pub trait AnyRootElement {
 }
 
 impl<V: View> AnyRootElement for RootElement<V> {
-    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F> {
+    fn layout(
+        &mut self,
+        constraint: SizeConstraint,
+        new_parents: &mut HashMap<usize, usize>,
+        views_to_notify_if_ancestors_change: &mut HashSet<usize>,
+        refreshing: bool,
+        cx: &mut WindowContext,
+    ) -> Result<Vector2F> {
         let view = self
             .view
             .upgrade(cx)
             .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
-        view.update(cx, |view, cx| Ok(self.element.layout(constraint, view, cx)))
+        view.update(cx, |view, cx| {
+            let mut cx = LayoutContext::new(
+                cx,
+                new_parents,
+                views_to_notify_if_ancestors_change,
+                refreshing,
+            );
+            Ok(self.element.layout(constraint, view, &mut cx))
+        })
     }
 
     fn paint(

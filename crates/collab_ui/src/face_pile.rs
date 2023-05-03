@@ -7,7 +7,7 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, SceneBuilder, ViewContext,
+    AnyElement, Axis, Element, LayoutContext, SceneBuilder, ViewContext,
 };
 
 use crate::CollabTitlebarItem;
@@ -34,7 +34,7 @@ impl Element<CollabTitlebarItem> for FacePile {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut CollabTitlebarItem,
-        cx: &mut ViewContext<CollabTitlebarItem>,
+        cx: &mut LayoutContext<CollabTitlebarItem>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 

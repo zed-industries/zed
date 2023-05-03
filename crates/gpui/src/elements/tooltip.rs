@@ -6,7 +6,8 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    Action, Axis, ElementStateHandle, SceneBuilder, SizeConstraint, Task, View, ViewContext,
+    Action, Axis, ElementStateHandle, LayoutContext, SceneBuilder, SizeConstraint, Task, View,
+    ViewContext,
 };
 use serde::Deserialize;
 use std::{
@@ -172,7 +173,7 @@ impl<V: View> Element<V> for Tooltip<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {

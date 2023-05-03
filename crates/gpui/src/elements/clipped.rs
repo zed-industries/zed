@@ -3,7 +3,9 @@ use std::ops::Range;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use serde_json::json;
 
-use crate::{json, AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext};
+use crate::{
+    json, AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+};
 
 pub struct Clipped<V: View> {
     child: AnyElement<V>,
@@ -23,7 +25,7 @@ impl<V: View> Element<V> for Clipped<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }

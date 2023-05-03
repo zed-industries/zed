@@ -3,7 +3,8 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    AnyElement, Axis, Element, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Axis, Element, LayoutContext, MouseRegion, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 use serde_json::json;
 
@@ -124,7 +125,7 @@ impl<V: View> Element<V> for Overlay<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let constraint = if self.anchor_position.is_some() {
             SizeConstraint::new(Vector2F::zero(), cx.window_size())

@@ -10,7 +10,7 @@ use crate::{
     json::ToJson,
     platform::CursorStyle,
     scene::{self, Border, CursorRegion, Quad},
-    AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -192,7 +192,7 @@ impl<V: View> Element<V> for Container<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size_buffer = self.margin_size() + self.padding_size();
         if !self.style.border.overlay {

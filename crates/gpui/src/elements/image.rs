@@ -5,7 +5,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene, Border, Element, ImageData, SceneBuilder, SizeConstraint, View, ViewContext,
+    scene, Border, Element, ImageData, LayoutContext, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc};
@@ -63,7 +64,7 @@ impl<V: View> Element<V> for Image {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let data = match &self.source {
             ImageSource::Path(path) => match cx.asset_cache.png(path) {

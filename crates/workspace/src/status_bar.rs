@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyElement, AnyViewHandle, Entity, SceneBuilder, SizeConstraint, Subscription, View,
-    ViewContext, ViewHandle, WindowContext,
+    AnyElement, AnyViewHandle, Entity, LayoutContext, SceneBuilder, SizeConstraint, Subscription,
+    View, ViewContext, ViewHandle, WindowContext,
 };
 use settings::Settings;
 
@@ -157,7 +157,7 @@ impl Element<StatusBar> for StatusBarElement {
         &mut self,
         mut constraint: SizeConstraint,
         view: &mut StatusBar,
-        cx: &mut ViewContext<StatusBar>,
+        cx: &mut LayoutContext<StatusBar>,
     ) -> (Vector2F, Self::LayoutState) {
         let max_width = constraint.max.x();
         constraint.min = vec2f(0., constraint.min.y());

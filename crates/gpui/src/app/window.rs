@@ -14,8 +14,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
-    Element, Entity, Handle, MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription,
-    View, ViewContext, ViewHandle, WindowInvalidation,
+    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, ParentId, SceneBuilder,
+    Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -93,8 +93,8 @@ impl Window {
         let root_view = window_context
             .build_and_insert_view(ParentId::Root, |cx| Some(build_view(cx)))
             .unwrap();
-        if let Some(mut invalidation) = window_context.window.invalidation.take() {
-            window_context.invalidate(&mut invalidation, appearance);
+        if let Some(invalidation) = window_context.window.invalidation.take() {
+            window_context.invalidate(invalidation, appearance);
         }
         window.focused_view_id = Some(root_view.id());
         window.root_view = Some(root_view.into_any());
@@ -113,7 +113,6 @@ pub struct WindowContext<'a> {
     pub(crate) app_context: Reference<'a, AppContext>,
     pub(crate) window: Reference<'a, Window>,
     pub(crate) window_id: usize,
-    pub(crate) refreshing: bool,
     pub(crate) removed: bool,
 }
 
@@ -169,7 +168,6 @@ impl<'a> WindowContext<'a> {
             app_context: Reference::Mutable(app_context),
             window: Reference::Mutable(window),
             window_id,
-            refreshing: false,
             removed: false,
         }
     }
@@ -179,7 +177,6 @@ impl<'a> WindowContext<'a> {
             app_context: Reference::Immutable(app_context),
             window: Reference::Immutable(window),
             window_id,
-            refreshing: false,
             removed: false,
         }
     }
@@ -891,7 +888,7 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    pub fn invalidate(&mut self, invalidation: &mut WindowInvalidation, appearance: Appearance) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, appearance: Appearance) {
         self.start_frame();
         self.window.appearance = appearance;
         for view_id in &invalidation.removed {
@@ -932,13 +929,32 @@ impl<'a> WindowContext<'a> {
         Ok(element)
     }
 
-    pub fn build_scene(&mut self) -> Result<Scene> {
+    pub(crate) fn layout(&mut self, refreshing: bool) -> Result<()> {
+        let window_size = self.window.platform_window.content_size();
+        let root_view_id = self.window.root_view().id();
+        let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
+        let mut new_parents = HashMap::default();
+        let mut views_to_notify_if_ancestors_change = HashSet::default();
+        rendered_root.layout(
+            SizeConstraint::strict(window_size),
+            &mut new_parents,
+            &mut views_to_notify_if_ancestors_change,
+            refreshing,
+            self,
+        )?;
+
+        self.window
+            .rendered_views
+            .insert(root_view_id, rendered_root);
+        Ok(())
+    }
+
+    pub(crate) fn paint(&mut self) -> Result<Scene> {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
-        rendered_root.layout(SizeConstraint::strict(window_size), self)?;
 
         let mut scene_builder = SceneBuilder::new(scale_factor);
         rendered_root.paint(
@@ -1366,11 +1382,17 @@ impl<V: View> Element<V> for ChildView {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
             let size = rendered_view
-                .layout(constraint, cx)
+                .layout(
+                    constraint,
+                    cx.new_parents,
+                    cx.views_to_notify_if_ancestors_change,
+                    cx.refreshing,
+                    cx.view_context,
+                )
                 .log_err()
                 .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);

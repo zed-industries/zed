@@ -1361,9 +1361,9 @@ impl AppContext {
         }));
 
         let mut window = Window::new(window_id, platform_window, self, build_root_view);
-        let scene = WindowContext::mutable(self, &mut window, window_id)
-            .build_scene()
-            .expect("initial scene should not error");
+        let mut cx = WindowContext::mutable(self, &mut window, window_id);
+        cx.layout(false).expect("initial layout should not error");
+        let scene = cx.paint().expect("initial paint should not error");
         window.platform_window.present_scene(scene);
         window
     }
@@ -1486,6 +1486,7 @@ impl AppContext {
             self.flushing_effects = true;
 
             let mut refreshing = false;
+            let mut updated_windows = HashSet::default();
             loop {
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
@@ -1664,15 +1665,40 @@ impl AppContext {
                 } else {
                     self.remove_dropped_entities();
 
-                    if refreshing {
-                        self.perform_window_refresh();
-                    } else {
-                        self.update_windows();
+                    for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
+                        self.update_window(window_id, |cx| {
+                            let invalidation = if refreshing {
+                                let mut invalidation =
+                                    cx.window.invalidation.take().unwrap_or_default();
+                                invalidation
+                                    .updated
+                                    .extend(cx.window.rendered_views.keys().copied());
+                                Some(invalidation)
+                            } else {
+                                cx.window.invalidation.take()
+                            };
+
+                            if let Some(invalidation) = invalidation {
+                                let appearance = cx.window.platform_window.appearance();
+                                cx.invalidate(invalidation, appearance);
+                                if cx.layout(refreshing).log_err().is_some() {
+                                    updated_windows.insert(window_id);
+                                }
+                            }
+                        });
                     }
 
                     if self.pending_effects.is_empty() {
                         for callback in after_window_update_callbacks.drain(..) {
                             callback(self);
+                        }
+
+                        for window_id in updated_windows.drain() {
+                            self.update_window(window_id, |cx| {
+                                if let Some(scene) = cx.paint().log_err() {
+                                    cx.window.platform_window.present_scene(scene);
+                                }
+                            });
                         }
 
                         if self.pending_effects.is_empty() {
@@ -1686,21 +1712,6 @@ impl AppContext {
                     refreshing = false;
                 }
             }
-        }
-    }
-
-    fn update_windows(&mut self) {
-        let window_ids = self.windows.keys().cloned().collect::<Vec<_>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
-                if let Some(mut invalidation) = cx.window.invalidation.take() {
-                    let appearance = cx.window.platform_window.appearance();
-                    cx.invalidate(&mut invalidation, appearance);
-                    if let Some(scene) = cx.build_scene().log_err() {
-                        cx.window.platform_window.present_scene(scene);
-                    }
-                }
-            });
         }
     }
 
@@ -1745,23 +1756,6 @@ impl AppContext {
 
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
-    }
-
-    fn perform_window_refresh(&mut self) {
-        let window_ids = self.windows.keys().cloned().collect::<Vec<_>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
-                let mut invalidation = cx.window.invalidation.take().unwrap_or_default();
-                invalidation
-                    .updated
-                    .extend(cx.window.rendered_views.keys().copied());
-                cx.invalidate(&mut invalidation, cx.window.platform_window.appearance());
-                cx.refreshing = true;
-                if let Some(scene) = cx.build_scene().log_err() {
-                    cx.window.platform_window.present_scene(scene);
-                }
-            });
-        }
     }
 
     fn emit_global_event(&mut self, payload: Box<dyn Any>) {
@@ -3252,6 +3246,67 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
 
     fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
         BorrowWindowContext::update(&mut *self.window_context, window_id, f)
+    }
+}
+
+pub struct LayoutContext<'a, 'b, 'c, V: View> {
+    view_context: &'c mut ViewContext<'a, 'b, V>,
+    new_parents: &'c mut HashMap<usize, usize>,
+    views_to_notify_if_ancestors_change: &'c mut HashSet<usize>,
+    pub refreshing: bool,
+}
+
+impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
+    pub fn new(
+        view_context: &'c mut ViewContext<'a, 'b, V>,
+        new_parents: &'c mut HashMap<usize, usize>,
+        views_to_notify_if_ancestors_change: &'c mut HashSet<usize>,
+        refreshing: bool,
+    ) -> Self {
+        Self {
+            view_context,
+            new_parents,
+            views_to_notify_if_ancestors_change,
+            refreshing,
+        }
+    }
+
+    pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        self.view_context
+    }
+}
+
+impl<'a, 'b, 'c, V: View> Deref for LayoutContext<'a, 'b, 'c, V> {
+    type Target = ViewContext<'a, 'b, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view_context
+    }
+}
+
+impl<V: View> DerefMut for LayoutContext<'_, '_, '_, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.view_context
+    }
+}
+
+impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        BorrowAppContext::read_with(&*self.view_context, f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        BorrowAppContext::update(&mut *self.view_context, f)
+    }
+}
+
+impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.view_context, window_id, f)
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.view_context, window_id, f)
     }
 }
 

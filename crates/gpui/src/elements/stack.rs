@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::{self, json, ToJson},
-    AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 /// Element which renders it's children in a stack on top of each other.
@@ -34,7 +34,7 @@ impl<V: View> Element<V> for Stack<V> {
         &mut self,
         mut constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.min;
         let mut children = self.children.iter_mut();

@@ -8,7 +8,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, Element, SceneBuilder, SizeConstraint, View, ViewContext,
+    scene, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 pub struct Svg {
@@ -38,7 +38,7 @@ impl<V: View> Element<V> for Svg {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         match cx.asset_cache.svg(&self.path) {
             Ok(tree) => {

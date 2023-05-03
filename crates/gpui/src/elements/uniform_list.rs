@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    AnyElement, MouseRegion, SceneBuilder, View, ViewContext,
+    AnyElement, LayoutContext, MouseRegion, SceneBuilder, View, ViewContext,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -159,7 +159,7 @@ impl<V: View> Element<V> for UniformList<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if constraint.max.y().is_infinite() {
             unimplemented!(

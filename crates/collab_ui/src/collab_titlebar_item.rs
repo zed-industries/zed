@@ -14,8 +14,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, ModelHandle, SceneBuilder, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Entity, ImageData, LayoutContext, ModelHandle, SceneBuilder, Subscription, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::Project;
 use settings::Settings;
@@ -865,7 +865,7 @@ impl Element<CollabTitlebarItem> for AvatarRibbon {
         &mut self,
         constraint: gpui::SizeConstraint,
         _: &mut CollabTitlebarItem,
-        _: &mut ViewContext<CollabTitlebarItem>,
+        _: &mut LayoutContext<CollabTitlebarItem>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }
