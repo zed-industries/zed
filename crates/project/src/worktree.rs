@@ -1492,7 +1492,7 @@ impl LocalSnapshot {
         let mut current_candidate = None;
         for (work_directory, repo) in (&self.repository_entries).iter() {
             if work_directory.contains(path) {
-                if work_directory.0.as_os_str().len() > max_len {
+                if work_directory.0.as_os_str().len() >= max_len {
                     current_candidate = Some(repo);
                     max_len = work_directory.0.as_os_str().len();
                 } else {
