@@ -449,7 +449,7 @@ impl<'a> WindowContext<'a> {
             })
     }
 
-    pub fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+    pub(crate) fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.focused_view_id() {
             let dispatch_path = self
