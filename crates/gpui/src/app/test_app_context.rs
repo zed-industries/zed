@@ -72,14 +72,16 @@ impl TestAppContext {
     }
 
     pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
-        let mut cx = self.cx.borrow_mut();
-        if let Some(view_id) = cx.windows.get(&window_id).and_then(|w| w.focused_view_id) {
-            cx.handle_dispatch_action_from_effect(window_id, Some(view_id), &action);
-        }
+        self.cx
+            .borrow_mut()
+            .update_window(window_id, |window| {
+                window.handle_dispatch_action_from_effect(window.focused_view_id(), &action);
+            })
+            .expect("window not found");
     }
 
     pub fn dispatch_global_action<A: Action>(&self, action: A) {
-        self.cx.borrow_mut().dispatch_global_action(action);
+        self.cx.borrow_mut().dispatch_global_action_any(&action);
     }
 
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
@@ -180,7 +182,11 @@ impl TestAppContext {
     }
 
     pub fn window_ids(&self) -> Vec<usize> {
-        self.cx.borrow().window_ids().collect()
+        self.cx.borrow().windows.keys().copied().collect()
+    }
+
+    pub fn remove_all_windows(&mut self) {
+        self.update(|cx| cx.windows.clear());
     }
 
     pub fn read<T, F: FnOnce(&AppContext) -> T>(&self, callback: F) -> T {

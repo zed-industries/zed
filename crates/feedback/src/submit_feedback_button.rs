@@ -1,12 +1,16 @@
+use crate::feedback_editor::{FeedbackEditor, SubmitFeedback};
+use anyhow::Result;
 use gpui::{
     elements::{Label, MouseEventHandler},
     platform::{CursorStyle, MouseButton},
-    AnyElement, Element, Entity, View, ViewContext, ViewHandle,
+    AnyElement, AppContext, Element, Entity, Task, View, ViewContext, ViewHandle,
 };
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
-use crate::feedback_editor::{FeedbackEditor, SubmitFeedback};
+pub fn init(cx: &mut AppContext) {
+    cx.add_async_action(SubmitFeedbackButton::submit);
+}
 
 pub struct SubmitFeedbackButton {
     pub(crate) active_item: Option<ViewHandle<FeedbackEditor>>,
@@ -16,6 +20,18 @@ impl SubmitFeedbackButton {
     pub fn new() -> Self {
         Self {
             active_item: Default::default(),
+        }
+    }
+
+    pub fn submit(
+        &mut self,
+        _: &SubmitFeedback,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if let Some(active_item) = self.active_item.as_ref() {
+            Some(active_item.update(cx, |feedback_editor, cx| feedback_editor.submit(cx)))
+        } else {
+            None
         }
     }
 }
@@ -39,8 +55,8 @@ impl View for SubmitFeedbackButton {
                 .with_style(style.container)
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, |_, _, cx| {
-            cx.dispatch_action(SubmitFeedback)
+        .on_click(MouseButton::Left, |_, this, cx| {
+            this.submit(&Default::default(), cx);
         })
         .aligned()
         .contained()

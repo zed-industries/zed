@@ -279,9 +279,9 @@ impl View for SidebarButtons {
                             .with_style(style.container)
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, {
-                        let action = action.clone();
-                        move |_, _, cx| cx.dispatch_action(action.clone())
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.sidebar
+                            .update(cx, |sidebar, cx| sidebar.toggle_item(ix, cx));
                     })
                     .with_tooltip::<Self>(
                         ix,

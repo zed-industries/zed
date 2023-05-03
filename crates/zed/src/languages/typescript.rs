@@ -188,35 +188,10 @@ impl LspAdapter for EsLintLspAdapter {
         Some(
             future::ready(json!({
                 "": {
-                      "validate": "on",
-                      "packageManager": "npm",
-                      "useESLintClass": false,
-                      "experimental": {
-                        "useFlatConfig": false
-                      },
-                      "codeActionOnSave": {
-                        "mode": "all"
-                      },
-                      "format": false,
-                      "quiet": false,
-                      "onIgnoredFiles": "off",
-                      "options": {},
-                      "rulesCustomizations": [],
-                      "run": "onType",
-                      "problems": {
-                        "shortenToSingleLine": false
-                      },
-                      "nodePath": null,
-                      "codeAction": {
-                        "disableRuleComment": {
-                          "enable": true,
-                          "location": "separateLine",
-                          "commentStyle": "line"
-                        },
-                        "showDocumentation": {
-                          "enable": true
-                        }
-                      }
+                    "validate": "on",
+                    "rulesCustomizations": [],
+                    "run": "onType",
+                    "nodePath": null,
                 }
             }))
             .boxed(),

@@ -52,8 +52,8 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
-    Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
-    Point, Selection, SelectionGoal, TransactionId,
+    Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
+    OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
@@ -809,10 +809,13 @@ impl CompletionsMenu {
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(ConfirmCompletion {
-                                item_ix: Some(item_ix),
-                            });
+                        .on_down(MouseButton::Left, move |_, this, cx| {
+                            this.confirm_completion(
+                                &ConfirmCompletion {
+                                    item_ix: Some(item_ix),
+                                },
+                                cx,
+                            );
                         })
                         .into_any(),
                     );
@@ -970,9 +973,23 @@ impl CodeActionsMenu {
                                 .with_style(item_style)
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_down(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(ConfirmCodeAction {
-                                item_ix: Some(item_ix),
+                        .on_down(MouseButton::Left, move |_, this, cx| {
+                            let workspace = this
+                                .workspace
+                                .as_ref()
+                                .and_then(|(workspace, _)| workspace.upgrade(cx));
+                            cx.window_context().defer(move |cx| {
+                                if let Some(workspace) = workspace {
+                                    workspace.update(cx, |workspace, cx| {
+                                        if let Some(task) = Editor::confirm_code_action(
+                                            workspace,
+                                            &Default::default(),
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx);
+                                        }
+                                    });
+                                }
                             });
                         })
                         .into_any(),
@@ -1359,6 +1376,10 @@ impl Editor {
         cx: &'a AppContext,
     ) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
+    }
+
+    pub fn file_at<'a, T: ToOffset>(&self, point: T, cx: &'a AppContext) -> Option<Arc<dyn File>> {
+        self.buffer.read(cx).read(cx).file_at(point).cloned()
     }
 
     pub fn active_excerpt(
@@ -2930,11 +2951,7 @@ impl Editor {
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
-        let language_name = snapshot.language_at(cursor).map(|language| language.name());
-        if !cx
-            .global::<Settings>()
-            .show_copilot_suggestions(language_name.as_deref())
-        {
+        if !self.is_copilot_enabled_at(cursor, &snapshot, cx) {
             self.clear_copilot_suggestions(cx);
             return None;
         }
@@ -3085,6 +3102,25 @@ impl Editor {
         }
     }
 
+    fn is_copilot_enabled_at(
+        &self,
+        location: Anchor,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let settings = cx.global::<Settings>();
+
+        let path = snapshot.file_at(location).map(|file| file.path());
+        let language_name = snapshot
+            .language_at(location)
+            .map(|language| language.name());
+        if !settings.show_copilot_suggestions(language_name.as_deref(), path.map(|p| p.as_ref())) {
+            return false;
+        }
+
+        true
+    }
+
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
         self.display_map.read(cx).has_suggestion()
     }
@@ -3138,10 +3174,13 @@ impl Editor {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
-                .on_down(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(ToggleCodeActions {
-                        deployed_from_indicator: true,
-                    });
+                .on_down(MouseButton::Left, |_, this, cx| {
+                    this.toggle_code_actions(
+                        &ToggleCodeActions {
+                            deployed_from_indicator: true,
+                        },
+                        cx,
+                    );
                 })
                 .into_any(),
             )
@@ -3199,11 +3238,13 @@ impl Editor {
                             .with_cursor_style(CursorStyle::PointingHand)
                             .with_padding(Padding::uniform(3.))
                             .on_click(MouseButton::Left, {
-                                move |_, _, cx| {
-                                    cx.dispatch_any_action(match fold_status {
-                                        FoldStatus::Folded => Box::new(UnfoldAt { buffer_row }),
-                                        FoldStatus::Foldable => Box::new(FoldAt { buffer_row }),
-                                    });
+                                move |_, editor, cx| match fold_status {
+                                    FoldStatus::Folded => {
+                                        editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+                                    }
+                                    FoldStatus::Foldable => {
+                                        editor.fold_at(&FoldAt { buffer_row }, cx);
+                                    }
                                 }
                             })
                             .into_any()
@@ -6841,6 +6882,9 @@ impl Editor {
                     self.language_at(0, cx)
                         .map(|language| language.name())
                         .as_deref(),
+                    self.file_at(0, cx)
+                        .map(|file| file.path().clone())
+                        .as_deref(),
                 ),
             };
             telemetry.report_clickhouse_event(event, settings.telemetry())
@@ -7487,8 +7531,16 @@ impl Deref for EditorStyle {
 
 pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> RenderBlock {
     let mut highlighted_lines = Vec::new();
-    for line in diagnostic.message.lines() {
-        highlighted_lines.push(highlight_diagnostic_message(line));
+    for (index, line) in diagnostic.message.lines().enumerate() {
+        let line = match &diagnostic.source {
+            Some(source) if index == 0 => {
+                let source_highlight = Vec::from_iter(0..source.len());
+                highlight_diagnostic_message(source_highlight, &format!("{source}: {line}"))
+            }
+
+            _ => highlight_diagnostic_message(Vec::new(), line),
+        };
+        highlighted_lines.push(line);
     }
 
     Arc::new(move |cx: &mut BlockContext| {
@@ -7512,11 +7564,14 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     })
 }
 
-pub fn highlight_diagnostic_message(message: &str) -> (String, Vec<usize>) {
+pub fn highlight_diagnostic_message(
+    inital_highlights: Vec<usize>,
+    message: &str,
+) -> (String, Vec<usize>) {
     let mut message_without_backticks = String::new();
     let mut prev_offset = 0;
     let mut inside_block = false;
-    let mut highlights = Vec::new();
+    let mut highlights = inital_highlights;
     for (match_ix, (offset, _)) in message
         .match_indices('`')
         .chain([(message.len(), "")])

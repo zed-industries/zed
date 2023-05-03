@@ -338,8 +338,8 @@ impl BufferSearchBar {
                     .contained()
                     .with_style(style.container)
             })
-            .on_click(MouseButton::Left, move |_, _, cx| {
-                cx.dispatch_any_action(option.to_toggle_action())
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                this.toggle_search_option(option, cx);
             })
             .with_cursor_style(CursorStyle::PointingHand)
             .with_tooltip::<Self>(
@@ -386,8 +386,10 @@ impl BufferSearchBar {
                 .with_style(style.container)
         })
         .on_click(MouseButton::Left, {
-            let action = action.boxed_clone();
-            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+            move |_, this, cx| match direction {
+                Direction::Prev => this.select_prev_match(&Default::default(), cx),
+                Direction::Next => this.select_next_match(&Default::default(), cx),
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<NavButton>(
@@ -405,7 +407,6 @@ impl BufferSearchBar {
         theme: &theme::Search,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        let action = Box::new(Dismiss);
         let tooltip = "Dismiss Buffer Search";
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
@@ -422,12 +423,17 @@ impl BufferSearchBar {
                 .contained()
                 .with_style(style.container)
         })
-        .on_click(MouseButton::Left, {
-            let action = action.boxed_clone();
-            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.dismiss(&Default::default(), cx)
         })
         .with_cursor_style(CursorStyle::PointingHand)
-        .with_tooltip::<CloseButton>(0, tooltip.to_string(), Some(action), tooltip_style, cx)
+        .with_tooltip::<CloseButton>(
+            0,
+            tooltip.to_string(),
+            Some(Box::new(Dismiss)),
+            tooltip_style,
+            cx,
+        )
         .into_any()
     }
 

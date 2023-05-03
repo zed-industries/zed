@@ -1,13 +1,13 @@
 use gpui::{
     elements::*, platform::MouseButton, AppContext, Entity, Subscription, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WeakViewHandle,
 };
 use itertools::Itertools;
 use search::ProjectSearchView;
 use settings::Settings;
 use workspace::{
     item::{ItemEvent, ItemHandle},
-    ToolbarItemLocation, ToolbarItemView,
+    ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 pub enum Event {
@@ -19,15 +19,17 @@ pub struct Breadcrumbs {
     active_item: Option<Box<dyn ItemHandle>>,
     project_search: Option<ViewHandle<ProjectSearchView>>,
     subscription: Option<Subscription>,
+    workspace: WeakViewHandle<Workspace>,
 }
 
 impl Breadcrumbs {
-    pub fn new() -> Self {
+    pub fn new(workspace: &Workspace) -> Self {
         Self {
             pane_focused: false,
             active_item: Default::default(),
             subscription: Default::default(),
             project_search: Default::default(),
+            workspace: workspace.weak_handle(),
         }
     }
 }
@@ -85,8 +87,12 @@ impl View for Breadcrumbs {
             let style = style.style_for(state, false);
             crumbs.with_style(style.container)
         })
-        .on_click(MouseButton::Left, |_, _, cx| {
-            cx.dispatch_action(outline::Toggle);
+        .on_click(MouseButton::Left, |_, this, cx| {
+            if let Some(workspace) = this.workspace.upgrade(cx) {
+                workspace.update(cx, |workspace, cx| {
+                    outline::toggle(workspace, &Default::default(), cx)
+                })
+            }
         })
         .with_tooltip::<Breadcrumbs>(
             0,

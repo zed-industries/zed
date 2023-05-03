@@ -6,20 +6,18 @@ use staff_mode::StaffMode;
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
 use util::ResultExt;
-use workspace::{AppState, Workspace};
+use workspace::Workspace;
 
 actions!(theme_selector, [Toggle, Reload]);
 
-pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    cx.add_action({
-        let theme_registry = app_state.themes.clone();
-        move |workspace, _: &Toggle, cx| toggle(workspace, theme_registry.clone(), cx)
-    });
+pub fn init(cx: &mut AppContext) {
+    cx.add_action(toggle);
     ThemeSelector::init(cx);
 }
 
-fn toggle(workspace: &mut Workspace, themes: Arc<ThemeRegistry>, cx: &mut ViewContext<Workspace>) {
-    workspace.toggle_modal(cx, |_, cx| {
+pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+    workspace.toggle_modal(cx, |workspace, cx| {
+        let themes = workspace.app_state().themes.clone();
         cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(themes, cx), cx))
     });
 }

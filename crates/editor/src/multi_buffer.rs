@@ -10,9 +10,9 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
-    DiagnosticEntry, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
-    OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _, ToOffsetUtf16 as _,
-    ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
+    DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
+    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
+    ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use std::{
     borrow::Cow,
@@ -2752,6 +2752,11 @@ impl MultiBufferSnapshot {
 
     pub fn trailing_excerpt_update_count(&self) -> usize {
         self.trailing_excerpt_update_count
+    }
+
+    pub fn file_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<dyn File>> {
+        self.point_to_buffer_offset(point)
+            .and_then(|(buffer, _)| buffer.file())
     }
 
     pub fn language_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<Language>> {

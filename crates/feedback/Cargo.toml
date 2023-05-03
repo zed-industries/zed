@@ -11,25 +11,27 @@ path = "src/feedback.rs"
 test-support = []
 
 [dependencies]
-anyhow.workspace = true
 client = { path = "../client" }
 editor = { path = "../editor" }
 language = { path = "../language" }
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+search = { path = "../search" }
+settings = { path = "../settings" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }
+
 log.workspace = true
 futures.workspace = true
-gpui = { path = "../gpui" }
+anyhow.workspace = true
+smallvec.workspace = true
 human_bytes = "0.4.1"
 isahc = "1.7"
 lazy_static.workspace = true
 postage.workspace = true
-project = { path = "../project" }
-search = { path = "../search" }
 serde.workspace = true
 serde_derive.workspace = true
-settings = { path = "../settings" }
 sysinfo = "0.27.1"
-theme = { path = "../theme" }
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 urlencoding = "2.1.2"
-util = { path = "../util" }
-workspace = { path = "../workspace" }

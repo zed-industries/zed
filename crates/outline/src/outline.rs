@@ -24,7 +24,7 @@ pub fn init(cx: &mut AppContext) {
     OutlineView::init(cx);
 }
 
-fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     if let Some(editor) = workspace
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())

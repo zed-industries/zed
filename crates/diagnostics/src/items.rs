@@ -3,18 +3,19 @@ use editor::{Editor, GoToDiagnostic};
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    serde_json, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    serde_json, AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
-use project::Project;
 use settings::Settings;
-use workspace::{item::ItemHandle, StatusItemView};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
+
+use crate::ProjectDiagnosticsEditor;
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
     active_editor: Option<WeakViewHandle<Editor>>,
+    workspace: WeakViewHandle<Workspace>,
     current_diagnostic: Option<Diagnostic>,
     in_progress_checks: HashSet<LanguageServerId>,
     _observe_active_editor: Option<Subscription>,
@@ -25,7 +26,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl DiagnosticIndicator {
-    pub fn new(project: &ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+        let project = workspace.project();
         cx.subscribe(project, |this, project, event, cx| match event {
             project::Event::DiskBasedDiagnosticsStarted { language_server_id } => {
                 this.in_progress_checks.insert(*language_server_id);
@@ -46,6 +48,7 @@ impl DiagnosticIndicator {
                 .language_servers_running_disk_based_diagnostics()
                 .collect(),
             active_editor: None,
+            workspace: workspace.weak_handle(),
             current_diagnostic: None,
             _observe_active_editor: None,
         }
@@ -163,8 +166,12 @@ impl View for DiagnosticIndicator {
                     })
             })
             .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, |_, _, cx| {
-                cx.dispatch_action(crate::Deploy)
+            .on_click(MouseButton::Left, |_, this, cx| {
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    workspace.update(cx, |workspace, cx| {
+                        ProjectDiagnosticsEditor::deploy(workspace, &Default::default(), cx)
+                    })
+                }
             })
             .with_tooltip::<Summary>(
                 0,
@@ -200,8 +207,8 @@ impl View for DiagnosticIndicator {
                     .with_margin_left(item_spacing)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(GoToDiagnostic)
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    this.go_to_next_diagnostic(&Default::default(), cx)
                 }),
             );
         }

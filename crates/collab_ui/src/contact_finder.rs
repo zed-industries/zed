@@ -23,6 +23,7 @@ pub fn build_contact_finder(
         },
         cx,
     )
+    .with_theme(|theme| theme.contact_finder.picker.clone())
 }
 
 pub struct ContactFinderDelegate {

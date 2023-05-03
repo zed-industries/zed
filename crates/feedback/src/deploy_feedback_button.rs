@@ -1,15 +1,16 @@
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    Entity, View, ViewContext,
+    Entity, View, ViewContext, WeakViewHandle,
 };
 use settings::Settings;
-use workspace::{item::ItemHandle, StatusItemView};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::feedback_editor::{FeedbackEditor, GiveFeedback};
 
 pub struct DeployFeedbackButton {
     active: bool,
+    workspace: WeakViewHandle<Workspace>,
 }
 
 impl Entity for DeployFeedbackButton {
@@ -17,8 +18,11 @@ impl Entity for DeployFeedbackButton {
 }
 
 impl DeployFeedbackButton {
-    pub fn new() -> Self {
-        DeployFeedbackButton { active: false }
+    pub fn new(workspace: &Workspace) -> Self {
+        DeployFeedbackButton {
+            active: false,
+            workspace: workspace.weak_handle(),
+        }
     }
 }
 
@@ -52,9 +56,12 @@ impl View for DeployFeedbackButton {
                         .with_style(style.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
+                .on_click(MouseButton::Left, move |_, this, cx| {
                     if !active {
-                        cx.dispatch_action(GiveFeedback)
+                        if let Some(workspace) = this.workspace.upgrade(cx) {
+                            workspace
+                                .update(cx, |workspace, cx| FeedbackEditor::deploy(workspace, cx))
+                        }
                     }
                 })
                 .with_tooltip::<Self>(

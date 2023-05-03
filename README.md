@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
 
-Welcome to Zed, a lightning-fast, collaborative code editor that makes your dreams come true. 
+Welcome to Zed, a lightning-fast, collaborative code editor that makes your dreams come true.
 
 ## Development tips
 
@@ -31,7 +31,8 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
 
 * Set up a local `zed` database and seed it with some initial users:
 
-    Create a personal GitHub token to run `script/bootstrap` once successfully. Then delete that token.
+    Create a personal GitHub token to run `script/bootstrap` once successfully: the token needs to have an access to private repositories for the script to work (`repo` OAuth scope).
+    Then delete that token.
 
     ```
     GITHUB_TOKEN=<$token> script/bootstrap

@@ -788,9 +788,10 @@ impl ProjectSearchBar {
                 .contained()
                 .with_style(style.container)
         })
-        .on_click(MouseButton::Left, {
-            let action = action.boxed_clone();
-            move |_, _, cx| cx.dispatch_any_action(action.boxed_clone())
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            if let Some(search) = this.active_project_search.as_ref() {
+                search.update(cx, |search, cx| search.select_match(direction, cx));
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<NavButton>(
@@ -822,8 +823,8 @@ impl ProjectSearchBar {
                 .contained()
                 .with_style(style.container)
         })
-        .on_click(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_any_action(option.to_toggle_action())
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.toggle_search_option(option, cx);
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<Self>(

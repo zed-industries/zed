@@ -80,6 +80,7 @@ workspace = { path = "../workspace", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true
+glob.workspace = true
 rand.workspace = true
 unindent.workspace = true
 tree-sitter = "0.20"

@@ -6,7 +6,7 @@ use gpui::{
 use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
-use crate::{feedback_editor::FeedbackEditor, OpenZedCommunityRepo};
+use crate::{feedback_editor::FeedbackEditor, open_zed_community_repo, OpenZedCommunityRepo};
 
 pub struct FeedbackInfoText {
     active_item: Option<ViewHandle<FeedbackEditor>>,
@@ -57,7 +57,7 @@ impl View for FeedbackInfoText {
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(OpenZedCommunityRepo)
+                    open_zed_community_repo(&Default::default(), cx)
                 }),
             )
             .with_child(

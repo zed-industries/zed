@@ -156,24 +156,7 @@ pub fn keystroke_label<V: View>(
 
 pub type ButtonStyle = Interactive<ContainedText>;
 
-pub fn cta_button<L, A, V>(
-    label: L,
-    action: A,
-    max_width: f32,
-    style: &ButtonStyle,
-    cx: &mut ViewContext<V>,
-) -> MouseEventHandler<A, V>
-where
-    L: Into<Cow<'static, str>>,
-    A: 'static + Action + Clone,
-    V: View,
-{
-    cta_button_with_click::<A, _, _, _>(label, max_width, style, cx, move |_, _, cx| {
-        cx.dispatch_action(action.clone())
-    })
-}
-
-pub fn cta_button_with_click<Tag, L, V, F>(
+pub fn cta_button<Tag, L, V, F>(
     label: L,
     max_width: f32,
     style: &ButtonStyle,

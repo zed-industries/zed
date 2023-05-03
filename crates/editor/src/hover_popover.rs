@@ -1,3 +1,7 @@
+use crate::{
+    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSnapshot,
+    EditorStyle, RangeToAnchorExt,
+};
 use futures::FutureExt;
 use gpui::{
     actions,
@@ -11,11 +15,6 @@ use project::{HoverBlock, HoverBlockKind, Project};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
-
-use crate::{
-    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSnapshot,
-    EditorStyle, GoToDiagnostic, RangeToAnchorExt,
-};
 
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
@@ -668,8 +667,8 @@ impl DiagnosticPopover {
             ..Default::default()
         })
         .on_move(|_, _, _| {}) // Consume move events so they don't reach regions underneath.
-        .on_click(MouseButton::Left, |_, _, cx| {
-            cx.dispatch_action(GoToDiagnostic)
+        .on_click(MouseButton::Left, |_, this, cx| {
+            this.go_to_diagnostic(&Default::default(), cx)
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .with_tooltip::<PrimaryDiagnostic>(
