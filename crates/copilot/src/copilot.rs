@@ -560,7 +560,7 @@ impl Copilot {
         }
     }
 
-    fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    pub fn reinstall(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -932,7 +932,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release = latest_github_release("zed-industries/copilot", http.clone()).await?;
+        let release = latest_github_release("zed-industries/copilot", false, http.clone()).await?;
 
         let version_dir = &*paths::COPILOT_DIR.join(format!("copilot-{}", release.name));
 

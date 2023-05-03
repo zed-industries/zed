@@ -30,7 +30,7 @@ impl super::LspAdapter for LuaLspAdapter {
         &self,
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release("LuaLS/lua-language-server", http).await?;
+        let release = latest_github_release("LuaLS/lua-language-server", false, http).await?;
         let version = release.name.clone();
         let platform = match consts::ARCH {
             "x86_64" => "x64",

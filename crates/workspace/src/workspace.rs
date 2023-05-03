@@ -42,8 +42,9 @@ use gpui::{
         CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
         WindowOptions,
     },
-    Action, AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext,
-    ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use language::{LanguageRegistry, Rope};
@@ -59,7 +60,7 @@ use std::{
 };
 
 use crate::{
-    notifications::simple_message_notification::{MessageNotification, OsOpen},
+    notifications::simple_message_notification::MessageNotification,
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
 use lazy_static::lazy_static;
@@ -139,7 +140,7 @@ pub struct ActivatePane(pub usize);
 pub struct Toast {
     id: usize,
     msg: Cow<'static, str>,
-    click: Option<(Cow<'static, str>, Box<dyn Action>)>,
+    on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 
 impl Toast {
@@ -147,21 +148,17 @@ impl Toast {
         Toast {
             id,
             msg: msg.into(),
-            click: None,
+            on_click: None,
         }
     }
 
-    pub fn new_action<I1: Into<Cow<'static, str>>, I2: Into<Cow<'static, str>>>(
-        id: usize,
-        msg: I1,
-        click_msg: I2,
-        action: impl Action,
-    ) -> Self {
-        Toast {
-            id,
-            msg: msg.into(),
-            click: Some((click_msg.into(), Box::new(action))),
-        }
+    pub fn on_click<F, M>(mut self, message: M, on_click: F) -> Self
+    where
+        M: Into<Cow<'static, str>>,
+        F: Fn(&mut WindowContext) + 'static,
+    {
+        self.on_click = Some((message.into(), Arc::new(on_click)));
+        self
     }
 }
 
@@ -169,7 +166,7 @@ impl PartialEq for Toast {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
             && self.msg == other.msg
-            && self.click.is_some() == other.click.is_some()
+            && self.on_click.is_some() == other.on_click.is_some()
     }
 }
 
@@ -178,10 +175,7 @@ impl Clone for Toast {
         Toast {
             id: self.id,
             msg: self.msg.to_owned(),
-            click: self
-                .click
-                .as_ref()
-                .map(|(msg, click)| (msg.to_owned(), click.boxed_clone())),
+            on_click: self.on_click.clone(),
         }
     }
 }
@@ -216,52 +210,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             }
         }
     });
-    cx.add_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_, _: &Open, cx: &mut ViewContext<Workspace>| {
-            let mut paths = cx.prompt_for_paths(PathPromptOptions {
-                files: true,
-                directories: true,
-                multiple: true,
-            });
-
-            if let Some(app_state) = app_state.upgrade() {
-                cx.spawn(|this, mut cx| async move {
-                    if let Some(paths) = paths.recv().await.flatten() {
-                        if let Some(task) = this
-                            .update(&mut cx, |this, cx| {
-                                this.open_workspace_for_paths(paths, app_state, cx)
-                            })
-                            .log_err()
-                        {
-                            task.await.log_err();
-                        }
-                    }
-                })
-                .detach();
-            }
-        }
-    });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &NewWindow, cx: &mut AppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
-            }
-        }
-    });
-    cx.add_global_action({
-        let app_state = Arc::downgrade(&app_state);
-        move |_: &NewFile, cx: &mut AppContext| {
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(&app_state, cx, |_, cx| cx.dispatch_action(NewFile)).detach();
-            }
-        }
-    });
+    cx.add_async_action(Workspace::open);
 
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
     cx.add_global_action(Workspace::close_global);
+    cx.add_global_action(restart);
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
     cx.add_action(
@@ -305,9 +259,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                 } else {
                     workspace.show_notification(1, cx, |cx| {
                         cx.add_view(|_| {
-                            MessageNotification::new_message(
-                                "Successfully installed the `zed` binary",
-                            )
+                            MessageNotification::new("Successfully installed the `zed` binary")
                         })
                     });
                 }
@@ -316,17 +268,16 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         .detach();
     });
 
-    cx.add_action({
-        let app_state = app_state.clone();
+    cx.add_action(
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            create_and_open_local_file(&paths::SETTINGS, app_state.clone(), cx, || {
+            create_and_open_local_file(&paths::SETTINGS, cx, || {
                 Settings::initial_user_settings_content(&Assets)
                     .as_ref()
                     .into()
             })
             .detach_and_log_err(cx);
-        }
-    });
+        },
+    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -934,7 +885,6 @@ impl Workspace {
     /// to the callback. Otherwise, a new empty window will be created.
     pub fn with_local_workspace<T, F>(
         &mut self,
-        app_state: &Arc<AppState>,
         cx: &mut ViewContext<Self>,
         callback: F,
     ) -> Task<Result<T>>
@@ -945,7 +895,7 @@ impl Workspace {
         if self.project.read(cx).is_local() {
             Task::Ready(Some(Ok(callback(self, cx))))
         } else {
-            let task = Self::new_local(Vec::new(), app_state.clone(), None, cx);
+            let task = Self::new_local(Vec::new(), self.app_state.clone(), None, cx);
             cx.spawn(|_vh, mut cx| async move {
                 let (workspace, _) = task.await;
                 workspace.update(&mut cx, callback)
@@ -981,12 +931,18 @@ impl Workspace {
     }
 
     pub fn close_global(_: &CloseWindow, cx: &mut AppContext) {
-        let id = cx.window_ids().find(|&id| cx.window_is_active(id));
-        if let Some(id) = id {
-            //This can only get called when the window's project connection has been lost
-            //so we don't need to prompt the user for anything and instead just close the window
-            cx.remove_window(id);
-        }
+        cx.spawn(|mut cx| async move {
+            let id = cx
+                .window_ids()
+                .into_iter()
+                .find(|&id| cx.window_is_active(id));
+            if let Some(id) = id {
+                //This can only get called when the window's project connection has been lost
+                //so we don't need to prompt the user for anything and instead just close the window
+                cx.remove_window(id);
+            }
+        })
+        .detach();
     }
 
     pub fn close(
@@ -1011,19 +967,14 @@ impl Workspace {
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
         let window_id = cx.window_id();
-        let workspace_count = cx
-            .window_ids()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|window_id| {
-                cx.app_context()
-                    .root_view(window_id)?
-                    .clone()
-                    .downcast::<Workspace>()
-            })
-            .count();
 
         cx.spawn(|this, mut cx| async move {
+            let workspace_count = cx
+                .window_ids()
+                .into_iter()
+                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+                .count();
+
             if let Some(active_call) = active_call {
                 if !quitting
                     && workspace_count == 1
@@ -1114,10 +1065,29 @@ impl Workspace {
         })
     }
 
+    pub fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let mut paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        });
+
+        Some(cx.spawn(|this, mut cx| async move {
+            if let Some(paths) = paths.recv().await.flatten() {
+                if let Some(task) = this
+                    .update(&mut cx, |this, cx| this.open_workspace_for_paths(paths, cx))
+                    .log_err()
+                {
+                    task.await?
+                }
+            }
+            Ok(())
+        }))
+    }
+
     pub fn open_workspace_for_paths(
         &mut self,
         paths: Vec<PathBuf>,
-        app_state: Arc<AppState>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let window_id = cx.window_id();
@@ -1129,6 +1099,7 @@ impl Workspace {
         } else {
             Some(self.prepare_to_close(false, cx))
         };
+        let app_state = self.app_state.clone();
 
         cx.spawn(|_, mut cx| async move {
             let window_id_to_replace = if let Some(close_task) = close_task {
@@ -2682,36 +2653,37 @@ impl Workspace {
 }
 
 fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
-    workspace.update(cx, |workspace, cx| {
-        if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
-            workspace.show_notification_once(0, cx, |cx| {
-                cx.add_view(|_| {
-                    MessageNotification::new(
-                        "Failed to load any database file.",
-                        OsOpen::new("https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml".to_string()),
-                        "Click to let us know about this error"
-                    )
-                })
-            });
-        } else {
-            let backup_path = (*db::BACKUP_DB_PATH).read();
-            if let Some(backup_path) = &*backup_path {
+    const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
+
+    workspace
+        .update(cx, |workspace, cx| {
+            if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 workspace.show_notification_once(0, cx, |cx| {
                     cx.add_view(|_| {
-                        let backup_path = backup_path.to_string_lossy();
-                        MessageNotification::new(
-                            format!(
-                                "Database file was corrupted. Old database backed up to {}",
-                                backup_path
-                            ),
-                            OsOpen::new(backup_path.to_string()),
-                            "Click to show old database in finder",
-                        )
+                        MessageNotification::new("Failed to load any database file.")
+                            .with_click_message("Click to let us know about this error")
+                            .on_click(|cx| cx.platform().open_url(REPORT_ISSUE_URL))
                     })
                 });
+            } else {
+                let backup_path = (*db::BACKUP_DB_PATH).read();
+                if let Some(backup_path) = backup_path.clone() {
+                    workspace.show_notification_once(0, cx, move |cx| {
+                        cx.add_view(move |_| {
+                            MessageNotification::new(format!(
+                                "Database file was corrupted. Old database backed up to {}",
+                                backup_path.display()
+                            ))
+                            .with_click_message("Click to show old database in finder")
+                            .on_click(move |cx| {
+                                cx.platform().open_url(&backup_path.to_string_lossy())
+                            })
+                        })
+                    });
+                }
             }
-        }
-    }).log_err();
+        })
+        .log_err();
 }
 
 impl Entity for Workspace {
@@ -2891,10 +2863,10 @@ impl std::fmt::Debug for OpenPaths {
 pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
 
 pub fn activate_workspace_for_project(
-    cx: &mut AppContext,
+    cx: &mut AsyncAppContext,
     predicate: impl Fn(&mut Project, &mut ModelContext<Project>) -> bool,
 ) -> Option<WeakViewHandle<Workspace>> {
-    for window_id in cx.window_ids().collect::<Vec<_>>() {
+    for window_id in cx.window_ids() {
         let handle = cx
             .update_window(window_id, |cx| {
                 if let Some(workspace_handle) = cx.root_view().clone().downcast::<Workspace>() {
@@ -2933,13 +2905,14 @@ pub fn open_paths(
 > {
     log::info!("open paths {:?}", abs_paths);
 
-    // Open paths in existing workspace if possible
-    let existing =
-        activate_workspace_for_project(cx, |project, cx| project.contains_paths(abs_paths, cx));
-
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {
+        // Open paths in existing workspace if possible
+        let existing = activate_workspace_for_project(&mut cx, |project, cx| {
+            project.contains_paths(&abs_paths, cx)
+        });
+
         if let Some(existing) = existing {
             Ok((
                 existing.clone(),
@@ -2997,12 +2970,11 @@ pub fn open_new(
 
 pub fn create_and_open_local_file(
     path: &'static Path,
-    app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn(|workspace, mut cx| async move {
-        let fs = &app_state.fs;
+        let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
@@ -3011,7 +2983,7 @@ pub fn create_and_open_local_file(
 
         let mut items = workspace
             .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                workspace.with_local_workspace(cx, |workspace, cx| {
                     workspace.open_paths(vec![path.to_path_buf()], false, cx)
                 })
             })?
@@ -3030,13 +3002,16 @@ pub fn join_remote_project(
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
-        let existing_workspace = cx.update(|cx| {
-            cx.window_ids()
-                .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
-                .find(|workspace| {
+        let existing_workspace = cx
+            .window_ids()
+            .into_iter()
+            .filter_map(|window_id| cx.root_view(window_id)?.clone().downcast::<Workspace>())
+            .find(|workspace| {
+                cx.read_window(workspace.window_id(), |cx| {
                     workspace.read(cx).project().read(cx).remote_id() == Some(project_id)
                 })
-        });
+                .unwrap_or(false)
+            });
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace.downgrade()
@@ -3102,6 +3077,59 @@ pub fn join_remote_project(
 
         anyhow::Ok(())
     })
+}
+
+pub fn restart(_: &Restart, cx: &mut AppContext) {
+    let should_confirm = cx.global::<Settings>().confirm_quit;
+    cx.spawn(|mut cx| async move {
+        let mut workspaces = cx
+            .window_ids()
+            .into_iter()
+            .filter_map(|window_id| {
+                Some(
+                    cx.root_view(window_id)?
+                        .clone()
+                        .downcast::<Workspace>()?
+                        .downgrade(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // If multiple windows have unsaved changes, and need a save prompt,
+        // prompt in the active window before switching to a different window.
+        workspaces.sort_by_key(|workspace| !cx.window_is_active(workspace.window_id()));
+
+        if let (true, Some(workspace)) = (should_confirm, workspaces.first()) {
+            let answer = cx.prompt(
+                workspace.window_id(),
+                PromptLevel::Info,
+                "Are you sure you want to restart?",
+                &["Restart", "Cancel"],
+            );
+
+            if let Some(mut answer) = answer {
+                let answer = answer.next().await;
+                if answer != Some(0) {
+                    return Ok(());
+                }
+            }
+        }
+
+        // If the user cancels any save prompt, then keep the app open.
+        for workspace in workspaces {
+            if !workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.prepare_to_close(true, cx)
+                })?
+                .await?
+            {
+                return Ok(());
+            }
+        }
+        cx.platform().restart();
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {

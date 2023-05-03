@@ -211,10 +211,13 @@ impl EditorElement {
         enum GutterHandlers {}
         scene.push_mouse_region(
             MouseRegion::new::<GutterHandlers>(cx.view_id(), cx.view_id() + 1, gutter_bounds)
-                .on_hover(|hover, _: &mut Editor, cx| {
-                    cx.dispatch_action(GutterHover {
-                        hovered: hover.started,
-                    })
+                .on_hover(|hover, editor: &mut Editor, cx| {
+                    editor.gutter_hover(
+                        &GutterHover {
+                            hovered: hover.started,
+                        },
+                        cx,
+                    );
                 }),
         )
     }
@@ -309,25 +312,17 @@ impl EditorElement {
             editor.select(SelectPhase::End, cx);
         }
 
-        if let Some(workspace) = editor
-            .workspace
-            .as_ref()
-            .and_then(|(workspace, _)| workspace.upgrade(cx))
-        {
-            if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-                let (point, target_point) = position_map.point_for_position(text_bounds, position);
+        if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
+            let (point, target_point) = position_map.point_for_position(text_bounds, position);
 
-                if point == target_point {
-                    workspace.update(cx, |workspace, cx| {
-                        if shift {
-                            go_to_fetched_type_definition(workspace, point, cx);
-                        } else {
-                            go_to_fetched_definition(workspace, point, cx);
-                        }
-                    });
-
-                    return true;
+            if point == target_point {
+                if shift {
+                    go_to_fetched_type_definition(editor, point, cx);
+                } else {
+                    go_to_fetched_definition(editor, point, cx);
                 }
+
+                return true;
             }
         }
 
@@ -762,8 +757,8 @@ impl EditorElement {
 
                 scene.push_mouse_region(
                     MouseRegion::new::<FoldMarkers>(cx.view_id(), *id as usize, bound)
-                        .on_click(MouseButton::Left, move |_, _: &mut Editor, cx| {
-                            cx.dispatch_action(UnfoldAt { buffer_row })
+                        .on_click(MouseButton::Left, move |_, editor: &mut Editor, cx| {
+                            editor.unfold_at(&UnfoldAt { buffer_row }, cx)
                         })
                         .with_notify_on_hover(true)
                         .with_notify_on_click(true),

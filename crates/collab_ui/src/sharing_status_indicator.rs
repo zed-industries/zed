@@ -1,3 +1,4 @@
+use crate::toggle_screen_sharing;
 use call::ActiveCall;
 use gpui::{
     color::Color,
@@ -6,8 +7,6 @@ use gpui::{
     AnyElement, AppContext, Element, Entity, View, ViewContext,
 };
 use settings::Settings;
-
-use crate::ToggleScreenSharing;
 
 pub fn init(cx: &mut AppContext) {
     let active_call = ActiveCall::global(cx);
@@ -20,10 +19,10 @@ pub fn init(cx: &mut AppContext) {
                     status_indicator = Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
                 }
             } else if let Some((window_id, _)) = status_indicator.take() {
-                cx.remove_status_bar_item(window_id);
+                cx.update_window(window_id, |cx| cx.remove_window());
             }
         } else if let Some((window_id, _)) = status_indicator.take() {
-            cx.remove_status_bar_item(window_id);
+            cx.update_window(window_id, |cx| cx.remove_window());
         }
     })
     .detach();
@@ -54,7 +53,7 @@ impl View for SharingStatusIndicator {
                 .aligned()
         })
         .on_click(MouseButton::Left, |_, _, cx| {
-            cx.dispatch_action(ToggleScreenSharing);
+            toggle_screen_sharing(&Default::default(), cx)
         })
         .into_any()
     }

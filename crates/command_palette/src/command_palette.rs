@@ -167,9 +167,11 @@ impl PickerDelegate for CommandPaletteDelegate {
             let focused_view_id = self.focused_view_id;
             let action_ix = self.matches[self.selected_ix].candidate_id;
             let action = self.actions.remove(action_ix).action;
-            cx.defer(move |_, cx| {
-                cx.dispatch_any_action_at(window_id, focused_view_id, action);
-            });
+            cx.app_context()
+                .spawn(move |mut cx| async move {
+                    cx.dispatch_action(window_id, focused_view_id, action.as_ref())
+                })
+                .detach_and_log_err(cx);
         }
         cx.emit(PickerEvent::Dismiss);
     }
@@ -266,9 +268,11 @@ impl std::fmt::Debug for Command {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use editor::Editor;
-    use gpui::TestAppContext;
+    use gpui::{executor::Deterministic, TestAppContext};
     use project::Project;
     use workspace::{AppState, Workspace};
 
@@ -289,7 +293,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_command_palette(cx: &mut TestAppContext) {
+    async fn test_command_palette(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+        deterministic.forbid_parking();
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -331,7 +336,7 @@ mod tests {
             assert_eq!(palette.delegate().matches[0].string, "editor: backspace");
             palette.confirm(&Default::default(), cx);
         });
-
+        deterministic.run_until_parked();
         editor.read_with(cx, |editor, cx| {
             assert_eq!(editor.text(cx), "ab");
         });

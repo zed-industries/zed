@@ -1973,6 +1973,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "client",
  "clock",
  "collections",
  "context_menu",
@@ -2156,6 +2157,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "smallvec",
  "sysinfo",
  "theme",
  "tree-sitter-markdown",

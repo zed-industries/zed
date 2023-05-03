@@ -1,6 +1,6 @@
 use anyhow::Result;
 use context_menu::{ContextMenu, ContextMenuItem};
-use copilot::{Copilot, Reinstall, SignOut, Status};
+use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     elements::*,
@@ -13,7 +13,7 @@ use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
 use workspace::{
     create_and_open_local_file, item::ItemHandle,
-    notifications::simple_message_notification::OsOpen, AppState, StatusItemView, Toast, Workspace,
+    notifications::simple_message_notification::OsOpen, StatusItemView, Toast, Workspace,
 };
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
@@ -21,7 +21,6 @@ const COPILOT_STARTING_TOAST_ID: usize = 1337;
 const COPILOT_ERROR_TOAST_ID: usize = 1338;
 
 pub struct CopilotButton {
-    app_state: Arc<AppState>,
     popup_menu: ViewHandle<ContextMenu>,
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
@@ -106,11 +105,21 @@ impl View for CopilotButton {
                             {
                                 workspace.update(cx, |workspace, cx| {
                                     workspace.show_toast(
-                                        Toast::new_action(
+                                        Toast::new(
                                             COPILOT_ERROR_TOAST_ID,
                                             format!("Copilot can't be started: {}", e),
+                                        )
+                                        .on_click(
                                             "Reinstall Copilot",
-                                            Reinstall,
+                                            |cx| {
+                                                if let Some(copilot) = Copilot::global(cx) {
+                                                    copilot
+                                                        .update(cx, |copilot, cx| {
+                                                            copilot.reinstall(cx)
+                                                        })
+                                                        .detach();
+                                                }
+                                            },
                                         ),
                                         cx,
                                     );
@@ -134,7 +143,7 @@ impl View for CopilotButton {
 }
 
 impl CopilotButton {
-    pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let menu = cx.add_view(|cx| {
             let mut menu = ContextMenu::new(cx);
             menu.set_position_mode(OverlayPositionMode::Local);
@@ -149,7 +158,6 @@ impl CopilotButton {
             .detach();
 
         Self {
-            app_state,
             popup_menu: menu,
             editor_subscription: None,
             editor_enabled: None,
@@ -197,7 +205,6 @@ impl CopilotButton {
 
         if let Some(path) = self.path.as_ref() {
             let path_enabled = settings.copilot_enabled_for_path(path);
-            let app_state = Arc::downgrade(&self.app_state);
             let path = path.clone();
             menu_options.push(ContextMenuItem::handler(
                 format!(
@@ -205,17 +212,11 @@ impl CopilotButton {
                     if path_enabled { "Hide" } else { "Show" }
                 ),
                 move |cx| {
-                    if let Some((workspace, app_state)) = cx
-                        .root_view()
-                        .clone()
-                        .downcast::<Workspace>()
-                        .zip(app_state.upgrade())
-                    {
+                    if let Some(workspace) = cx.root_view().clone().downcast::<Workspace>() {
                         let workspace = workspace.downgrade();
                         cx.spawn(|_, cx| {
                             configure_disabled_globs(
                                 workspace,
-                                app_state,
                                 path_enabled.then_some(path.clone()),
                                 cx,
                             )
@@ -302,13 +303,12 @@ impl StatusItemView for CopilotButton {
 
 async fn configure_disabled_globs(
     workspace: WeakViewHandle<Workspace>,
-    app_state: Arc<AppState>,
     path_to_disable: Option<Arc<Path>>,
     mut cx: AsyncAppContext,
 ) -> Result<()> {
     let settings_editor = workspace
         .update(&mut cx, |_, cx| {
-            create_and_open_local_file(&paths::SETTINGS, app_state, cx, || {
+            create_and_open_local_file(&paths::SETTINGS, cx, || {
                 Settings::initial_user_settings_content(&assets::Assets)
                     .as_ref()
                     .into()

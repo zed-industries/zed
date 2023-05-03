@@ -45,7 +45,6 @@ use std::{
     mem,
     ops::{Deref, DerefMut, Range},
 };
-use util::ResultExt;
 
 pub trait Element<V: View>: 'static {
     type LayoutState;
@@ -709,68 +708,16 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .ok_or_else(|| anyhow!("debug called on a root element for a dropped view"))?;
         let view = view.read(cx);
         let view_context = ViewContext::immutable(cx, self.view.id());
-        Ok(self.element.debug(view, &view_context))
+        Ok(serde_json::json!({
+            "view_id": self.view.id(),
+            "view_name": V::ui_name(),
+            "view": view.debug_json(cx),
+            "element": self.element.debug(view, &view_context)
+        }))
     }
 
     fn name(&self) -> Option<&str> {
         self.element.name()
-    }
-}
-
-impl<V: View, R: View> Element<V> for RootElement<R> {
-    type LayoutState = ();
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        _view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> (Vector2F, ()) {
-        let size = AnyRootElement::layout(self, constraint, cx)
-            .log_err()
-            .unwrap_or_else(|| Vector2F::zero());
-        (size, ())
-    }
-
-    fn paint(
-        &mut self,
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        visible_bounds: RectF,
-        _layout: &mut Self::LayoutState,
-        _view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) {
-        AnyRootElement::paint(self, scene, bounds.origin(), visible_bounds, cx).log_err();
-    }
-
-    fn rect_for_text_range(
-        &self,
-        range_utf16: Range<usize>,
-        _bounds: RectF,
-        _visible_bounds: RectF,
-        _layout: &Self::LayoutState,
-        _paint: &Self::PaintState,
-        _view: &V,
-        cx: &ViewContext<V>,
-    ) -> Option<RectF> {
-        AnyRootElement::rect_for_text_range(self, range_utf16, cx)
-            .log_err()
-            .flatten()
-    }
-
-    fn debug(
-        &self,
-        _bounds: RectF,
-        _layout: &Self::LayoutState,
-        _paint: &Self::PaintState,
-        _view: &V,
-        cx: &ViewContext<V>,
-    ) -> serde_json::Value {
-        AnyRootElement::debug(self, cx)
-            .log_err()
-            .unwrap_or_default()
     }
 }
 

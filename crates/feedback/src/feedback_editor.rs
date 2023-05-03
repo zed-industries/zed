@@ -1,10 +1,4 @@
-use std::{
-    any::TypeId,
-    borrow::Cow,
-    ops::{Range, RangeInclusive},
-    sync::Arc,
-};
-
+use crate::system_specs::SystemSpecs;
 use anyhow::bail;
 use client::{Client, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use editor::{Anchor, Editor};
@@ -19,17 +13,21 @@ use gpui::{
 use isahc::Request;
 use language::Buffer;
 use postage::prelude::Stream;
-
 use project::Project;
 use serde::Serialize;
+use smallvec::SmallVec;
+use std::{
+    any::TypeId,
+    borrow::Cow,
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 use util::ResultExt;
 use workspace::{
-    item::{Item, ItemHandle},
+    item::{Item, ItemEvent, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    AppState, Workspace,
+    Workspace,
 };
-
-use crate::{submit_feedback_button::SubmitFeedbackButton, system_specs::SystemSpecs};
 
 const FEEDBACK_CHAR_LIMIT: RangeInclusive<usize> = 10..=5000;
 const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
@@ -37,28 +35,19 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 
 actions!(feedback, [GiveFeedback, SubmitFeedback]);
 
-pub fn init(system_specs: SystemSpecs, app_state: Arc<AppState>, cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     cx.add_action({
         move |workspace: &mut Workspace, _: &GiveFeedback, cx: &mut ViewContext<Workspace>| {
-            FeedbackEditor::deploy(system_specs.clone(), workspace, app_state.clone(), cx);
+            FeedbackEditor::deploy(workspace, cx);
         }
     });
-
-    cx.add_async_action(
-        |submit_feedback_button: &mut SubmitFeedbackButton, _: &SubmitFeedback, cx| {
-            if let Some(active_item) = submit_feedback_button.active_item.as_ref() {
-                Some(active_item.update(cx, |feedback_editor, cx| feedback_editor.handle_save(cx)))
-            } else {
-                None
-            }
-        },
-    );
 }
 
 #[derive(Serialize)]
 struct FeedbackRequestBody<'a> {
     feedback_text: &'a str,
     metrics_id: Option<Arc<str>>,
+    installation_id: Option<Arc<str>>,
     system_specs: SystemSpecs,
     is_staff: bool,
     token: &'a str,
@@ -94,7 +83,7 @@ impl FeedbackEditor {
         }
     }
 
-    fn handle_save(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
         let feedback_text = self.editor.read(cx).text(cx);
         let feedback_char_count = feedback_text.chars().count();
         let feedback_text = feedback_text.trim().to_string();
@@ -133,10 +122,8 @@ impl FeedbackEditor {
             if answer == Some(0) {
                 match FeedbackEditor::submit_feedback(&feedback_text, client, specs).await {
                     Ok(_) => {
-                        this.update(&mut cx, |_, cx| {
-                            cx.dispatch_action(workspace::CloseActiveItem);
-                        })
-                        .log_err();
+                        this.update(&mut cx, |_, cx| cx.emit(editor::Event::Closed))
+                            .log_err();
                     }
                     Err(error) => {
                         log::error!("{}", error);
@@ -164,13 +151,16 @@ impl FeedbackEditor {
     ) -> anyhow::Result<()> {
         let feedback_endpoint = format!("{}/api/feedback", *ZED_SERVER_URL);
 
-        let metrics_id = zed_client.metrics_id();
-        let is_staff = zed_client.is_staff();
+        let telemetry = zed_client.telemetry();
+        let metrics_id = telemetry.metrics_id();
+        let installation_id = telemetry.installation_id();
+        let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
 
         let request = FeedbackRequestBody {
             feedback_text: &feedback_text,
             metrics_id,
+            installation_id,
             system_specs,
             is_staff: is_staff.unwrap_or(false),
             token: ZED_SECRET_CLIENT_TOKEN,
@@ -197,22 +187,21 @@ impl FeedbackEditor {
 }
 
 impl FeedbackEditor {
-    pub fn deploy(
-        system_specs: SystemSpecs,
-        _: &mut Workspace,
-        app_state: Arc<AppState>,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let markdown = app_state.languages.language_for_name("Markdown");
+    pub fn deploy(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        let markdown = workspace
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
         cx.spawn(|workspace, mut cx| async move {
             let markdown = markdown.await.log_err();
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
+                    workspace.with_local_workspace(cx, |workspace, cx| {
                         let project = workspace.project().clone();
                         let buffer = project
                             .update(cx, |project, cx| project.create_buffer("", markdown, cx))
                             .expect("creating buffers on a local workspace always succeeds");
+                        let system_specs = SystemSpecs::new(cx);
                         let feedback_editor = cx
                             .add_view(|cx| FeedbackEditor::new(system_specs, project, buffer, cx));
                         workspace.add_item(Box::new(feedback_editor), cx);
@@ -290,7 +279,7 @@ impl Item for FeedbackEditor {
         _: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(cx)
+        self.submit(cx)
     }
 
     fn save_as(
@@ -299,7 +288,7 @@ impl Item for FeedbackEditor {
         _: std::path::PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.handle_save(cx)
+        self.submit(cx)
     }
 
     fn reload(
@@ -351,6 +340,10 @@ impl Item for FeedbackEditor {
         } else {
             None
         }
+    }
+
+    fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
+        Editor::to_item_events(event)
     }
 }
 

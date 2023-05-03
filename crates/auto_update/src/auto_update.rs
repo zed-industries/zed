@@ -1,13 +1,15 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
     Task, WeakViewHandle,
 };
+use isahc::AsyncBody;
 use serde::Deserialize;
+use serde_derive::Serialize;
 use settings::Settings;
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{ffi::OsString, sync::Arc, time::Duration};
@@ -20,6 +22,13 @@ const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-upda
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes]);
+
+#[derive(Serialize)]
+struct UpdateRequestBody {
+    installation_id: Option<Arc<str>>,
+    release_channel: Option<&'static str>,
+    telemetry: bool,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
@@ -51,9 +60,8 @@ impl Entity for AutoUpdater {
 
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
-        let server_url = server_url;
         let auto_updater = cx.add_model(|cx| {
-            let updater = AutoUpdater::new(version, http_client, server_url.clone());
+            let updater = AutoUpdater::new(version, http_client, server_url);
 
             let mut update_subscription = cx
                 .global::<Settings>()
@@ -74,22 +82,29 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
             updater
         });
         cx.set_global(Some(auto_updater));
-        cx.add_global_action(|_: &Check, cx| {
-            if let Some(updater) = AutoUpdater::get(cx) {
-                updater.update(cx, |updater, cx| updater.poll(cx));
-            }
-        });
-        cx.add_global_action(move |_: &ViewReleaseNotes, cx| {
-            let latest_release_url = if cx.has_global::<ReleaseChannel>()
-                && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
-            {
-                format!("{server_url}/releases/preview/latest")
-            } else {
-                format!("{server_url}/releases/latest")
-            };
-            cx.platform().open_url(&latest_release_url);
-        });
+        cx.add_global_action(check);
+        cx.add_global_action(view_release_notes);
         cx.add_action(UpdateNotification::dismiss);
+    }
+}
+
+pub fn check(_: &Check, cx: &mut AppContext) {
+    if let Some(updater) = AutoUpdater::get(cx) {
+        updater.update(cx, |updater, cx| updater.poll(cx));
+    }
+}
+
+fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
+    if let Some(auto_updater) = AutoUpdater::get(cx) {
+        let server_url = &auto_updater.read(cx).server_url;
+        let latest_release_url = if cx.has_global::<ReleaseChannel>()
+            && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
+        {
+            format!("{server_url}/releases/preview/latest")
+        } else {
+            format!("{server_url}/releases/latest")
+        };
+        cx.platform().open_url(&latest_release_url);
     }
 }
 
@@ -241,7 +256,24 @@ impl AutoUpdater {
         mounted_app_path.push("/");
 
         let mut dmg_file = File::create(&dmg_path).await?;
-        let mut response = client.get(&release.url, Default::default(), true).await?;
+
+        let (installation_id, release_channel, telemetry) = cx.read(|cx| {
+            let installation_id = cx.global::<Arc<Client>>().telemetry().installation_id();
+            let release_channel = cx
+                .has_global::<ReleaseChannel>()
+                .then(|| cx.global::<ReleaseChannel>().display_name());
+            let telemetry = cx.global::<Settings>().telemetry().metrics();
+
+            (installation_id, release_channel, telemetry)
+        });
+
+        let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
+            installation_id,
+            release_channel,
+            telemetry,
+        })?);
+
+        let mut response = client.post_json(&release.url, request_body, true).await?;
         smol::io::copy(response.body_mut(), &mut dmg_file).await?;
         log::info!("downloaded update. path:{:?}", dmg_path);
 

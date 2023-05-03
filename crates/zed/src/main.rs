@@ -10,6 +10,7 @@ use cli::{
 };
 use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -29,8 +30,16 @@ use settings::{
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
-    env, ffi::OsStr, fs::OpenOptions, io::Write as _, os::unix::prelude::OsStrExt, panic,
-    path::PathBuf, sync::Arc, thread, time::Duration,
+    env,
+    ffi::OsStr,
+    fs::OpenOptions,
+    io::Write as _,
+    os::unix::prelude::OsStrExt,
+    panic,
+    path::PathBuf,
+    sync::{Arc, Weak},
+    thread,
+    time::Duration,
 };
 use terminal_view::{get_working_directory, TerminalView};
 use util::http::{self, HttpClient};
@@ -43,8 +52,8 @@ use staff_mode::StaffMode;
 use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,
-    OpenSettings, Workspace,
+    dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings,
+    Workspace,
 };
 use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
@@ -104,7 +113,16 @@ fn main() {
                 .log_err();
         }
     })
-    .on_reopen(move |cx| cx.dispatch_global_action(NewFile));
+    .on_reopen(move |cx| {
+        if cx.has_global::<Weak<AppState>>() {
+            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+                workspace::open_new(&app_state, cx, |workspace, cx| {
+                    Editor::new_file(workspace, &Default::default(), cx)
+                })
+                .detach();
+            }
+        }
+    });
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
@@ -172,8 +190,8 @@ fn main() {
         })
         .detach();
 
-        client.start_telemetry();
-        client.report_event(
+        client.telemetry().start();
+        client.telemetry().report_mixpanel_event(
             "start app",
             Default::default(),
             cx.global::<Settings>().telemetry(),
@@ -190,17 +208,18 @@ fn main() {
             dock_default_item_factory,
             background_actions,
         });
+        cx.set_global(Arc::downgrade(&app_state));
         auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
-        recent_projects::init(cx, Arc::downgrade(&app_state));
+        recent_projects::init(cx);
 
         journal::init(app_state.clone(), cx);
-        language_selector::init(app_state.clone(), cx);
-        theme_selector::init(app_state.clone(), cx);
+        language_selector::init(cx);
+        theme_selector::init(cx);
         zed::init(&app_state, cx);
         collab_ui::init(&app_state, cx);
-        feedback::init(app_state.clone(), cx);
+        feedback::init(cx);
         welcome::init(cx);
 
         cx.set_menus(menus::menus());
@@ -274,7 +293,10 @@ async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncApp
         cx.update(|cx| show_welcome_experience(app_state, cx));
     } else {
         cx.update(|cx| {
-            cx.dispatch_global_action(NewFile);
+            workspace::open_new(app_state, cx, |workspace, cx| {
+                Editor::new_file(workspace, &Default::default(), cx)
+            })
+            .detach();
         });
     }
 }

@@ -63,8 +63,8 @@ impl View for UpdateNotification {
                                     .with_height(style.button_width)
                             })
                             .with_padding(Padding::uniform(5.))
-                            .on_click(MouseButton::Left, move |_, _, cx| {
-                                cx.dispatch_action(Cancel)
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                this.dismiss(&Default::default(), cx)
                             })
                             .aligned()
                             .constrained()
@@ -84,7 +84,7 @@ impl View for UpdateNotification {
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, |_, _, cx| {
-            cx.dispatch_action(ViewReleaseNotes)
+            crate::view_release_notes(&Default::default(), cx)
         })
         .into_any_named("update notification")
     }

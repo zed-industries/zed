@@ -13,7 +13,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
     AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle,
+    ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -44,6 +44,7 @@ pub struct ProjectPanel {
     clipboard_entry: Option<ClipboardEntry>,
     context_menu: ViewHandle<ContextMenu>,
     dragged_entry_destination: Option<Arc<Path>>,
+    workspace: WeakViewHandle<Workspace>,
 }
 
 #[derive(Copy, Clone)]
@@ -137,7 +138,8 @@ pub enum Event {
 }
 
 impl ProjectPanel {
-    pub fn new(project: ModelHandle<Project>, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
+    pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
+        let project = workspace.project().clone();
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
             cx.observe(&project, |this, _, cx| {
                 this.update_visible_entries(None, cx);
@@ -206,6 +208,7 @@ impl ProjectPanel {
                 clipboard_entry: None,
                 context_menu: cx.add_view(ContextMenu::new),
                 dragged_entry_destination: None,
+                workspace: workspace.weak_handle(),
             };
             this.update_visible_entries(None, cx);
             this
@@ -1296,8 +1299,14 @@ impl View for ProjectPanel {
                             )
                         }
                     })
-                    .on_click(MouseButton::Left, move |_, _, cx| {
-                        cx.dispatch_action(workspace::Open)
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        if let Some(workspace) = this.workspace.upgrade(cx) {
+                            workspace.update(cx, |workspace, cx| {
+                                if let Some(task) = workspace.open(&Default::default(), cx) {
+                                    task.detach_and_log_err(cx);
+                                }
+                            })
+                        }
                     })
                     .with_cursor_style(CursorStyle::PointingHand),
                 )
@@ -1400,7 +1409,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
@@ -1492,7 +1501,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         select_path(&panel, "root1", cx);
         assert_eq!(
@@ -1785,7 +1794,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let panel = workspace.update(cx, |_, cx| ProjectPanel::new(project, cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
 
         panel.update(cx, |panel, cx| {
             panel.select_next(&Default::default(), cx);

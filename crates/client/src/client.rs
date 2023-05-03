@@ -17,7 +17,7 @@ use futures::{
 use gpui::{
     actions,
     platform::AppVersion,
-    serde_json::{self, Value},
+    serde_json::{self},
     AnyModelHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
     ModelHandle, Task, View, ViewContext, WeakViewHandle,
 };
@@ -27,7 +27,7 @@ use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use serde::Deserialize;
-use settings::{Settings, TelemetrySettings};
+use settings::Settings;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -47,6 +47,7 @@ use util::http::HttpClient;
 use util::{ResultExt, TryFutureExt};
 
 pub use rpc::*;
+pub use telemetry::ClickhouseEvent;
 pub use user::*;
 
 lazy_static! {
@@ -736,7 +737,7 @@ impl Client {
             read_from_keychain = credentials.is_some();
             if read_from_keychain {
                 cx.read(|cx| {
-                    self.report_event(
+                    self.telemetry().report_mixpanel_event(
                         "read credentials from keychain",
                         Default::default(),
                         cx.global::<Settings>().telemetry(),
@@ -1116,7 +1117,7 @@ impl Client {
                 .context("failed to decrypt access token")?;
             platform.activate(true);
 
-            telemetry.report_event(
+            telemetry.report_mixpanel_event(
                 "authenticate with browser",
                 Default::default(),
                 metrics_enabled,
@@ -1338,30 +1339,8 @@ impl Client {
         }
     }
 
-    pub fn start_telemetry(&self) {
-        self.telemetry.start();
-    }
-
-    pub fn report_event(
-        &self,
-        kind: &str,
-        properties: Value,
-        telemetry_settings: TelemetrySettings,
-    ) {
-        self.telemetry
-            .report_event(kind, properties.clone(), telemetry_settings);
-    }
-
-    pub fn telemetry_log_file_path(&self) -> Option<PathBuf> {
-        self.telemetry.log_file_path()
-    }
-
-    pub fn metrics_id(&self) -> Option<Arc<str>> {
-        self.telemetry.metrics_id()
-    }
-
-    pub fn is_staff(&self) -> Option<bool> {
-        self.telemetry.is_staff()
+    pub fn telemetry(&self) -> &Arc<Telemetry> {
+        &self.telemetry
     }
 }
 

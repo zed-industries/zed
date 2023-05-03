@@ -5,7 +5,7 @@ use futures::{future::Shared, FutureExt};
 use gpui::{executor::Background, Task};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use smol::{fs, io::BufReader};
+use smol::{fs, io::BufReader, process::Command};
 use std::{
     env::consts,
     path::{Path, PathBuf},
@@ -48,12 +48,41 @@ impl NodeRuntime {
         Ok(installation_path.join("bin/node"))
     }
 
+    pub async fn run_npm_subcommand(
+        &self,
+        directory: &Path,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<()> {
+        let installation_path = self.install_if_needed().await?;
+        let node_binary = installation_path.join("bin/node");
+        let npm_file = installation_path.join("bin/npm");
+
+        let output = Command::new(node_binary)
+            .arg(npm_file)
+            .arg(subcommand)
+            .args(args)
+            .current_dir(directory)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(())
+    }
+
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
         let installation_path = self.install_if_needed().await?;
         let node_binary = installation_path.join("bin/node");
         let npm_file = installation_path.join("bin/npm");
 
-        let output = smol::process::Command::new(node_binary)
+        let output = Command::new(node_binary)
             .arg(npm_file)
             .args(["-fetch-retry-mintimeout", "2000"])
             .args(["-fetch-retry-maxtimeout", "5000"])
@@ -64,11 +93,11 @@ impl NodeRuntime {
             .context("failed to run npm info")?;
 
         if !output.status.success() {
-            Err(anyhow!(
+            return Err(anyhow!(
                 "failed to execute npm info:\nstdout: {:?}\nstderr: {:?}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
-            ))?;
+            ));
         }
 
         let mut info: NpmInfo = serde_json::from_slice(&output.stdout)?;
@@ -80,14 +109,14 @@ impl NodeRuntime {
 
     pub async fn npm_install_packages(
         &self,
-        packages: impl IntoIterator<Item = (&str, &str)>,
         directory: &Path,
+        packages: impl IntoIterator<Item = (&str, &str)>,
     ) -> Result<()> {
         let installation_path = self.install_if_needed().await?;
         let node_binary = installation_path.join("bin/node");
         let npm_file = installation_path.join("bin/npm");
 
-        let output = smol::process::Command::new(node_binary)
+        let output = Command::new(node_binary)
             .arg(npm_file)
             .args(["-fetch-retry-mintimeout", "2000"])
             .args(["-fetch-retry-maxtimeout", "5000"])
@@ -103,12 +132,13 @@ impl NodeRuntime {
             .output()
             .await
             .context("failed to run npm install")?;
+
         if !output.status.success() {
-            Err(anyhow!(
+            return Err(anyhow!(
                 "failed to execute npm install:\nstdout: {:?}\nstderr: {:?}",
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
-            ))?;
+            ));
         }
         Ok(())
     }

@@ -1,7 +1,6 @@
 use crate::{
     contact_finder::{build_contact_finder, ContactFinder},
     contact_list::ContactList,
-    ToggleContactsMenu,
 };
 use client::UserStore;
 use gpui::{
@@ -9,6 +8,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use picker::PickerEvent;
+use project::Project;
 use settings::Settings;
 use workspace::Workspace;
 
@@ -29,17 +29,26 @@ enum Child {
 
 pub struct ContactsPopover {
     child: Child,
+    project: ModelHandle<Project>,
     user_store: ModelHandle<UserStore>,
     workspace: WeakViewHandle<Workspace>,
     _subscription: Option<gpui::Subscription>,
 }
 
 impl ContactsPopover {
-    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        user_store: ModelHandle<UserStore>,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let mut this = Self {
-            child: Child::ContactList(cx.add_view(|cx| ContactList::new(workspace, cx))),
-            user_store: workspace.read(cx).user_store().clone(),
-            workspace: workspace.downgrade(),
+            child: Child::ContactList(cx.add_view(|cx| {
+                ContactList::new(project.clone(), user_store.clone(), workspace.clone(), cx)
+            })),
+            project,
+            user_store,
+            workspace,
             _subscription: None,
         };
         this.show_contact_list(String::new(), cx);
@@ -68,16 +77,24 @@ impl ContactsPopover {
     }
 
     fn show_contact_list(&mut self, editor_text: String, cx: &mut ViewContext<ContactsPopover>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            let child = cx
-                .add_view(|cx| ContactList::new(&workspace, cx).with_editor_text(editor_text, cx));
-            cx.focus(&child);
-            self._subscription = Some(cx.subscribe(&child, |_, _, event, cx| match event {
-                crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),
-            }));
-            self.child = Child::ContactList(child);
-            cx.notify();
-        }
+        let child = cx.add_view(|cx| {
+            ContactList::new(
+                self.project.clone(),
+                self.user_store.clone(),
+                self.workspace.clone(),
+                cx,
+            )
+            .with_editor_text(editor_text, cx)
+        });
+        cx.focus(&child);
+        self._subscription = Some(cx.subscribe(&child, |this, _, event, cx| match event {
+            crate::contact_list::Event::Dismissed => cx.emit(Event::Dismissed),
+            crate::contact_list::Event::ToggleContactFinder => {
+                this.toggle_contact_finder(&Default::default(), cx)
+            }
+        }));
+        self.child = Child::ContactList(child);
+        cx.notify();
     }
 }
 
@@ -106,9 +123,7 @@ impl View for ContactsPopover {
                 .with_width(theme.contacts_popover.width)
                 .with_height(theme.contacts_popover.height)
         })
-        .on_down_out(MouseButton::Left, move |_, _, cx| {
-            cx.dispatch_action(ToggleContactsMenu);
-        })
+        .on_down_out(MouseButton::Left, move |_, _, cx| cx.emit(Event::Dismissed))
         .into_any()
     }
 

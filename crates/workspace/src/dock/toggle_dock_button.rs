@@ -1,3 +1,5 @@
+use super::{icon_for_dock_anchor, Dock, FocusDock, HideDock};
+use crate::{handle_dropped_item, StatusItemView, Workspace};
 use gpui::{
     elements::{Empty, MouseEventHandler, Svg},
     platform::CursorStyle,
@@ -5,10 +7,6 @@ use gpui::{
     AnyElement, Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use settings::Settings;
-
-use crate::{handle_dropped_item, StatusItemView, Workspace};
-
-use super::{icon_for_dock_anchor, FocusDock, HideDock};
 
 pub struct ToggleDockButton {
     workspace: WeakViewHandle<Workspace>,
@@ -82,8 +80,12 @@ impl View for ToggleDockButton {
 
         if dock_position.is_visible() {
             button
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(HideDock);
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            Dock::hide_dock(workspace, &Default::default(), cx)
+                        })
+                    }
                 })
                 .with_tooltip::<Self>(
                     0,
@@ -94,8 +96,12 @@ impl View for ToggleDockButton {
                 )
         } else {
             button
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    cx.dispatch_action(FocusDock);
+                .on_click(MouseButton::Left, |_, this, cx| {
+                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            Dock::focus_dock(workspace, &Default::default(), cx)
+                        })
+                    }
                 })
                 .with_tooltip::<Self>(
                     0,

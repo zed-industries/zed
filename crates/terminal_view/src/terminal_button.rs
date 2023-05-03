@@ -7,7 +7,11 @@ use gpui::{
 };
 use settings::Settings;
 use std::any::TypeId;
-use workspace::{dock::FocusDock, item::ItemHandle, NewTerminal, StatusItemView, Workspace};
+use workspace::{
+    dock::{Dock, FocusDock},
+    item::ItemHandle,
+    NewTerminal, StatusItemView, Workspace,
+};
 
 pub struct TerminalButton {
     workspace: WeakViewHandle<Workspace>,
@@ -80,7 +84,11 @@ impl View for TerminalButton {
                         this.deploy_terminal_menu(cx);
                     } else {
                         if !active {
-                            cx.dispatch_action(FocusDock);
+                            if let Some(workspace) = this.workspace.upgrade(cx) {
+                                workspace.update(cx, |workspace, cx| {
+                                    Dock::focus_dock(workspace, &Default::default(), cx)
+                                })
+                            }
                         }
                     };
                 })

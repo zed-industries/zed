@@ -1,4 +1,3 @@
-use crate::contacts_popover;
 use call::ActiveCall;
 use client::{proto::PeerId, Contact, User, UserStore};
 use editor::{Cancel, Editor};
@@ -140,6 +139,7 @@ pub struct RespondToContactRequest {
 }
 
 pub enum Event {
+    ToggleContactFinder,
     Dismissed,
 }
 
@@ -157,7 +157,12 @@ pub struct ContactList {
 }
 
 impl ContactList {
-    pub fn new(workspace: &ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        project: ModelHandle<Project>,
+        user_store: ModelHandle<UserStore>,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let filter_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
@@ -262,7 +267,6 @@ impl ContactList {
         });
 
         let active_call = ActiveCall::global(cx);
-        let user_store = workspace.read(cx).user_store().clone();
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&user_store, |this, _, cx| this.update_entries(cx)));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.update_entries(cx)));
@@ -275,8 +279,8 @@ impl ContactList {
             match_candidates: Default::default(),
             filter_editor,
             _subscriptions: subscriptions,
-            project: workspace.read(cx).project().clone(),
-            workspace: workspace.downgrade(),
+            project,
+            workspace,
             user_store,
         };
         this.update_entries(cx);
@@ -1116,11 +1120,14 @@ impl ContactList {
                         )
                         .with_padding(Padding::uniform(2.))
                         .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, _, cx| {
-                            cx.dispatch_action(RemoveContact {
-                                user_id,
-                                github_login: github_login.clone(),
-                            })
+                        .on_click(MouseButton::Left, move |_, this, cx| {
+                            this.remove_contact(
+                                &RemoveContact {
+                                    user_id,
+                                    github_login: github_login.clone(),
+                                },
+                                cx,
+                            );
                         })
                         .flex_float(),
                     )
@@ -1203,11 +1210,14 @@ impl ContactList {
                     render_icon_button(button_style, "icons/x_mark_8.svg").aligned()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(RespondToContactRequest {
-                        user_id,
-                        accept: false,
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.respond_to_contact_request(
+                        &RespondToContactRequest {
+                            user_id,
+                            accept: false,
+                        },
+                        cx,
+                    );
                 })
                 .contained()
                 .with_margin_right(button_spacing),
@@ -1225,11 +1235,14 @@ impl ContactList {
                         .flex_float()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(RespondToContactRequest {
-                        user_id,
-                        accept: true,
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.respond_to_contact_request(
+                        &RespondToContactRequest {
+                            user_id,
+                            accept: true,
+                        },
+                        cx,
+                    );
                 }),
             );
         } else {
@@ -1246,11 +1259,14 @@ impl ContactList {
                 })
                 .with_padding(Padding::uniform(2.))
                 .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, _, cx| {
-                    cx.dispatch_action(RemoveContact {
-                        user_id,
-                        github_login: github_login.clone(),
-                    })
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.remove_contact(
+                        &RemoveContact {
+                            user_id,
+                            github_login: github_login.clone(),
+                        },
+                        cx,
+                    );
                 })
                 .flex_float(),
             );
@@ -1318,7 +1334,7 @@ impl View for ContactList {
                         })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_click(MouseButton::Left, |_, _, cx| {
-                            cx.dispatch_action(contacts_popover::ToggleContactFinder)
+                            cx.emit(Event::ToggleContactFinder)
                         })
                         .with_tooltip::<AddContact>(
                             0,

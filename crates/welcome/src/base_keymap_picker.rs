@@ -18,7 +18,7 @@ pub fn init(cx: &mut AppContext) {
     BaseKeymapSelector::init(cx);
 }
 
-fn toggle(
+pub fn toggle(
     workspace: &mut Workspace,
     _: &ToggleBaseKeymapSelector,
     cx: &mut ViewContext<Workspace>,

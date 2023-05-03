@@ -43,6 +43,7 @@ use window_input_handler::WindowInputHandler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
+    json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
         self, FontSystem, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent, MouseButton,
@@ -301,12 +302,58 @@ impl AsyncAppContext {
         self.0.borrow_mut().update(callback)
     }
 
+    pub fn read_window<T, F: FnOnce(&WindowContext) -> T>(
+        &self,
+        window_id: usize,
+        callback: F,
+    ) -> Option<T> {
+        self.0.borrow_mut().read_window(window_id, callback)
+    }
+
     pub fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
         &mut self,
         window_id: usize,
         callback: F,
     ) -> Option<T> {
         self.0.borrow_mut().update_window(window_id, callback)
+    }
+
+    pub fn debug_elements(&self, window_id: usize) -> Option<json::Value> {
+        self.0.borrow().read_window(window_id, |cx| {
+            let root_view = cx.window.root_view();
+            let root_element = cx.window.rendered_views.get(&root_view.id())?;
+            root_element.debug(cx).log_err()
+        })?
+    }
+
+    pub fn dispatch_action(
+        &mut self,
+        window_id: usize,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Result<()> {
+        self.0
+            .borrow_mut()
+            .update_window(window_id, |window| {
+                window.handle_dispatch_action_from_effect(Some(view_id), action);
+            })
+            .ok_or_else(|| anyhow!("window not found"))
+    }
+
+    pub fn has_window(&self, window_id: usize) -> bool {
+        self.read(|cx| cx.windows.contains_key(&window_id))
+    }
+
+    pub fn window_is_active(&self, window_id: usize) -> bool {
+        self.read(|cx| cx.windows.get(&window_id).map_or(false, |w| w.is_active))
+    }
+
+    pub fn root_view(&self, window_id: usize) -> Option<AnyViewHandle> {
+        self.read(|cx| cx.windows.get(&window_id).map(|w| w.root_view().clone()))
+    }
+
+    pub fn window_ids(&self) -> Vec<usize> {
+        self.read(|cx| cx.windows.keys().copied().collect())
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>
@@ -330,7 +377,7 @@ impl AsyncAppContext {
     }
 
     pub fn remove_window(&mut self, window_id: usize) {
-        self.update(|cx| cx.remove_window(window_id))
+        self.update_window(window_id, |cx| cx.remove_window());
     }
 
     pub fn activate_window(&mut self, window_id: usize) {
@@ -529,7 +576,7 @@ impl AppContext {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
 
-    pub fn quit(&mut self) {
+    fn quit(&mut self) {
         let mut futures = Vec::new();
 
         self.update(|cx| {
@@ -546,7 +593,8 @@ impl AppContext {
             }
         });
 
-        self.remove_all_windows();
+        self.windows.clear();
+        self.flush_effects();
 
         let futures = futures::future::join_all(futures);
         if self
@@ -556,11 +604,6 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
-    }
-
-    pub fn remove_all_windows(&mut self) {
-        self.windows.clear();
-        self.flush_effects();
     }
 
     pub fn foreground(&self) -> &Rc<executor::Foreground> {
@@ -677,24 +720,6 @@ impl AppContext {
                 type_name::<A>()
             );
         }
-    }
-
-    pub fn has_window(&self, window_id: usize) -> bool {
-        self.window_ids()
-            .find(|window| window == &window_id)
-            .is_some()
-    }
-
-    pub fn window_is_active(&self, window_id: usize) -> bool {
-        self.windows.get(&window_id).map_or(false, |w| w.is_active)
-    }
-
-    pub fn root_view(&self, window_id: usize) -> Option<&AnyViewHandle> {
-        self.windows.get(&window_id).map(|w| w.root_view())
-    }
-
-    pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
-        self.windows.keys().copied()
     }
 
     pub fn view_ui_name(&self, window_id: usize, view_id: usize) -> Option<&'static str> {
@@ -1048,10 +1073,6 @@ impl AppContext {
         }
     }
 
-    pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
-        self.dispatch_global_action_any(&action);
-    }
-
     fn dispatch_global_action_any(&mut self, action: &dyn Action) -> bool {
         self.update(|this| {
             if let Some((name, mut handler)) = this.global_actions.remove_entry(&action.id()) {
@@ -1266,15 +1287,6 @@ impl AppContext {
         })
     }
 
-    pub fn remove_status_bar_item(&mut self, id: usize) {
-        self.remove_window(id);
-    }
-
-    pub fn remove_window(&mut self, window_id: usize) {
-        self.windows.remove(&window_id);
-        self.flush_effects();
-    }
-
     pub fn build_window<V, F>(
         &mut self,
         window_id: usize,
@@ -1333,7 +1345,7 @@ impl AppContext {
         {
             let mut app = self.upgrade();
             platform_window.on_close(Box::new(move || {
-                app.update(|cx| cx.remove_window(window_id));
+                app.update(|cx| cx.update_window(window_id, |cx| cx.remove_window()));
             }));
         }
 
@@ -1619,17 +1631,7 @@ impl AppContext {
                         Effect::RefreshWindows => {
                             refreshing = true;
                         }
-                        Effect::DispatchActionFrom {
-                            window_id,
-                            view_id,
-                            action,
-                        } => {
-                            self.handle_dispatch_action_from_effect(
-                                window_id,
-                                Some(view_id),
-                                action.as_ref(),
-                            );
-                        }
+
                         Effect::ActionDispatchNotification { action_id } => {
                             self.handle_action_dispatch_notification_effect(action_id)
                         }
@@ -1743,23 +1745,6 @@ impl AppContext {
 
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
-    }
-
-    pub fn dispatch_action_at(&mut self, window_id: usize, view_id: usize, action: impl Action) {
-        self.dispatch_any_action_at(window_id, view_id, Box::new(action));
-    }
-
-    pub fn dispatch_any_action_at(
-        &mut self,
-        window_id: usize,
-        view_id: usize,
-        action: Box<dyn Action>,
-    ) {
-        self.pending_effects.push_back(Effect::DispatchActionFrom {
-            window_id,
-            view_id,
-            action,
-        });
     }
 
     fn perform_window_refresh(&mut self) {
@@ -1917,17 +1902,6 @@ impl AppContext {
                 let mut subscriptions = cx.focus_observations.clone();
                 subscriptions.emit(focused_id, |callback| callback(true, cx));
             }
-        });
-    }
-
-    fn handle_dispatch_action_from_effect(
-        &mut self,
-        window_id: usize,
-        view_id: Option<usize>,
-        action: &dyn Action,
-    ) {
-        self.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(view_id, action)
         });
     }
 
@@ -2159,11 +2133,6 @@ pub enum Effect {
         result: MatchResult,
     },
     RefreshWindows,
-    DispatchActionFrom {
-        window_id: usize,
-        view_id: usize,
-        action: Box<dyn Action>,
-    },
     ActionDispatchNotification {
         action_id: TypeId,
     },
@@ -2251,13 +2220,6 @@ impl Debug for Effect {
                 .debug_struct("Effect::FocusObservation")
                 .field("view_id", view_id)
                 .field("subscription_id", subscription_id)
-                .finish(),
-            Effect::DispatchActionFrom {
-                window_id, view_id, ..
-            } => f
-                .debug_struct("Effect::DispatchActionFrom")
-                .field("window_id", window_id)
-                .field("view_id", view_id)
                 .finish(),
             Effect::ActionDispatchNotification { action_id, .. } => f
                 .debug_struct("Effect::ActionDispatchNotification")
@@ -3187,20 +3149,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         let window_id = self.window_id;
         let view_id = self.view_id;
         self.window_context.notify_view(window_id, view_id);
-    }
-
-    pub fn dispatch_action(&mut self, action: impl Action) {
-        let window_id = self.window_id;
-        let view_id = self.view_id;
-        self.window_context
-            .dispatch_action_at(window_id, view_id, action)
-    }
-
-    pub fn dispatch_any_action(&mut self, action: Box<dyn Action>) {
-        let window_id = self.window_id;
-        let view_id = self.view_id;
-        self.window_context
-            .dispatch_any_action_at(window_id, view_id, action)
     }
 
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
@@ -4708,7 +4656,7 @@ mod tests {
         assert!(model_release_observed.get());
 
         drop(view);
-        cx.remove_window(window_id);
+        cx.update_window(window_id, |cx| cx.remove_window());
         assert!(view_released.get());
         assert!(view_release_observed.get());
     }

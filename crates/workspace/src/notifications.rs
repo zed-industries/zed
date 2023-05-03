@@ -114,17 +114,14 @@ impl Workspace {
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
         self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
         self.show_notification(toast.id, cx, |cx| {
-            cx.add_view(|_cx| match &toast.click {
-                Some((click_msg, action)) => {
-                    simple_message_notification::MessageNotification::new_boxed_action(
-                        toast.msg.clone(),
-                        action.boxed_clone(),
-                        click_msg.clone(),
-                    )
+            cx.add_view(|_cx| match toast.on_click.as_ref() {
+                Some((click_msg, on_click)) => {
+                    let on_click = on_click.clone();
+                    simple_message_notification::MessageNotification::new(toast.msg.clone())
+                        .with_click_message(click_msg.clone())
+                        .on_click(move |cx| on_click(cx))
                 }
-                None => {
-                    simple_message_notification::MessageNotification::new_message(toast.msg.clone())
-                }
+                None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
             })
         })
     }
@@ -152,19 +149,17 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
-
-    use std::borrow::Cow;
-
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
         impl_actions,
         platform::{CursorStyle, MouseButton},
-        Action, AppContext, Element, Entity, View, ViewContext,
+        AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;
     use settings::Settings;
+    use std::{borrow::Cow, sync::Arc};
 
     use crate::Workspace;
 
@@ -194,7 +189,7 @@ pub mod simple_message_notification {
 
     pub struct MessageNotification {
         message: Cow<'static, str>,
-        click_action: Option<Box<dyn Action>>,
+        on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<Cow<'static, str>>,
     }
 
@@ -207,36 +202,31 @@ pub mod simple_message_notification {
     }
 
     impl MessageNotification {
-        pub fn new_message<S: Into<Cow<'static, str>>>(message: S) -> MessageNotification {
+        pub fn new<S>(message: S) -> MessageNotification
+        where
+            S: Into<Cow<'static, str>>,
+        {
             Self {
                 message: message.into(),
-                click_action: None,
+                on_click: None,
                 click_message: None,
             }
         }
 
-        pub fn new_boxed_action<S1: Into<Cow<'static, str>>, S2: Into<Cow<'static, str>>>(
-            message: S1,
-            click_action: Box<dyn Action>,
-            click_message: S2,
-        ) -> Self {
-            Self {
-                message: message.into(),
-                click_action: Some(click_action),
-                click_message: Some(click_message.into()),
-            }
+        pub fn with_click_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<Cow<'static, str>>,
+        {
+            self.click_message = Some(message.into());
+            self
         }
 
-        pub fn new<S1: Into<Cow<'static, str>>, A: Action, S2: Into<Cow<'static, str>>>(
-            message: S1,
-            click_action: A,
-            click_message: S2,
-        ) -> Self {
-            Self {
-                message: message.into(),
-                click_action: Some(Box::new(click_action) as Box<dyn Action>),
-                click_message: Some(click_message.into()),
-            }
+        pub fn on_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Fn(&mut ViewContext<Self>),
+        {
+            self.on_click = Some(Arc::new(on_click));
+            self
         }
 
         pub fn dismiss(&mut self, _: &CancelMessageNotification, cx: &mut ViewContext<Self>) {
@@ -255,14 +245,10 @@ pub mod simple_message_notification {
 
             enum MessageNotificationTag {}
 
-            let click_action = self
-                .click_action
-                .as_ref()
-                .map(|action| action.boxed_clone());
-            let click_message = self.click_message.as_ref().map(|message| message.clone());
+            let click_message = self.click_message.clone();
             let message = self.message.clone();
-
-            let has_click_action = click_action.is_some();
+            let on_click = self.on_click.clone();
+            let has_click_action = on_click.is_some();
 
             MouseEventHandler::<MessageNotificationTag, _>::new(0, cx, |state, cx| {
                 Flex::column()
@@ -292,8 +278,8 @@ pub mod simple_message_notification {
                                         .with_height(style.button_width)
                                 })
                                 .with_padding(Padding::uniform(5.))
-                                .on_click(MouseButton::Left, move |_, _, cx| {
-                                    cx.dispatch_action(CancelMessageNotification)
+                                .on_click(MouseButton::Left, move |_, this, cx| {
+                                    this.dismiss(&Default::default(), cx);
                                 })
                                 .with_cursor_style(CursorStyle::PointingHand)
                                 .aligned()
@@ -326,10 +312,10 @@ pub mod simple_message_notification {
             // Since we're not using a proper overlay, we have to capture these extra events
             .on_down(MouseButton::Left, |_, _, _| {})
             .on_up(MouseButton::Left, |_, _, _| {})
-            .on_click(MouseButton::Left, move |_, _, cx| {
-                if let Some(click_action) = click_action.as_ref() {
-                    cx.dispatch_any_action(click_action.boxed_clone());
-                    cx.dispatch_action(CancelMessageNotification)
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                if let Some(on_click) = on_click.as_ref() {
+                    on_click(cx);
+                    this.dismiss(&Default::default(), cx);
                 }
             })
             .with_cursor_style(if has_click_action {
@@ -372,7 +358,7 @@ where
             Err(err) => {
                 workspace.show_notification(0, cx, |cx| {
                     cx.add_view(|_cx| {
-                        simple_message_notification::MessageNotification::new_message(format!(
+                        simple_message_notification::MessageNotification::new(format!(
                             "Error: {:?}",
                             err,
                         ))

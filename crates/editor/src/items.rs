@@ -636,7 +636,7 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.report_event("save editor", cx);
+        self.report_editor_event("save", cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
