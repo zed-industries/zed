@@ -17,7 +17,7 @@ use gpui::{
     AppContext, Entity, ImageData, LayoutContext, ModelHandle, SceneBuilder, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::Project;
+use project::{Project, Worktree};
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
@@ -68,29 +68,17 @@ impl View for CollabTitlebarItem {
         };
 
         let project = self.project.read(cx);
-        let mut project_title = String::new();
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
-            if i > 0 {
-                project_title.push_str(", ");
-            }
-            project_title.push_str(name);
-        }
-        if project_title.is_empty() {
-            project_title = "empty project".to_owned();
-        }
-
+        let project_title = self.prepare_title(&project, cx);
         let theme = cx.global::<Settings>().theme.clone();
 
         let mut left_container = Flex::row();
         let mut right_container = Flex::row().align_children_center();
 
-        left_container.add_child(
-            Label::new(project_title, theme.workspace.titlebar.title.clone())
-                .contained()
-                .with_margin_right(theme.workspace.titlebar.item_spacing)
-                .aligned()
-                .left(),
-        );
+        left_container.add_child(self.render_title_with_information(
+            project,
+            &project_title,
+            theme.clone(),
+        ));
 
         let user = self.user_store.read(cx).current_user();
         let peer_id = self.client.peer_id();
@@ -179,6 +167,49 @@ impl CollabTitlebarItem {
             }),
             _subscriptions: subscriptions,
         }
+    }
+
+    fn decorate_with_git_branch(
+        &self,
+        worktree: &ModelHandle<Worktree>,
+        cx: &ViewContext<Self>,
+    ) -> String {
+        let name = worktree.read(cx).root_name();
+        let branch = worktree
+            .read(cx)
+            .snapshot()
+            .git_branch()
+            .unwrap_or_else(|| "".to_owned());
+        format!("{} / {}", name, branch)
+    }
+
+    fn prepare_title(&self, project: &Project, cx: &ViewContext<Self>) -> String {
+        let decorated_root_names: Vec<String> = project
+            .visible_worktrees(cx)
+            .map(|worktree| self.decorate_with_git_branch(&worktree, cx))
+            .collect();
+        if decorated_root_names.is_empty() {
+            "empty project".to_owned()
+        } else {
+            decorated_root_names.join(", ")
+        }
+    }
+
+    fn render_title_with_information(
+        &self,
+        _project: &Project,
+        title: &str,
+        theme: Arc<Theme>,
+    ) -> AnyElement<Self> {
+        let text_style = theme.workspace.titlebar.title.clone();
+        let item_spacing = theme.workspace.titlebar.item_spacing;
+
+        Label::new(title.to_owned(), text_style)
+            .contained()
+            .with_margin_right(dbg!(item_spacing))
+            .aligned()
+            .left()
+            .into_any_named("title-with-git-information")
     }
 
     fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {

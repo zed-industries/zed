@@ -1484,6 +1484,10 @@ impl Snapshot {
     pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         self.entry_for_path(path.as_ref()).map(|e| e.inode)
     }
+
+    pub fn git_branch(&self) -> Option<String> {
+        Some("test".to_owned())
+    }
 }
 
 impl LocalSnapshot {
