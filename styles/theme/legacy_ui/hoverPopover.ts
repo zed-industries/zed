@@ -13,7 +13,6 @@ export default function HoverPopover(theme: Theme) {
     }
 
     const diagnosticSourceHighlight = textStyle(theme, {
-        underline: true,
         color: "accent",
     })
 
@@ -22,8 +21,8 @@ export default function HoverPopover(theme: Theme) {
             padding: { top: 4 },
         },
         // Should be a full text style
+        // This is the prefix that shows which language server the diagnostic is from
         diagnosticSourceHighlight: {
-            underline: diagnosticSourceHighlight.underline,
             color: diagnosticSourceHighlight.color,
         },
         // TODO: I don't know what this is
