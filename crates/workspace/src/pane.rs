@@ -134,6 +134,7 @@ pub enum Event {
     RemoveItem { item_id: usize },
     Split(SplitDirection),
     ChangeItemTitle,
+    Focus,
 }
 
 pub struct Pane {
@@ -1797,6 +1798,7 @@ impl View for Pane {
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Focus);
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(true, cx);
         });

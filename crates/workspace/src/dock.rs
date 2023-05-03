@@ -178,11 +178,7 @@ impl Dock {
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
-        let pane_id = pane.id();
-        cx.subscribe(&pane, move |workspace, _, event, cx| {
-            workspace.handle_pane_event(pane_id, event, cx);
-        })
-        .detach();
+        cx.subscribe(&pane, Workspace::handle_pane_event).detach();
 
         Self {
             pane,

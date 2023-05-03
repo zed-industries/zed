@@ -2833,16 +2833,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         }
     }
 
-    pub fn is_child(&self, view: impl Into<AnyViewHandle>) -> bool {
-        let view = view.into();
-        if self.window_id != view.window_id {
-            return false;
-        }
-        self.ancestors(view.view_id)
-            .skip(1) // Skip self id
-            .any(|parent| parent == self.view_id)
-    }
-
     pub fn blur(&mut self) {
         let window_id = self.window_id;
         self.window_context.focus(window_id, None);
