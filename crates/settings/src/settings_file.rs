@@ -1,9 +1,9 @@
-use crate::{update_settings_file, watched_json::WatchedJsonFile, SettingsFileContent};
+use crate::{update_settings_file, watched_json::WatchedJsonFile, Settings, SettingsFileContent};
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
-use gpui::{AppContext, AssetSource};
-use std::{io::ErrorKind, path::Path, sync::Arc};
+use gpui::AppContext;
+use std::{io::ErrorKind, ops::Range, path::Path, sync::Arc};
 
 // TODO: Switch SettingsFile to open a worktree and buffer for synchronization
 //       And instant updates in the Zed editor
@@ -33,14 +33,7 @@ impl SettingsFile {
             Err(err) => {
                 if let Some(e) = err.downcast_ref::<std::io::Error>() {
                     if e.kind() == ErrorKind::NotFound {
-                        return Ok(std::str::from_utf8(
-                            Assets
-                                .load("settings/initial_user_settings.json")
-                                .unwrap()
-                                .as_ref(),
-                        )
-                        .unwrap()
-                        .to_string());
+                        return Ok(Settings::initial_user_settings_content(&Assets).to_string());
                     }
                 }
                 return Err(err);
@@ -48,28 +41,39 @@ impl SettingsFile {
         }
     }
 
+    pub fn update_unsaved(
+        text: &str,
+        cx: &AppContext,
+        update: impl FnOnce(&mut SettingsFileContent),
+    ) -> Vec<(Range<usize>, String)> {
+        let this = cx.global::<SettingsFile>();
+        let tab_size = cx.global::<Settings>().tab_size(Some("JSON"));
+        let current_file_content = this.settings_file_content.current();
+        update_settings_file(&text, current_file_content, tab_size, update)
+    }
+
     pub fn update(
         cx: &mut AppContext,
         update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
     ) {
         let this = cx.global::<SettingsFile>();
-
+        let tab_size = cx.global::<Settings>().tab_size(Some("JSON"));
         let current_file_content = this.settings_file_content.current();
-
         let fs = this.fs.clone();
         let path = this.path.clone();
 
         cx.background()
             .spawn(async move {
                 let old_text = SettingsFile::load_settings(path, &fs).await?;
-
-                let new_text = update_settings_file(old_text, current_file_content, update);
-
+                let edits = update_settings_file(&old_text, current_file_content, tab_size, update);
+                let mut new_text = old_text;
+                for (range, replacement) in edits.into_iter().rev() {
+                    new_text.replace_range(range, &replacement);
+                }
                 fs.atomic_write(path.to_path_buf(), new_text).await?;
-
-                Ok(()) as Result<()>
+                anyhow::Ok(())
             })
-            .detach_and_log_err(cx);
+            .detach_and_log_err(cx)
     }
 }
 

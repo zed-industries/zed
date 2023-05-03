@@ -3084,24 +3084,12 @@ impl Editor {
     ) -> bool {
         let settings = cx.global::<Settings>();
 
+        let path = snapshot.file_at(location).map(|file| file.path());
         let language_name = snapshot
             .language_at(location)
             .map(|language| language.name());
-        if !settings.show_copilot_suggestions(language_name.as_deref()) {
+        if !settings.show_copilot_suggestions(language_name.as_deref(), path.map(|p| p.as_ref())) {
             return false;
-        }
-
-        let file = snapshot.file_at(location);
-        if let Some(file) = file {
-            let path = file.path();
-            if settings
-                .copilot
-                .disabled_globs
-                .iter()
-                .any(|glob| glob.matches_path(path))
-            {
-                return false;
-            }
         }
 
         true

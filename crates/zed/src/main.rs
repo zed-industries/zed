@@ -44,9 +44,9 @@ use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     self, dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, NewFile,
-    Workspace,
+    OpenSettings, Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus, OpenSettings};
+use zed::{self, build_window_options, initialize_workspace, languages, menus};
 
 fn main() {
     let http = http::client();

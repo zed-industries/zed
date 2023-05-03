@@ -20,22 +20,21 @@ use gpui::{
     geometry::vector::vec2f,
     impl_actions,
     platform::{Platform, PromptLevel, TitlebarOptions, WindowBounds, WindowKind, WindowOptions},
-    AssetSource, ViewContext,
+    ViewContext,
 };
-use language::Rope;
 pub use lsp;
 pub use project;
 use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::Settings;
-use std::{borrow::Cow, env, path::Path, str, sync::Arc};
+use settings::{Settings, DEFAULT_SETTINGS_ASSET_PATH};
+use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{sidebar::SidebarSide, AppState, Restart, Workspace};
+use workspace::{create_and_open_local_file, sidebar::SidebarSide, AppState, Restart, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -56,7 +55,6 @@ actions!(
         ToggleFullScreen,
         Quit,
         DebugElements,
-        OpenSettings,
         OpenLog,
         OpenLicenses,
         OpenTelemetryLog,
@@ -150,21 +148,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     });
     cx.add_action({
         let app_state = app_state.clone();
-        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&paths::SETTINGS, app_state.clone(), cx, || {
-                str::from_utf8(
-                    Assets
-                        .load("settings/initial_user_settings.json")
-                        .unwrap()
-                        .as_ref(),
-                )
-                .unwrap()
-                .into()
-            });
-        }
-    });
-    cx.add_action({
-        let app_state = app_state.clone();
         move |workspace: &mut Workspace, _: &OpenLog, cx: &mut ViewContext<Workspace>| {
             open_log_file(workspace, app_state.clone(), cx);
         }
@@ -190,7 +173,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action({
         let app_state = app_state.clone();
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
-            open_config_file(&paths::KEYMAP, app_state.clone(), cx, Default::default);
+            create_and_open_local_file(&paths::KEYMAP, app_state.clone(), cx, Default::default)
+                .detach_and_log_err(cx);
         }
     });
     cx.add_action({
@@ -210,7 +194,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |_: &mut Workspace, _: &OpenDefaultSettings, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 app_state.clone(),
-                "settings/default.json",
+                DEFAULT_SETTINGS_ASSET_PATH,
                 "Default Settings",
                 "JSON",
                 cx,
@@ -316,7 +300,7 @@ pub fn initialize_workspace(
     });
 
     let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
-    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
+    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.clone(), cx));
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace.project(), cx));
     let activity_indicator =
@@ -478,33 +462,6 @@ fn about(_: &mut Workspace, _: &About, cx: &mut gpui::ViewContext<Workspace>) {
     let app_name = cx.global::<ReleaseChannel>().display_name();
     let version = env!("CARGO_PKG_VERSION");
     cx.prompt(PromptLevel::Info, &format!("{app_name} {version}"), &["OK"]);
-}
-
-fn open_config_file(
-    path: &'static Path,
-    app_state: Arc<AppState>,
-    cx: &mut ViewContext<Workspace>,
-    default_content: impl 'static + Send + FnOnce() -> Rope,
-) {
-    cx.spawn(|workspace, mut cx| async move {
-        let fs = &app_state.fs;
-        if !fs.is_file(path).await {
-            fs.create_file(path, Default::default()).await?;
-            fs.save(path, &default_content(), Default::default())
-                .await?;
-        }
-
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.with_local_workspace(&app_state, cx, |workspace, cx| {
-                    workspace.open_paths(vec![path.to_path_buf()], false, cx)
-                })
-            })?
-            .await?
-            .await;
-        Ok::<_, anyhow::Error>(())
-    })
-    .detach_and_log_err(cx)
 }
 
 fn open_log_file(

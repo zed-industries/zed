@@ -1,18 +1,19 @@
+use anyhow::Result;
 use context_menu::{ContextMenu, ContextMenuItem};
 use copilot::{Copilot, Reinstall, SignOut, Status};
-use editor::Editor;
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, Entity, MouseState, Subscription, View, ViewContext,
-    ViewHandle, WindowContext,
+    AnyElement, AppContext, AsyncAppContext, Element, Entity, MouseState, Subscription, View,
+    ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use settings::{settings_file::SettingsFile, Settings};
-use std::sync::Arc;
-use util::ResultExt;
+use std::{path::Path, sync::Arc};
+use util::{paths, ResultExt};
 use workspace::{
-    item::ItemHandle, notifications::simple_message_notification::OsOpen, StatusItemView, Toast,
-    Workspace,
+    create_and_open_local_file, item::ItemHandle,
+    notifications::simple_message_notification::OsOpen, AppState, StatusItemView, Toast, Workspace,
 };
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
@@ -20,10 +21,12 @@ const COPILOT_STARTING_TOAST_ID: usize = 1337;
 const COPILOT_ERROR_TOAST_ID: usize = 1338;
 
 pub struct CopilotButton {
+    app_state: Arc<AppState>,
     popup_menu: ViewHandle<ContextMenu>,
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
     language: Option<Arc<str>>,
+    path: Option<Arc<Path>>,
 }
 
 impl Entity for CopilotButton {
@@ -51,7 +54,7 @@ impl View for CopilotButton {
 
         let enabled = self
             .editor_enabled
-            .unwrap_or(settings.show_copilot_suggestions(None));
+            .unwrap_or(settings.show_copilot_suggestions(None, None));
 
         Stack::new()
             .with_child(
@@ -131,7 +134,7 @@ impl View for CopilotButton {
 }
 
 impl CopilotButton {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
         let menu = cx.add_view(|cx| {
             let mut menu = ContextMenu::new(cx);
             menu.set_position_mode(OverlayPositionMode::Local);
@@ -146,10 +149,12 @@ impl CopilotButton {
             .detach();
 
         Self {
+            app_state,
             popup_menu: menu,
             editor_subscription: None,
             editor_enabled: None,
             language: None,
+            path: None,
         }
     }
 
@@ -176,10 +181,10 @@ impl CopilotButton {
     pub fn deploy_copilot_menu(&mut self, cx: &mut ViewContext<Self>) {
         let settings = cx.global::<Settings>();
 
-        let mut menu_options = Vec::with_capacity(6);
+        let mut menu_options = Vec::with_capacity(8);
 
         if let Some(language) = self.language.clone() {
-            let language_enabled = settings.show_copilot_suggestions(Some(language.as_ref()));
+            let language_enabled = settings.copilot_enabled_for_language(Some(language.as_ref()));
             menu_options.push(ContextMenuItem::handler(
                 format!(
                     "{} Suggestions for {}",
@@ -190,7 +195,38 @@ impl CopilotButton {
             ));
         }
 
-        let globally_enabled = cx.global::<Settings>().show_copilot_suggestions(None);
+        if let Some(path) = self.path.as_ref() {
+            let path_enabled = settings.copilot_enabled_for_path(path);
+            let app_state = Arc::downgrade(&self.app_state);
+            let path = path.clone();
+            menu_options.push(ContextMenuItem::handler(
+                format!(
+                    "{} Suggestions for This Path",
+                    if path_enabled { "Hide" } else { "Show" }
+                ),
+                move |cx| {
+                    if let Some((workspace, app_state)) = cx
+                        .root_view()
+                        .clone()
+                        .downcast::<Workspace>()
+                        .zip(app_state.upgrade())
+                    {
+                        let workspace = workspace.downgrade();
+                        cx.spawn(|_, cx| {
+                            configure_disabled_globs(
+                                workspace,
+                                app_state,
+                                path_enabled.then_some(path.clone()),
+                                cx,
+                            )
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                },
+            ));
+        }
+
+        let globally_enabled = cx.global::<Settings>().features.copilot;
         menu_options.push(ContextMenuItem::handler(
             if globally_enabled {
                 "Hide Suggestions for All Files"
@@ -236,10 +272,14 @@ impl CopilotButton {
         let language_name = snapshot
             .language_at(suggestion_anchor)
             .map(|language| language.name());
+        let path = snapshot
+            .file_at(suggestion_anchor)
+            .map(|file| file.path().clone());
 
-        self.language = language_name.clone();
-
-        self.editor_enabled = Some(settings.show_copilot_suggestions(language_name.as_deref()));
+        self.editor_enabled =
+            Some(settings.show_copilot_suggestions(language_name.as_deref(), path.as_deref()));
+        self.language = language_name;
+        self.path = path;
 
         cx.notify()
     }
@@ -260,8 +300,63 @@ impl StatusItemView for CopilotButton {
     }
 }
 
+async fn configure_disabled_globs(
+    workspace: WeakViewHandle<Workspace>,
+    app_state: Arc<AppState>,
+    path_to_disable: Option<Arc<Path>>,
+    mut cx: AsyncAppContext,
+) -> Result<()> {
+    let settings_editor = workspace
+        .update(&mut cx, |_, cx| {
+            create_and_open_local_file(&paths::SETTINGS, app_state, cx, || {
+                Settings::initial_user_settings_content(&assets::Assets)
+                    .as_ref()
+                    .into()
+            })
+        })?
+        .await?
+        .downcast::<Editor>()
+        .unwrap();
+
+    settings_editor.downgrade().update(&mut cx, |item, cx| {
+        let text = item.buffer().read(cx).snapshot(cx).text();
+
+        let edits = SettingsFile::update_unsaved(&text, cx, |file| {
+            let copilot = file.copilot.get_or_insert_with(Default::default);
+            let globs = copilot.disabled_globs.get_or_insert_with(|| {
+                cx.global::<Settings>()
+                    .copilot
+                    .disabled_globs
+                    .clone()
+                    .iter()
+                    .map(|glob| glob.as_str().to_string())
+                    .collect::<Vec<_>>()
+            });
+
+            if let Some(path_to_disable) = &path_to_disable {
+                globs.push(path_to_disable.to_string_lossy().into_owned());
+            } else {
+                globs.clear();
+            }
+        });
+
+        if !edits.is_empty() {
+            item.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                selections.select_ranges(edits.iter().map(|e| e.0.clone()));
+            });
+
+            // When *enabling* a path, don't actually perform an edit, just select the range.
+            if path_to_disable.is_some() {
+                item.edit(edits.iter().cloned(), cx);
+            }
+        }
+    })?;
+
+    anyhow::Ok(())
+}
+
 fn toggle_copilot_globally(cx: &mut AppContext) {
-    let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None);
+    let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None, None);
     SettingsFile::update(cx, move |file_contents| {
         file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
     });
@@ -270,7 +365,7 @@ fn toggle_copilot_globally(cx: &mut AppContext) {
 fn toggle_copilot_for_language(language: Arc<str>, cx: &mut AppContext) {
     let show_copilot_suggestions = cx
         .global::<Settings>()
-        .show_copilot_suggestions(Some(&language));
+        .show_copilot_suggestions(Some(&language), None);
 
     SettingsFile::update(cx, move |file_contents| {
         file_contents.languages.insert(
@@ -280,13 +375,13 @@ fn toggle_copilot_for_language(language: Arc<str>, cx: &mut AppContext) {
                 ..Default::default()
             },
         );
-    })
+    });
 }
 
 fn hide_copilot(cx: &mut AppContext) {
     SettingsFile::update(cx, move |file_contents| {
         file_contents.features.copilot = Some(false)
-    })
+    });
 }
 
 fn initiate_sign_in(cx: &mut WindowContext) {

@@ -7,6 +7,7 @@ use gpui::{
     font_cache::{FamilyId, FontCache},
     fonts, AssetSource,
 };
+use lazy_static::lazy_static;
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
@@ -18,13 +19,18 @@ use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use std::{collections::HashMap, num::NonZeroU32, str, sync::Arc};
+use std::{
+    borrow::Cow, collections::HashMap, num::NonZeroU32, ops::Range, path::Path, str, sync::Arc,
+};
 use theme::{Theme, ThemeRegistry};
-use tree_sitter::Query;
+use tree_sitter::{Query, Tree};
 use util::{RangeExt, ResultExt as _};
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use watched_json::watch_files;
+
+pub const DEFAULT_SETTINGS_ASSET_PATH: &str = "settings/default.json";
+pub const INITIAL_USER_SETTINGS_ASSET_PATH: &str = "settings/initial_user_settings.json";
 
 #[derive(Clone)]
 pub struct Settings {
@@ -136,19 +142,7 @@ pub struct CopilotSettings {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CopilotSettingsContent {
     #[serde(default)]
-    disabled_globs: Vec<String>,
-}
-
-impl From<CopilotSettingsContent> for CopilotSettings {
-    fn from(value: CopilotSettingsContent) -> Self {
-        Self {
-            disabled_globs: value
-                .disabled_globs
-                .into_iter()
-                .filter_map(|p| glob::Pattern::new(&p).ok())
-                .collect(),
-        }
-    }
+    pub disabled_globs: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -453,6 +447,13 @@ pub struct FeaturesContent {
 }
 
 impl Settings {
+    pub fn initial_user_settings_content(assets: &'static impl AssetSource) -> Cow<'static, str> {
+        match assets.load(INITIAL_USER_SETTINGS_ASSET_PATH).unwrap() {
+            Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
+            Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
+        }
+    }
+
     /// Fill out the settings corresponding to the default.json file, overrides will be set later
     pub fn defaults(
         assets: impl AssetSource,
@@ -466,7 +467,7 @@ impl Settings {
         }
 
         let defaults: SettingsFileContent = parse_json_with_comments(
-            str::from_utf8(assets.load("settings/default.json").unwrap().as_ref()).unwrap(),
+            str::from_utf8(assets.load(DEFAULT_SETTINGS_ASSET_PATH).unwrap().as_ref()).unwrap(),
         )
         .unwrap();
 
@@ -508,7 +509,16 @@ impl Settings {
                 show_copilot_suggestions: required(defaults.editor.show_copilot_suggestions),
             },
             editor_overrides: Default::default(),
-            copilot: defaults.copilot.unwrap().into(),
+            copilot: CopilotSettings {
+                disabled_globs: defaults
+                    .copilot
+                    .unwrap()
+                    .disabled_globs
+                    .unwrap()
+                    .into_iter()
+                    .map(|s| glob::Pattern::new(&s).unwrap())
+                    .collect(),
+            },
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
             journal_defaults: defaults.journal,
@@ -579,8 +589,13 @@ impl Settings {
         merge(&mut self.base_keymap, data.base_keymap);
         merge(&mut self.features.copilot, data.features.copilot);
 
-        if let Some(copilot) = data.copilot.map(CopilotSettings::from) {
-            self.copilot = copilot;
+        if let Some(copilot) = data.copilot {
+            if let Some(disabled_globs) = copilot.disabled_globs {
+                self.copilot.disabled_globs = disabled_globs
+                    .into_iter()
+                    .filter_map(|s| glob::Pattern::new(&s).ok())
+                    .collect()
+            }
         }
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
@@ -608,11 +623,34 @@ impl Settings {
         &self.features
     }
 
-    pub fn show_copilot_suggestions(&self, language: Option<&str>) -> bool {
-        self.features.copilot
-            && self.language_setting(language, |settings| {
-                settings.show_copilot_suggestions.map(Into::into)
-            })
+    pub fn show_copilot_suggestions(&self, language: Option<&str>, path: Option<&Path>) -> bool {
+        if !self.features.copilot {
+            return false;
+        }
+
+        if !self.copilot_enabled_for_language(language) {
+            return false;
+        }
+
+        if let Some(path) = path {
+            if !self.copilot_enabled_for_path(path) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn copilot_enabled_for_path(&self, path: &Path) -> bool {
+        !self
+            .copilot
+            .disabled_globs
+            .iter()
+            .any(|glob| glob.matches_path(path))
+    }
+
+    pub fn copilot_enabled_for_language(&self, language: Option<&str>) -> bool {
+        self.language_setting(language, |settings| settings.show_copilot_suggestions)
     }
 
     pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
@@ -866,17 +904,8 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
     )?)
 }
 
-fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_value: &Value) {
-    const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
-    const LANGAUGES: &'static str = "languages";
-
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(tree_sitter_json::language()).unwrap();
-    let tree = parser.parse(&settings_content, None).unwrap();
-
-    let mut cursor = tree_sitter::QueryCursor::new();
-
-    let query = Query::new(
+lazy_static! {
+    static ref PAIR_QUERY: Query = Query::new(
         tree_sitter_json::language(),
         "
             (pair
@@ -885,14 +914,65 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
         ",
     )
     .unwrap();
+}
 
-    let has_language_overrides = settings_content.contains(LANGUAGE_OVERRIDES);
+fn update_object_in_settings_file<'a>(
+    old_object: &'a serde_json::Map<String, Value>,
+    new_object: &'a serde_json::Map<String, Value>,
+    text: &str,
+    syntax_tree: &Tree,
+    tab_size: usize,
+    key_path: &mut Vec<&'a str>,
+    edits: &mut Vec<(Range<usize>, String)>,
+) {
+    for (key, old_value) in old_object.iter() {
+        key_path.push(key);
+        let new_value = new_object.get(key).unwrap_or(&Value::Null);
+
+        // If the old and new values are both objects, then compare them key by key,
+        // preserving the comments and formatting of the unchanged parts. Otherwise,
+        // replace the old value with the new value.
+        if let (Value::Object(old_sub_object), Value::Object(new_sub_object)) =
+            (old_value, new_value)
+        {
+            update_object_in_settings_file(
+                old_sub_object,
+                new_sub_object,
+                text,
+                syntax_tree,
+                tab_size,
+                key_path,
+                edits,
+            )
+        } else if old_value != new_value {
+            let (range, replacement) =
+                update_key_in_settings_file(text, syntax_tree, &key_path, tab_size, &new_value);
+            edits.push((range, replacement));
+        }
+
+        key_path.pop();
+    }
+}
+
+fn update_key_in_settings_file(
+    text: &str,
+    syntax_tree: &Tree,
+    key_path: &[&str],
+    tab_size: usize,
+    new_value: impl Serialize,
+) -> (Range<usize>, String) {
+    const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
+    const LANGUAGES: &'static str = "languages";
+
+    let mut cursor = tree_sitter::QueryCursor::new();
+
+    let has_language_overrides = text.contains(LANGUAGE_OVERRIDES);
 
     let mut depth = 0;
     let mut last_value_range = 0..0;
     let mut first_key_start = None;
-    let mut existing_value_range = 0..settings_content.len();
-    let matches = cursor.matches(&query, tree.root_node(), settings_content.as_bytes());
+    let mut existing_value_range = 0..text.len();
+    let matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
     for mat in matches {
         if mat.captures.len() != 2 {
             continue;
@@ -915,10 +995,10 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
 
         first_key_start.get_or_insert_with(|| key_range.start);
 
-        let found_key = settings_content
+        let found_key = text
             .get(key_range.clone())
             .map(|key_text| {
-                if key_path[depth] == LANGAUGES && has_language_overrides {
+                if key_path[depth] == LANGUAGES && has_language_overrides {
                     return key_text == format!("\"{}\"", LANGUAGE_OVERRIDES);
                 } else {
                     return key_text == format!("\"{}\"", key_path[depth]);
@@ -942,12 +1022,11 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
 
     // We found the exact key we want, insert the new value
     if depth == key_path.len() {
-        let new_val = serde_json::to_string_pretty(new_value)
-            .expect("Could not serialize new json field to string");
-        settings_content.replace_range(existing_value_range, &new_val);
+        let new_val = to_pretty_json(&new_value, tab_size, tab_size * depth);
+        (existing_value_range, new_val)
     } else {
         // We have key paths, construct the sub objects
-        let new_key = if has_language_overrides && key_path[depth] == LANGAUGES {
+        let new_key = if has_language_overrides && key_path[depth] == LANGUAGES {
             LANGUAGE_OVERRIDES
         } else {
             key_path[depth]
@@ -956,7 +1035,7 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
         // We don't have the key, construct the nested objects
         let mut new_value = serde_json::to_value(new_value).unwrap();
         for key in key_path[(depth + 1)..].iter().rev() {
-            if has_language_overrides && key == &LANGAUGES {
+            if has_language_overrides && key == &LANGUAGES {
                 new_value = serde_json::json!({ LANGUAGE_OVERRIDES.to_string(): new_value });
             } else {
                 new_value = serde_json::json!({ key.to_string(): new_value });
@@ -966,7 +1045,7 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
         if let Some(first_key_start) = first_key_start {
             let mut row = 0;
             let mut column = 0;
-            for (ix, char) in settings_content.char_indices() {
+            for (ix, char) in text.char_indices() {
                 if ix == first_key_start {
                     break;
                 }
@@ -981,37 +1060,29 @@ fn write_settings_key(settings_content: &mut String, key_path: &[&str], new_valu
             if row > 0 {
                 // depth is 0 based, but division needs to be 1 based.
                 let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
-                let content = format!(r#""{new_key}": {new_val},"#);
-                settings_content.insert_str(first_key_start, &content);
-
-                settings_content.insert_str(
-                    first_key_start + content.len(),
-                    &format!("\n{:width$}", ' ', width = column),
-                )
+                let space = ' ';
+                let content = format!("\"{new_key}\": {new_val},\n{space:width$}", width = column);
+                (first_key_start..first_key_start, content)
             } else {
                 let new_val = serde_json::to_string(&new_value).unwrap();
                 let mut content = format!(r#""{new_key}": {new_val},"#);
                 content.push(' ');
-                settings_content.insert_str(first_key_start, &content);
+                (first_key_start..first_key_start, content)
             }
         } else {
             new_value = serde_json::json!({ new_key.to_string(): new_value });
             let indent_prefix_len = 4 * depth;
-            let new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
-
-            settings_content.replace_range(existing_value_range, &new_val);
+            let mut new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
             if depth == 0 {
-                settings_content.push('\n');
+                new_val.push('\n');
             }
+
+            (existing_value_range, new_val)
         }
     }
 }
 
-fn to_pretty_json(
-    value: &serde_json::Value,
-    indent_size: usize,
-    indent_prefix_len: usize,
-) -> String {
+fn to_pretty_json(value: &impl Serialize, indent_size: usize, indent_prefix_len: usize) -> String {
     const SPACES: [u8; 32] = [b' '; 32];
 
     debug_assert!(indent_size <= SPACES.len());
@@ -1038,13 +1109,16 @@ fn to_pretty_json(
     adjusted_text
 }
 
-pub fn update_settings_file(
-    mut text: String,
+/// Update the settings file with the given callback.
+///
+/// Returns a new JSON string and the offset where the first edit occurred.
+fn update_settings_file(
+    text: &str,
     mut old_file_content: SettingsFileContent,
+    tab_size: NonZeroU32,
     update: impl FnOnce(&mut SettingsFileContent),
-) -> String {
+) -> Vec<(Range<usize>, String)> {
     let mut new_file_content = old_file_content.clone();
-
     update(&mut new_file_content);
 
     if new_file_content.languages.len() != old_file_content.languages.len() {
@@ -1062,51 +1136,25 @@ pub fn update_settings_file(
         }
     }
 
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(tree_sitter_json::language()).unwrap();
+    let tree = parser.parse(text, None).unwrap();
+
     let old_object = to_json_object(old_file_content);
     let new_object = to_json_object(new_file_content);
-
-    fn apply_changes_to_json_text(
-        old_object: &serde_json::Map<String, Value>,
-        new_object: &serde_json::Map<String, Value>,
-        current_key_path: Vec<&str>,
-        json_text: &mut String,
-    ) {
-        for (key, old_value) in old_object.iter() {
-            // We know that these two are from the same shape of object, so we can just unwrap
-            let new_value = new_object.get(key).unwrap();
-
-            if old_value != new_value {
-                match new_value {
-                    Value::Bool(_) | Value::Number(_) | Value::String(_) => {
-                        let mut key_path = current_key_path.clone();
-                        key_path.push(key);
-                        write_settings_key(json_text, &key_path, &new_value);
-                    }
-                    Value::Object(new_sub_object) => {
-                        let mut key_path = current_key_path.clone();
-                        key_path.push(key);
-                        if let Value::Object(old_sub_object) = old_value {
-                            apply_changes_to_json_text(
-                                old_sub_object,
-                                new_sub_object,
-                                key_path,
-                                json_text,
-                            );
-                        } else {
-                            unimplemented!("This function doesn't support changing values from simple values to objects yet");
-                        }
-                    }
-                    Value::Null | Value::Array(_) => {
-                        unimplemented!("We only support objects and simple values");
-                    }
-                }
-            }
-        }
-    }
-
-    apply_changes_to_json_text(&old_object, &new_object, vec![], &mut text);
-
-    text
+    let mut key_path = Vec::new();
+    let mut edits = Vec::new();
+    update_object_in_settings_file(
+        &old_object,
+        &new_object,
+        &text,
+        &tree,
+        tab_size.get() as usize,
+        &mut key_path,
+        &mut edits,
+    );
+    edits.sort_unstable_by_key(|e| e.0.start);
+    return edits;
 }
 
 fn to_json_object(settings_file: SettingsFileContent) -> serde_json::Map<String, Value> {
@@ -1122,15 +1170,18 @@ mod tests {
     use super::*;
     use unindent::Unindent;
 
-    fn assert_new_settings<S1: Into<String>, S2: Into<String>>(
-        old_json: S1,
+    fn assert_new_settings(
+        old_json: String,
         update: fn(&mut SettingsFileContent),
-        expected_new_json: S2,
+        expected_new_json: String,
     ) {
-        let old_json = old_json.into();
         let old_content: SettingsFileContent = serde_json::from_str(&old_json).unwrap_or_default();
-        let new_json = update_settings_file(old_json, old_content, update);
-        pretty_assertions::assert_eq!(new_json, expected_new_json.into());
+        let edits = update_settings_file(&old_json, old_content, 4.try_into().unwrap(), update);
+        let mut new_json = old_json;
+        for (range, replacement) in edits.into_iter().rev() {
+            new_json.replace_range(range, &replacement);
+        }
+        pretty_assertions::assert_eq!(new_json, expected_new_json);
     }
 
     #[test]
@@ -1164,6 +1215,63 @@ mod tests {
                         "JSON": {
                             "show_copilot_suggestions": false
                         }
+                    }
+                }
+            "#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_update_copilot_globs() {
+        assert_new_settings(
+            r#"
+                {
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings.copilot = Some(CopilotSettingsContent {
+                    disabled_globs: Some(vec![]),
+                });
+            },
+            r#"
+                {
+                    "copilot": {
+                        "disabled_globs": []
+                    }
+                }
+            "#
+            .unindent(),
+        );
+
+        assert_new_settings(
+            r#"
+                {
+                    "copilot": {
+                        "disabled_globs": [
+                            "**/*.json"
+                        ]
+                    }
+                }
+            "#
+            .unindent(),
+            |settings| {
+                settings
+                    .copilot
+                    .get_or_insert(Default::default())
+                    .disabled_globs
+                    .as_mut()
+                    .unwrap()
+                    .push(".env".into());
+            },
+            r#"
+                {
+                    "copilot": {
+                        "disabled_globs": [
+                            "**/*.json",
+                            ".env"
+                        ]
                     }
                 }
             "#
@@ -1354,7 +1462,7 @@ mod tests {
     #[test]
     fn test_update_telemetry_setting() {
         assert_new_settings(
-            "{}",
+            "{}".into(),
             |settings| settings.telemetry.set_diagnostics(true),
             r#"
                 {
@@ -1370,7 +1478,7 @@ mod tests {
     #[test]
     fn test_update_object_empty_doc() {
         assert_new_settings(
-            "",
+            "".into(),
             |settings| settings.telemetry.set_diagnostics(true),
             r#"
                 {
@@ -1423,7 +1531,7 @@ mod tests {
     #[test]
     fn write_key_no_document() {
         assert_new_settings(
-            "",
+            "".to_string(),
             |settings| settings.theme = Some("summerfruit-light".to_string()),
             r#"
                 {
@@ -1437,16 +1545,16 @@ mod tests {
     #[test]
     fn test_write_theme_into_single_line_settings_without_theme() {
         assert_new_settings(
-            r#"{ "a": "", "ok": true }"#,
+            r#"{ "a": "", "ok": true }"#.to_string(),
             |settings| settings.theme = Some("summerfruit-light".to_string()),
-            r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#,
+            r#"{ "theme": "summerfruit-light", "a": "", "ok": true }"#.to_string(),
         );
     }
 
     #[test]
     fn test_write_theme_pre_object_whitespace() {
         assert_new_settings(
-            r#"          { "a": "", "ok": true }"#,
+            r#"          { "a": "", "ok": true }"#.to_string(),
             |settings| settings.theme = Some("summerfruit-light".to_string()),
             r#"          { "theme": "summerfruit-light", "a": "", "ok": true }"#.unindent(),
         );
