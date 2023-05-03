@@ -6804,13 +6804,10 @@ async fn test_peers_following_each_other(
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        let pane_a1 = pane_a1.clone();
-        cx.defer(move |workspace, _| {
-            assert_ne!(*workspace.active_pane(), pane_a1);
-        });
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
+            assert_ne!(*workspace.active_pane(), pane_a1);
             let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
             workspace.toggle_follow(leader_id, cx).unwrap()
         })
@@ -6818,13 +6815,10 @@ async fn test_peers_following_each_other(
         .unwrap();
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        let pane_b1 = pane_b1.clone();
-        cx.defer(move |workspace, _| {
-            assert_ne!(*workspace.active_pane(), pane_b1);
-        });
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
+            assert_ne!(*workspace.active_pane(), pane_b1);
             let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
             workspace.toggle_follow(leader_id, cx).unwrap()
         })
