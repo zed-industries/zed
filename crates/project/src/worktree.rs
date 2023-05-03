@@ -1472,9 +1472,20 @@ impl Snapshot {
 
 impl LocalSnapshot {
     pub(crate) fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
-        dbg!(&self.repository_entries)
-            .closest(&RepositoryWorkDirectory(path.into()))
-            .map(|(_, entry)| entry.to_owned())
+        let mut max_len = 0;
+        let mut current_candidate = None;
+        for (work_directory, repo) in (&self.repository_entries).iter() {
+            if work_directory.contains(path) {
+                if work_directory.0.as_os_str().len() > max_len {
+                    current_candidate = Some(repo);
+                    max_len = work_directory.0.as_os_str().len();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        current_candidate.map(|entry| entry.to_owned())
     }
 
     pub(crate) fn repo_for_metadata(
@@ -2373,8 +2384,13 @@ impl BackgroundScanner {
         git_repositories.retain(|project_entry_id, _| snapshot.contains_entry(*project_entry_id));
         snapshot.git_repositories = git_repositories;
 
+        let mut git_repository_entries = mem::take(&mut snapshot.snapshot.repository_entries);
+        git_repository_entries.retain(|_, entry| snapshot.contains_entry(entry.git_dir_entry_id));
+        snapshot.snapshot.repository_entries = git_repository_entries;
+
         snapshot.removed_entry_ids.clear();
         snapshot.completed_scan_id = snapshot.scan_id;
+
         drop(snapshot);
 
         self.send_status_update(false, None);
