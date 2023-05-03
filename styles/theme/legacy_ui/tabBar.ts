@@ -17,8 +17,8 @@ export default function tabBar(theme: Theme) {
         iconDirty: inactive_tab.default.indicator.dirty.color,
         description: {
             margin: inactive_tab.default.description.container.margin,
-            ...inactive_tab.default.description.text
-        }
+            ...inactive_tab.default.description.text,
+        },
     }
 
     const TAB_BAR_HEIGHT = 32
@@ -26,7 +26,6 @@ export default function tabBar(theme: Theme) {
     const legacy_styles = {
         height: TAB_BAR_HEIGHT,
         background: useSurfaceStyle(theme, "pane").background,
-
     }
 
     return {
@@ -57,7 +56,6 @@ export default function tabBar(theme: Theme) {
         // },
     }
 }
-
 
 // const tab = {
 //     height,

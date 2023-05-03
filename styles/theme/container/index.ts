@@ -6,7 +6,11 @@ import {
     useElementIntensities,
 } from "../intensity"
 import { Padding, Margin } from "@theme/properties"
-import { ContainedText, ContainedTextProps, containedText } from "./containedText"
+import {
+    ContainedText,
+    ContainedTextProps,
+    containedText,
+} from "./containedText"
 import { FlexStyle } from "@theme/element/flex"
 import { IconStyle } from "@theme/icon"
 import { Shadow } from "@theme/shadow"
@@ -18,7 +22,7 @@ export interface ContainerStyle {
     borderRadius?: number
     border?: Border
     width: number | "auto"
-    height: number | "auto",
+    height: number | "auto"
     shadow?: Shadow
 }
 
@@ -41,19 +45,19 @@ export type ContainerOptions = Partial<ContainerStyle>
 const DEFAULT_OPTIONS: ContainerOptions = {
     borderRadius: 0,
     width: "auto",
-    height: "auto"
+    height: "auto",
 } as const
 
 export function containerStyle(options: ContainerOptions): ContainerStyle {
     const mergedOptions = {
         ...DEFAULT_OPTIONS,
         ...options,
-    };
+    }
 
     return {
         width: mergedOptions.width,
         height: mergedOptions.height,
-        ...mergedOptions
+        ...mergedOptions,
     }
 }
 
@@ -99,13 +103,15 @@ export type StateIntensities = Record<State, StateIntensity>
 export function buildIntensitiesForStates(
     theme: Theme,
     name: string,
-    startingIntensity: ElementIntensities,
+    startingIntensity: ElementIntensities
 ): StateIntensities {
     const light = theme.appearance === "light"
-    const multiplier = light ? 1 : 1.2;
-    const stepSize = 5;
-    const startingOffset = light ? 5 : 12;
-    const intensitySteps = [0, 1, 2, 3].map(step => multiplier * stepSize * step + startingOffset);
+    const multiplier = light ? 1 : 1.2
+    const stepSize = 5
+    const startingOffset = light ? 5 : 12
+    const intensitySteps = [0, 1, 2, 3].map(
+        (step) => multiplier * stepSize * step + startingOffset
+    )
 
     const scaleFactor = theme.intensity.scaleFactor
 
@@ -123,8 +129,18 @@ export function buildIntensitiesForStates(
 
     const elementStates = {
         default: buildStateIntensity(name, "default", defaultState),
-        hovered: buildStateIntensity(name, "hovered", defaultState, scaledIntensitySteps[1]),
-        pressed: buildStateIntensity(name, "pressed", defaultState, scaledIntensitySteps[2]),
+        hovered: buildStateIntensity(
+            name,
+            "hovered",
+            defaultState,
+            scaledIntensitySteps[1]
+        ),
+        pressed: buildStateIntensity(
+            name,
+            "pressed",
+            defaultState,
+            scaledIntensitySteps[2]
+        ),
     }
 
     return elementStates
@@ -166,7 +182,10 @@ export const checkContrast = (
     // Return a contrast with 2 decimal places
     const contrast = +contrastRatio.toFixed(2)
 
-    debug && console.log(`Contrast on ${name}: ${contrast}. Foreground: ${foreground}, Background: ${background}`)
+    debug &&
+        console.log(
+            `Contrast on ${name}: ${contrast}. Foreground: ${foreground}, Background: ${background}`
+        )
 
     if (contrast < 4.5) {
         console.log(`Constrast on ${name} may be too low: ${contrast}`)

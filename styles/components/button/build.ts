@@ -68,11 +68,12 @@ export function buildButton({
     const icon = iconStyle({
         theme,
         intensity: resolvedIntensities.fg,
-        size: 'md'
+        size: "md",
     })
 
-    let text: TextStyle = textStyle(theme,
-        { intensity: resolvedIntensities.fg })
+    let text: TextStyle = textStyle(theme, {
+        intensity: resolvedIntensities.fg,
+    })
 
     const states = buildIntensitiesForStates(theme, name, resolvedIntensities)
 
@@ -81,43 +82,43 @@ export function buildButton({
             ...container,
             background: color.neutral(intensities.bg),
             border: border(theme, intensities.border),
-        };
+        }
 
         let updatedIcon = {
             ...icon,
             color: color.neutral(intensities.fg),
-        };
+        }
 
         let updatedText = {
             ...text,
             color: color.neutral(intensities.fg),
-        };
+        }
 
-        let stateStyle;
+        let stateStyle
 
         switch (kind) {
             case "icon":
                 stateStyle = {
                     container: updatedContainer,
                     icon: updatedIcon,
-                };
+                }
 
-                return stateStyle as ContainedIcon;
+                return stateStyle as ContainedIcon
             case "label":
                 stateStyle = {
                     container: updatedContainer,
                     text: updatedText,
-                };
-                return stateStyle as ContainedText;
+                }
+                return stateStyle as ContainedText
             default:
-                throw new Error("Unhandled button kind");
+                throw new Error("Unhandled button kind")
         }
-    };
+    }
 
     let button = {
         default: buildStates(states.default),
         hovered: buildStates(states.hovered),
-        pressed: buildStates(states.pressed)
+        pressed: buildStates(states.pressed),
     }
 
     switch (kind) {

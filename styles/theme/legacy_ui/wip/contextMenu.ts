@@ -14,14 +14,13 @@ export default function contextMenu(theme: Theme) {
     // interactiveFlex() // interactive<container> with flex
     // shadow() or add shdow to container
 
-    const containerStyle = container(theme,
-        {
-            background: background(theme, "popover"),
-            borderRadius: 10,
-            padding: 4,
-            border: border(theme, "popover"),
-            shadow: shadow(theme),
-        })
+    const containerStyle = container(theme, {
+        background: background(theme, "popover"),
+        borderRadius: 10,
+        padding: 4,
+        border: border(theme, "popover"),
+        shadow: shadow(theme),
+    })
 
     const item = interactiveFlex(theme, {})
 

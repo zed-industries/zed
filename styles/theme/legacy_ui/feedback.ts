@@ -11,6 +11,7 @@ export default function feedback(theme: Theme) {
         // Should be info_text
         info_text_default: info_text,
         // Should be link_text
+
         link_text_default: link_text.default,
         link_text_hover: link_text.hovered,
     }

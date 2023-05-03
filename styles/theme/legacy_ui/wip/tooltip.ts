@@ -14,7 +14,7 @@ export default function tooltip(theme: Theme) {
             padding: padding(8, 4),
             margin: margin(6),
         },
-        text: textStyle(theme)
+        text: textStyle(theme),
     }
 
     return {

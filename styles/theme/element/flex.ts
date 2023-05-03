@@ -3,19 +3,17 @@ import { ContainerStyle } from "@theme/container"
 export interface FlexStyle {
     spacing: number
     /** Cross-axis alignment of items inside the flex */
-    alignItems:
-    | "start"
-    | "center"
+    alignItems: "start" | "center"
     // GPUI doesn't currently support end alignment
     // | "end"
 }
 
 export type Flex = {
-    container: ContainerStyle,
-    flex: FlexStyle,
+    container: ContainerStyle
+    flex: FlexStyle
 }
 
-type FlexOptions = Partial<Omit<FlexStyle, 'spacing'>>
+type FlexOptions = Partial<Omit<FlexStyle, "spacing">>
 
 const DEFAULT_FLEX_OPTIONS: FlexOptions = {
     alignItems: "start",

@@ -12,26 +12,35 @@ import { border } from "@theme/border"
 import { buildSurfaceTokens } from "./tokens"
 
 type SurfaceLevel = 0 | 1 | 2
-type SurfaceName = "background" | "panel" | "pane" | "popover" | "palette" | "tooltip"
+type SurfaceName =
+    | "background"
+    | "panel"
+    | "pane"
+    | "popover"
+    | "palette"
+    | "tooltip"
 
 type SurfaceLevels = Record<SurfaceName, SurfaceLevel>
 
 type Surface = keyof SurfaceLevels
 
 const surfaceLevel: SurfaceLevels = {
-    "background": 0,
-    "panel": 1,
-    "pane": 1,
-    "popover": 2,
-    "palette": 2,
-    "tooltip": 2,
+    background: 0,
+    panel: 1,
+    pane: 1,
+    popover: 2,
+    palette: 2,
+    tooltip: 2,
 }
 
-type SurfaceStyle = Pick<Required<ContainerStyle>, 'background' | 'border'>
+type SurfaceStyle = Pick<Required<ContainerStyle>, "background" | "border">
 
 type InteractiveSurfaceStyles = Record<State, SurfaceStyle>
 
-function useSurfaceIntensity(theme: Theme, surface: Surface): ElementIntensities<Intensity> {
+function useSurfaceIntensity(
+    theme: Theme,
+    surface: Surface
+): ElementIntensities<Intensity> {
     const level = surfaceLevel[surface]
 
     const BASE_SURFACE_INTENSITIES: ElementIntensities<Intensity> = {
@@ -82,15 +91,21 @@ const surface = (theme: Theme) => {
 
     return {
         level: surfaceLevel,
-        style: buildSurfaceLevels(theme)
+        style: buildSurfaceLevels(theme),
     }
 }
 
 // Placeholder for defining element background intensity relative to surface logic
 // TODO: You should be able to specific adding or subtracting intensity
-function relativeIntensityToSurface(surfaceIntensity: Intensity, intensityChange: Intensity): Intensity {
+function relativeIntensityToSurface(
+    surfaceIntensity: Intensity,
+    intensityChange: Intensity
+): Intensity {
     // adjust background color based on the relative difference between surface intensity and intensityChange
-    const newIntensity: Intensity = addToIntensity(surfaceIntensity, intensityChange)
+    const newIntensity: Intensity = addToIntensity(
+        surfaceIntensity,
+        intensityChange
+    )
 
     return newIntensity
 }

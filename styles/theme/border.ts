@@ -40,7 +40,7 @@ const DEFAULT_BORDER_INTENSITY: Intensity = 100
 export function border(
     theme: Theme,
     intensity: Intensity,
-    options?: Partial<BorderOptions>,
+    options?: Partial<BorderOptions>
 ): Border {
     if (!intensity) {
         intensity = DEFAULT_BORDER_INTENSITY
@@ -57,20 +57,30 @@ export function border(
 
     // If options are provided, we use the provided color intensity
     // Otherwise we use the default color intensity
-    const color = (options?.color && themeColor[options.color](intensity)) || DEFAULT_COLOR;
+    const color =
+        (options?.color && themeColor[options.color](intensity)) ||
+        DEFAULT_COLOR
 
     const position = {
-        top: mergedOptions.position === "all" || mergedOptions.position === "top",
-        bottom: mergedOptions.position === "all" || mergedOptions.position === "bottom",
-        left: mergedOptions.position === "all" || mergedOptions.position === "left",
-        right: mergedOptions.position === "all" || mergedOptions.position === "right",
+        top:
+            mergedOptions.position === "all" ||
+            mergedOptions.position === "top",
+        bottom:
+            mergedOptions.position === "all" ||
+            mergedOptions.position === "bottom",
+        left:
+            mergedOptions.position === "all" ||
+            mergedOptions.position === "left",
+        right:
+            mergedOptions.position === "all" ||
+            mergedOptions.position === "right",
     }
 
     const border: Border = {
         color: color,
         width: mergedOptions.width,
         overlay: mergedOptions.inset,
-        ...position
+        ...position,
     }
 
     return border

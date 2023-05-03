@@ -7,14 +7,17 @@ export interface ContainedText {
 }
 
 export interface ContainedTextProps {
-    text: TextStyle,
-    container: ContainerStyle,
+    text: TextStyle
+    container: ContainerStyle
 }
 
 // Placeholder for containedText logic
-export const containedText = ({ text, container }: ContainedTextProps): ContainedText => {
+export const containedText = ({
+    text,
+    container,
+}: ContainedTextProps): ContainedText => {
     return {
         text,
-        container
+        container,
     }
 }

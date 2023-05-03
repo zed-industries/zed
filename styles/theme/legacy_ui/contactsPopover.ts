@@ -10,7 +10,7 @@ export default function contactsPopover(theme: Theme) {
             width: 300,
             height: 400,
             padding: padding(0, 6),
-        }
+        },
     })
 
     const legacy_properties = {

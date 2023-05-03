@@ -14,7 +14,7 @@ export default function HoverPopover(theme: Theme) {
 
     const diagnosticSourceHighlight = textStyle(theme, {
         underline: true,
-        color: "accent"
+        color: "accent",
     })
 
     const legacy_properties = {
@@ -28,14 +28,14 @@ export default function HoverPopover(theme: Theme) {
         },
         // TODO: I don't know what this is
         // Make it a bright solid color for now
-        highlight: '#0000FF',
+        highlight: "#0000FF",
     }
 
     return {
         ...legacy_properties,
         container: popoverContainerStyle({
             theme,
-            options: popverOptions
+            options: popverOptions,
         }),
         infoContainer: popoverContainerStyle({
             theme,

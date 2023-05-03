@@ -149,7 +149,10 @@ export interface ElementIntensities<T = ElementIntensity> {
     fg: T
 }
 
-export function resolveThemeColorIntensity(theme: Theme, intensity: ElementIntensity): Intensity {
+export function resolveThemeColorIntensity(
+    theme: Theme,
+    intensity: ElementIntensity
+): Intensity {
     if (Array.isArray(intensity)) {
         return theme.appearance === "light" ? intensity[1] : intensity[0]
     }

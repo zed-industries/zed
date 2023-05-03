@@ -18,12 +18,12 @@ export function shadow(theme: Theme, surface: Surface): Shadow {
 
     switch (surface) {
         case "popover":
-            shadowAlpha = .12 as const
+            shadowAlpha = 0.12 as const
             offsetX = 1
             offsetY = 2
             break
         default:
-            shadowAlpha = .12 as const
+            shadowAlpha = 0.12 as const
             offsetX = 1
             offsetY = 4
             break
@@ -36,6 +36,6 @@ export function shadow(theme: Theme, surface: Surface): Shadow {
     return {
         blur,
         color,
-        offset
+        offset,
     }
 }

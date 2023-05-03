@@ -1,4 +1,7 @@
-import { relativeIntensityToSurface, useSurfaceIntensity } from "@components/surface"
+import {
+    relativeIntensityToSurface,
+    useSurfaceIntensity,
+} from "@components/surface"
 import { Theme } from "@theme/config"
 import { containedText, container } from "@theme/container"
 import { ContainerStyle } from "@theme/container"
@@ -39,11 +42,11 @@ export default function commandPalette(theme: Theme) {
             active: {
                 text: active_key_text,
                 background: active_key_background,
-            }
-        }
+            },
+        },
     }
 
     return {
-        ...legacy_properties
+        ...legacy_properties,
     }
 }

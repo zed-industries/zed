@@ -15,15 +15,15 @@ interface ColorFunctions {
 }
 
 /**
-* Returns a set of functions that can be used to get a color from the theme.
-*
-* Get a specific color using a theme color name and an intensity:
-*
-* ```ts
-* const color = useColors(theme)
-* const background = color.accent(80)
-* ```
-*/
+ * Returns a set of functions that can be used to get a color from the theme.
+ *
+ * Get a specific color using a theme color name and an intensity:
+ *
+ * ```ts
+ * const color = useColors(theme)
+ * const background = color.accent(80)
+ * ```
+ */
 export function useColors(theme: Theme): ColorFunctions {
     const functions: ColorFunctions = {}
     for (const colorKey in theme.colors) {

@@ -1,8 +1,17 @@
 import chroma from "chroma-js"
 import { useColors } from "./colors"
 import { Theme, ThemeColor } from "./config"
-import { ContainedText, Interactive, buildIntensitiesForStates, container } from "./container"
-import { ElementIntensities, Intensity, resolveThemeColorIntensity } from "./intensity"
+import {
+    ContainedText,
+    Interactive,
+    buildIntensitiesForStates,
+    container,
+} from "./container"
+import {
+    ElementIntensities,
+    Intensity,
+    resolveThemeColorIntensity,
+} from "./intensity"
 
 type Font = "Zed Mono" | "Zed Sans"
 
@@ -130,26 +139,32 @@ const DEFAULT_TEXT_OPTIONS: BuildTextOptions = {
     lineHeight: 1,
 }
 
-
 function buildText(
     theme: Theme,
     options?: Partial<BuildTextOptions>
 ): TextStyle {
-    const themeColor = useColors(theme);
-    const defaultOptions = DEFAULT_TEXT_OPTIONS;
+    const themeColor = useColors(theme)
+    const defaultOptions = DEFAULT_TEXT_OPTIONS
 
     const mergedOptions = {
         ...defaultOptions,
         ...options,
-    };
+    }
 
-    const { family, weight, baseSize, lineHeight, color: colorScale, intensity } = mergedOptions;
+    const {
+        family,
+        weight,
+        baseSize,
+        lineHeight,
+        color: colorScale,
+        intensity,
+    } = mergedOptions
 
-    const resolvedIntensity = resolveThemeColorIntensity(theme, intensity);
-    const color = themeColor[colorScale](resolvedIntensity);
+    const resolvedIntensity = resolveThemeColorIntensity(theme, intensity)
+    const color = themeColor[colorScale](resolvedIntensity)
 
     // Calculate the final font size
-    const size = mergedOptions.size * baseSize;
+    const size = mergedOptions.size * baseSize
 
     // Ensture the color is valid
     chroma.valid(color)
@@ -162,14 +177,14 @@ function buildText(
         color,
     }
 
-    return text;
+    return text
 }
 
 export function textStyle(
     theme: Theme,
     options?: Partial<BuildTextOptions>
 ): TextStyle {
-    return buildText(theme, options);
+    return buildText(theme, options)
 }
 
 export function useInteractiveText(
@@ -180,13 +195,13 @@ export function useInteractiveText(
         bg: 1,
         border: 15,
         fg: 100,
-    } as const;
+    } as const
 
     const states = buildIntensitiesForStates(
         theme,
         "interactiveText",
         DEFAULT_INTENSITIES
-    );
+    )
 
     const text = {
         default: buildText(theme, {
@@ -200,7 +215,7 @@ export function useInteractiveText(
         pressed: buildText(theme, {
             ...options,
             intensity: states.pressed.fg,
-        })
+        }),
     }
 
     const buildContainedText = (text: TextStyle) => {
@@ -214,5 +229,5 @@ export function useInteractiveText(
         default: buildContainedText(text.default),
         hovered: buildContainedText(text.hovered),
         pressed: buildContainedText(text.pressed),
-    };
+    }
 }
