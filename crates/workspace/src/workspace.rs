@@ -583,10 +583,11 @@ impl Workspace {
 
         let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
         let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
-        let left_sidebar_buttons = cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), cx));
+        let left_sidebar_buttons =
+            cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), weak_handle.clone(), cx));
         let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(handle, cx));
         let right_sidebar_buttons =
-            cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), cx));
+            cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), weak_handle.clone(), cx));
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_sidebar_buttons, cx);
