@@ -5680,28 +5680,30 @@ impl Editor {
             }
         } else if !definitions.is_empty() {
             let replica_id = self.replica_id(cx);
-            let title = definitions
-                .iter()
-                .find(|definition| definition.origin.is_some())
-                .and_then(|definition| {
-                    definition.origin.as_ref().map(|origin| {
-                        let buffer = origin.buffer.read(cx);
-                        format!(
-                            "Definitions for {}",
-                            buffer
-                                .text_for_range(origin.range.clone())
-                                .collect::<String>()
-                        )
+            cx.window_context().defer(move |cx| {
+                let title = definitions
+                    .iter()
+                    .find(|definition| definition.origin.is_some())
+                    .and_then(|definition| {
+                        definition.origin.as_ref().map(|origin| {
+                            let buffer = origin.buffer.read(cx);
+                            format!(
+                                "Definitions for {}",
+                                buffer
+                                    .text_for_range(origin.range.clone())
+                                    .collect::<String>()
+                            )
+                        })
                     })
-                })
-                .unwrap_or("Definitions".to_owned());
-            let locations = definitions
-                .into_iter()
-                .map(|definition| definition.target)
-                .collect();
-            workspace.update(cx, |workspace, cx| {
-                Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
-            })
+                    .unwrap_or("Definitions".to_owned());
+                let locations = definitions
+                    .into_iter()
+                    .map(|definition| definition.target)
+                    .collect();
+                workspace.update(cx, |workspace, cx| {
+                    Self::open_locations_in_multibuffer(workspace, locations, replica_id, title, cx)
+                });
+            });
         }
     }
 
