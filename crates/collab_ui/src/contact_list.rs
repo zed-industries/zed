@@ -1306,10 +1306,9 @@ impl View for ContactList {
         "ContactList"
     }
 
-    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        let mut cx = Self::default_keymap_context();
-        cx.add_identifier("menu");
-        cx
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
+        keymap.add_identifier("menu");
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
