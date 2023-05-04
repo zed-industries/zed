@@ -784,11 +784,15 @@ impl EditorElement {
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
         let corner_radius = 0.15 * layout.position_map.line_height;
+        let mut selection_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
         for (replica_id, selections) in &layout.selections {
             let selection_style = style.replica_selection_style(*replica_id);
 
             for selection in selections {
+                if !selection.range.is_empty() {
+                    selection_ranges.push(selection.range.clone());
+                }
                 self.paint_highlighted_range(
                     scene,
                     selection.range.clone(),
@@ -880,33 +884,42 @@ impl EditorElement {
                 );
 
                 let settings = cx.global::<Settings>();
-                match settings
+                let regions_to_hit = match settings
                     .editor_overrides
                     .show_invisibles
                     .or(settings.editor_defaults.show_invisibles)
                     .unwrap_or_default()
                 {
-                    ShowInvisibles::None => {}
-                    ShowInvisibles::All => {
-                        for invisible in &line_with_invisibles.invisibles {
-                            let (token_offset, invisible_symbol) = match invisible {
-                                Invisible::Tab { line_start_offset } => {
-                                    (*line_start_offset, &layout.tab_invisible)
-                                }
-                                Invisible::Whitespace { line_offset } => {
-                                    (*line_offset, &layout.space_invisible)
-                                }
-                            };
+                    ShowInvisibles::None => continue,
+                    ShowInvisibles::Selection => Some(&selection_ranges),
+                    ShowInvisibles::All => None,
+                };
 
-                            let x_offset = line_with_invisibles.line.x_for_index(token_offset);
-                            let invisible_offset =
-                                (layout.position_map.em_width - invisible_symbol.width()).max(0.0)
-                                    / 2.0;
-                            let origin = content_origin
-                                + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
-                            invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
+                for invisible in &line_with_invisibles.invisibles {
+                    let (&token_offset, invisible_symbol) = match invisible {
+                        Invisible::Tab { line_start_offset } => {
+                            (line_start_offset, &layout.tab_invisible)
+                        }
+                        Invisible::Whitespace { line_offset } => {
+                            (line_offset, &layout.space_invisible)
+                        }
+                    };
+
+                    let x_offset = line_with_invisibles.line.x_for_index(token_offset);
+                    let invisible_offset =
+                        (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
+                    let origin =
+                        content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+
+                    if let Some(regions_to_hit) = regions_to_hit {
+                        let invisible_point = DisplayPoint::new(row, token_offset as u32);
+                        if !regions_to_hit.iter().any(|region| {
+                            region.start <= invisible_point && invisible_point < region.end
+                        }) {
+                            continue;
                         }
                     }
+                    invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
                 }
             }
         }
