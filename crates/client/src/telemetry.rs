@@ -270,7 +270,7 @@ impl Telemetry {
                         }])?;
 
                         this.http_client
-                            .post_json(MIXPANEL_ENGAGE_URL, json_bytes.into(), false)
+                            .post_json(MIXPANEL_ENGAGE_URL, json_bytes.into())
                             .await?;
                         anyhow::Ok(())
                     }
@@ -404,7 +404,7 @@ impl Telemetry {
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, &events)?;
                         this.http_client
-                            .post_json(MIXPANEL_EVENTS_URL, json_bytes.into(), false)
+                            .post_json(MIXPANEL_EVENTS_URL, json_bytes.into())
                             .await?;
                         anyhow::Ok(())
                     }
@@ -454,7 +454,7 @@ impl Telemetry {
                     }
 
                     this.http_client
-                        .post_json(CLICKHOUSE_EVENTS_URL.as_str(), json_bytes.into(), false)
+                        .post_json(CLICKHOUSE_EVENTS_URL.as_str(), json_bytes.into())
                         .await?;
                     anyhow::Ok(())
                 }

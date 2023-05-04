@@ -273,7 +273,7 @@ impl AutoUpdater {
             telemetry,
         })?);
 
-        let mut response = client.post_json(&release.url, request_body, true).await?;
+        let mut response = client.get(&release.url, request_body, true).await?;
         smol::io::copy(response.body_mut(), &mut dmg_file).await?;
         log::info!("downloaded update. path:{:?}", dmg_path);
 
