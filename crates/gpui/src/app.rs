@@ -5360,10 +5360,6 @@ mod tests {
             cx.focus(&view_2);
         });
 
-        cx.read_window(window_id, |cx| {
-            assert!(cx.is_child_focused(&view_1));
-            assert!(!cx.is_child_focused(&view_2));
-        });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 1 blurred", "view 2 focused"],
@@ -5377,10 +5373,6 @@ mod tests {
         );
 
         view_1.update(cx, |_, cx| cx.focus(&view_1));
-        cx.read_window(window_id, |cx| {
-            assert!(!cx.is_child_focused(&view_1));
-            assert!(!cx.is_child_focused(&view_2));
-        });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 2 blurred", "view 1 focused"],

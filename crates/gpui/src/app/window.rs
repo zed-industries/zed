@@ -1085,16 +1085,6 @@ impl<'a> WindowContext<'a> {
         self.window.focused_view_id
     }
 
-    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
-        if let Some(focused_view_id) = self.focused_view_id() {
-            self.ancestors(focused_view_id)
-                .skip(1) // Skip self id
-                .any(|parent| parent == view.view_id)
-        } else {
-            false
-        }
-    }
-
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.platform_window.bounds()
     }

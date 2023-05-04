@@ -151,6 +151,7 @@ pub struct Pane {
     docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
+    has_focus: bool,
 }
 
 pub struct ItemNavHistory {
@@ -258,6 +259,7 @@ impl Pane {
             docked,
             _background_actions: background_actions,
             workspace,
+            has_focus: false,
         }
     }
 
@@ -272,6 +274,10 @@ impl Pane {
     pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
         self.is_active = is_active;
         cx.notify();
+    }
+
+    pub fn has_focus(&self) -> bool {
+        self.has_focus
     }
 
     pub fn set_docked(&mut self, docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) {
@@ -1798,7 +1804,7 @@ impl View for Pane {
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Focus);
+        self.has_focus = true;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(true, cx);
         });
@@ -1824,9 +1830,12 @@ impl View for Pane {
                     .insert(active_item.id(), focused.downgrade());
             }
         }
+
+        cx.emit(Event::Focus);
     }
 
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = false;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(false, cx);
         });

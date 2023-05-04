@@ -2339,19 +2339,14 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_activate {
-            let active_item_was_focused = pane
-                .read(cx)
-                .active_item()
-                .map(|active_item| cx.is_child_focused(active_item.as_any()))
-                .unwrap_or_default();
-
+            let pane_was_focused = pane.read(cx).has_focus();
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
             } else {
                 Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
             }
 
-            if active_item_was_focused {
+            if pane_was_focused {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
         }
