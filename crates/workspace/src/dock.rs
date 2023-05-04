@@ -726,7 +726,7 @@ mod tests {
             self.update_workspace(|workspace, cx| Dock::move_dock(workspace, anchor, true, cx));
         }
 
-        pub fn hide_dock(&self) {
+        pub fn hide_dock(&mut self) {
             self.cx.dispatch_action(self.window_id, HideDock);
         }
 

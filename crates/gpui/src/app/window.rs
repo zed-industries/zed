@@ -356,49 +356,10 @@ impl<'a> WindowContext<'a> {
         )
     }
 
-    /// Return keystrokes that would dispatch the given action on the given view.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        let window_id = self.window_id;
-        let mut contexts = Vec::new();
-        let mut handler_depth = None;
-        for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view) = self.views.get(&(window_id, view_id)) {
-                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
-                    if actions.contains_key(&action.as_any().type_id()) {
-                        handler_depth = Some(i);
-                    }
-                }
-                contexts.push(view.keymap_context(self));
-            }
-        }
-
-        if self.global_actions.contains_key(&action.as_any().type_id()) {
-            handler_depth = Some(contexts.len())
-        }
-
-        self.keystroke_matcher
-            .bindings_for_action_type(action.as_any().type_id())
-            .find_map(|b| {
-                handler_depth
-                    .map(|highest_handler| {
-                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
-                            Some(b.keystrokes().into())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-            })
-    }
-
-    pub fn available_actions(
+    pub(crate) fn available_actions(
         &self,
         view_id: usize,
-    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
+    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
         let window_id = self.window_id;
         let mut contexts = Vec::new();
         let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
@@ -441,12 +402,14 @@ impl<'a> WindowContext<'a> {
                             .filter(|b| {
                                 (0..=action_depth).any(|depth| b.match_context(&contexts[depth..]))
                             })
+                            .cloned()
                             .collect(),
                     ))
                 } else {
                     None
                 }
             })
+            .collect()
     }
 
     pub(crate) fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {

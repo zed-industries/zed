@@ -341,6 +341,15 @@ impl AsyncAppContext {
             .ok_or_else(|| anyhow!("window not found"))
     }
 
+    pub fn available_actions(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
+        self.read_window(window_id, |cx| cx.available_actions(view_id))
+            .unwrap_or_default()
+    }
+
     pub fn has_window(&self, window_id: usize) -> bool {
         self.read(|cx| cx.windows.contains_key(&window_id))
     }
@@ -3221,6 +3230,64 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
     pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
         self.view_context
     }
+
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        view: &V,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        self.notify_if_view_ancestors_change(view_id);
+
+        let window_id = self.window_id;
+        let mut contexts = Vec::new();
+        let mut handler_depth = None;
+        for (i, view_id) in self.ancestors(view_id).enumerate() {
+            let view = if view_id == self.view_id {
+                Some(view as _)
+            } else {
+                self.views
+                    .get(&(window_id, view_id))
+                    .map(|view| view.as_ref())
+            };
+
+            if let Some(view) = view {
+                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
+                    if actions.contains_key(&action.as_any().type_id()) {
+                        handler_depth = Some(i);
+                    }
+                }
+                contexts.push(view.keymap_context(self));
+            }
+        }
+
+        if self.global_actions.contains_key(&action.as_any().type_id()) {
+            handler_depth = Some(contexts.len())
+        }
+
+        self.keystroke_matcher
+            .bindings_for_action_type(action.as_any().type_id())
+            .find_map(|b| {
+                handler_depth
+                    .map(|highest_handler| {
+                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
+                            Some(b.keystrokes().into())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+            })
+    }
+
+    fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
+        let self_view_id = self.view_id;
+        self.views_to_notify_if_ancestors_change
+            .entry(view_id)
+            .or_default()
+            .push(self_view_id);
+    }
 }
 
 impl<'a, 'b, 'c, V: View> Deref for LayoutContext<'a, 'b, 'c, V> {
@@ -5740,7 +5807,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_keystrokes_for_action(cx: &mut AppContext) {
+    fn test_keystrokes_for_action(cx: &mut TestAppContext) {
         actions!(test, [Action1, Action2, GlobalAction]);
 
         struct View1 {
@@ -5772,35 +5839,47 @@ mod tests {
             }
         }
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |cx| {
+        let (window_id, view_1) = cx.add_window(|cx| {
             let view_2 = cx.add_view(|cx| {
                 cx.focus_self();
                 View2 {}
             });
             View1 { child: view_2 }
         });
-        let view_2 = view_1.read(cx).child.clone();
+        let view_2 = view_1.read_with(cx, |view, _| view.child.clone());
 
-        cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
-        cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
-        cx.add_global_action(|_: &GlobalAction, _| {});
+        cx.update(|cx| {
+            cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
+            cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
+            cx.add_global_action(|_: &GlobalAction, _| {});
+            cx.add_bindings(vec![
+                Binding::new("a", Action1, Some("View1")),
+                Binding::new("b", Action2, Some("View1 > View2")),
+                Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
+            ]);
+        });
 
-        cx.add_bindings(vec![
-            Binding::new("a", Action1, Some("View1")),
-            Binding::new("b", Action2, Some("View1 > View2")),
-            Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
-        ]);
-
-        cx.update_window(window_id, |cx| {
+        let view_1_id = view_1.id();
+        view_1.update(cx, |view_1, cx| {
             // Sanity check
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
             assert_eq!(
-                cx.keystrokes_for_action(view_1.id(), &Action1)
+                layout_cx
+                    .keystrokes_for_action(view_1, view_1_id, &Action1)
                     .unwrap()
                     .as_slice(),
                 &[Keystroke::parse("a").unwrap()]
             );
             assert_eq!(
-                cx.keystrokes_for_action(view_2.id(), &Action2)
+                layout_cx
+                    .keystrokes_for_action(view_1, view_2.id(), &Action2)
                     .unwrap()
                     .as_slice(),
                 &[Keystroke::parse("b").unwrap()]
@@ -5809,44 +5888,53 @@ mod tests {
             // The 'a' keystroke propagates up the view tree from view_2
             // to view_1. The action, Action1, is handled by view_1.
             assert_eq!(
-                cx.keystrokes_for_action(view_2.id(), &Action1)
+                layout_cx
+                    .keystrokes_for_action(view_1, view_2.id(), &Action1)
                     .unwrap()
                     .as_slice(),
                 &[Keystroke::parse("a").unwrap()]
             );
 
             // Actions that are handled below the current view don't have bindings
-            assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action2), None);
-
-            // Actions that are handled in other branches of the tree should not have a binding
-            assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
-
-            // Check that global actions do not have a binding, even if a binding does exist in another view
             assert_eq!(
-                &available_actions(view_1.id(), cx),
-                &[
-                    ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                    ("test::GlobalAction", vec![])
-                ],
+                layout_cx.keystrokes_for_action(view_1, view_1_id, &Action2),
+                None
             );
 
-            // Check that view 1 actions and bindings are available even when called from view 2
+            // Actions that are handled in other branches of the tree should not have a binding
             assert_eq!(
-                &available_actions(view_2.id(), cx),
-                &[
-                    ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                    ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
-                    ("test::GlobalAction", vec![]),
-                ],
+                layout_cx.keystrokes_for_action(view_1, view_2.id(), &GlobalAction),
+                None
             );
         });
 
+        // Check that global actions do not have a binding, even if a binding does exist in another view
+        assert_eq!(
+            &available_actions(window_id, view_1.id(), cx),
+            &[
+                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                ("test::GlobalAction", vec![])
+            ],
+        );
+
+        // Check that view 1 actions and bindings are available even when called from view 2
+        assert_eq!(
+            &available_actions(window_id, view_2.id(), cx),
+            &[
+                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
+                ("test::GlobalAction", vec![]),
+            ],
+        );
+
         // Produces a list of actions and key bindings
         fn available_actions(
+            window_id: usize,
             view_id: usize,
-            cx: &WindowContext,
+            cx: &TestAppContext,
         ) -> Vec<(&'static str, Vec<Keystroke>)> {
-            cx.available_actions(view_id)
+            cx.available_actions(window_id, view_id)
+                .into_iter()
                 .map(|(action_name, _, bindings)| {
                     (
                         action_name,

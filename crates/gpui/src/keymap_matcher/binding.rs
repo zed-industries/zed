@@ -11,6 +11,16 @@ pub struct Binding {
     context_predicate: Option<KeymapContextPredicate>,
 }
 
+impl Clone for Binding {
+    fn clone(&self) -> Self {
+        Self {
+            action: self.action.boxed_clone(),
+            keystrokes: self.keystrokes.clone(),
+            context_predicate: self.context_predicate.clone(),
+        }
+    }
+}
+
 impl Binding {
     pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
         Self::load(keystrokes, Box::new(action), context).unwrap()

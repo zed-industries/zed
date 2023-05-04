@@ -80,7 +80,7 @@ mod tests {
         watch_files, watched_json::watch_settings_file, EditorSettings, Settings, SoftWrap,
     };
     use fs::FakeFs;
-    use gpui::{actions, elements::*, Action, Entity, View, ViewContext, WindowContext};
+    use gpui::{actions, elements::*, Action, Entity, TestAppContext, View, ViewContext};
     use theme::ThemeRegistry;
 
     struct TestView;
@@ -167,13 +167,12 @@ mod tests {
         let (window_id, _view) = cx.add_window(|_| TestView);
 
         // Test loading the keymap base at all
-        cx.read_window(window_id, |cx| {
-            assert_key_bindings_for(
-                cx,
-                vec![("backspace", &A), ("k", &ActivatePreviousPane)],
-                line!(),
-            );
-        });
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
 
         // Test modifying the users keymap, while retaining the base keymap
         fs.save(
@@ -195,13 +194,12 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        cx.read_window(window_id, |cx| {
-            assert_key_bindings_for(
-                cx,
-                vec![("backspace", &B), ("k", &ActivatePreviousPane)],
-                line!(),
-            );
-        });
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
 
         // Test modifying the base, while retaining the users keymap
         fs.save(
@@ -219,31 +217,33 @@ mod tests {
 
         cx.foreground().run_until_parked();
 
-        cx.read_window(window_id, |cx| {
-            assert_key_bindings_for(
-                cx,
-                vec![("backspace", &B), ("[", &ActivatePrevItem)],
-                line!(),
-            );
-        });
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            line!(),
+        );
     }
 
     fn assert_key_bindings_for<'a>(
-        cx: &WindowContext,
+        window_id: usize,
+        cx: &TestAppContext,
         actions: Vec<(&'static str, &'a dyn Action)>,
         line: u32,
     ) {
         for (key, action) in actions {
             // assert that...
             assert!(
-                cx.available_actions(0).any(|(_, bound_action, b)| {
-                    // action names match...
-                    bound_action.name() == action.name()
+                cx.available_actions(window_id, 0)
+                    .into_iter()
+                    .any(|(_, bound_action, b)| {
+                        // action names match...
+                        bound_action.name() == action.name()
                     && bound_action.namespace() == action.namespace()
                     // and key strokes contain the given key
                     && b.iter()
                         .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
-                }),
+                    }),
                 "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),
