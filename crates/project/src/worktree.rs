@@ -137,6 +137,10 @@ impl RepositoryEntry {
     pub fn branch(&self) -> Option<Arc<str>> {
         self.branch.clone()
     }
+
+    pub fn work_directory(&self) -> Arc<Path> {
+        self.work_directory.0.clone()
+    }
 }
 
 /// This path corresponds to the 'content path' (the folder that contains the .git)
@@ -1457,6 +1461,10 @@ impl Snapshot {
         self.repository_entries
             .get(&"".into())
             .map(|entry| entry.to_owned())
+    }
+
+    pub fn git_entries(&self) -> impl Iterator<Item = &RepositoryEntry> {
+        self.repository_entries.values()
     }
 
     pub fn scan_id(&self) -> usize {
