@@ -71,6 +71,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone, Default)]
 pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
+    pub branch_name: Option<String>,
 }
 
 impl FakeGitRepository {
@@ -89,7 +90,8 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn branch_name(&self) -> Option<String> {
-        None
+        let state = self.state.lock();
+        state.branch_name.clone()
     }
 }
 
