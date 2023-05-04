@@ -40,14 +40,8 @@ pub trait HttpClient: Send + Sync {
         &'a self,
         uri: &str,
         body: AsyncBody,
-        follow_redirects: bool,
     ) -> BoxFuture<'a, Result<Response<AsyncBody>, Error>> {
         let request = isahc::Request::builder()
-            .redirect_policy(if follow_redirects {
-                RedirectPolicy::Follow
-            } else {
-                RedirectPolicy::None
-            })
             .method(Method::POST)
             .uri(uri)
             .header("Content-Type", "application/json")
