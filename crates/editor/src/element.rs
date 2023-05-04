@@ -1359,7 +1359,11 @@ impl EditorElement {
                         highlight_style = Some(diagnostic_highlight);
                     }
 
-                    (chunk.text, highlight_style)
+                    HighlightedChunk {
+                        chunk: chunk.text,
+                        style: highlight_style,
+                        is_tab: chunk.is_tab,
+                    }
                 });
             layout_highlighted_chunks(
                 chunks,
