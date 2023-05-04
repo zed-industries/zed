@@ -1425,13 +1425,19 @@ impl Editor {
         }
     }
 
-    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: KeymapContext) {
+    pub fn set_keymap_context_layer<Tag: 'static>(
+        &mut self,
+        context: KeymapContext,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.keymap_context_layers
             .insert(TypeId::of::<Tag>(), context);
+        cx.notify();
     }
 
-    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self) {
+    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self, cx: &mut ViewContext<Self>) {
         self.keymap_context_layers.remove(&TypeId::of::<Tag>());
+        cx.notify();
     }
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
@@ -7157,28 +7163,26 @@ impl View for Editor {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        let mut context = Self::default_keymap_context();
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
-        context.add_key("mode", mode);
+        keymap.add_key("mode", mode);
         if self.pending_rename.is_some() {
-            context.add_identifier("renaming");
+            keymap.add_identifier("renaming");
         }
         match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => context.add_identifier("showing_completions"),
-            Some(ContextMenu::CodeActions(_)) => context.add_identifier("showing_code_actions"),
+            Some(ContextMenu::Completions(_)) => keymap.add_identifier("showing_completions"),
+            Some(ContextMenu::CodeActions(_)) => keymap.add_identifier("showing_code_actions"),
             None => {}
         }
 
         for layer in self.keymap_context_layers.values() {
-            context.extend(layer);
+            keymap.extend(layer);
         }
-
-        context
     }
 
     fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {

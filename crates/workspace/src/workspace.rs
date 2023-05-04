@@ -37,7 +37,6 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     impl_actions,
-    keymap_matcher::KeymapContext,
     platform::{
         CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
         WindowOptions,
@@ -2808,10 +2807,6 @@ impl View for Workspace {
                 }
             }
         }
-    }
-
-    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        Self::default_keymap_context()
     }
 }
 

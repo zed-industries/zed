@@ -83,14 +83,15 @@ pub trait View: Entity + Sized {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap_matcher::KeymapContext {
-        Self::default_keymap_context()
+    fn update_keymap_context(&self, keymap: &mut keymap_matcher::KeymapContext, _: &AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
     }
-    fn default_keymap_context() -> keymap_matcher::KeymapContext {
-        let mut cx = keymap_matcher::KeymapContext::default();
-        cx.add_identifier(Self::ui_name());
-        cx
+
+    fn reset_to_default_keymap_context(keymap: &mut keymap_matcher::KeymapContext) {
+        keymap.clear();
+        keymap.add_identifier(Self::ui_name());
     }
+
     fn debug_json(&self, _: &AppContext) -> serde_json::Value {
         serde_json::Value::Null
     }
@@ -1797,7 +1798,7 @@ impl AppContext {
                     .insert(observed_view_id);
             }
 
-            view_metadata.keymap_context = view.keymap_context(self);
+            view.update_keymap_context(&mut view_metadata.keymap_context, self);
             self.views.insert(view_key, view);
             self.views_metadata.insert(view_key, view_metadata);
 
@@ -2380,7 +2381,7 @@ pub trait AnyView {
         cx: &mut WindowContext,
         view_id: usize,
     ) -> bool;
-    fn keymap_context(&self, cx: &AppContext) -> KeymapContext;
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext);
     fn debug_json(&self, cx: &WindowContext) -> serde_json::Value;
 
     fn text_for_range(&self, range: Range<usize>, cx: &WindowContext) -> Option<String>;
@@ -2506,8 +2507,8 @@ where
         View::modifiers_changed(self, event, &mut cx)
     }
 
-    fn keymap_context(&self, cx: &AppContext) -> KeymapContext {
-        View::keymap_context(self, cx)
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
+        View::update_keymap_context(self, keymap, cx)
     }
 
     fn debug_json(&self, cx: &WindowContext) -> serde_json::Value {
@@ -5572,8 +5573,8 @@ mod tests {
                 "View"
             }
 
-            fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-                self.keymap_context.clone()
+            fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+                *keymap = self.keymap_context.clone();
             }
         }
 
