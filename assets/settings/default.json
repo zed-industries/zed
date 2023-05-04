@@ -36,11 +36,13 @@
   // Whether to show tabs and spaces in the editor.
   // This setting can take two values:
   //
-  // 1. Do not draw any tabs or spaces (default):
+  // 1. Draw tabs and spaces only for the selected text (default):
+  //    "selection"
+  // 2. Do not draw any tabs or spaces:
   //   "none"
-  // 2. Draw all invisible symbols:
+  // 3. Draw all invisible symbols:
   //   "all"
-  "show_invisibles": "none",
+  "show_invisibles": "selection",
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.

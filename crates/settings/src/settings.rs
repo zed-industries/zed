@@ -451,6 +451,7 @@ pub struct FeaturesContent {
 #[serde(rename_all = "snake_case")]
 pub enum ShowInvisibles {
     #[default]
+    Selection,
     None,
     All,
 }
