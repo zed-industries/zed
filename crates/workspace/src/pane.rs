@@ -1854,12 +1854,11 @@ impl View for Pane {
         });
     }
 
-    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        let mut keymap = Self::default_keymap_context();
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
         if self.docked.is_some() {
             keymap.add_identifier("docked");
         }
-        keymap
     }
 }
 

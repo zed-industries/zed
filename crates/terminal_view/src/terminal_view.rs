@@ -454,11 +454,11 @@ impl View for TerminalView {
         });
     }
 
-    fn keymap_context(&self, cx: &gpui::AppContext) -> KeymapContext {
-        let mut context = Self::default_keymap_context();
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &gpui::AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
 
         let mode = self.terminal.read(cx).last_content.mode;
-        context.add_key(
+        keymap.add_key(
             "screen",
             if mode.contains(TermMode::ALT_SCREEN) {
                 "alt"
@@ -468,40 +468,40 @@ impl View for TerminalView {
         );
 
         if mode.contains(TermMode::APP_CURSOR) {
-            context.add_identifier("DECCKM");
+            keymap.add_identifier("DECCKM");
         }
         if mode.contains(TermMode::APP_KEYPAD) {
-            context.add_identifier("DECPAM");
+            keymap.add_identifier("DECPAM");
         } else {
-            context.add_identifier("DECPNM");
+            keymap.add_identifier("DECPNM");
         }
         if mode.contains(TermMode::SHOW_CURSOR) {
-            context.add_identifier("DECTCEM");
+            keymap.add_identifier("DECTCEM");
         }
         if mode.contains(TermMode::LINE_WRAP) {
-            context.add_identifier("DECAWM");
+            keymap.add_identifier("DECAWM");
         }
         if mode.contains(TermMode::ORIGIN) {
-            context.add_identifier("DECOM");
+            keymap.add_identifier("DECOM");
         }
         if mode.contains(TermMode::INSERT) {
-            context.add_identifier("IRM");
+            keymap.add_identifier("IRM");
         }
         //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
         if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
-            context.add_identifier("LNM");
+            keymap.add_identifier("LNM");
         }
         if mode.contains(TermMode::FOCUS_IN_OUT) {
-            context.add_identifier("report_focus");
+            keymap.add_identifier("report_focus");
         }
         if mode.contains(TermMode::ALTERNATE_SCROLL) {
-            context.add_identifier("alternate_scroll");
+            keymap.add_identifier("alternate_scroll");
         }
         if mode.contains(TermMode::BRACKETED_PASTE) {
-            context.add_identifier("bracketed_paste");
+            keymap.add_identifier("bracketed_paste");
         }
         if mode.intersects(TermMode::MOUSE_MODE) {
-            context.add_identifier("any_mouse_reporting");
+            keymap.add_identifier("any_mouse_reporting");
         }
         {
             let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
@@ -513,7 +513,7 @@ impl View for TerminalView {
             } else {
                 "off"
             };
-            context.add_key("mouse_reporting", mouse_reporting);
+            keymap.add_key("mouse_reporting", mouse_reporting);
         }
         {
             let format = if mode.contains(TermMode::SGR_MOUSE) {
@@ -523,9 +523,8 @@ impl View for TerminalView {
             } else {
                 "normal"
             };
-            context.add_key("mouse_format", format);
+            keymap.add_key("mouse_format", format);
         }
-        context
     }
 }
 
