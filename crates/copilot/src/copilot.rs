@@ -461,14 +461,12 @@ impl Copilot {
     pub fn sign_in(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } | SignInStatus::Unauthorized { .. } => {
-                    Task::ready(Ok(())).shared()
-                }
+                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut => {
+                SignInStatus::SignedOut | SignInStatus::Unauthorized { .. } => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(|this, mut cx| async move {
