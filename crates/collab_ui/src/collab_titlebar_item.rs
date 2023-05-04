@@ -1,6 +1,6 @@
 use crate::{
     contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
-    toggle_screen_sharing, ToggleScreenSharing,
+    toggle_screen_sharing, BranchesButton, ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
@@ -48,6 +48,7 @@ pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     user_menu: ViewHandle<ContextMenu>,
+    branches: ViewHandle<BranchesButton>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -68,17 +69,14 @@ impl View for CollabTitlebarItem {
         };
 
         let project = self.project.read(cx);
-        let project_title = self.prepare_title(&project, cx);
         let theme = cx.global::<Settings>().theme.clone();
-
         let mut left_container = Flex::row();
         let mut right_container = Flex::row().align_children_center();
 
-        left_container.add_child(self.render_title_with_information(
-            project,
-            &project_title,
-            theme.clone(),
-        ));
+        let project_title = self.collect_title_root_names(&project, cx);
+        left_container.add_child(self.render_title_root_names(&project_title, theme.clone()));
+
+        left_container.add_child(ChildView::new(&self.branches.clone().into_any(), cx));
 
         let user = self.user_store.read(cx).current_user();
         let peer_id = self.client.peer_id();
@@ -165,15 +163,16 @@ impl CollabTitlebarItem {
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
+            branches: cx.add_view(|cx| BranchesButton::new(workspace_handle.to_owned(), cx)),
             _subscriptions: subscriptions,
         }
     }
 
-    fn decorate_with_git_branch(
+    fn root_name_with_branch(
         &self,
         worktree: &ModelHandle<Worktree>,
         cx: &ViewContext<Self>,
-    ) -> String {
+    ) -> (String, String) {
         let name = worktree.read(cx).root_name();
         let branch = worktree
             .read(cx)
@@ -182,14 +181,23 @@ impl CollabTitlebarItem {
             .and_then(|entry| entry.branch())
             .map(|branch| branch.to_string())
             .unwrap_or_else(|| "".to_owned());
-        format!("{} / {}", name, branch)
+        (name.to_owned(), branch)
     }
 
-    fn prepare_title(&self, project: &Project, cx: &ViewContext<Self>) -> String {
-        let decorated_root_names: Vec<String> = project
+    fn collect_root_names_with_branches(
+        &self,
+        project: &Project,
+        cx: &ViewContext<Self>,
+    ) -> Vec<(String, String)> {
+        let root_names_with_branches: Vec<(String, String)> = project
             .visible_worktrees(cx)
-            .map(|worktree| self.decorate_with_git_branch(&worktree, cx))
+            .map(|worktree| self.root_name_with_branch(&worktree, cx))
             .collect();
+        root_names_with_branches
+    }
+
+    fn collect_title_root_names(&self, project: &Project, cx: &ViewContext<Self>) -> String {
+        let decorated_root_names: Vec<&str> = project.worktree_root_names(cx).collect();
         if decorated_root_names.is_empty() {
             "empty project".to_owned()
         } else {
@@ -197,12 +205,7 @@ impl CollabTitlebarItem {
         }
     }
 
-    fn render_title_with_information(
-        &self,
-        _project: &Project,
-        title: &str,
-        theme: Arc<Theme>,
-    ) -> AnyElement<Self> {
+    fn render_title_root_names(&self, title: &str, theme: Arc<Theme>) -> AnyElement<Self> {
         let text_style = theme.workspace.titlebar.title.clone();
         let item_spacing = theme.workspace.titlebar.item_spacing;
 
