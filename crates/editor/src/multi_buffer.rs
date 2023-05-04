@@ -43,7 +43,7 @@ pub struct ExcerptId(usize);
 
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
-    buffers: RefCell<HashMap<usize, BufferState>>,
+    buffers: RefCell<HashMap<u64, BufferState>>,
     next_excerpt_id: usize,
     subscriptions: Topic,
     singleton: bool,
@@ -85,7 +85,7 @@ struct History {
 #[derive(Clone)]
 struct Transaction {
     id: TransactionId,
-    buffer_transactions: HashMap<usize, text::TransactionId>,
+    buffer_transactions: HashMap<u64, text::TransactionId>,
     first_edit_at: Instant,
     last_edit_at: Instant,
     suppress_grouping: bool,
@@ -145,7 +145,7 @@ pub struct ExcerptBoundary {
 struct Excerpt {
     id: ExcerptId,
     locator: Locator,
-    buffer_id: usize,
+    buffer_id: u64,
     buffer: BufferSnapshot,
     range: ExcerptRange<text::Anchor>,
     max_buffer_row: u32,
@@ -337,7 +337,7 @@ impl MultiBuffer {
         offset: T,
         theme: Option<&SyntaxTheme>,
         cx: &AppContext,
-    ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
+    ) -> Option<(u64, Vec<OutlineItem<Anchor>>)> {
         self.read(cx).symbols_containing(offset, theme)
     }
 
@@ -394,7 +394,7 @@ impl MultiBuffer {
             is_insertion: bool,
             original_indent_column: u32,
         }
-        let mut buffer_edits: HashMap<usize, Vec<BufferEdit>> = Default::default();
+        let mut buffer_edits: HashMap<u64, Vec<BufferEdit>> = Default::default();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         for (ix, (range, new_text)) in edits.enumerate() {
             let new_text: Arc<str> = new_text.into();
@@ -593,7 +593,7 @@ impl MultiBuffer {
             if let Some(transaction_id) =
                 buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
             {
-                buffer_transactions.insert(buffer.id(), transaction_id);
+                buffer_transactions.insert(buffer.read(cx).remote_id(), transaction_id);
             }
         }
 
@@ -614,12 +614,12 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T)
+    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &mut ModelContext<Self>)
     where
         T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
     {
         self.history
-            .push_transaction(buffer_transactions, Instant::now());
+            .push_transaction(buffer_transactions, Instant::now(), cx);
         self.history.finalize_last_transaction();
     }
 
@@ -644,7 +644,7 @@ impl MultiBuffer {
         cursor_shape: CursorShape,
         cx: &mut ModelContext<Self>,
     ) {
-        let mut selections_by_buffer: HashMap<usize, Vec<Selection<text::Anchor>>> =
+        let mut selections_by_buffer: HashMap<u64, Vec<Selection<text::Anchor>>> =
             Default::default();
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
@@ -785,8 +785,8 @@ impl MultiBuffer {
         let (mut tx, rx) = mpsc::channel(256);
         let task = cx.spawn(|this, mut cx| async move {
             for (buffer, ranges) in excerpts {
-                let buffer_id = buffer.id();
-                let buffer_snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                let (buffer_id, buffer_snapshot) =
+                    buffer.read_with(&cx, |buffer, _| (buffer.remote_id(), buffer.snapshot()));
 
                 let mut excerpt_ranges = Vec::new();
                 let mut range_counts = Vec::new();
@@ -855,7 +855,7 @@ impl MultiBuffer {
     where
         O: text::ToPoint + text::ToOffset,
     {
-        let buffer_id = buffer.id();
+        let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let (excerpt_ranges, range_counts) =
             build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
@@ -924,7 +924,7 @@ impl MultiBuffer {
 
         self.sync(cx);
 
-        let buffer_id = buffer.id();
+        let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let mut buffers = self.buffers.borrow_mut();
@@ -1051,7 +1051,7 @@ impl MultiBuffer {
         let buffers = self.buffers.borrow();
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
         for locator in buffers
-            .get(&buffer.id())
+            .get(&buffer.read(cx).remote_id())
             .map(|state| &state.excerpts)
             .into_iter()
             .flatten()
@@ -1321,7 +1321,7 @@ impl MultiBuffer {
             .collect()
     }
 
-    pub fn buffer(&self, buffer_id: usize) -> Option<ModelHandle<Buffer>> {
+    pub fn buffer(&self, buffer_id: u64) -> Option<ModelHandle<Buffer>> {
         self.buffers
             .borrow()
             .get(&buffer_id)
@@ -1478,8 +1478,8 @@ impl MultiBuffer {
         for (locator, buffer, buffer_edited) in excerpts_to_edit {
             new_excerpts.push_tree(cursor.slice(&Some(locator), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
-            let buffer_id = buffer.id();
             let buffer = buffer.read(cx);
+            let buffer_id = buffer.remote_id();
 
             let mut new_excerpt;
             if buffer_edited {
@@ -1605,11 +1605,11 @@ impl MultiBuffer {
                 let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
                     buffers.push(cx.add_model(|cx| Buffer::new(0, text, cx)));
-                    let buffer = buffers.last().unwrap();
+                    let buffer = buffers.last().unwrap().read(cx);
                     log::info!(
                         "Creating new buffer {} with text: {:?}",
-                        buffer.id(),
-                        buffer.read(cx).text()
+                        buffer.remote_id(),
+                        buffer.text()
                     );
                     buffers.last().unwrap().clone()
                 } else {
@@ -1637,7 +1637,7 @@ impl MultiBuffer {
                     .collect::<Vec<_>>();
                 log::info!(
                     "Inserting excerpts from buffer {} and ranges {:?}: {:?}",
-                    buffer_handle.id(),
+                    buffer_handle.read(cx).remote_id(),
                     ranges.iter().map(|r| &r.context).collect::<Vec<_>>(),
                     ranges
                         .iter()
@@ -1830,7 +1830,7 @@ impl MultiBufferSnapshot {
         (start..end, word_kind)
     }
 
-    pub fn as_singleton(&self) -> Option<(&ExcerptId, usize, &BufferSnapshot)> {
+    pub fn as_singleton(&self) -> Option<(&ExcerptId, u64, &BufferSnapshot)> {
         if self.singleton {
             self.excerpts
                 .iter()
@@ -2938,7 +2938,7 @@ impl MultiBufferSnapshot {
         &self,
         offset: T,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<(usize, Vec<OutlineItem<Anchor>>)> {
+    ) -> Option<(u64, Vec<OutlineItem<Anchor>>)> {
         let anchor = self.anchor_before(offset);
         let excerpt_id = anchor.excerpt_id();
         let excerpt = self.excerpt(excerpt_id)?;
@@ -2978,7 +2978,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn buffer_id_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<usize> {
+    pub fn buffer_id_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<u64> {
         Some(self.excerpt(excerpt_id)?.buffer_id)
     }
 
@@ -3116,7 +3116,7 @@ impl History {
     fn end_transaction(
         &mut self,
         now: Instant,
-        buffer_transactions: HashMap<usize, TransactionId>,
+        buffer_transactions: HashMap<u64, TransactionId>,
     ) -> bool {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
@@ -3141,8 +3141,12 @@ impl History {
         }
     }
 
-    fn push_transaction<'a, T>(&mut self, buffer_transactions: T, now: Instant)
-    where
+    fn push_transaction<'a, T>(
+        &mut self,
+        buffer_transactions: T,
+        now: Instant,
+        cx: &mut ModelContext<MultiBuffer>,
+    ) where
         T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
     {
         assert_eq!(self.transaction_depth, 0);
@@ -3150,7 +3154,7 @@ impl History {
             id: self.next_transaction_id.tick(),
             buffer_transactions: buffer_transactions
                 .into_iter()
-                .map(|(buffer, transaction)| (buffer.id(), transaction.id))
+                .map(|(buffer, transaction)| (buffer.read(cx).remote_id(), transaction.id))
                 .collect(),
             first_edit_at: now,
             last_edit_at: now,
@@ -3247,7 +3251,7 @@ impl Excerpt {
     fn new(
         id: ExcerptId,
         locator: Locator,
-        buffer_id: usize,
+        buffer_id: u64,
         buffer: BufferSnapshot,
         range: ExcerptRange<text::Anchor>,
         has_trailing_newline: bool,
@@ -4715,7 +4719,7 @@ mod tests {
                         "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
                         excerpt_ix,
                         expected_excerpts.len(),
-                        buffer_handle.id(),
+                        buffer_handle.read(cx).remote_id(),
                         buffer.text(),
                         start_ix..end_ix,
                         &buffer.text()[start_ix..end_ix]
@@ -4801,8 +4805,8 @@ mod tests {
 
             let mut excerpt_starts = excerpt_starts.into_iter();
             for (buffer, range) in &expected_excerpts {
-                let buffer_id = buffer.id();
                 let buffer = buffer.read(cx);
+                let buffer_id = buffer.remote_id();
                 let buffer_range = range.to_offset(buffer);
                 let buffer_start_point = buffer.offset_to_point(buffer_range.start);
                 let buffer_start_point_utf16 =

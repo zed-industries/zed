@@ -109,6 +109,7 @@ pub struct Project {
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
+    next_buffer_id: u64,
     opened_buffer: (watch::Sender<()>, watch::Receiver<()>),
     shared_buffers: HashMap<proto::PeerId, HashSet<u64>>,
     #[allow(clippy::type_complexity)]
@@ -124,7 +125,7 @@ pub struct Project {
     /// Used for re-issuing buffer requests when peers temporarily disconnect
     incomplete_remote_buffers: HashMap<u64, Option<ModelHandle<Buffer>>>,
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
-    buffers_being_formatted: HashSet<usize>,
+    buffers_being_formatted: HashSet<u64>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
@@ -441,6 +442,7 @@ impl Project {
                 worktrees: Default::default(),
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
+                next_buffer_id: 0,
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -509,6 +511,7 @@ impl Project {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
                 loading_buffers_by_path: Default::default(),
+                next_buffer_id: 0,
                 opened_buffer: watch::channel(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -1401,9 +1404,10 @@ impl Project {
         worktree: &ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
+        let buffer_id = post_inc(&mut self.next_buffer_id);
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(path, cx)
+            worktree.load_buffer(buffer_id, path, cx)
         });
         cx.spawn(|this, mut cx| async move {
             let buffer = load_buffer.await?;
@@ -3200,9 +3204,11 @@ impl Project {
             cx.spawn(|this, mut cx| async move {
                 // Do not allow multiple concurrent formatting requests for the
                 // same buffer.
-                this.update(&mut cx, |this, _| {
-                    buffers_with_paths_and_servers
-                        .retain(|(buffer, _, _)| this.buffers_being_formatted.insert(buffer.id()));
+                this.update(&mut cx, |this, cx| {
+                    buffers_with_paths_and_servers.retain(|(buffer, _, _)| {
+                        this.buffers_being_formatted
+                            .insert(buffer.read(cx).remote_id())
+                    });
                 });
 
                 let _cleanup = defer({
@@ -3210,9 +3216,10 @@ impl Project {
                     let mut cx = cx.clone();
                     let buffers = &buffers_with_paths_and_servers;
                     move || {
-                        this.update(&mut cx, |this, _| {
+                        this.update(&mut cx, |this, cx| {
                             for (buffer, _, _) in buffers {
-                                this.buffers_being_formatted.remove(&buffer.id());
+                                this.buffers_being_formatted
+                                    .remove(&buffer.read(cx).remote_id());
                             }
                         });
                     }

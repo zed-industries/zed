@@ -126,7 +126,7 @@ impl CopilotServer {
 struct RunningCopilotServer {
     lsp: Arc<LanguageServer>,
     sign_in_status: SignInStatus,
-    registered_buffers: HashMap<usize, RegisteredBuffer>,
+    registered_buffers: HashMap<u64, RegisteredBuffer>,
 }
 
 #[derive(Clone, Debug)]
@@ -162,7 +162,7 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    id: usize,
+    id: u64,
     uri: lsp::Url,
     language_id: String,
     snapshot: BufferSnapshot,
@@ -267,7 +267,7 @@ pub struct Copilot {
     http: Arc<dyn HttpClient>,
     node_runtime: Arc<NodeRuntime>,
     server: CopilotServer,
-    buffers: HashMap<usize, WeakModelHandle<Buffer>>,
+    buffers: HashMap<u64, WeakModelHandle<Buffer>>,
 }
 
 impl Entity for Copilot {
@@ -582,7 +582,7 @@ impl Copilot {
     }
 
     pub fn register_buffer(&mut self, buffer: &ModelHandle<Buffer>, cx: &mut ModelContext<Self>) {
-        let buffer_id = buffer.id();
+        let buffer_id = buffer.read(cx).remote_id();
         self.buffers.insert(buffer_id, buffer.downgrade());
 
         if let CopilotServer::Running(RunningCopilotServer {
@@ -596,7 +596,8 @@ impl Copilot {
                 return;
             }
 
-            registered_buffers.entry(buffer.id()).or_insert_with(|| {
+            let buffer_id = buffer.read(cx).remote_id();
+            registered_buffers.entry(buffer_id).or_insert_with(|| {
                 let uri: lsp::Url = uri_for_buffer(buffer, cx);
                 let language_id = id_for_language(buffer.read(cx).language());
                 let snapshot = buffer.read(cx).snapshot();
@@ -641,7 +642,8 @@ impl Copilot {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Ok(server) = self.server.as_running() {
-            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer.id()) {
+            let buffer_id = buffer.read(cx).remote_id();
+            if let Some(registered_buffer) = server.registered_buffers.get_mut(&buffer_id) {
                 match event {
                     language::Event::Edited => {
                         let _ = registered_buffer.report_changes(&buffer, cx);
@@ -695,7 +697,7 @@ impl Copilot {
         Ok(())
     }
 
-    fn unregister_buffer(&mut self, buffer_id: usize) {
+    fn unregister_buffer(&mut self, buffer_id: u64) {
         if let Ok(server) = self.server.as_running() {
             if let Some(buffer) = server.registered_buffers.remove(&buffer_id) {
                 server
@@ -800,7 +802,8 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
         let lsp = server.lsp.clone();
-        let registered_buffer = server.registered_buffers.get_mut(&buffer.id()).unwrap();
+        let buffer_id = buffer.read(cx).remote_id();
+        let registered_buffer = server.registered_buffers.get_mut(&buffer_id).unwrap();
         let snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
@@ -919,7 +922,9 @@ fn uri_for_buffer(buffer: &ModelHandle<Buffer>, cx: &AppContext) -> lsp::Url {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
         lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
     } else {
-        format!("buffer://{}", buffer.id()).parse().unwrap()
+        format!("buffer://{}", buffer.read(cx).remote_id())
+            .parse()
+            .unwrap()
     }
 }
 

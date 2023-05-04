@@ -8,7 +8,7 @@ use sum_tree::Bias;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    pub(crate) buffer_id: Option<usize>,
+    pub(crate) buffer_id: Option<u64>,
     pub(crate) excerpt_id: ExcerptId,
     pub(crate) text_anchor: text::Anchor,
 }

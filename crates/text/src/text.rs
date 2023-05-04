@@ -90,8 +90,7 @@ impl HistoryEntry {
 }
 
 struct History {
-    // TODO: Turn this into a String or Rope, maybe.
-    base_text: Arc<str>,
+    base_text: Rope,
     operations: TreeMap<clock::Local, Operation>,
     insertion_slices: HashMap<clock::Local, Vec<InsertionSlice>>,
     undo_stack: Vec<HistoryEntry>,
@@ -107,7 +106,7 @@ struct InsertionSlice {
 }
 
 impl History {
-    pub fn new(base_text: Arc<str>) -> Self {
+    pub fn new(base_text: Rope) -> Self {
         Self {
             base_text,
             operations: Default::default(),
@@ -470,7 +469,7 @@ impl Buffer {
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
 
-        let history = History::new(base_text.into());
+        let history = History::new(Rope::from(base_text.as_ref()));
         let mut fragments = SumTree::new();
         let mut insertions = SumTree::new();
 
@@ -478,7 +477,7 @@ impl Buffer {
         let mut lamport_clock = clock::Lamport::new(replica_id);
         let mut version = clock::Global::new();
 
-        let visible_text = Rope::from(history.base_text.as_ref());
+        let visible_text = history.base_text.clone();
         if !visible_text.is_empty() {
             let insertion_timestamp = InsertionTimestamp {
                 replica_id: 0,
@@ -1165,7 +1164,7 @@ impl Buffer {
         self.history.group_until(transaction_id);
     }
 
-    pub fn base_text(&self) -> &Arc<str> {
+    pub fn base_text(&self) -> &Rope {
         &self.history.base_text
     }
 

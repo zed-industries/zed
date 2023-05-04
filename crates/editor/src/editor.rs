@@ -2594,7 +2594,7 @@ impl Editor {
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
         let newest_selection = self.selections.newest_anchor();
-        if newest_selection.start.buffer_id != Some(buffer_handle.id()) {
+        if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
             return None;
         }
 
@@ -2802,7 +2802,7 @@ impl Editor {
                     ),
                 );
             }
-            multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)));
+            multibuffer.push_transaction(entries.iter().map(|(b, t)| (b, t)), cx);
             multibuffer
         });
 
@@ -5764,7 +5764,7 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         // If there are multiple definitions, open them in a multibuffer
-        locations.sort_by_key(|location| location.buffer.id());
+        locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
         let mut locations = locations.into_iter().peekable();
         let mut ranges_to_highlight = Vec::new();
 
@@ -6059,7 +6059,7 @@ impl Editor {
             buffer.update(&mut cx, |buffer, cx| {
                 if let Some(transaction) = transaction {
                     if !buffer.is_singleton() {
-                        buffer.push_transaction(&transaction.0);
+                        buffer.push_transaction(&transaction.0, cx);
                     }
                 }
 

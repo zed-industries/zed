@@ -3222,14 +3222,18 @@ async fn test_canceling_buffer_opening(
         .unwrap();
 
     // Open a buffer as client B but cancel after a random amount of time.
-    let buffer_b = project_b.update(cx_b, |p, cx| p.open_buffer_by_id(buffer_a.id() as u64, cx));
+    let buffer_b = project_b.update(cx_b, |p, cx| {
+        p.open_buffer_by_id(buffer_a.read_with(cx_a, |a, _| a.remote_id()), cx)
+    });
     deterministic.simulate_random_delay().await;
     drop(buffer_b);
 
     // Try opening the same buffer again as client B, and ensure we can
     // still do it despite the cancellation above.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer_by_id(buffer_a.id() as u64, cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer_by_id(buffer_a.read_with(cx_a, |a, _| a.remote_id()), cx)
+        })
         .await
         .unwrap();
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "abc"));
