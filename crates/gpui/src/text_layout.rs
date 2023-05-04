@@ -11,7 +11,6 @@ use crate::{
     window::WindowContext,
     SceneBuilder,
 };
-use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -179,7 +178,6 @@ impl<'a> Hash for CacheKeyRef<'a> {
 pub struct Line {
     layout: Arc<LineLayout>,
     style_runs: SmallVec<[StyleRun; 32]>,
-    pub invisibles: SmallVec<[Invisible; 32]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -215,8 +213,8 @@ pub struct Glyph {
 
 #[derive(Debug, Clone)]
 pub enum Invisible {
-    Tab { range: std::ops::Range<usize> },
-    Whitespace { range: std::ops::Range<usize> },
+    Tab { line_start_offset: usize },
+    Whitespace { line_range: std::ops::Range<usize> },
 }
 
 impl Line {
@@ -229,11 +227,7 @@ impl Line {
                 underline: style.underline,
             });
         }
-        Self {
-            layout,
-            style_runs,
-            invisibles: SmallVec::new(),
-        }
+        Self { layout, style_runs }
     }
 
     pub fn runs(&self) -> &[Run] {
@@ -310,16 +304,6 @@ impl Line {
         let mut color = Color::black();
         let mut underline = None;
 
-        let tab_ranges = self
-            .invisibles
-            .iter()
-            .filter_map(|invisible| match invisible {
-                Invisible::Tab { range } => Some(range),
-                Invisible::Whitespace { .. } => None,
-            })
-            .sorted_by(|tab_range_1, tab_range_2| tab_range_1.start.cmp(&tab_range_2.start))
-            .collect::<Vec<_>>();
-
         for run in &self.layout.runs {
             let max_glyph_width = cx
                 .font_cache
@@ -386,19 +370,10 @@ impl Line {
                         origin: glyph_origin,
                     });
                 } else {
-                    let id = if tab_ranges.iter().any(|tab_range| {
-                        tab_range.start <= glyph.index && glyph.index < tab_range.end
-                    }) {
-                        // TODO kb get a proper (cached) glyph
-                        glyph.id + 100
-                    } else {
-                        glyph.id
-                    };
-
                     scene.push_glyph(scene::Glyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
-                        id,
+                        id: glyph.id,
                         origin: glyph_origin,
                         color,
                     });
