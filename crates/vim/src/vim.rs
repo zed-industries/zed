@@ -309,7 +309,7 @@ impl Vim {
                 editor.set_input_enabled(!state.vim_controlled());
                 editor.selections.line_mode = matches!(state.mode, Mode::Visual { line: true });
                 let context_layer = state.keymap_context_layer();
-                editor.set_keymap_context_layer::<Self>(context_layer);
+                editor.set_keymap_context_layer::<Self>(context_layer, cx);
             } else {
                 Self::unhook_vim_settings(editor, cx);
             }
@@ -321,7 +321,7 @@ impl Vim {
         editor.set_clip_at_line_ends(false, cx);
         editor.set_input_enabled(true);
         editor.selections.line_mode = false;
-        editor.remove_keymap_context_layer::<Self>();
+        editor.remove_keymap_context_layer::<Self>(cx);
     }
 }
 
