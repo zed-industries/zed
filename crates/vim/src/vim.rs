@@ -84,7 +84,12 @@ pub fn init(cx: &mut AppContext) {
         Vim::active_editor_input_ignored("\n".into(), cx)
     });
 
-    // Any time settings change, update vim mode to match.
+    // Any time settings change, update vim mode to match. The Vim struct
+    // will be initialized as disabled by default, so we filter its commands
+    // out when starting up.
+    cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
+        filter.filtered_namespaces.insert("vim");
+    });
     cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
         vim.set_enabled(cx.global::<Settings>().vim_mode, cx)
     });
