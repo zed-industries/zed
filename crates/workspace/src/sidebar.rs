@@ -1,7 +1,7 @@
-use crate::StatusItemView;
+use crate::{StatusItemView, Workspace};
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
-    AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WindowContext,
+    AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -84,6 +84,7 @@ struct Item {
 
 pub struct SidebarButtons {
     sidebar: ViewHandle<Sidebar>,
+    workspace: WeakViewHandle<Workspace>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -210,9 +211,13 @@ impl View for Sidebar {
 }
 
 impl SidebarButtons {
-    pub fn new(sidebar: ViewHandle<Sidebar>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        sidebar: ViewHandle<Sidebar>,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
-        Self { sidebar }
+        Self { sidebar, workspace }
     }
 }
 
@@ -279,9 +284,18 @@ impl View for SidebarButtons {
                             .with_style(style.container)
                     })
                     .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, this, cx| {
-                        this.sidebar
-                            .update(cx, |sidebar, cx| sidebar.toggle_item(ix, cx));
+                    .on_click(MouseButton::Left, {
+                        let action = action.clone();
+                        move |_, this, cx| {
+                            if let Some(workspace) = this.workspace.upgrade(cx) {
+                                let action = action.clone();
+                                cx.window_context().defer(move |cx| {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.toggle_sidebar_item(&action, cx)
+                                    });
+                                });
+                            }
+                        }
                     })
                     .with_tooltip::<Self>(
                         ix,
