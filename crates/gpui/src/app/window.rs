@@ -457,7 +457,7 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    pub fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
+    pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
         let window_id = self.window_id;
@@ -793,7 +793,7 @@ impl<'a> WindowContext<'a> {
         any_event_handled
     }
 
-    pub fn dispatch_key_down(&mut self, event: &KeyDownEvent) -> bool {
+    pub(crate) fn dispatch_key_down(&mut self, event: &KeyDownEvent) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
@@ -812,7 +812,7 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    pub fn dispatch_key_up(&mut self, event: &KeyUpEvent) -> bool {
+    pub(crate) fn dispatch_key_up(&mut self, event: &KeyUpEvent) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
@@ -831,7 +831,7 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    pub fn dispatch_modifiers_changed(&mut self, event: &ModifiersChangedEvent) -> bool {
+    pub(crate) fn dispatch_modifiers_changed(&mut self, event: &ModifiersChangedEvent) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
