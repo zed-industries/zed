@@ -1,9 +1,9 @@
 use std::cmp;
 
-use gpui::{text_layout, ViewContext};
+use gpui::ViewContext;
 use language::Point;
 
-use crate::{display_map::ToDisplayPoint, Editor, EditorMode};
+use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
 
 #[derive(PartialEq, Eq)]
 pub enum Autoscroll {
@@ -172,7 +172,7 @@ impl Editor {
         viewport_width: f32,
         scroll_width: f32,
         max_glyph_width: f32,
-        layouts: &[text_layout::Line],
+        layouts: &[LineWithInvisibles],
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -194,10 +194,13 @@ impl Editor {
                     let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
                     target_left = target_left.min(
                         layouts[(head.row() - start_row) as usize]
+                            .line
                             .x_for_index(start_column as usize),
                     );
                     target_right = target_right.max(
-                        layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
+                        layouts[(head.row() - start_row) as usize]
+                            .line
+                            .x_for_index(end_column as usize)
                             + max_glyph_width,
                     );
                 }

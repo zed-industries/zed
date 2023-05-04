@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{ToJson, Value},
-    text_layout::{Invisible, Line, RunStyle, ShapedBoundary},
+    text_layout::{Line, RunStyle, ShapedBoundary},
     AppContext, Element, FontCache, LayoutContext, SceneBuilder, SizeConstraint, TextLayoutCache,
     View, ViewContext,
 };
@@ -114,11 +114,7 @@ impl<V: View> Element<V> for Text {
             } else {
                 result = None;
             }
-            result.map(|(chunk, style)| HighlightedChunk {
-                chunk,
-                style,
-                is_tab: false,
-            })
+            result
         });
 
         // Perform shaping on these highlighted chunks
@@ -129,7 +125,6 @@ impl<V: View> Element<V> for Text {
             &cx.font_cache,
             usize::MAX,
             self.text.matches('\n').count() + 1,
-            false,
         );
 
         // If line wrapping is enabled, wrap each of the shaped lines.
@@ -342,45 +337,24 @@ impl<V: View> Element<V> for Text {
     }
 }
 
-pub struct HighlightedChunk<'a> {
-    pub chunk: &'a str,
-    pub style: Option<HighlightStyle>,
-    pub is_tab: bool,
-}
-
-impl<'a> HighlightedChunk<'a> {
-    fn plain_str(str_symbols: &'a str) -> Self {
-        Self {
-            chunk: str_symbols,
-            style: None,
-            is_tab: str_symbols == "\t",
-        }
-    }
-}
-
 /// Perform text layout on a series of highlighted chunks of text.
-pub fn layout_highlighted_chunks<'a>(
-    chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+fn layout_highlighted_chunks<'a>(
+    chunks: impl Iterator<Item = (&'a str, Option<HighlightStyle>)>,
     text_style: &TextStyle,
     text_layout_cache: &TextLayoutCache,
     font_cache: &Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
-    show_invisibles: bool,
 ) -> Vec<Line> {
     let mut layouts = Vec::with_capacity(max_line_count);
     let mut line = String::new();
-    let mut invisibles = Vec::new();
     let mut styles = Vec::new();
     let mut row = 0;
     let mut line_exceeded_max_len = false;
-    for highlighted_chunk in chunks.chain(std::iter::once(HighlightedChunk::plain_str("\n"))) {
-        for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
+    for (chunk, highlight_style) in chunks.chain([("\n", Default::default())]) {
+        for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
             if ix > 0 {
-                let mut laid_out_line =
-                    text_layout_cache.layout_str(&line, text_style.font_size, &styles);
-                laid_out_line.invisibles.extend(invisibles.drain(..));
-                layouts.push(laid_out_line);
+                layouts.push(text_layout_cache.layout_str(&line, text_style.font_size, &styles));
                 line.clear();
                 styles.clear();
                 row += 1;
@@ -391,7 +365,7 @@ pub fn layout_highlighted_chunks<'a>(
             }
 
             if !line_chunk.is_empty() && !line_exceeded_max_len {
-                let text_style = if let Some(style) = highlighted_chunk.style {
+                let text_style = if let Some(style) = highlight_style {
                     text_style
                         .clone()
                         .highlight(style, font_cache)
@@ -410,6 +384,7 @@ pub fn layout_highlighted_chunks<'a>(
                     line_exceeded_max_len = true;
                 }
 
+                line.push_str(line_chunk);
                 styles.push((
                     line_chunk.len(),
                     RunStyle {
@@ -418,12 +393,6 @@ pub fn layout_highlighted_chunks<'a>(
                         underline: text_style.underline,
                     },
                 ));
-                if show_invisibles && highlighted_chunk.is_tab {
-                    invisibles.push(Invisible::Tab {
-                        range: line.len()..line.len() + line_chunk.len(),
-                    });
-                }
-                line.push_str(line_chunk);
             }
         }
     }

@@ -21,7 +21,7 @@ use git::diff::DiffHunkStatus;
 use gpui::{
     color::Color,
     elements::*,
-    fonts::{HighlightStyle, Underline},
+    fonts::{HighlightStyle, TextStyle, Underline},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -29,17 +29,18 @@ use gpui::{
     },
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
-    text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AnyElement, Axis, Border, CursorRegion, Element, EventContext, LayoutContext, MouseRegion,
-    Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
+    text_layout::{self, Invisible, Line, RunStyle, TextLayoutCache},
+    AnyElement, Axis, Border, CursorRegion, Element, EventContext, FontCache, LayoutContext,
+    MouseRegion, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
 use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
-use settings::{GitGutter, Settings};
+use settings::{GitGutter, Settings, ShowInvisibles};
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
     iter,
@@ -808,7 +809,8 @@ impl EditorElement {
                         .contains(&cursor_position.row())
                     {
                         let cursor_row_layout = &layout.position_map.line_layouts
-                            [(cursor_position.row() - start_row) as usize];
+                            [(cursor_position.row() - start_row) as usize]
+                            .line;
                         let cursor_column = cursor_position.column() as usize;
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
@@ -863,9 +865,9 @@ impl EditorElement {
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
             // Draw glyphs
-            for (ix, line) in layout.position_map.line_layouts.iter().enumerate() {
+            for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;
-                line.paint(
+                line_with_invisibles.line.paint(
                     scene,
                     content_origin
                         + vec2f(
@@ -876,6 +878,53 @@ impl EditorElement {
                     layout.position_map.line_height,
                     cx,
                 );
+
+                let settings = cx.global::<Settings>();
+                match settings
+                    .editor_overrides
+                    .show_invisibles
+                    .or(settings.editor_defaults.show_invisibles)
+                    .unwrap_or_default()
+                {
+                    ShowInvisibles::None => {}
+                    ShowInvisibles::All => {
+                        for invisible in &line_with_invisibles.invisibles {
+                            match invisible {
+                                Invisible::Tab { line_start_offset } => {
+                                    // TODO kb cache, deduplicate
+                                    let x_offset =
+                                        line_with_invisibles.line.x_for_index(*line_start_offset);
+                                    let font_size = line_with_invisibles.line.font_size();
+                                    let max_size = vec2f(font_size, font_size);
+                                    let origin = content_origin
+                                        + vec2f(
+                                            -scroll_left + x_offset,
+                                            row as f32 * layout.position_map.line_height
+                                                - scroll_top,
+                                        );
+
+                                    let mut test_svg = Svg::new("icons/arrow_right_16.svg")
+                                        .with_color(Color::red());
+                                    let (_, mut layout_state) = test_svg.layout(
+                                        SizeConstraint::new(origin, max_size),
+                                        editor,
+                                        cx,
+                                    );
+                                    test_svg.paint(
+                                        scene,
+                                        RectF::new(origin, max_size),
+                                        visible_bounds,
+                                        &mut layout_state,
+                                        editor,
+                                        cx,
+                                    );
+                                }
+                                // TODO kb draw whitespaces too
+                                Invisible::Whitespace { .. } => {}
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -888,7 +937,7 @@ impl EditorElement {
         if let Some((position, context_menu)) = layout.context_menu.as_mut() {
             scene.push_stacking_context(None, None);
             let cursor_row_layout =
-                &layout.position_map.line_layouts[(position.row() - start_row) as usize];
+                &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
             let y = (position.row() + 1) as f32 * layout.position_map.line_height - scroll_top;
             let mut list_origin = content_origin + vec2f(x, y);
@@ -921,7 +970,7 @@ impl EditorElement {
 
             // This is safe because we check on layout whether the required row is available
             let hovered_row_layout =
-                &layout.position_map.line_layouts[(position.row() - start_row) as usize];
+                &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
 
             // Minimum required size: Take the first popover, and add 1.5 times the minimum popover
             // height. This is the size we will use to decide whether to render popovers above or below
@@ -1118,7 +1167,7 @@ impl EditorElement {
                     .into_iter()
                     .map(|row| {
                         let line_layout =
-                            &layout.position_map.line_layouts[(row - start_row) as usize];
+                            &layout.position_map.line_layouts[(row - start_row) as usize].line;
                         HighlightedRangeLine {
                             start_x: if row == range.start.row() {
                                 content_origin.x()
@@ -1282,7 +1331,7 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
-    ) -> Vec<text_layout::Line> {
+    ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
             return Vec::new();
         }
@@ -1316,6 +1365,10 @@ impl EditorElement {
                             },
                         )],
                     )
+                })
+                .map(|line| LineWithInvisibles {
+                    line,
+                    invisibles: Vec::new(),
                 })
                 .collect()
         } else {
@@ -1366,13 +1419,6 @@ impl EditorElement {
                     }
                 });
 
-            let settings = cx.global::<Settings>();
-            let show_invisibles = settings
-                .editor_overrides
-                .show_invisibles
-                .or(settings.editor_defaults.show_invisibles)
-                .unwrap_or_default()
-                == settings::ShowInvisibles::All;
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
@@ -1380,7 +1426,6 @@ impl EditorElement {
                 cx.font_cache(),
                 MAX_LINE_LEN,
                 rows.len() as usize,
-                show_invisibles,
             )
         }
     }
@@ -1398,7 +1443,7 @@ impl EditorElement {
         text_x: f32,
         line_height: f32,
         style: &EditorStyle,
-        line_layouts: &[text_layout::Line],
+        line_layouts: &[LineWithInvisibles],
         include_root: bool,
         editor: &mut Editor,
         cx: &mut LayoutContext<Editor>,
@@ -1421,6 +1466,7 @@ impl EditorElement {
                     let anchor_x = text_x
                         + if rows.contains(&align_to.row()) {
                             line_layouts[(align_to.row() - rows.start) as usize]
+                                .line
                                 .x_for_index(align_to.column() as usize)
                         } else {
                             layout_line(align_to.row(), snapshot, style, cx.text_layout_cache())
@@ -1597,6 +1643,93 @@ impl EditorElement {
             blocks,
         )
     }
+}
+
+struct HighlightedChunk<'a> {
+    chunk: &'a str,
+    style: Option<HighlightStyle>,
+    is_tab: bool,
+}
+
+pub struct LineWithInvisibles {
+    pub line: Line,
+    invisibles: Vec<Invisible>,
+}
+
+fn layout_highlighted_chunks<'a>(
+    chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+    text_style: &TextStyle,
+    text_layout_cache: &TextLayoutCache,
+    font_cache: &Arc<FontCache>,
+    max_line_len: usize,
+    max_line_count: usize,
+) -> Vec<LineWithInvisibles> {
+    let mut layouts = Vec::with_capacity(max_line_count);
+    let mut line = String::new();
+    let mut invisibles = Vec::new();
+    let mut styles = Vec::new();
+    let mut row = 0;
+    let mut line_exceeded_max_len = false;
+    for highlighted_chunk in chunks.chain([HighlightedChunk {
+        chunk: "\n",
+        style: None,
+        is_tab: false,
+    }]) {
+        for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
+            if ix > 0 {
+                layouts.push(LineWithInvisibles {
+                    line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
+                    invisibles: invisibles.drain(..).collect(),
+                });
+
+                line.clear();
+                styles.clear();
+                row += 1;
+                line_exceeded_max_len = false;
+                if row == max_line_count {
+                    return layouts;
+                }
+            }
+
+            if !line_chunk.is_empty() && !line_exceeded_max_len {
+                let text_style = if let Some(style) = highlighted_chunk.style {
+                    text_style
+                        .clone()
+                        .highlight(style, font_cache)
+                        .map(Cow::Owned)
+                        .unwrap_or_else(|_| Cow::Borrowed(text_style))
+                } else {
+                    Cow::Borrowed(text_style)
+                };
+
+                if line.len() + line_chunk.len() > max_line_len {
+                    let mut chunk_len = max_line_len - line.len();
+                    while !line_chunk.is_char_boundary(chunk_len) {
+                        chunk_len -= 1;
+                    }
+                    line_chunk = &line_chunk[..chunk_len];
+                    line_exceeded_max_len = true;
+                }
+
+                styles.push((
+                    line_chunk.len(),
+                    RunStyle {
+                        font_id: text_style.font_id,
+                        color: text_style.color,
+                        underline: text_style.underline,
+                    },
+                ));
+                if highlighted_chunk.is_tab {
+                    invisibles.push(Invisible::Tab {
+                        line_start_offset: line.len(),
+                    });
+                }
+                line.push_str(line_chunk);
+            }
+        }
+    }
+
+    layouts
 }
 
 impl Element<Editor> for EditorElement {
@@ -1825,9 +1958,9 @@ impl Element<Editor> for EditorElement {
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
-        for line in &line_layouts {
-            if line.width() > max_visible_line_width {
-                max_visible_line_width = line.width();
+        for line_with_invisibles in &line_layouts {
+            if line_with_invisibles.line.width() > max_visible_line_width {
+                max_visible_line_width = line_with_invisibles.line.width();
             }
         }
 
@@ -2087,10 +2220,11 @@ impl Element<Editor> for EditorElement {
             return None;
         }
 
-        let line = layout
+        let line = &layout
             .position_map
             .line_layouts
-            .get((range_start.row() - start_row) as usize)?;
+            .get((range_start.row() - start_row) as usize)?
+            .line;
         let range_start_x = line.x_for_index(range_start.column() as usize);
         let range_start_y = range_start.row() as f32 * layout.position_map.line_height;
         Some(RectF::new(
@@ -2149,13 +2283,13 @@ pub struct LayoutState {
     fold_indicators: Vec<Option<AnyElement<Editor>>>,
 }
 
-pub struct PositionMap {
+struct PositionMap {
     size: Vector2F,
     line_height: f32,
     scroll_max: Vector2F,
     em_width: f32,
     em_advance: f32,
-    line_layouts: Vec<text_layout::Line>,
+    line_layouts: Vec<LineWithInvisibles>,
     snapshot: EditorSnapshot,
 }
 
@@ -2177,6 +2311,7 @@ impl PositionMap {
         let (column, x_overshoot) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y() as usize)
+            .map(|line_with_spaces| &line_with_spaces.line)
         {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, 0.0)
@@ -2445,7 +2580,7 @@ impl HighlightedRange {
     }
 }
 
-pub fn position_to_display_point(
+fn position_to_display_point(
     position: Vector2F,
     text_bounds: RectF,
     position_map: &PositionMap,
@@ -2462,7 +2597,7 @@ pub fn position_to_display_point(
     }
 }
 
-pub fn range_to_bounds(
+fn range_to_bounds(
     range: &Range<DisplayPoint>,
     content_origin: Vector2F,
     scroll_left: f32,
@@ -2490,7 +2625,7 @@ pub fn range_to_bounds(
         content_origin.y() + row_range.start as f32 * position_map.line_height - scroll_top;
 
     for (idx, row) in row_range.enumerate() {
-        let line_layout = &position_map.line_layouts[(row - start_row) as usize];
+        let line_layout = &position_map.line_layouts[(row - start_row) as usize].line;
 
         let start_x = if row == range.start.row() {
             content_origin.x() + line_layout.x_for_index(range.start.column() as usize)
