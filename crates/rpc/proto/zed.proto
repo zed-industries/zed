@@ -329,9 +329,10 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
-    uint64 scan_id = 6;
-    bool is_last_update = 7;
-    string abs_path = 8;
+    repeated RepositoryEntry updated_repositories = 6;
+    uint64 scan_id = 7;
+    bool is_last_update = 8;
+    string abs_path = 9;
 }
 
 message CreateProjectEntry {
@@ -977,6 +978,14 @@ message Entry {
     Timestamp mtime = 5;
     bool is_symlink = 6;
     bool is_ignored = 7;
+}
+
+message RepositoryEntry {
+    uint64 git_dir_entry_id = 1;
+    uint64 scan_id = 2;
+    bytes git_dir_path = 3;
+    bytes work_directory = 4;
+    optional string branch = 5;
 }
 
 message BufferState {

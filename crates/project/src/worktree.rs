@@ -43,6 +43,7 @@ use std::{
     future::Future,
     mem,
     ops::{Deref, DerefMut},
+    os::unix::prelude::OsStrExt,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -140,6 +141,18 @@ impl RepositoryEntry {
 
     pub fn work_directory(&self) -> Arc<Path> {
         self.work_directory.0.clone()
+    }
+}
+
+impl From<&RepositoryEntry> for proto::RepositoryEntry {
+    fn from(value: &RepositoryEntry) -> Self {
+        proto::RepositoryEntry {
+            git_dir_entry_id: value.git_dir_entry_id.to_proto(),
+            scan_id: value.scan_id as u64,
+            git_dir_path: value.git_dir_path.as_os_str().as_bytes().to_vec(),
+            work_directory: value.work_directory.0.as_os_str().as_bytes().to_vec(),
+            branch: value.branch.as_ref().map(|str| str.to_string()),
+        }
     }
 }
 
@@ -1542,6 +1555,7 @@ impl LocalSnapshot {
             removed_entries: Default::default(),
             scan_id: self.scan_id as u64,
             is_last_update: true,
+            updated_repositories: self.repository_entries.values().map(Into::into).collect(),
         }
     }
 
@@ -1610,6 +1624,8 @@ impl LocalSnapshot {
             removed_entries,
             scan_id: self.scan_id as u64,
             is_last_update: self.completed_scan_id == self.scan_id,
+            // TODO repo
+            updated_repositories: vec![],
         }
     }
 
