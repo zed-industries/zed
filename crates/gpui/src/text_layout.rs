@@ -214,7 +214,7 @@ pub struct Glyph {
 #[derive(Debug, Clone)]
 pub enum Invisible {
     Tab { line_start_offset: usize },
-    Whitespace { line_range: std::ops::Range<usize> },
+    Whitespace { line_offset: usize },
 }
 
 impl Line {
