@@ -173,6 +173,7 @@ pub struct EditorSettings {
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
     pub show_copilot_suggestions: Option<bool>,
+    pub show_invisibles: Option<ShowInvisibles>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -446,6 +447,14 @@ pub struct FeaturesContent {
     pub copilot: Option<bool>,
 }
 
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowInvisibles {
+    #[default]
+    None,
+    All,
+}
+
 impl Settings {
     pub fn initial_user_settings_content(assets: &'static impl AssetSource) -> Cow<'static, str> {
         match assets.load(INITIAL_USER_SETTINGS_ASSET_PATH).unwrap() {
@@ -507,6 +516,7 @@ impl Settings {
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
                 show_copilot_suggestions: required(defaults.editor.show_copilot_suggestions),
+                show_invisibles: required(defaults.editor.show_invisibles),
             },
             editor_overrides: Default::default(),
             copilot: CopilotSettings {
@@ -657,6 +667,10 @@ impl Settings {
         self.language_setting(language, |settings| settings.tab_size)
     }
 
+    pub fn show_invisibles(&self, language: Option<&str>) -> ShowInvisibles {
+        self.language_setting(language, |settings| settings.show_invisibles)
+    }
+
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
         self.language_setting(language, |settings| settings.hard_tabs)
     }
@@ -793,6 +807,7 @@ impl Settings {
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
                 show_copilot_suggestions: Some(true),
+                show_invisibles: Some(ShowInvisibles::None),
             },
             editor_overrides: Default::default(),
             copilot: Default::default(),

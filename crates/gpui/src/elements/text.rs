@@ -129,6 +129,7 @@ impl<V: View> Element<V> for Text {
             &cx.font_cache,
             usize::MAX,
             self.text.matches('\n').count() + 1,
+            false,
         );
 
         // If line wrapping is enabled, wrap each of the shaped lines.
@@ -365,6 +366,7 @@ pub fn layout_highlighted_chunks<'a>(
     font_cache: &Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
+    show_invisibles: bool,
 ) -> Vec<Line> {
     let mut layouts = Vec::with_capacity(max_line_count);
     let mut line = String::new();
@@ -416,7 +418,7 @@ pub fn layout_highlighted_chunks<'a>(
                         underline: text_style.underline,
                     },
                 ));
-                if highlighted_chunk.is_tab {
+                if show_invisibles && highlighted_chunk.is_tab {
                     invisibles.push(Invisible::Tab {
                         range: line.len()..line.len() + line_chunk.len(),
                     });

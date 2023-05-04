@@ -33,6 +33,14 @@
   // Controls whether copilot provides suggestion immediately
   // or waits for a `copilot::Toggle`
   "show_copilot_suggestions": true,
+  // Whether to show tabs and spaces in the editor.
+  // This setting can take two values:
+  //
+  // 1. Do not draw any tabs or spaces (default):
+  //   "none"
+  // 2. Draw all invisible symbols:
+  //   "all"
+  "show_invisibles": "none",
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
