@@ -1003,7 +1003,6 @@ impl<'a> WindowContext<'a> {
         if let Some(view_id) = view_id {
             self.halt_action_dispatch = false;
             self.visit_dispatch_path(view_id, |view_id, capture_phase, cx| {
-                dbg!(view_id);
                 cx.update_any_view(view_id, |view, cx| {
                     let type_id = view.as_any().type_id();
                     if let Some((name, mut handlers)) = cx
