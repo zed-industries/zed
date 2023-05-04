@@ -868,60 +868,18 @@ impl EditorElement {
         }
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
-            let line_height = layout.position_map.line_height;
-
-            // Draw glyphs
-            for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
-                let row = start_row + ix as u32;
-                let line_y = row as f32 * line_height - scroll_top;
-
-                line_with_invisibles.line.paint(
-                    scene,
-                    content_origin + vec2f(-scroll_left, line_y),
-                    visible_text_bounds,
-                    layout.position_map.line_height,
-                    cx,
-                );
-
-                let settings = cx.global::<Settings>();
-                let regions_to_hit = match settings
-                    .editor_overrides
-                    .show_invisibles
-                    .or(settings.editor_defaults.show_invisibles)
-                    .unwrap_or_default()
-                {
-                    ShowInvisibles::None => continue,
-                    ShowInvisibles::Selection => Some(&selection_ranges),
-                    ShowInvisibles::All => None,
-                };
-
-                for invisible in &line_with_invisibles.invisibles {
-                    let (&token_offset, invisible_symbol) = match invisible {
-                        Invisible::Tab { line_start_offset } => {
-                            (line_start_offset, &layout.tab_invisible)
-                        }
-                        Invisible::Whitespace { line_offset } => {
-                            (line_offset, &layout.space_invisible)
-                        }
-                    };
-
-                    let x_offset = line_with_invisibles.line.x_for_index(token_offset);
-                    let invisible_offset =
-                        (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
-                    let origin =
-                        content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
-
-                    if let Some(regions_to_hit) = regions_to_hit {
-                        let invisible_point = DisplayPoint::new(row, token_offset as u32);
-                        if !regions_to_hit.iter().any(|region| {
-                            region.start <= invisible_point && invisible_point < region.end
-                        }) {
-                            continue;
-                        }
-                    }
-                    invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
-                }
-            }
+            draw_line_glyphs(
+                layout,
+                start_row,
+                scroll_top,
+                scene,
+                content_origin,
+                scroll_left,
+                visible_text_bounds,
+                cx,
+                selection_ranges,
+                visible_bounds,
+            );
         }
 
         scene.paint_layer(Some(bounds), |scene| {
@@ -1638,6 +1596,97 @@ impl EditorElement {
             scroll_width.max(fixed_block_max_width - gutter_width),
             blocks,
         )
+    }
+}
+
+fn draw_line_glyphs(
+    layout: &mut LayoutState,
+    start_row: u32,
+    scroll_top: f32,
+    scene: &mut SceneBuilder,
+    content_origin: Vector2F,
+    scroll_left: f32,
+    visible_text_bounds: RectF,
+    cx: &mut ViewContext<Editor>,
+    selection_ranges: SmallVec<[Range<DisplayPoint>; 32]>,
+    visible_bounds: RectF,
+) {
+    let line_height = layout.position_map.line_height;
+
+    for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
+        let row = start_row + ix as u32;
+        let line_y = row as f32 * line_height - scroll_top;
+
+        line_with_invisibles.line.paint(
+            scene,
+            content_origin + vec2f(-scroll_left, line_y),
+            visible_text_bounds,
+            line_height,
+            cx,
+        );
+
+        draw_invisibles(
+            cx,
+            &selection_ranges,
+            line_with_invisibles,
+            layout,
+            content_origin,
+            scroll_left,
+            line_y,
+            row,
+            scene,
+            visible_bounds,
+            line_height,
+        );
+    }
+}
+
+fn draw_invisibles(
+    cx: &mut ViewContext<Editor>,
+    selection_ranges: &SmallVec<[Range<DisplayPoint>; 32]>,
+    line_with_invisibles: &LineWithInvisibles,
+    layout: &LayoutState,
+    content_origin: Vector2F,
+    scroll_left: f32,
+    line_y: f32,
+    row: u32,
+    scene: &mut SceneBuilder,
+    visible_bounds: RectF,
+    line_height: f32,
+) {
+    let settings = cx.global::<Settings>();
+    let regions_to_hit = match settings
+        .editor_overrides
+        .show_invisibles
+        .or(settings.editor_defaults.show_invisibles)
+        .unwrap_or_default()
+    {
+        ShowInvisibles::None => return,
+        ShowInvisibles::Selection => Some(selection_ranges),
+        ShowInvisibles::All => None,
+    };
+
+    for invisible in &line_with_invisibles.invisibles {
+        let (&token_offset, invisible_symbol) = match invisible {
+            Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
+            Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
+        };
+
+        let x_offset = line_with_invisibles.line.x_for_index(token_offset);
+        let invisible_offset =
+            (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
+        let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+
+        if let Some(regions_to_hit) = regions_to_hit {
+            let invisible_point = DisplayPoint::new(row, token_offset as u32);
+            if !regions_to_hit
+                .iter()
+                .any(|region| region.start <= invisible_point && invisible_point < region.end)
+            {
+                continue;
+            }
+        }
+        invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
     }
 }
 
