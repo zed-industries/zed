@@ -35,9 +35,7 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
                 }
             }
 
-            cx.update_window(editor.window_id(), |cx| {
-                editor.update(cx, |editor, cx| Vim::unhook_vim_settings(editor, cx))
-            });
+            editor.update(cx, |editor, cx| Vim::unhook_vim_settings(editor, cx))
         });
     });
 }
