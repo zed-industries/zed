@@ -34,7 +34,7 @@ use std::{
 use util::ResultExt;
 use uuid::Uuid;
 
-use super::Reference;
+use super::{Reference, ViewMetadata};
 
 pub struct Window {
     pub(crate) root_view: Option<AnyViewHandle>,
@@ -369,13 +369,13 @@ impl<'a> WindowContext<'a> {
         let mut contexts = Vec::new();
         let mut handler_depth = None;
         for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view) = self.views.get(&(window_id, view_id)) {
-                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
+            if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
+                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
                     if actions.contains_key(&action.as_any().type_id()) {
                         handler_depth = Some(i);
                     }
                 }
-                contexts.push(view.keymap_context(self));
+                contexts.push(view_metadata.keymap_context.clone());
             }
         }
 
@@ -1177,6 +1177,14 @@ impl<'a> WindowContext<'a> {
         self.parents.insert((window_id, view_id), parent_id);
         let mut cx = ViewContext::mutable(self, view_id);
         let handle = if let Some(view) = build_view(&mut cx) {
+            let keymap_context = view.keymap_context(cx.app_context());
+            self.views_metadata.insert(
+                (window_id, view_id),
+                ViewMetadata {
+                    type_id: TypeId::of::<T>(),
+                    keymap_context,
+                },
+            );
             self.views.insert((window_id, view_id), Box::new(view));
             self.window
                 .invalidation

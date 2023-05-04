@@ -440,6 +440,7 @@ type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> b
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
+    views_metadata: HashMap<(usize, usize), ViewMetadata>,
     pub(crate) parents: HashMap<(usize, usize), ParentId>,
     windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
@@ -502,6 +503,7 @@ impl AppContext {
         Self {
             models: Default::default(),
             views: Default::default(),
+            views_metadata: Default::default(),
             parents: Default::default(),
             windows: Default::default(),
             globals: Default::default(),
@@ -727,9 +729,9 @@ impl AppContext {
     }
 
     pub fn view_type_id(&self, window_id: usize, view_id: usize) -> Option<TypeId> {
-        self.views
+        self.views_metadata
             .get(&(window_id, view_id))
-            .map(|view| view.as_any().type_id())
+            .map(|metadata| metadata.type_id)
     }
 
     pub fn active_labeled_tasks<'a>(
@@ -1045,9 +1047,10 @@ impl AppContext {
                 .read_window(window_id, |cx| {
                     if let Some(focused_view_id) = cx.focused_view_id() {
                         for view_id in cx.ancestors(focused_view_id) {
-                            if let Some(view) = cx.views.get(&(window_id, view_id)) {
-                                let view_type = view.as_any().type_id();
-                                if let Some(actions) = cx.actions.get(&view_type) {
+                            if let Some(view_metadata) =
+                                cx.views_metadata.get(&(window_id, view_id))
+                            {
+                                if let Some(actions) = cx.actions.get(&view_metadata.type_id) {
                                     if actions.contains_key(&action_type) {
                                         return true;
                                     }
@@ -1448,6 +1451,7 @@ impl AppContext {
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(view_id);
                 self.observations.remove(view_id);
+                self.views_metadata.remove(&(window_id, view_id));
                 let mut view = self.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
                 let change_focus_to = self.windows.get_mut(&window_id).and_then(|window| {
@@ -1779,9 +1783,11 @@ impl AppContext {
         observed_window_id: usize,
         observed_view_id: usize,
     ) {
-        if self
+        let view_key = (observed_window_id, observed_view_id);
+        if let Some((view, mut view_metadata)) = self
             .views
-            .contains_key(&(observed_window_id, observed_view_id))
+            .remove(&view_key)
+            .zip(self.views_metadata.remove(&view_key))
         {
             if let Some(window) = self.windows.get_mut(&observed_window_id) {
                 window
@@ -1790,6 +1796,10 @@ impl AppContext {
                     .updated
                     .insert(observed_view_id);
             }
+
+            view_metadata.keymap_context = view.keymap_context(self);
+            self.views.insert(view_key, view);
+            self.views_metadata.insert(view_key, view_metadata);
 
             let mut observations = self.observations.clone();
             observations.emit(observed_view_id, |callback| callback(self));
@@ -2035,6 +2045,11 @@ impl BorrowAppContext for AppContext {
 pub enum ParentId {
     View(usize),
     Root,
+}
+
+struct ViewMetadata {
+    type_id: TypeId,
+    keymap_context: KeymapContext,
 }
 
 #[derive(Default, Clone)]
@@ -2437,11 +2452,10 @@ where
             cx.handle().into_any()
         } else {
             let focused_type = cx
-                .views
+                .views_metadata
                 .get(&(cx.window_id, focused_id))
                 .unwrap()
-                .as_any()
-                .type_id();
+                .type_id;
             AnyViewHandle::new(
                 cx.window_id,
                 focused_id,
@@ -2458,11 +2472,10 @@ where
             cx.handle().into_any()
         } else {
             let blurred_type = cx
-                .views
+                .views_metadata
                 .get(&(cx.window_id, blurred_id))
                 .unwrap()
-                .as_any()
-                .type_id();
+                .type_id;
             AnyViewHandle::new(
                 cx.window_id,
                 blurred_id,
