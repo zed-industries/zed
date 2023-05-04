@@ -1365,6 +1365,14 @@ impl EditorElement {
                         is_tab: chunk.is_tab,
                     }
                 });
+
+            let settings = cx.global::<Settings>();
+            let show_invisibles = settings
+                .editor_overrides
+                .show_invisibles
+                .or(settings.editor_defaults.show_invisibles)
+                .unwrap_or_default()
+                == settings::ShowInvisibles::All;
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
@@ -1372,6 +1380,7 @@ impl EditorElement {
                 cx.font_cache(),
                 MAX_LINE_LEN,
                 rows.len() as usize,
+                show_invisibles,
             )
         }
     }
