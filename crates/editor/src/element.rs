@@ -864,16 +864,16 @@ impl EditorElement {
         }
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
+            let line_height = layout.position_map.line_height;
+
             // Draw glyphs
             for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;
+                let line_y = row as f32 * line_height - scroll_top;
+
                 line_with_invisibles.line.paint(
                     scene,
-                    content_origin
-                        + vec2f(
-                            -scroll_left,
-                            row as f32 * layout.position_map.line_height - scroll_top,
-                        ),
+                    content_origin + vec2f(-scroll_left, line_y),
                     visible_text_bounds,
                     layout.position_map.line_height,
                     cx,
@@ -889,38 +889,22 @@ impl EditorElement {
                     ShowInvisibles::None => {}
                     ShowInvisibles::All => {
                         for invisible in &line_with_invisibles.invisibles {
-                            // TODO kb cache, deduplicate
-                            let (token_offset, mut test_svg) = match invisible {
-                                Invisible::Tab { line_start_offset } => (
-                                    *line_start_offset,
-                                    Svg::new("icons/arrow_right_16.svg")
-                                        .with_color(self.style.line_number),
-                                ),
-                                Invisible::Whitespace { line_offset } => (
-                                    *line_offset,
-                                    Svg::new("icons/plus_8.svg").with_color(self.style.line_number),
-                                ),
+                            let (token_offset, invisible_symbol) = match invisible {
+                                Invisible::Tab { line_start_offset } => {
+                                    (*line_start_offset, &layout.tab_invisible)
+                                }
+                                Invisible::Whitespace { line_offset } => {
+                                    (*line_offset, &layout.space_invisible)
+                                }
                             };
 
                             let x_offset = line_with_invisibles.line.x_for_index(token_offset);
-                            let font_size = line_with_invisibles.line.font_size();
-                            let max_size = vec2f(font_size, font_size);
+                            let invisible_offset =
+                                (layout.position_map.em_width - invisible_symbol.width()).max(0.0)
+                                    / 2.0;
                             let origin = content_origin
-                                + vec2f(
-                                    -scroll_left + x_offset,
-                                    row as f32 * layout.position_map.line_height - scroll_top,
-                                );
-
-                            let (_, mut layout_state) =
-                                test_svg.layout(SizeConstraint::new(origin, max_size), editor, cx);
-                            test_svg.paint(
-                                scene,
-                                RectF::new(origin, max_size),
-                                visible_bounds,
-                                &mut layout_state,
-                                editor,
-                                cx,
-                            );
+                                + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+                            invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
                         }
                     }
                 }
@@ -1655,6 +1639,7 @@ pub struct LineWithInvisibles {
     invisibles: Vec<Invisible>,
 }
 
+// TODO kb deduplicate? + tests
 fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = HighlightedChunk<'a>>,
     text_style: &TextStyle,
@@ -2121,6 +2106,13 @@ impl Element<Editor> for EditorElement {
             }
         }
 
+        let invisible_symbol_font_size = self.style.text.font_size / 2.0;
+        let invisible_symbol_style = RunStyle {
+            color: self.style.line_number,
+            font_id: self.style.text.font_id,
+            underline: Default::default(),
+        };
+
         (
             size,
             LayoutState {
@@ -2153,6 +2145,16 @@ impl Element<Editor> for EditorElement {
                 context_menu,
                 code_actions_indicator,
                 fold_indicators,
+                tab_invisible: cx.text_layout_cache().layout_str(
+                    "→",
+                    invisible_symbol_font_size,
+                    &[("→".len(), invisible_symbol_style)],
+                ),
+                space_invisible: cx.text_layout_cache().layout_str(
+                    "•",
+                    invisible_symbol_font_size,
+                    &[("•".len(), invisible_symbol_style)],
+                ),
                 hover_popovers: hover,
             },
         )
@@ -2290,6 +2292,8 @@ pub struct LayoutState {
     code_actions_indicator: Option<(u32, AnyElement<Editor>)>,
     hover_popovers: Option<(DisplayPoint, Vec<AnyElement<Editor>>)>,
     fold_indicators: Vec<Option<AnyElement<Editor>>>,
+    tab_invisible: Line,
+    space_invisible: Line,
 }
 
 struct PositionMap {
