@@ -509,6 +509,13 @@ pub fn split_worktree_update(
             .drain(..updated_repositories_chunk_size)
             .collect();
 
+        let removed_repositories_chunk_size =
+            cmp::min(message.removed_repositories.len(), max_chunk_size);
+        let removed_repositories = message
+            .removed_repositories
+            .drain(..removed_repositories_chunk_size)
+            .collect();
+
         done = message.updated_entries.is_empty() && message.removed_entries.is_empty();
         Some(UpdateWorktree {
             project_id: message.project_id,
@@ -520,6 +527,7 @@ pub fn split_worktree_update(
             scan_id: message.scan_id,
             is_last_update: done && message.is_last_update,
             updated_repositories,
+            removed_repositories,
         })
     })
 }

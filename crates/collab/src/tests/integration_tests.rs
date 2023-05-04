@@ -2609,13 +2609,15 @@ async fn test_git_branch_name(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
     server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
@@ -2679,6 +2681,11 @@ async fn test_git_branch_name(
         assert_branch(Some("branch-2"), project, cx)
     });
     project_remote.read_with(cx_b, |project, cx| {
+        assert_branch(Some("branch-2"), project, cx)
+    });
+
+    let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
+    project_remote_c.read_with(cx_c, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
     });
 }

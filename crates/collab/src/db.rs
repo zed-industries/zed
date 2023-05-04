@@ -14,6 +14,7 @@ mod user;
 mod worktree;
 mod worktree_diagnostic_summary;
 mod worktree_entry;
+mod worktree_repository;
 
 use crate::executor::Executor;
 use crate::{Error, Result};
@@ -2322,6 +2323,55 @@ impl Database {
                             ),
                     )
                     .set(worktree_entry::ActiveModel {
+                        is_deleted: ActiveValue::Set(true),
+                        scan_id: ActiveValue::Set(update.scan_id as i64),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+            }
+
+            if !update.updated_repositories.is_empty() {
+                worktree_repository::Entity::insert_many(update.updated_repositories.iter().map(
+                    |repository| worktree_repository::ActiveModel {
+                        project_id: ActiveValue::set(project_id),
+                        worktree_id: ActiveValue::set(worktree_id),
+                        dot_git_entry_id: ActiveValue::set(repository.dot_git_entry_id as i64),
+                        work_directory_path: ActiveValue::set(repository.work_directory.clone()),
+                        scan_id: ActiveValue::set(update.scan_id as i64),
+                        branch: ActiveValue::set(repository.branch.clone()),
+                        is_deleted: ActiveValue::set(false),
+                    },
+                ))
+                .on_conflict(
+                    OnConflict::columns([
+                        worktree_repository::Column::ProjectId,
+                        worktree_repository::Column::WorktreeId,
+                        worktree_repository::Column::DotGitEntryId,
+                    ])
+                    .update_columns([
+                        worktree_repository::Column::ScanId,
+                        worktree_repository::Column::WorkDirectoryPath,
+                        worktree_repository::Column::Branch,
+                    ])
+                    .to_owned(),
+                )
+                .exec(&*tx)
+                .await?;
+            }
+
+            if !update.removed_repositories.is_empty() {
+                worktree_repository::Entity::update_many()
+                    .filter(
+                        worktree_repository::Column::ProjectId
+                            .eq(project_id)
+                            .and(worktree_repository::Column::WorktreeId.eq(worktree_id))
+                            .and(
+                                worktree_repository::Column::DotGitEntryId
+                                    .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
+                            ),
+                    )
+                    .set(worktree_repository::ActiveModel {
                         is_deleted: ActiveValue::Set(true),
                         scan_id: ActiveValue::Set(update.scan_id as i64),
                         ..Default::default()

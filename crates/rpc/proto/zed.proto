@@ -330,9 +330,10 @@ message UpdateWorktree {
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
     repeated RepositoryEntry updated_repositories = 6;
-    uint64 scan_id = 7;
-    bool is_last_update = 8;
-    string abs_path = 9;
+    repeated uint64 removed_repositories = 7;
+    uint64 scan_id = 8;
+    bool is_last_update = 9;
+    string abs_path = 10;
 }
 
 message CreateProjectEntry {
@@ -981,10 +982,9 @@ message Entry {
 }
 
 message RepositoryEntry {
-    uint64 git_dir_entry_id = 1;
+    uint64 dot_git_entry_id = 1;
     uint64 scan_id = 2;
-    bytes git_dir_path = 3;
-    bytes work_directory = 4;
+    string work_directory = 4;
     optional string branch = 5;
 }
 
