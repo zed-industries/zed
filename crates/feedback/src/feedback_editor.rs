@@ -15,6 +15,7 @@ use language::Buffer;
 use postage::prelude::Stream;
 use project::Project;
 use serde::Serialize;
+use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -25,7 +26,6 @@ use util::ResultExt;
 use workspace::{
     item::{Item, ItemEvent, ItemHandle},
     searchable::{SearchableItem, SearchableItemHandle},
-    smallvec::SmallVec,
     Workspace,
 };
 

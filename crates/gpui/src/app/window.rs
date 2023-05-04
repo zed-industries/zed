@@ -2,7 +2,7 @@ use crate::{
     elements::AnyRootElement,
     geometry::rect::RectF,
     json::ToJson,
-    keymap_matcher::{Binding, Keystroke, MatchResult},
+    keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
     platform::{
         self, Appearance, CursorStyle, Event, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent,
         MouseButton, MouseMovedEvent, PromptLevel, WindowBounds,
@@ -34,7 +34,7 @@ use std::{
 use util::ResultExt;
 use uuid::Uuid;
 
-use super::Reference;
+use super::{Reference, ViewMetadata};
 
 pub struct Window {
     pub(crate) root_view: Option<AnyViewHandle>,
@@ -364,10 +364,9 @@ impl<'a> WindowContext<'a> {
         let mut contexts = Vec::new();
         let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
         for (depth, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view) = self.views.get(&(window_id, view_id)) {
-                contexts.push(view.keymap_context(self));
-                let view_type = view.as_any().type_id();
-                if let Some(actions) = self.actions.get(&view_type) {
+            if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
+                contexts.push(view_metadata.keymap_context.clone());
+                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
                     handler_depths_by_action_type.extend(
                         actions
                             .keys()
@@ -418,9 +417,9 @@ impl<'a> WindowContext<'a> {
             let dispatch_path = self
                 .ancestors(focused_view_id)
                 .filter_map(|view_id| {
-                    self.views
+                    self.views_metadata
                         .get(&(window_id, view_id))
-                        .map(|view| (view_id, view.keymap_context(self)))
+                        .map(|view| (view_id, view.keymap_context.clone()))
                 })
                 .collect();
 
@@ -1149,6 +1148,15 @@ impl<'a> WindowContext<'a> {
         let view_id = post_inc(&mut self.next_entity_id);
         let mut cx = ViewContext::mutable(self, view_id);
         let handle = if let Some(view) = build_view(&mut cx) {
+            let mut keymap_context = KeymapContext::default();
+            view.update_keymap_context(&mut keymap_context, cx.app_context());
+            self.views_metadata.insert(
+                (window_id, view_id),
+                ViewMetadata {
+                    type_id: TypeId::of::<T>(),
+                    keymap_context,
+                },
+            );
             self.views.insert((window_id, view_id), Box::new(view));
             self.window
                 .invalidation

@@ -9,6 +9,7 @@ path = "src/copilot_button.rs"
 doctest = false
 
 [dependencies]
+assets = { path = "../assets" }
 copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 context_menu = { path = "../context_menu" }

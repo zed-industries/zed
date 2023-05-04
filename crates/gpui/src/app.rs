@@ -84,14 +84,15 @@ pub trait View: Entity + Sized {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> keymap_matcher::KeymapContext {
-        Self::default_keymap_context()
+    fn update_keymap_context(&self, keymap: &mut keymap_matcher::KeymapContext, _: &AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
     }
-    fn default_keymap_context() -> keymap_matcher::KeymapContext {
-        let mut cx = keymap_matcher::KeymapContext::default();
-        cx.add_identifier(Self::ui_name());
-        cx
+
+    fn reset_to_default_keymap_context(keymap: &mut keymap_matcher::KeymapContext) {
+        keymap.clear();
+        keymap.add_identifier(Self::ui_name());
     }
+
     fn debug_json(&self, _: &AppContext) -> serde_json::Value {
         serde_json::Value::Null
     }
@@ -450,6 +451,7 @@ type WindowShouldCloseSubscriptionCallback = Box<dyn FnMut(&mut AppContext) -> b
 pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
+    views_metadata: HashMap<(usize, usize), ViewMetadata>,
     windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
@@ -511,6 +513,7 @@ impl AppContext {
         Self {
             models: Default::default(),
             views: Default::default(),
+            views_metadata: Default::default(),
             windows: Default::default(),
             globals: Default::default(),
             element_states: Default::default(),
@@ -735,9 +738,9 @@ impl AppContext {
     }
 
     pub fn view_type_id(&self, window_id: usize, view_id: usize) -> Option<TypeId> {
-        self.views
+        self.views_metadata
             .get(&(window_id, view_id))
-            .map(|view| view.as_any().type_id())
+            .map(|metadata| metadata.type_id)
     }
 
     pub fn active_labeled_tasks<'a>(
@@ -1053,9 +1056,10 @@ impl AppContext {
                 .read_window(window_id, |cx| {
                     if let Some(focused_view_id) = cx.focused_view_id() {
                         for view_id in cx.ancestors(focused_view_id) {
-                            if let Some(view) = cx.views.get(&(window_id, view_id)) {
-                                let view_type = view.as_any().type_id();
-                                if let Some(actions) = cx.actions.get(&view_type) {
+                            if let Some(view_metadata) =
+                                cx.views_metadata.get(&(window_id, view_id))
+                            {
+                                if let Some(actions) = cx.actions.get(&view_metadata.type_id) {
                                     if actions.contains_key(&action_type) {
                                         return true;
                                     }
@@ -1444,6 +1448,7 @@ impl AppContext {
             for (window_id, view_id) in dropped_views {
                 self.subscriptions.remove(view_id);
                 self.observations.remove(view_id);
+                self.views_metadata.remove(&(window_id, view_id));
                 let mut view = self.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
                 let change_focus_to = self.windows.get_mut(&window_id).and_then(|window| {
@@ -1775,9 +1780,11 @@ impl AppContext {
         observed_window_id: usize,
         observed_view_id: usize,
     ) {
-        if self
+        let view_key = (observed_window_id, observed_view_id);
+        if let Some((view, mut view_metadata)) = self
             .views
-            .contains_key(&(observed_window_id, observed_view_id))
+            .remove(&view_key)
+            .zip(self.views_metadata.remove(&view_key))
         {
             if let Some(window) = self.windows.get_mut(&observed_window_id) {
                 window
@@ -1786,6 +1793,10 @@ impl AppContext {
                     .updated
                     .insert(observed_view_id);
             }
+
+            view.update_keymap_context(&mut view_metadata.keymap_context, self);
+            self.views.insert(view_key, view);
+            self.views_metadata.insert(view_key, view_metadata);
 
             let mut observations = self.observations.clone();
             observations.emit(observed_view_id, |callback| callback(self));
@@ -2031,6 +2042,11 @@ impl BorrowAppContext for AppContext {
 pub enum ParentId {
     View(usize),
     Root,
+}
+
+struct ViewMetadata {
+    type_id: TypeId,
+    keymap_context: KeymapContext,
 }
 
 #[derive(Default, Clone)]
@@ -2361,7 +2377,7 @@ pub trait AnyView {
         cx: &mut WindowContext,
         view_id: usize,
     ) -> bool;
-    fn keymap_context(&self, cx: &AppContext) -> KeymapContext;
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext);
     fn debug_json(&self, cx: &WindowContext) -> serde_json::Value;
 
     fn text_for_range(&self, range: Range<usize>, cx: &WindowContext) -> Option<String>;
@@ -2433,11 +2449,10 @@ where
             cx.handle().into_any()
         } else {
             let focused_type = cx
-                .views
+                .views_metadata
                 .get(&(cx.window_id, focused_id))
                 .unwrap()
-                .as_any()
-                .type_id();
+                .type_id;
             AnyViewHandle::new(
                 cx.window_id,
                 focused_id,
@@ -2454,11 +2469,10 @@ where
             cx.handle().into_any()
         } else {
             let blurred_type = cx
-                .views
+                .views_metadata
                 .get(&(cx.window_id, blurred_id))
                 .unwrap()
-                .as_any()
-                .type_id();
+                .type_id;
             AnyViewHandle::new(
                 cx.window_id,
                 blurred_id,
@@ -2489,8 +2503,8 @@ where
         View::modifiers_changed(self, event, &mut cx)
     }
 
-    fn keymap_context(&self, cx: &AppContext) -> KeymapContext {
-        View::keymap_context(self, cx)
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
+        View::update_keymap_context(self, keymap, cx)
     }
 
     fn debug_json(&self, cx: &WindowContext) -> serde_json::Value {
@@ -3234,7 +3248,6 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
     /// Return keystrokes that would dispatch the given action on the given view.
     pub(crate) fn keystrokes_for_action(
         &mut self,
-        view: &V,
         view_id: usize,
         action: &dyn Action,
     ) -> Option<SmallVec<[Keystroke; 2]>> {
@@ -3244,21 +3257,13 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
         let mut contexts = Vec::new();
         let mut handler_depth = None;
         for (i, view_id) in self.ancestors(view_id).enumerate() {
-            let view = if view_id == self.view_id {
-                Some(view as _)
-            } else {
-                self.views
-                    .get(&(window_id, view_id))
-                    .map(|view| view.as_ref())
-            };
-
-            if let Some(view) = view {
-                if let Some(actions) = self.actions.get(&view.as_any().type_id()) {
+            if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
+                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
                     if actions.contains_key(&action.as_any().type_id()) {
                         handler_depth = Some(i);
                     }
                 }
-                contexts.push(view.keymap_context(self));
+                contexts.push(view_metadata.keymap_context.clone());
             }
         }
 
@@ -5687,8 +5692,8 @@ mod tests {
                 "View"
             }
 
-            fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-                self.keymap_context.clone()
+            fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+                *keymap = self.keymap_context.clone();
             }
         }
 
@@ -5852,52 +5857,51 @@ mod tests {
         });
 
         let view_1_id = view_1.id();
-        view_1.update(cx, |view_1, cx| {
-            // Sanity check
-            let mut new_parents = Default::default();
-            let mut notify_views_if_parents_change = Default::default();
-            let mut layout_cx = LayoutContext::new(
-                cx,
-                &mut new_parents,
-                &mut notify_views_if_parents_change,
-                false,
-            );
-            assert_eq!(
-                layout_cx
-                    .keystrokes_for_action(view_1, view_1_id, &Action1)
-                    .unwrap()
-                    .as_slice(),
-                &[Keystroke::parse("a").unwrap()]
-            );
-            assert_eq!(
-                layout_cx
-                    .keystrokes_for_action(view_1, view_2.id(), &Action2)
-                    .unwrap()
-                    .as_slice(),
-                &[Keystroke::parse("b").unwrap()]
-            );
+        view_1.update(cx, |_, cx| {
+            view_2.update(cx, |_, cx| {
+                // Sanity check
+                let mut new_parents = Default::default();
+                let mut notify_views_if_parents_change = Default::default();
+                let mut layout_cx = LayoutContext::new(
+                    cx,
+                    &mut new_parents,
+                    &mut notify_views_if_parents_change,
+                    false,
+                );
+                assert_eq!(
+                    layout_cx
+                        .keystrokes_for_action(view_1_id, &Action1)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("a").unwrap()]
+                );
+                assert_eq!(
+                    layout_cx
+                        .keystrokes_for_action(view_2.id(), &Action2)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("b").unwrap()]
+                );
 
-            // The 'a' keystroke propagates up the view tree from view_2
-            // to view_1. The action, Action1, is handled by view_1.
-            assert_eq!(
-                layout_cx
-                    .keystrokes_for_action(view_1, view_2.id(), &Action1)
-                    .unwrap()
-                    .as_slice(),
-                &[Keystroke::parse("a").unwrap()]
-            );
+                // The 'a' keystroke propagates up the view tree from view_2
+                // to view_1. The action, Action1, is handled by view_1.
+                assert_eq!(
+                    layout_cx
+                        .keystrokes_for_action(view_2.id(), &Action1)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("a").unwrap()]
+                );
 
-            // Actions that are handled below the current view don't have bindings
-            assert_eq!(
-                layout_cx.keystrokes_for_action(view_1, view_1_id, &Action2),
-                None
-            );
+                // Actions that are handled below the current view don't have bindings
+                assert_eq!(layout_cx.keystrokes_for_action(view_1_id, &Action2), None);
 
-            // Actions that are handled in other branches of the tree should not have a binding
-            assert_eq!(
-                layout_cx.keystrokes_for_action(view_1, view_2.id(), &GlobalAction),
-                None
-            );
+                // Actions that are handled in other branches of the tree should not have a binding
+                assert_eq!(
+                    layout_cx.keystrokes_for_action(view_2.id(), &GlobalAction),
+                    None
+                );
+            });
         });
 
         // Check that global actions do not have a binding, even if a binding does exist in another view

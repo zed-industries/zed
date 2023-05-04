@@ -52,8 +52,8 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
-    Diagnostic, DiagnosticSeverity, IndentKind, IndentSize, Language, OffsetRangeExt, OffsetUtf16,
-    Point, Selection, SelectionGoal, TransactionId,
+    Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
+    OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
@@ -1380,6 +1380,10 @@ impl Editor {
         self.buffer.read(cx).language_at(point, cx)
     }
 
+    pub fn file_at<'a, T: ToOffset>(&self, point: T, cx: &'a AppContext) -> Option<Arc<dyn File>> {
+        self.buffer.read(cx).read(cx).file_at(point).cloned()
+    }
+
     pub fn active_excerpt(
         &self,
         cx: &AppContext,
@@ -1423,13 +1427,19 @@ impl Editor {
         }
     }
 
-    pub fn set_keymap_context_layer<Tag: 'static>(&mut self, context: KeymapContext) {
+    pub fn set_keymap_context_layer<Tag: 'static>(
+        &mut self,
+        context: KeymapContext,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.keymap_context_layers
             .insert(TypeId::of::<Tag>(), context);
+        cx.notify();
     }
 
-    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self) {
+    pub fn remove_keymap_context_layer<Tag: 'static>(&mut self, cx: &mut ViewContext<Self>) {
         self.keymap_context_layers.remove(&TypeId::of::<Tag>());
+        cx.notify();
     }
 
     pub fn set_input_enabled(&mut self, input_enabled: bool) {
@@ -2949,11 +2959,7 @@ impl Editor {
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let cursor = self.selections.newest_anchor().head();
-        let language_name = snapshot.language_at(cursor).map(|language| language.name());
-        if !cx
-            .global::<Settings>()
-            .show_copilot_suggestions(language_name.as_deref())
-        {
+        if !self.is_copilot_enabled_at(cursor, &snapshot, cx) {
             self.clear_copilot_suggestions(cx);
             return None;
         }
@@ -3102,6 +3108,25 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn is_copilot_enabled_at(
+        &self,
+        location: Anchor,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let settings = cx.global::<Settings>();
+
+        let path = snapshot.file_at(location).map(|file| file.path());
+        let language_name = snapshot
+            .language_at(location)
+            .map(|language| language.name());
+        if !settings.show_copilot_suggestions(language_name.as_deref(), path.map(|p| p.as_ref())) {
+            return false;
+        }
+
+        true
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
@@ -6865,6 +6890,9 @@ impl Editor {
                     self.language_at(0, cx)
                         .map(|language| language.name())
                         .as_deref(),
+                    self.file_at(0, cx)
+                        .map(|file| file.path().clone())
+                        .as_deref(),
                 ),
             };
             telemetry.report_clickhouse_event(event, settings.telemetry())
@@ -7137,28 +7165,26 @@ impl View for Editor {
         false
     }
 
-    fn keymap_context(&self, _: &AppContext) -> KeymapContext {
-        let mut context = Self::default_keymap_context();
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+        Self::reset_to_default_keymap_context(keymap);
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
             EditorMode::Full => "full",
         };
-        context.add_key("mode", mode);
+        keymap.add_key("mode", mode);
         if self.pending_rename.is_some() {
-            context.add_identifier("renaming");
+            keymap.add_identifier("renaming");
         }
         match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => context.add_identifier("showing_completions"),
-            Some(ContextMenu::CodeActions(_)) => context.add_identifier("showing_code_actions"),
+            Some(ContextMenu::Completions(_)) => keymap.add_identifier("showing_completions"),
+            Some(ContextMenu::CodeActions(_)) => keymap.add_identifier("showing_code_actions"),
             None => {}
         }
 
         for layer in self.keymap_context_layers.values() {
-            context.extend(layer);
+            keymap.extend(layer);
         }
-
-        context
     }
 
     fn text_for_range(&self, range_utf16: Range<usize>, cx: &AppContext) -> Option<String> {

@@ -17,6 +17,11 @@ impl KeymapContext {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.set.clear();
+        self.map.clear();
+    }
+
     pub fn extend(&mut self, other: &Self) {
         for v in &other.set {
             self.set.insert(v.clone());

@@ -6387,6 +6387,97 @@ async fn test_copilot_multibuffer(
     });
 }
 
+#[gpui::test]
+async fn test_copilot_disabled_globs(
+    deterministic: Arc<Deterministic>,
+    cx: &mut gpui::TestAppContext,
+) {
+    let (copilot, copilot_lsp) = Copilot::fake(cx);
+    cx.update(|cx| {
+        let mut settings = Settings::test(cx);
+        settings.copilot.disabled_globs = vec![glob::Pattern::new(".env*").unwrap()];
+        cx.set_global(settings);
+        cx.set_global(copilot)
+    });
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/test",
+        json!({
+            ".env": "SECRET=something\n",
+            "README.md": "hello\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/test".as_ref()], cx).await;
+
+    let private_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/.env", cx)
+        })
+        .await
+        .unwrap();
+    let public_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/test/README.md", cx)
+        })
+        .await
+        .unwrap();
+
+    let multibuffer = cx.add_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0);
+        multibuffer.push_excerpts(
+            private_buffer.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(1, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            public_buffer.clone(),
+            [ExcerptRange {
+                context: Point::new(0, 0)..Point::new(1, 0),
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer
+    });
+    let (_, editor) = cx.add_window(|cx| build_editor(multibuffer, cx));
+
+    let mut copilot_requests = copilot_lsp
+        .handle_request::<copilot::request::GetCompletions, _, _>(move |_params, _cx| async move {
+            Ok(copilot::request::GetCompletionsResult {
+                completions: vec![copilot::request::Completion {
+                    text: "next line".into(),
+                    range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
+                    ..Default::default()
+                }],
+            })
+        });
+
+    editor.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+        editor.next_copilot_suggestion(&Default::default(), cx);
+    });
+
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    assert!(copilot_requests.try_next().is_err());
+
+    editor.update(cx, |editor, cx| {
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 0)])
+        });
+        editor.next_copilot_suggestion(&Default::default(), cx);
+    });
+
+    deterministic.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+    assert!(copilot_requests.try_next().is_ok());
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
