@@ -17,7 +17,7 @@ use gpui::{
     AppContext, Entity, ImageData, LayoutContext, ModelHandle, SceneBuilder, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use project::{Project, Worktree};
+use project::Project;
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
@@ -166,34 +166,6 @@ impl CollabTitlebarItem {
             branches: cx.add_view(|cx| BranchesButton::new(workspace_handle.to_owned(), cx)),
             _subscriptions: subscriptions,
         }
-    }
-
-    fn root_name_with_branch(
-        &self,
-        worktree: &ModelHandle<Worktree>,
-        cx: &ViewContext<Self>,
-    ) -> (String, String) {
-        let name = worktree.read(cx).root_name();
-        let branch = worktree
-            .read(cx)
-            .snapshot()
-            .root_git_entry()
-            .and_then(|entry| entry.branch())
-            .map(|branch| branch.to_string())
-            .unwrap_or_else(|| "".to_owned());
-        (name.to_owned(), branch)
-    }
-
-    fn collect_root_names_with_branches(
-        &self,
-        project: &Project,
-        cx: &ViewContext<Self>,
-    ) -> Vec<(String, String)> {
-        let root_names_with_branches: Vec<(String, String)> = project
-            .visible_worktrees(cx)
-            .map(|worktree| self.root_name_with_branch(&worktree, cx))
-            .collect();
-        root_names_with_branches
     }
 
     fn collect_title_root_names(&self, project: &Project, cx: &ViewContext<Self>) -> String {
