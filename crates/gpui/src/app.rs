@@ -5678,7 +5678,7 @@ mod tests {
     }
 
     #[crate::test(self)]
-    fn test_keystrokes_for_action(cx: &mut AppContext) {
+    fn test_keystrokes_for_action(cx: &mut TestAppContext) {
         actions!(test, [Action1, Action2, GlobalAction]);
 
         struct View1 {}
@@ -5708,70 +5708,76 @@ mod tests {
             }
         }
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| View1 {});
+        let (_, view_1) = cx.add_window(|_| View1 {});
         let view_2 = cx.add_view(&view_1, |cx| {
             cx.focus_self();
             View2 {}
         });
 
-        cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
-        cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
-        cx.add_global_action(|_: &GlobalAction, _| {});
+        cx.update(|cx| {
+            cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
+            cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
+            cx.add_global_action(|_: &GlobalAction, _| {});
 
-        cx.add_bindings(vec![
-            Binding::new("a", Action1, Some("View1")),
-            Binding::new("b", Action2, Some("View1 > View2")),
-            Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
-        ]);
+            cx.add_bindings(vec![
+                Binding::new("a", Action1, Some("View1")),
+                Binding::new("b", Action2, Some("View1 > View2")),
+                Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
+            ]);
+        });
 
-        cx.update_window(window_id, |cx| {
-            // Sanity check
-            assert_eq!(
-                cx.keystrokes_for_action(view_1.id(), &Action1)
-                    .unwrap()
-                    .as_slice(),
-                &[Keystroke::parse("a").unwrap()]
-            );
-            assert_eq!(
-                cx.keystrokes_for_action(view_2.id(), &Action2)
-                    .unwrap()
-                    .as_slice(),
-                &[Keystroke::parse("b").unwrap()]
-            );
+        // Here we update the views to ensure that, even if they are on the stack,
+        // we can still retrieve keystrokes correctly.
+        view_1.update(cx, |_, cx| {
+            view_2.update(cx, |_, cx| {
+                // Sanity check
+                assert_eq!(
+                    cx.keystrokes_for_action(view_1.id(), &Action1)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("a").unwrap()]
+                );
+                assert_eq!(
+                    cx.keystrokes_for_action(view_2.id(), &Action2)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("b").unwrap()]
+                );
 
-            // The 'a' keystroke propagates up the view tree from view_2
-            // to view_1. The action, Action1, is handled by view_1.
-            assert_eq!(
-                cx.keystrokes_for_action(view_2.id(), &Action1)
-                    .unwrap()
-                    .as_slice(),
-                &[Keystroke::parse("a").unwrap()]
-            );
+                // The 'a' keystroke propagates up the view tree from view_2
+                // to view_1. The action, Action1, is handled by view_1.
+                assert_eq!(
+                    cx.keystrokes_for_action(view_2.id(), &Action1)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("a").unwrap()]
+                );
 
-            // Actions that are handled below the current view don't have bindings
-            assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action2), None);
+                // Actions that are handled below the current view don't have bindings
+                assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action2), None);
 
-            // Actions that are handled in other branches of the tree should not have a binding
-            assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
+                // Actions that are handled in other branches of the tree should not have a binding
+                assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
 
-            // Check that global actions do not have a binding, even if a binding does exist in another view
-            assert_eq!(
-                &available_actions(view_1.id(), cx),
-                &[
-                    ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                    ("test::GlobalAction", vec![])
-                ],
-            );
+                // Check that global actions do not have a binding, even if a binding does exist in another view
+                assert_eq!(
+                    &available_actions(view_1.id(), cx),
+                    &[
+                        ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                        ("test::GlobalAction", vec![])
+                    ],
+                );
 
-            // Check that view 1 actions and bindings are available even when called from view 2
-            assert_eq!(
-                &available_actions(view_2.id(), cx),
-                &[
-                    ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                    ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
-                    ("test::GlobalAction", vec![]),
-                ],
-            );
+                // Check that view 1 actions and bindings are available even when called from view 2
+                assert_eq!(
+                    &available_actions(view_2.id(), cx),
+                    &[
+                        ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                        ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
+                        ("test::GlobalAction", vec![]),
+                    ],
+                );
+            });
         });
 
         // Produces a list of actions and key bindings
