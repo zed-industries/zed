@@ -889,39 +889,38 @@ impl EditorElement {
                     ShowInvisibles::None => {}
                     ShowInvisibles::All => {
                         for invisible in &line_with_invisibles.invisibles {
-                            match invisible {
-                                Invisible::Tab { line_start_offset } => {
-                                    // TODO kb cache, deduplicate
-                                    let x_offset =
-                                        line_with_invisibles.line.x_for_index(*line_start_offset);
-                                    let font_size = line_with_invisibles.line.font_size();
-                                    let max_size = vec2f(font_size, font_size);
-                                    let origin = content_origin
-                                        + vec2f(
-                                            -scroll_left + x_offset,
-                                            row as f32 * layout.position_map.line_height
-                                                - scroll_top,
-                                        );
+                            // TODO kb cache, deduplicate
+                            let (token_offset, mut test_svg) = match invisible {
+                                Invisible::Tab { line_start_offset } => (
+                                    *line_start_offset,
+                                    Svg::new("icons/arrow_right_16.svg")
+                                        .with_color(self.style.line_number),
+                                ),
+                                Invisible::Whitespace { line_offset } => (
+                                    *line_offset,
+                                    Svg::new("icons/plus_8.svg").with_color(self.style.line_number),
+                                ),
+                            };
 
-                                    let mut test_svg = Svg::new("icons/arrow_right_16.svg")
-                                        .with_color(Color::red());
-                                    let (_, mut layout_state) = test_svg.layout(
-                                        SizeConstraint::new(origin, max_size),
-                                        editor,
-                                        cx,
-                                    );
-                                    test_svg.paint(
-                                        scene,
-                                        RectF::new(origin, max_size),
-                                        visible_bounds,
-                                        &mut layout_state,
-                                        editor,
-                                        cx,
-                                    );
-                                }
-                                // TODO kb draw whitespaces too
-                                Invisible::Whitespace { .. } => {}
-                            }
+                            let x_offset = line_with_invisibles.line.x_for_index(token_offset);
+                            let font_size = line_with_invisibles.line.font_size();
+                            let max_size = vec2f(font_size, font_size);
+                            let origin = content_origin
+                                + vec2f(
+                                    -scroll_left + x_offset,
+                                    row as f32 * layout.position_map.line_height - scroll_top,
+                                );
+
+                            let (_, mut layout_state) =
+                                test_svg.layout(SizeConstraint::new(origin, max_size), editor, cx);
+                            test_svg.paint(
+                                scene,
+                                RectF::new(origin, max_size),
+                                visible_bounds,
+                                &mut layout_state,
+                                editor,
+                                cx,
+                            );
                         }
                     }
                 }
@@ -1723,6 +1722,16 @@ fn layout_highlighted_chunks<'a>(
                     invisibles.push(Invisible::Tab {
                         line_start_offset: line.len(),
                     });
+                } else {
+                    invisibles.extend(
+                        line_chunk
+                            .chars()
+                            .enumerate()
+                            .filter(|(_, line_char)| line_char.is_whitespace())
+                            .map(|(whitespace_index, _)| Invisible::Whitespace {
+                                line_offset: line.len() + whitespace_index,
+                            }),
+                    )
                 }
                 line.push_str(line_chunk);
             }
