@@ -117,13 +117,10 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositoryEntry {
     pub(crate) scan_id: usize,
-    pub(crate) dot_git_entry_id: ProjectEntryId,
-    /// Relative to the worktree, the repository for the root will have
-    /// a work directory equal to: ""
-    pub(crate) work_directory: RepositoryWorkDirectory,
+    pub(crate) work_directory_id: ProjectEntryId,
     pub(crate) branch: Option<Arc<str>>,
 }
 
@@ -132,17 +129,16 @@ impl RepositoryEntry {
         self.branch.clone()
     }
 
-    pub fn work_directory(&self) -> Arc<Path> {
-        self.work_directory.0.clone()
+    pub fn work_directory_id(&self) -> ProjectEntryId {
+        self.work_directory_id
     }
 }
 
 impl From<&RepositoryEntry> for proto::RepositoryEntry {
     fn from(value: &RepositoryEntry) -> Self {
         proto::RepositoryEntry {
-            dot_git_entry_id: value.dot_git_entry_id.to_proto(),
             scan_id: value.scan_id as u64,
-            work_directory: value.work_directory.to_string_lossy().to_string(),
+            work_directory_id: value.work_directory_id.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
         }
     }
@@ -212,6 +208,7 @@ impl AsRef<Path> for RepositoryWorkDirectory {
 pub struct LocalSnapshot {
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     // The ProjectEntryId corresponds to the entry for the .git dir
+    // work_directory_id
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
     next_entry_id: Arc<AtomicUsize>,
@@ -701,12 +698,12 @@ impl LocalWorktree {
         ) {
             for a_repo in a {
                 let matched = b.find(|b_repo| {
-                    a_repo.dot_git_entry_id == b_repo.dot_git_entry_id
+                    a_repo.work_directory_id == b_repo.work_directory_id
                         && a_repo.scan_id == b_repo.scan_id
                 });
 
                 if matched.is_none() {
-                    updated.insert(a_repo.dot_git_entry_id, a_repo.clone());
+                    updated.insert(a_repo.work_directory_id, a_repo.clone());
                 }
             }
         }
@@ -1158,7 +1155,7 @@ impl LocalWorktree {
         repo_path: RepoPath,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Option<String>> {
-        let Some(git_ptr) = self.git_repositories.get(&repo.dot_git_entry_id).map(|git_ptr| git_ptr.to_owned()) else {
+        let Some(git_ptr) = self.git_repositories.get(&repo.work_directory_id).map(|git_ptr| git_ptr.to_owned()) else {
             return Task::Ready(Some(None))
         };
         let git_ptr = git_ptr.repo_ptr;
@@ -1474,6 +1471,10 @@ impl Snapshot {
 
     pub fn entries(&self, include_ignored: bool) -> Traversal {
         self.traverse_from_offset(true, include_ignored, 0)
+    }
+
+    pub fn repositories(&self) -> impl Iterator<Item = &RepositoryEntry> {
+        self.repository_entries.values()
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {

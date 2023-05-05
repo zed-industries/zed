@@ -785,6 +785,28 @@ async fn apply_client_operation(
             }
             client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
         }
+
+        ClientOperation::WriteGitBranch {
+            repo_path,
+            new_branch,
+        } => {
+            if !client.fs.directories().contains(&repo_path) {
+                return Err(TestError::Inapplicable);
+            }
+
+            log::info!(
+                "{}: writing git branch for repo {:?}: {:?}",
+                client.username,
+                repo_path,
+                new_branch
+            );
+
+            let dot_git_dir = repo_path.join(".git");
+            if client.fs.metadata(&dot_git_dir).await?.is_none() {
+                client.fs.create_dir(&dot_git_dir).await?;
+            }
+            client.fs.set_branch_name(&dot_git_dir, new_branch).await;
+        }
     }
     Ok(())
 }
@@ -855,6 +877,12 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
                                 "{} has different snapshot than the host for worktree {:?} and project {:?}",
+                                client.username,
+                                host_snapshot.abs_path(),
+                                guest_project.remote_id(),
+                            );
+                            assert_eq!(guest_snapshot.repositories().collect::<Vec<_>>(), host_snapshot.repositories().collect::<Vec<_>>(),
+                                "{} has different repositories than the host for worktree {:?} and project {:?}",
                                 client.username,
                                 host_snapshot.abs_path(),
                                 guest_project.remote_id(),
@@ -1150,6 +1178,10 @@ enum ClientOperation {
     WriteGitIndex {
         repo_path: PathBuf,
         contents: Vec<(PathBuf, String)>,
+    },
+    WriteGitBranch {
+        repo_path: PathBuf,
+        new_branch: Option<String>,
     },
 }
 
@@ -1664,7 +1696,7 @@ impl TestPlan {
                 }
 
                 // Update a git index
-                91..=95 => {
+                91..=93 => {
                     let repo_path = client
                         .fs
                         .directories()
@@ -1695,6 +1727,24 @@ impl TestPlan {
                     break ClientOperation::WriteGitIndex {
                         repo_path,
                         contents,
+                    };
+                }
+
+                // Update a git branch
+                94..=95 => {
+                    let repo_path = client
+                        .fs
+                        .directories()
+                        .choose(&mut self.rng)
+                        .unwrap()
+                        .clone();
+
+                    let new_branch = (self.rng.gen_range(0..10) > 3)
+                        .then(|| Alphanumeric.sample_string(&mut self.rng, 8));
+
+                    break ClientOperation::WriteGitBranch {
+                        repo_path,
+                        new_branch,
                     };
                 }
 

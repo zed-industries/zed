@@ -982,10 +982,9 @@ message Entry {
 }
 
 message RepositoryEntry {
-    uint64 dot_git_entry_id = 1;
-    uint64 scan_id = 2;
-    string work_directory = 4;
-    optional string branch = 5;
+    uint64 scan_id = 1;
+    uint64 work_directory_id = 2;
+    optional string branch = 3;
 }
 
 message BufferState {

@@ -1386,9 +1386,8 @@ async fn join_project(
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
             is_last_update: worktree.scan_id == worktree.completed_scan_id,
-            // TODO repo
-            updated_repositories: vec![],
-            removed_repositories: vec![],
+            updated_repositories: worktree.repository_entries,
+            removed_repositories: Default::default(),
         };
         for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
             session.peer.send(session.connection_id, update.clone())?;
