@@ -74,7 +74,7 @@ use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::{Autosave, Settings};
 use shared_screen::SharedScreen;
-use dock::{Dock, PanelButtons, DockPosition, ToggleDockItem};
+use dock::{Dock, PanelButtons, DockPosition, TogglePanel};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
@@ -1322,7 +1322,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_panel(&mut self, action: &ToggleDockItem, cx: &mut ViewContext<Self>) {
+    pub fn toggle_panel(&mut self, action: &TogglePanel, cx: &mut ViewContext<Self>) {
         let dock = match action.dock_position {
             DockPosition::Left => &mut self.left_dock,
             DockPosition::Right => &mut self.right_dock,

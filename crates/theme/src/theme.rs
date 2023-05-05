@@ -344,7 +344,7 @@ pub struct StatusBar {
 pub struct StatusBarPanelButtons {
     pub group_left: ContainerStyle,
     pub group_right: ContainerStyle,
-    pub item: Interactive<DockItem>,
+    pub button: Interactive<PanelButton>,
     pub badge: ContainerStyle,
 }
 
@@ -382,7 +382,7 @@ pub struct Dock {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct DockItem {
+pub struct PanelButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub icon_color: Color,

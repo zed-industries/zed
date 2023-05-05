@@ -96,7 +96,7 @@ export default function statusBar(colorScheme: ColorScheme) {
         panelButtons: {
             groupLeft: {},
             groupRight: {},
-            item: {
+            button: {
                 ...statusContainer,
                 iconSize: 16,
                 iconColor: foreground(layer, "variant"),

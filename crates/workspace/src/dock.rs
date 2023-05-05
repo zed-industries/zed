@@ -7,7 +7,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::rc::Rc;
 
-pub trait DockItem: View {
+pub trait Panel: View {
     fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
@@ -19,16 +19,17 @@ pub trait DockItem: View {
     }
 }
 
-pub trait DockItemHandle {
+pub trait PanelHandle {
+
     fn id(&self) -> usize;
     fn should_show_badge(&self, cx: &WindowContext) -> bool;
     fn is_focused(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
 
-impl<T> DockItemHandle for ViewHandle<T>
+impl<T> PanelHandle for ViewHandle<T>
 where
-    T: DockItem,
+    T: Panel,
 {
     fn id(&self) -> usize {
         self.id()
@@ -47,8 +48,8 @@ where
     }
 }
 
-impl From<&dyn DockItemHandle> for AnyViewHandle {
-    fn from(val: &dyn DockItemHandle) -> Self {
+impl From<&dyn PanelHandle> for AnyViewHandle {
+    fn from(val: &dyn PanelHandle) -> Self {
         val.as_any().clone()
     }
 }
@@ -78,7 +79,7 @@ impl DockPosition {
 struct Item {
     icon_path: &'static str,
     tooltip: String,
-    view: Rc<dyn DockItemHandle>,
+    view: Rc<dyn PanelHandle>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -88,12 +89,12 @@ pub struct PanelButtons {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-pub struct ToggleDockItem {
+pub struct TogglePanel {
     pub dock_position: DockPosition,
     pub item_index: usize,
 }
 
-impl_actions!(workspace, [ToggleDockItem]);
+impl_actions!(workspace, [TogglePanel]);
 
 impl Dock {
     pub fn new(position: DockPosition) -> Self {
@@ -126,7 +127,7 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn add_item<T: DockItem>(
+    pub fn add_item<T: Panel>(
         &mut self,
         icon_path: &'static str,
         tooltip: String,
@@ -171,7 +172,7 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn active_item(&self) -> Option<&Rc<dyn DockItemHandle>> {
+    pub fn active_item(&self) -> Option<&Rc<dyn PanelHandle>> {
         if self.is_open {
             self.items.get(self.active_item_ix).map(|item| &item.view)
         } else {
@@ -235,7 +236,7 @@ impl View for PanelButtons {
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.panel_buttons;
         let dock = self.dock.read(cx);
-        let item_style = theme.item.clone();
+        let item_style = theme.button.clone();
         let badge_style = theme.badge;
         let active_ix = dock.active_item_ix;
         let is_open = dock.is_open;
@@ -255,7 +256,7 @@ impl View for PanelButtons {
         Flex::row()
             .with_children(items.into_iter().enumerate().map(
                 |(ix, (icon_path, tooltip, item_view))| {
-                    let action = ToggleDockItem {
+                    let action = TogglePanel {
                         dock_position,
                         item_index: ix,
                     };

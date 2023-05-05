@@ -53,7 +53,7 @@ impl View for TerminalButton {
                             .workspace
                             .status_bar
                             .panel_buttons
-                            .item
+                            .button
                             .style_for(state, active);
 
                         Flex::row()

@@ -41,7 +41,7 @@ impl View for DeployFeedbackButton {
                         .workspace
                         .status_bar
                         .panel_buttons
-                        .item
+                        .button
                         .style_for(state, active);
 
                     Svg::new("icons/feedback_16.svg")

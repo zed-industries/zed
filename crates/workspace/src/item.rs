@@ -766,7 +766,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 #[cfg(test)]
 pub(crate) mod test {
     use super::{Item, ItemEvent};
-    use crate::{dock::DockItem, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use crate::{dock::Panel, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         elements::Empty, AnyElement, AppContext, Element, Entity, ModelHandle, Task, View,
         ViewContext, ViewHandle, WeakViewHandle,
@@ -1060,5 +1060,5 @@ pub(crate) mod test {
         }
     }
 
-    impl DockItem for TestItem {}
+    impl Panel for TestItem {}
 }
