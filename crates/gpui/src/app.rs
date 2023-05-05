@@ -1470,6 +1470,7 @@ impl AppContext {
                         .push_back(Effect::Focus(FocusEffect::View {
                             window_id,
                             view_id: Some(view_id),
+                            is_forced: false,
                         }));
                 }
 
@@ -1492,7 +1493,7 @@ impl AppContext {
 
             let mut refreshing = false;
             let mut updated_windows = HashSet::default();
-            let mut focus_changes = HashMap::default();
+            let mut focus_effects = HashMap::<usize, FocusEffect>::default();
             loop {
                 self.remove_dropped_entities();
                 if let Some(effect) = self.pending_effects.pop_front() {
@@ -1567,8 +1568,15 @@ impl AppContext {
                             self.handle_entity_release_effect(view_id, view.as_any())
                         }
 
-                        Effect::Focus(effect) => {
-                            focus_changes.insert(effect.window_id(), effect);
+                        Effect::Focus(mut effect) => {
+                            if focus_effects
+                                .get(&effect.window_id())
+                                .map_or(false, |prev_effect| prev_effect.is_forced())
+                            {
+                                effect.force();
+                            }
+
+                            focus_effects.insert(effect.window_id(), effect);
                         }
 
                         Effect::FocusObservation {
@@ -1609,7 +1617,22 @@ impl AppContext {
                         Effect::ActivateWindow {
                             window_id,
                             is_active,
-                        } => self.handle_window_activation_effect(window_id, is_active),
+                        } => {
+                            if self.handle_window_activation_effect(window_id, is_active)
+                                && is_active
+                            {
+                                focus_effects
+                                    .entry(window_id)
+                                    .or_insert_with(|| FocusEffect::View {
+                                        window_id,
+                                        view_id: self
+                                            .read_window(window_id, |cx| cx.focused_view_id())
+                                            .flatten(),
+                                        is_forced: true,
+                                    })
+                                    .force();
+                            }
+                        }
 
                         Effect::WindowFullscreenObservation {
                             window_id,
@@ -1692,7 +1715,7 @@ impl AppContext {
                         });
                     }
 
-                    for (_, effect) in focus_changes.drain() {
+                    for (_, effect) in focus_effects.drain() {
                         self.handle_focus_effect(effect);
                     }
 
@@ -1846,28 +1869,18 @@ impl AppContext {
         });
     }
 
-    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
+    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) -> bool {
         self.update_window(window_id, |cx| {
             if cx.window.is_active == active {
-                return;
+                return false;
             }
             cx.window.is_active = active;
 
-            if let Some(focused_id) = cx.window.focused_view_id {
-                for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
-                    cx.update_any_view(view_id, |view, cx| {
-                        if active {
-                            view.focus_in(focused_id, cx, view_id);
-                        } else {
-                            view.focus_out(focused_id, cx, view_id);
-                        }
-                    });
-                }
-            }
-
             let mut observations = cx.window_activation_observations.clone();
             observations.emit(window_id, |callback| callback(active, cx));
-        });
+            true
+        })
+        .unwrap_or(false)
     }
 
     fn handle_focus_effect(&mut self, effect: FocusEffect) {
@@ -1877,41 +1890,37 @@ impl AppContext {
                 FocusEffect::View { view_id, .. } => view_id,
                 FocusEffect::ViewParent { view_id, .. } => cx.ancestors(view_id).skip(1).next(),
             };
-            if cx.window.focused_view_id == focused_id {
-                return;
-            }
+
+            let focus_changed = cx.window.focused_view_id != focused_id;
             let blurred_id = cx.window.focused_view_id;
             cx.window.focused_view_id = focused_id;
 
-            let blurred_parents = blurred_id
-                .map(|blurred_id| cx.ancestors(blurred_id).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let focused_parents = focused_id
-                .map(|focused_id| cx.ancestors(focused_id).collect::<Vec<_>>())
-                .unwrap_or_default();
-
-            if let Some(blurred_id) = blurred_id {
-                for view_id in blurred_parents.iter().copied() {
-                    if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
-                        view.focus_out(blurred_id, cx, view_id);
-                        cx.views.insert((window_id, view_id), view);
+            if focus_changed {
+                if let Some(blurred_id) = blurred_id {
+                    for view_id in cx.ancestors(blurred_id).collect::<Vec<_>>() {
+                        if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                            view.focus_out(blurred_id, cx, view_id);
+                            cx.views.insert((window_id, view_id), view);
+                        }
                     }
-                }
 
-                let mut subscriptions = cx.focus_observations.clone();
-                subscriptions.emit(blurred_id, |callback| callback(false, cx));
+                    let mut subscriptions = cx.focus_observations.clone();
+                    subscriptions.emit(blurred_id, |callback| callback(false, cx));
+                }
             }
 
-            if let Some(focused_id) = focused_id {
-                for view_id in focused_parents {
-                    if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
-                        view.focus_in(focused_id, cx, view_id);
-                        cx.views.insert((window_id, view_id), view);
+            if focus_changed || effect.is_forced() {
+                if let Some(focused_id) = focused_id {
+                    for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
+                        if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                            view.focus_in(focused_id, cx, view_id);
+                            cx.views.insert((window_id, view_id), view);
+                        }
                     }
-                }
 
-                let mut subscriptions = cx.focus_observations.clone();
-                subscriptions.emit(focused_id, |callback| callback(true, cx));
+                    let mut subscriptions = cx.focus_observations.clone();
+                    subscriptions.emit(focused_id, |callback| callback(true, cx));
+                }
             }
         });
     }
@@ -1963,7 +1972,11 @@ impl AppContext {
 
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
         self.pending_effects
-            .push_back(Effect::Focus(FocusEffect::View { window_id, view_id }));
+            .push_back(Effect::Focus(FocusEffect::View {
+                window_id,
+                view_id,
+                is_forced: false,
+            }));
     }
 
     fn spawn_internal<F, Fut, T>(&mut self, task_name: Option<&'static str>, f: F) -> Task<T>
@@ -2064,10 +2077,12 @@ pub enum FocusEffect {
     View {
         window_id: usize,
         view_id: Option<usize>,
+        is_forced: bool,
     },
     ViewParent {
         window_id: usize,
         view_id: usize,
+        is_forced: bool,
     },
 }
 
@@ -2076,6 +2091,20 @@ impl FocusEffect {
         match self {
             FocusEffect::View { window_id, .. } => *window_id,
             FocusEffect::ViewParent { window_id, .. } => *window_id,
+        }
+    }
+
+    fn is_forced(&self) -> bool {
+        match self {
+            FocusEffect::View { is_forced, .. } => *is_forced,
+            FocusEffect::ViewParent { is_forced, .. } => *is_forced,
+        }
+    }
+
+    fn force(&mut self) {
+        match self {
+            FocusEffect::View { is_forced, .. } => *is_forced = true,
+            FocusEffect::ViewParent { is_forced, .. } => *is_forced = true,
         }
     }
 }
@@ -2866,6 +2895,7 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
             .push_back(Effect::Focus(FocusEffect::ViewParent {
                 window_id,
                 view_id,
+                is_forced: false,
             }));
     }
 
