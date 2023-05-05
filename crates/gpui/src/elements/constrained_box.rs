@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, SceneBuilder, SizeConstraint, View, ViewContext,
+    json, AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 
 pub struct ConstrainedBox<V: View> {
@@ -15,7 +15,7 @@ pub struct ConstrainedBox<V: View> {
 
 pub enum Constraint<V: View> {
     Static(SizeConstraint),
-    Dynamic(Box<dyn FnMut(SizeConstraint, &mut V, &mut ViewContext<V>) -> SizeConstraint>),
+    Dynamic(Box<dyn FnMut(SizeConstraint, &mut V, &mut LayoutContext<V>) -> SizeConstraint>),
 }
 
 impl<V: View> ToJson for Constraint<V> {
@@ -37,7 +37,8 @@ impl<V: View> ConstrainedBox<V> {
 
     pub fn dynamically(
         mut self,
-        constraint: impl 'static + FnMut(SizeConstraint, &mut V, &mut ViewContext<V>) -> SizeConstraint,
+        constraint: impl 'static
+            + FnMut(SizeConstraint, &mut V, &mut LayoutContext<V>) -> SizeConstraint,
     ) -> Self {
         self.constraint = Constraint::Dynamic(Box::new(constraint));
         self
@@ -119,7 +120,7 @@ impl<V: View> ConstrainedBox<V> {
         &mut self,
         input_constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> SizeConstraint {
         match &mut self.constraint {
             Constraint::Static(constraint) => *constraint,
@@ -138,7 +139,7 @@ impl<V: View> Element<V> for ConstrainedBox<V> {
         &mut self,
         mut parent_constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let constraint = self.constraint(parent_constraint, view, cx);
         parent_constraint.min = parent_constraint.min.max(constraint.min);

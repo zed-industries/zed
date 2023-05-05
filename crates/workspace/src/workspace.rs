@@ -63,7 +63,7 @@ use crate::{
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
 use lazy_static::lazy_static;
-use log::{error, warn};
+use log::warn;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
@@ -536,11 +536,7 @@ impl Workspace {
 
         let center_pane = cx
             .add_view(|cx| Pane::new(weak_handle.clone(), None, app_state.background_actions, cx));
-        let pane_id = center_pane.id();
-        cx.subscribe(&center_pane, move |this, _, event, cx| {
-            this.handle_pane_event(pane_id, event, cx)
-        })
-        .detach();
+        cx.subscribe(&center_pane, Self::handle_pane_event).detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
         let dock = Dock::new(
@@ -1433,11 +1429,7 @@ impl Workspace {
                 cx,
             )
         });
-        let pane_id = pane.id();
-        cx.subscribe(&pane, move |this, _, event, cx| {
-            this.handle_pane_event(pane_id, event, cx)
-        })
-        .detach();
+        cx.subscribe(&pane, Self::handle_pane_event).detach();
         self.panes.push(pane.clone());
         cx.focus(&pane);
         cx.emit(Event::PaneAdded(pane.clone()));
@@ -1634,47 +1626,46 @@ impl Workspace {
 
     fn handle_pane_event(
         &mut self,
-        pane_id: usize,
+        pane: ViewHandle<Pane>,
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(pane) = self.pane(pane_id) {
-            let is_dock = &pane == self.dock.pane();
-            match event {
-                pane::Event::Split(direction) if !is_dock => {
-                    self.split_pane(pane, *direction, cx);
-                }
-                pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
-                pane::Event::Remove if is_dock => Dock::hide(self, cx),
-                pane::Event::ActivateItem { local } => {
-                    if *local {
-                        self.unfollow(&pane, cx);
-                    }
-                    if &pane == self.active_pane() {
-                        self.active_item_path_changed(cx);
-                    }
-                }
-                pane::Event::ChangeItemTitle => {
-                    if pane == self.active_pane {
-                        self.active_item_path_changed(cx);
-                    }
-                    self.update_window_edited(cx);
-                }
-                pane::Event::RemoveItem { item_id } => {
-                    self.update_window_edited(cx);
-                    if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
-                        if entry.get().id() == pane.id() {
-                            entry.remove();
-                        }
-                    }
-                }
-                _ => {}
+        let is_dock = &pane == self.dock.pane();
+        match event {
+            pane::Event::Split(direction) if !is_dock => {
+                self.split_pane(pane, *direction, cx);
             }
-
-            self.serialize_workspace(cx);
-        } else if self.dock.visible_pane().is_none() {
-            error!("pane {} not found", pane_id);
+            pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
+            pane::Event::Remove if is_dock => Dock::hide(self, cx),
+            pane::Event::ActivateItem { local } => {
+                if *local {
+                    self.unfollow(&pane, cx);
+                }
+                if &pane == self.active_pane() {
+                    self.active_item_path_changed(cx);
+                }
+            }
+            pane::Event::ChangeItemTitle => {
+                if pane == self.active_pane {
+                    self.active_item_path_changed(cx);
+                }
+                self.update_window_edited(cx);
+            }
+            pane::Event::RemoveItem { item_id } => {
+                self.update_window_edited(cx);
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                    if entry.get().id() == pane.id() {
+                        entry.remove();
+                    }
+                }
+            }
+            pane::Event::Focus => {
+                self.handle_pane_focused(pane.clone(), cx);
+            }
+            _ => {}
         }
+
+        self.serialize_workspace(cx);
     }
 
     pub fn split_pane(
@@ -1771,10 +1762,6 @@ impl Workspace {
 
     pub fn panes(&self) -> &[ViewHandle<Pane>] {
         &self.panes
-    }
-
-    fn pane(&self, pane_id: usize) -> Option<ViewHandle<Pane>> {
-        self.panes.iter().find(|pane| pane.id() == pane_id).cloned()
     }
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
@@ -2365,19 +2352,14 @@ impl Workspace {
         }
 
         for (pane, item) in items_to_activate {
-            let active_item_was_focused = pane
-                .read(cx)
-                .active_item()
-                .map(|active_item| cx.is_child_focused(active_item.as_any()))
-                .unwrap_or_default();
-
+            let pane_was_focused = pane.read(cx).has_focus();
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
             } else {
                 Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
             }
 
-            if active_item_was_focused {
+            if pane_was_focused {
                 pane.update(cx, |pane, cx| pane.focus_active_item(cx));
             }
         }
@@ -2796,17 +2778,9 @@ impl View for Workspace {
             .into_any_named("workspace")
     }
 
-    fn focus_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
-        } else {
-            for pane in self.panes() {
-                let view = view.clone();
-                if pane.update(cx, |_, cx| view.id() == cx.view_id() || cx.is_child(view)) {
-                    self.handle_pane_focused(pane.clone(), cx);
-                    break;
-                }
-            }
         }
     }
 }
@@ -3154,10 +3128,10 @@ mod tests {
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.add_view(&workspace, |_| {
+        let item1 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -3169,7 +3143,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.add_view(&workspace, |_| {
+        let item2 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -3183,7 +3157,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.add_view(&workspace, |_| {
+        let item3 = cx.add_view(window_id, |_| {
             let mut item = TestItem::new();
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -3223,10 +3197,10 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.add_view(&workspace, |cx| {
+        let item1 = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.add_view(&workspace, |cx| {
+        let item2 = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
@@ -3311,15 +3285,15 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.add_view(&workspace, |_| TestItem::new());
+        let item1 = cx.add_view(window_id, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.add_view(&workspace, |_| TestItem::new().with_dirty(true));
-        let item3 = cx.add_view(&workspace, |cx| {
+        let item2 = cx.add_view(window_id, |_| TestItem::new().with_dirty(true));
+        let item3 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3345,24 +3319,24 @@ mod tests {
         let project = Project::test(fs, None, cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
-        let item1 = cx.add_view(&workspace, |cx| {
+        let item1 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
-        let item2 = cx.add_view(&workspace, |cx| {
+        let item2 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
         });
-        let item3 = cx.add_view(&workspace, |cx| {
+        let item3 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
-        let item4 = cx.add_view(&workspace, |cx| {
+        let item4 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new_untitled(cx)])
@@ -3456,7 +3430,7 @@ mod tests {
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.add_view(&workspace, |cx| {
+                cx.add_view(window_id, |cx| {
                     TestItem::new()
                         .with_dirty(true)
                         .with_project_items(&[TestProjectItem::new(
@@ -3467,7 +3441,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.add_view(&workspace, |cx| {
+        let item_2_3 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
@@ -3476,7 +3450,7 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.add_view(&workspace, |cx| {
+        let item_3_4 = cx.add_view(window_id, |cx| {
             TestItem::new()
                 .with_dirty(true)
                 .with_singleton(false)
@@ -3559,7 +3533,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
-        let item = cx.add_view(&workspace, |cx| {
+        let item = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.id();
@@ -3674,9 +3648,9 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
-        let item = cx.add_view(&workspace, |cx| {
+        let item = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());

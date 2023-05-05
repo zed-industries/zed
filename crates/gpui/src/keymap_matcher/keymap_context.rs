@@ -44,7 +44,7 @@ impl KeymapContext {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KeymapContextPredicate {
     Identifier(String),
     Equal(String, String),

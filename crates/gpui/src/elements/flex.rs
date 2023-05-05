@@ -2,8 +2,8 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    AnyElement, Axis, Element, ElementStateHandle, SceneBuilder, SizeConstraint, Vector2FExt, View,
-    ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, SceneBuilder, SizeConstraint,
+    Vector2FExt, View, ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -74,7 +74,7 @@ impl<V: View> Flex<V> {
         remaining_flex: &mut f32,
         cross_axis_max: &mut f32,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) {
         let cross_axis = self.axis.invert();
         for child in &mut self.children {
@@ -125,7 +125,7 @@ impl<V: View> Element<V> for Flex<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
         let mut fixed_space = 0.0;
@@ -214,7 +214,7 @@ impl<V: View> Element<V> for Flex<V> {
         }
 
         if let Some(scroll_state) = self.scroll_state.as_ref() {
-            scroll_state.0.update(cx, |scroll_state, _| {
+            scroll_state.0.update(cx.view_context(), |scroll_state, _| {
                 if let Some(scroll_to) = scroll_state.scroll_to.take() {
                     let visible_start = scroll_state.scroll_position.get();
                     let visible_end = visible_start + size.along(self.axis);
@@ -432,7 +432,7 @@ impl<V: View> Element<V> for FlexItem<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         (size, ())

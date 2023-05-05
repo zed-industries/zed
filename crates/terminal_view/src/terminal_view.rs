@@ -2,7 +2,6 @@ mod persistence;
 pub mod terminal_button;
 pub mod terminal_element;
 
-use anyhow::anyhow;
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
 use gpui::{
@@ -125,6 +124,7 @@ impl TerminalView {
         workspace_id: WorkspaceId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let view_id = cx.view_id();
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&terminal, |this, _, event, cx| match event {
             Event::Wakeup => {
@@ -163,7 +163,7 @@ impl TerminalView {
             terminal,
             has_new_content: true,
             has_bell: false,
-            context_menu: cx.add_view(ContextMenu::new),
+            context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
             blink_state: true,
             blinking_on: false,
             blinking_paused: false,
@@ -627,16 +627,12 @@ impl Item for TerminalView {
                     })
                 });
 
-            let pane = pane
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("pane was dropped"))?;
-            cx.update(|cx| {
-                let terminal = project.update(cx, |project, cx| {
-                    project.create_terminal(cwd, window_id, cx)
-                })?;
-
-                Ok(cx.add_view(&pane, |cx| TerminalView::new(terminal, workspace_id, cx)))
-            })
+            let terminal = project.update(&mut cx, |project, cx| {
+                project.create_terminal(cwd, window_id, cx)
+            })?;
+            Ok(pane.update(&mut cx, |_, cx| {
+                cx.add_view(|cx| TerminalView::new(terminal, workspace_id, cx))
+            })?)
         })
     }
 

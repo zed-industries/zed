@@ -14,7 +14,7 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Effect,
-    Element, Entity, Handle, MouseRegion, MouseRegionId, ParentId, SceneBuilder, Subscription,
+    Element, Entity, Handle, LayoutContext, MouseRegion, MouseRegionId, SceneBuilder, Subscription,
     View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
@@ -39,6 +39,7 @@ use super::{Reference, ViewMetadata};
 pub struct Window {
     pub(crate) root_view: Option<AnyViewHandle>,
     pub(crate) focused_view_id: Option<usize>,
+    pub(crate) parents: HashMap<usize, usize>,
     pub(crate) is_active: bool,
     pub(crate) is_fullscreen: bool,
     pub(crate) invalidation: Option<WindowInvalidation>,
@@ -72,6 +73,7 @@ impl Window {
         let mut window = Self {
             root_view: None,
             focused_view_id: None,
+            parents: Default::default(),
             is_active: false,
             invalidation: None,
             is_fullscreen: false,
@@ -90,11 +92,9 @@ impl Window {
         };
 
         let mut window_context = WindowContext::mutable(cx, &mut window, window_id);
-        let root_view = window_context
-            .build_and_insert_view(ParentId::Root, |cx| Some(build_view(cx)))
-            .unwrap();
-        if let Some(mut invalidation) = window_context.window.invalidation.take() {
-            window_context.invalidate(&mut invalidation, appearance);
+        let root_view = window_context.add_view(|cx| build_view(cx));
+        if let Some(invalidation) = window_context.window.invalidation.take() {
+            window_context.invalidate(invalidation, appearance);
         }
         window.focused_view_id = Some(root_view.id());
         window.root_view = Some(root_view.into_any());
@@ -113,7 +113,6 @@ pub struct WindowContext<'a> {
     pub(crate) app_context: Reference<'a, AppContext>,
     pub(crate) window: Reference<'a, Window>,
     pub(crate) window_id: usize,
-    pub(crate) refreshing: bool,
     pub(crate) removed: bool,
 }
 
@@ -169,7 +168,6 @@ impl<'a> WindowContext<'a> {
             app_context: Reference::Mutable(app_context),
             window: Reference::Mutable(window),
             window_id,
-            refreshing: false,
             removed: false,
         }
     }
@@ -179,7 +177,6 @@ impl<'a> WindowContext<'a> {
             app_context: Reference::Immutable(app_context),
             window: Reference::Immutable(window),
             window_id,
-            refreshing: false,
             removed: false,
         }
     }
@@ -359,49 +356,10 @@ impl<'a> WindowContext<'a> {
         )
     }
 
-    /// Return keystrokes that would dispatch the given action on the given view.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        let window_id = self.window_id;
-        let mut contexts = Vec::new();
-        let mut handler_depth = None;
-        for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
-                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    if actions.contains_key(&action.as_any().type_id()) {
-                        handler_depth = Some(i);
-                    }
-                }
-                contexts.push(view_metadata.keymap_context.clone());
-            }
-        }
-
-        if self.global_actions.contains_key(&action.as_any().type_id()) {
-            handler_depth = Some(contexts.len())
-        }
-
-        self.keystroke_matcher
-            .bindings_for_action_type(action.as_any().type_id())
-            .find_map(|b| {
-                handler_depth
-                    .map(|highest_handler| {
-                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
-                            Some(b.keystrokes().into())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
-            })
-    }
-
-    pub fn available_actions(
+    pub(crate) fn available_actions(
         &self,
         view_id: usize,
-    ) -> impl Iterator<Item = (&'static str, Box<dyn Action>, SmallVec<[&Binding; 1]>)> {
+    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
         let window_id = self.window_id;
         let mut contexts = Vec::new();
         let mut handler_depths_by_action_type = HashMap::<TypeId, usize>::default();
@@ -443,15 +401,17 @@ impl<'a> WindowContext<'a> {
                             .filter(|b| {
                                 (0..=action_depth).any(|depth| b.match_context(&contexts[depth..]))
                             })
+                            .cloned()
                             .collect(),
                     ))
                 } else {
                     None
                 }
             })
+            .collect()
     }
 
-    pub fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
+    pub(crate) fn dispatch_keystroke(&mut self, keystroke: &Keystroke) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.focused_view_id() {
             let dispatch_path = self
@@ -473,8 +433,7 @@ impl<'a> WindowContext<'a> {
                 MatchResult::Pending => true,
                 MatchResult::Matches(matches) => {
                     for (view_id, action) in matches {
-                        if self.handle_dispatch_action_from_effect(Some(*view_id), action.as_ref())
-                        {
+                        if self.dispatch_action(Some(*view_id), action.as_ref()) {
                             self.keystroke_matcher.clear_pending();
                             handled_by = Some(action.boxed_clone());
                             break;
@@ -497,7 +456,7 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    pub fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
+    pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
         let window_id = self.window_id;
@@ -833,7 +792,7 @@ impl<'a> WindowContext<'a> {
         any_event_handled
     }
 
-    pub fn dispatch_key_down(&mut self, event: &KeyDownEvent) -> bool {
+    pub(crate) fn dispatch_key_down(&mut self, event: &KeyDownEvent) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
@@ -852,7 +811,7 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    pub fn dispatch_key_up(&mut self, event: &KeyUpEvent) -> bool {
+    pub(crate) fn dispatch_key_up(&mut self, event: &KeyUpEvent) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
@@ -871,7 +830,7 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    pub fn dispatch_modifiers_changed(&mut self, event: &ModifiersChangedEvent) -> bool {
+    pub(crate) fn dispatch_modifiers_changed(&mut self, event: &ModifiersChangedEvent) -> bool {
         let window_id = self.window_id;
         if let Some(focused_view_id) = self.window.focused_view_id {
             for view_id in self.ancestors(focused_view_id).collect::<Vec<_>>() {
@@ -890,7 +849,7 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    pub fn invalidate(&mut self, invalidation: &mut WindowInvalidation, appearance: Appearance) {
+    pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, appearance: Appearance) {
         self.start_frame();
         self.window.appearance = appearance;
         for view_id in &invalidation.removed {
@@ -931,13 +890,52 @@ impl<'a> WindowContext<'a> {
         Ok(element)
     }
 
-    pub fn build_scene(&mut self) -> Result<Scene> {
+    pub(crate) fn layout(&mut self, refreshing: bool) -> Result<()> {
+        let window_size = self.window.platform_window.content_size();
+        let root_view_id = self.window.root_view().id();
+        let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
+        let mut new_parents = HashMap::default();
+        let mut views_to_notify_if_ancestors_change = HashMap::default();
+        rendered_root.layout(
+            SizeConstraint::strict(window_size),
+            &mut new_parents,
+            &mut views_to_notify_if_ancestors_change,
+            refreshing,
+            self,
+        )?;
+
+        for (view_id, view_ids_to_notify) in views_to_notify_if_ancestors_change {
+            let mut current_view_id = view_id;
+            loop {
+                let old_parent_id = self.window.parents.get(&current_view_id);
+                let new_parent_id = new_parents.get(&current_view_id);
+                if old_parent_id.is_none() && new_parent_id.is_none() {
+                    break;
+                } else if old_parent_id == new_parent_id {
+                    current_view_id = *old_parent_id.unwrap();
+                } else {
+                    let window_id = self.window_id;
+                    for view_id_to_notify in view_ids_to_notify {
+                        self.notify_view(window_id, view_id_to_notify);
+                    }
+                    break;
+                }
+            }
+        }
+
+        self.window.parents = new_parents;
+        self.window
+            .rendered_views
+            .insert(root_view_id, rendered_root);
+        Ok(())
+    }
+
+    pub(crate) fn paint(&mut self) -> Result<Scene> {
         let window_size = self.window.platform_window.content_size();
         let scale_factor = self.window.platform_window.scale_factor();
 
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
-        rendered_root.layout(SizeConstraint::strict(window_size), self)?;
 
         let mut scene_builder = SceneBuilder::new(scale_factor);
         rendered_root.paint(
@@ -1000,11 +998,7 @@ impl<'a> WindowContext<'a> {
         self.window.is_fullscreen
     }
 
-    pub(crate) fn handle_dispatch_action_from_effect(
-        &mut self,
-        view_id: Option<usize>,
-        action: &dyn Action,
-    ) -> bool {
+    pub(crate) fn dispatch_action(&mut self, view_id: Option<usize>, action: &dyn Action) -> bool {
         if let Some(view_id) = view_id {
             self.halt_action_dispatch = false;
             self.visit_dispatch_path(view_id, |view_id, capture_phase, cx| {
@@ -1050,25 +1044,13 @@ impl<'a> WindowContext<'a> {
         std::iter::once(view_id)
             .into_iter()
             .chain(std::iter::from_fn(move || {
-                if let Some(ParentId::View(parent_id)) =
-                    self.parents.get(&(self.window_id, view_id))
-                {
+                if let Some(parent_id) = self.window.parents.get(&view_id) {
                     view_id = *parent_id;
                     Some(view_id)
                 } else {
                     None
                 }
             }))
-    }
-
-    /// Returns the id of the parent of the given view, or none if the given
-    /// view is the root.
-    pub(crate) fn parent(&self, view_id: usize) -> Option<usize> {
-        if let Some(ParentId::View(view_id)) = self.parents.get(&(self.window_id, view_id)) {
-            Some(*view_id)
-        } else {
-            None
-        }
     }
 
     // Traverses the parent tree. Walks down the tree toward the passed
@@ -1099,16 +1081,6 @@ impl<'a> WindowContext<'a> {
 
     pub fn focused_view_id(&self) -> Option<usize> {
         self.window.focused_view_id
-    }
-
-    pub fn is_child_focused(&self, view: &AnyViewHandle) -> bool {
-        if let Some(focused_view_id) = self.focused_view_id() {
-            self.ancestors(focused_view_id)
-                .skip(1) // Skip self id
-                .any(|parent| parent == view.view_id)
-        } else {
-            false
-        }
     }
 
     pub fn window_bounds(&self) -> WindowBounds {
@@ -1153,27 +1125,27 @@ impl<'a> WindowContext<'a> {
         V: View,
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
-        let root_view = self
-            .build_and_insert_view(ParentId::Root, |cx| Some(build_root_view(cx)))
-            .unwrap();
+        let root_view = self.add_view(|cx| build_root_view(cx));
         self.window.root_view = Some(root_view.clone().into_any());
         self.window.focused_view_id = Some(root_view.id());
         root_view
     }
 
-    pub(crate) fn build_and_insert_view<T, F>(
-        &mut self,
-        parent_id: ParentId,
-        build_view: F,
-    ) -> Option<ViewHandle<T>>
+    pub fn add_view<T, F>(&mut self, build_view: F) -> ViewHandle<T>
+    where
+        T: View,
+        F: FnOnce(&mut ViewContext<T>) -> T,
+    {
+        self.add_option_view(|cx| Some(build_view(cx))).unwrap()
+    }
+
+    pub fn add_option_view<T, F>(&mut self, build_view: F) -> Option<ViewHandle<T>>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> Option<T>,
     {
         let window_id = self.window_id;
         let view_id = post_inc(&mut self.next_entity_id);
-        // Make sure we can tell child views about their parentu
-        self.parents.insert((window_id, view_id), parent_id);
         let mut cx = ViewContext::mutable(self, view_id);
         let handle = if let Some(view) = build_view(&mut cx) {
             let mut keymap_context = KeymapContext::default();
@@ -1193,7 +1165,6 @@ impl<'a> WindowContext<'a> {
                 .insert(view_id);
             Some(ViewHandle::new(window_id, view_id, &self.ref_counts))
         } else {
-            self.parents.remove(&(window_id, view_id));
             None
         };
         handle
@@ -1374,11 +1345,18 @@ impl<V: View> Element<V> for ChildView {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
+            cx.new_parents.insert(self.view_id, cx.view_id());
             let size = rendered_view
-                .layout(constraint, cx)
+                .layout(
+                    constraint,
+                    cx.new_parents,
+                    cx.views_to_notify_if_ancestors_change,
+                    cx.refreshing,
+                    cx.view_context,
+                )
                 .log_err()
                 .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);

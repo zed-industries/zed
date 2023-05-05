@@ -7,7 +7,8 @@ use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
-    AnyElement, Axis, Element, ElementStateHandle, MouseRegion, SceneBuilder, View, ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, MouseRegion, SceneBuilder, View,
+    ViewContext,
 };
 
 use super::{ConstrainedBox, Hook};
@@ -139,7 +140,7 @@ impl<V: View> Element<V> for Resizable<V> {
         &mut self,
         constraint: crate::SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }

@@ -8,7 +8,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle},
-    Element, SceneBuilder, SizeConstraint, View, ViewContext,
+    Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -135,7 +135,7 @@ impl<V: View> Element<V> for Label {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let runs = self.compute_runs();
         let line = cx.text_layout_cache().layout_str(

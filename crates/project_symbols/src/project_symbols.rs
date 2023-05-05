@@ -318,10 +318,10 @@ mod tests {
             },
         );
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
 
         // Create the project symbols view.
-        let symbols = cx.add_view(&workspace, |cx| {
+        let symbols = cx.add_view(window_id, |cx| {
             ProjectSymbols::new(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 cx,

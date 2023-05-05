@@ -30,8 +30,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AnyElement, Axis, Border, CursorRegion, Element, EventContext, MouseRegion, Quad, SceneBuilder,
-    SizeConstraint, ViewContext, WindowContext,
+    AnyElement, Axis, Border, CursorRegion, Element, EventContext, LayoutContext, MouseRegion,
+    Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -1388,7 +1388,7 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         include_root: bool,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut LayoutContext<Editor>,
     ) -> (f32, Vec<BlockLayout>) {
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
         let scroll_x = snapshot.scroll_anchor.offset.x();
@@ -1594,7 +1594,7 @@ impl Element<Editor> for EditorElement {
         &mut self,
         constraint: SizeConstraint,
         editor: &mut Editor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut LayoutContext<Editor>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         if size.x().is_infinite() {
@@ -2565,10 +2565,18 @@ mod tests {
 
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (size, mut state) = editor.update(cx, |editor, cx| {
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
-                cx,
+                &mut layout_cx,
             )
         });
 

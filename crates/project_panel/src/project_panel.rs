@@ -196,6 +196,7 @@ impl ProjectPanel {
             })
             .detach();
 
+            let view_id = cx.view_id();
             let mut this = Self {
                 project: project.clone(),
                 list: Default::default(),
@@ -206,7 +207,7 @@ impl ProjectPanel {
                 edit_state: None,
                 filename_editor,
                 clipboard_entry: None,
-                context_menu: cx.add_view(ContextMenu::new),
+                context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
             };

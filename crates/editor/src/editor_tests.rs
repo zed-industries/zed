@@ -493,9 +493,9 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.background());
     let project = Project::test(fs, [], cx).await;
-    let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+    let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
     let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-    cx.add_view(&pane, |cx| {
+    cx.add_view(window_id, |cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
         let mut editor = build_editor(buffer.clone(), cx);
         let handle = cx.handle();

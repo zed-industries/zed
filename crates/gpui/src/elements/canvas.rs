@@ -34,7 +34,7 @@ where
         &mut self,
         constraint: crate::SizeConstraint,
         _: &mut V,
-        _: &mut crate::ViewContext<V>,
+        _: &mut crate::LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() {
             constraint.max.x()

@@ -7,8 +7,8 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle, ShapedBoundary},
-    AppContext, Element, FontCache, SceneBuilder, SizeConstraint, TextLayoutCache, View,
-    ViewContext,
+    AppContext, Element, FontCache, LayoutContext, SceneBuilder, SizeConstraint, TextLayoutCache,
+    View, ViewContext,
 };
 use log::warn;
 use serde_json::json;
@@ -78,7 +78,7 @@ impl<V: View> Element<V> for Text {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
 
@@ -411,10 +411,18 @@ mod tests {
             let mut view = TestView;
             fonts::with_font_cache(cx.font_cache().clone(), || {
                 let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
+                let mut new_parents = Default::default();
+                let mut notify_views_if_parents_change = Default::default();
+                let mut layout_cx = LayoutContext::new(
+                    cx,
+                    &mut new_parents,
+                    &mut notify_views_if_parents_change,
+                    false,
+                );
                 let (_, state) = text.layout(
                     SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
                     &mut view,
-                    cx,
+                    &mut layout_cx,
                 );
                 assert_eq!(state.shaped_lines.len(), 2);
                 assert_eq!(state.wrap_boundaries.len(), 2);

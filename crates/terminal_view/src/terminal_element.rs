@@ -10,8 +10,8 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SceneBuilder,
-    SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
+    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion, Quad,
+    SceneBuilder, SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -370,7 +370,7 @@ impl TerminalElement {
         f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
     ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
         move |event, _: &mut TerminalView, cx| {
-            cx.focus_parent_view();
+            cx.focus_parent();
             if let Some(conn_handle) = connection.upgrade(cx) {
                 conn_handle.update(cx, |terminal, cx| {
                     f(terminal, origin, event, cx);
@@ -408,7 +408,7 @@ impl TerminalElement {
             )
             // Update drag selections
             .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
-                if cx.is_parent_view_focused() {
+                if cx.is_self_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_drag(event, origin);
@@ -444,7 +444,7 @@ impl TerminalElement {
                 },
             )
             .on_move(move |event, _: &mut TerminalView, cx| {
-                if cx.is_parent_view_focused() {
+                if cx.is_self_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_move(&event, origin);
@@ -561,7 +561,7 @@ impl Element<TerminalView> for TerminalElement {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
+        cx: &mut LayoutContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
         let font_cache = cx.font_cache();

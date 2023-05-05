@@ -670,13 +670,11 @@ mod tests {
                 cx,
             )
         });
-        let (_, root_view) = cx.add_window(|_| EmptyView);
+        let (window_id, _root_view) = cx.add_window(|_| EmptyView);
 
-        let editor = cx.add_view(&root_view, |cx| {
-            Editor::for_buffer(buffer.clone(), None, cx)
-        });
+        let editor = cx.add_view(window_id, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
-        let search_bar = cx.add_view(&root_view, |cx| {
+        let search_bar = cx.add_view(window_id, |cx| {
             let mut search_bar = BufferSearchBar::new(cx);
             search_bar.set_active_pane_item(Some(&editor), cx);
             search_bar.show(false, true, cx);

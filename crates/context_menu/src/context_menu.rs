@@ -177,9 +177,7 @@ impl View for ContextMenu {
 }
 
 impl ContextMenu {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let parent_view_id = cx.parent().unwrap();
-
+    pub fn new(parent_view_id: usize, cx: &mut ViewContext<Self>) -> Self {
         Self {
             show_count: 0,
             anchor_position: Default::default(),

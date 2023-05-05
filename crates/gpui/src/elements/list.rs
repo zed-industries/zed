@@ -4,7 +4,8 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    AnyElement, Element, MouseRegion, SceneBuilder, SizeConstraint, View, ViewContext,
+    AnyElement, Element, LayoutContext, MouseRegion, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -99,7 +100,7 @@ impl<V: View> Element<V> for List<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let state = &mut *self.state.0.borrow_mut();
         let size = constraint.max;
@@ -452,7 +453,7 @@ impl<V: View> StateInner<V> {
         existing_element: Option<&ListItem<V>>,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> Option<Rc<RefCell<AnyElement<V>>>> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
@@ -665,7 +666,15 @@ mod tests {
             });
 
             let mut list = List::new(state.clone());
-            let (size, _) = list.layout(constraint, &mut view, cx);
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            let (size, _) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
                 state.0.borrow().items.summary().clone(),
@@ -689,7 +698,13 @@ mod tests {
                 cx,
             );
 
-            let (_, logical_scroll_top) = list.layout(constraint, &mut view, cx);
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            let (_, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(
                 logical_scroll_top,
                 ListOffset {
@@ -713,7 +728,13 @@ mod tests {
                 }
             );
 
-            let (size, logical_scroll_top) = list.layout(constraint, &mut view, cx);
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            let (size, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
                 state.0.borrow().items.summary().clone(),
@@ -831,10 +852,18 @@ mod tests {
 
                 let mut list = List::new(state.clone());
                 let window_size = vec2f(width, height);
+                let mut new_parents = Default::default();
+                let mut notify_views_if_parents_change = Default::default();
+                let mut layout_cx = LayoutContext::new(
+                    cx,
+                    &mut new_parents,
+                    &mut notify_views_if_parents_change,
+                    false,
+                );
                 let (size, logical_scroll_top) = list.layout(
                     SizeConstraint::new(vec2f(0., 0.), window_size),
                     &mut view,
-                    cx,
+                    &mut layout_cx,
                 );
                 assert_eq!(size, window_size);
                 last_logical_scroll_top = Some(logical_scroll_top);
@@ -947,7 +976,7 @@ mod tests {
             &mut self,
             _: SizeConstraint,
             _: &mut V,
-            _: &mut ViewContext<V>,
+            _: &mut LayoutContext<V>,
         ) -> (Vector2F, ()) {
             (self.size, ())
         }

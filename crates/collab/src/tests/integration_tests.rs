@@ -1202,7 +1202,7 @@ async fn test_share_project(
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    let (_, window_b) = cx_b.add_window(|_| EmptyView);
+    let (window_b, _) = cx_b.add_window(|_| EmptyView);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -1289,7 +1289,7 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = cx_b.add_view(&window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
+    let editor_b = cx_b.add_view(window_b, |cx| Editor::for_buffer(buffer_b, None, cx));
 
     // Client A sees client B's selection
     deterministic.run_until_parked();
@@ -3076,13 +3076,13 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let (_, window_a) = cx_a.add_window(|_| EmptyView);
-    let editor_a = cx_a.add_view(&window_a, |cx| {
+    let (window_a, _) = cx_a.add_window(|_| EmptyView);
+    let editor_a = cx_a.add_view(window_a, |cx| {
         Editor::for_buffer(buffer_a, Some(project_a), cx)
     });
     let mut editor_cx_a = EditorTestContext {
         cx: cx_a,
-        window_id: window_a.id(),
+        window_id: window_a,
         editor: editor_a,
     };
 
@@ -3091,13 +3091,13 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let (_, window_b) = cx_b.add_window(|_| EmptyView);
-    let editor_b = cx_b.add_view(&window_b, |cx| {
+    let (window_b, _) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(window_b, |cx| {
         Editor::for_buffer(buffer_b, Some(project_b), cx)
     });
     let mut editor_cx_b = EditorTestContext {
         cx: cx_b,
-        window_id: window_b.id(),
+        window_id: window_b,
         editor: editor_b,
     };
 
@@ -3836,8 +3836,8 @@ async fn test_collaborating_with_completion(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
-    let (_, window_b) = cx_b.add_window(|_| EmptyView);
-    let editor_b = cx_b.add_view(&window_b, |cx| {
+    let (window_b, _) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(window_b, |cx| {
         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), cx)
     });
 
@@ -6808,13 +6808,10 @@ async fn test_peers_following_each_other(
     // Clients A and B follow each other in split panes
     workspace_a.update(cx_a, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        let pane_a1 = pane_a1.clone();
-        cx.defer(move |workspace, _| {
-            assert_ne!(*workspace.active_pane(), pane_a1);
-        });
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
+            assert_ne!(*workspace.active_pane(), pane_a1);
             let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
             workspace.toggle_follow(leader_id, cx).unwrap()
         })
@@ -6822,13 +6819,10 @@ async fn test_peers_following_each_other(
         .unwrap();
     workspace_b.update(cx_b, |workspace, cx| {
         workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-        let pane_b1 = pane_b1.clone();
-        cx.defer(move |workspace, _| {
-            assert_ne!(*workspace.active_pane(), pane_b1);
-        });
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
+            assert_ne!(*workspace.active_pane(), pane_b1);
             let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
             workspace.toggle_follow(leader_id, cx).unwrap()
         })

@@ -24,8 +24,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    LayoutContext, ModelHandle, MouseRegion, Quad, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -134,6 +134,7 @@ pub enum Event {
     RemoveItem { item_id: usize },
     Split(SplitDirection),
     ChangeItemTitle,
+    Focus,
 }
 
 pub struct Pane {
@@ -150,6 +151,7 @@ pub struct Pane {
     docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
+    has_focus: bool,
 }
 
 pub struct ItemNavHistory {
@@ -226,8 +228,9 @@ impl Pane {
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let pane_view_id = cx.view_id();
         let handle = cx.weak_handle();
-        let context_menu = cx.add_view(ContextMenu::new);
+        let context_menu = cx.add_view(|cx| ContextMenu::new(pane_view_id, cx));
         context_menu.update(cx, |menu, _| {
             menu.set_position_mode(OverlayPositionMode::Local)
         });
@@ -252,10 +255,11 @@ impl Pane {
                 kind: TabBarContextMenuKind::New,
                 handle: context_menu,
             },
-            tab_context_menu: cx.add_view(ContextMenu::new),
+            tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
             docked,
             _background_actions: background_actions,
             workspace,
+            has_focus: false,
         }
     }
 
@@ -270,6 +274,10 @@ impl Pane {
     pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
         self.is_active = is_active;
         cx.notify();
+    }
+
+    pub fn has_focus(&self) -> bool {
+        self.has_focus
     }
 
     pub fn set_docked(&mut self, docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) {
@@ -537,7 +545,6 @@ impl Pane {
             // If the item already exists, move it to the desired destination and activate it
             pane.update(cx, |pane, cx| {
                 if existing_item_index != insertion_index {
-                    cx.reparent(item.as_any());
                     let existing_item_is_active = existing_item_index == pane.active_item_index;
 
                     // If the caller didn't specify a destination and the added item is already
@@ -567,7 +574,6 @@ impl Pane {
             });
         } else {
             pane.update(cx, |pane, cx| {
-                cx.reparent(item.as_any());
                 pane.items.insert(insertion_index, item);
                 if insertion_index <= pane.active_item_index {
                     pane.active_item_index += 1;
@@ -1764,7 +1770,7 @@ impl View for Pane {
                     self.render_blank_pane(&theme, cx)
                 })
                 .on_down(MouseButton::Left, |_, _, cx| {
-                    cx.focus_parent_view();
+                    cx.focus_parent();
                 })
                 .into_any()
             }
@@ -1798,6 +1804,7 @@ impl View for Pane {
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = true;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(true, cx);
         });
@@ -1823,9 +1830,12 @@ impl View for Pane {
                     .insert(active_item.id(), focused.downgrade());
             }
         }
+
+        cx.emit(Event::Focus);
     }
 
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = false;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(false, cx);
         });
@@ -1998,7 +2008,7 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut V,
-        cx: &mut ViewContext<V>,
+        cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         (size, ())

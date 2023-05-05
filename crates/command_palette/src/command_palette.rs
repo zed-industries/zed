@@ -2,7 +2,7 @@ use collections::CommandPaletteFilter;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, elements::*, keymap_matcher::Keystroke, Action, AppContext, Element, MouseState,
-    ViewContext, WindowContext,
+    ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use settings::Settings;
@@ -41,47 +41,17 @@ struct Command {
     keystrokes: Vec<Keystroke>,
 }
 
-fn toggle_command_palette(_: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-    let workspace = cx.handle();
-    let focused_view_id = cx.focused_view_id().unwrap_or_else(|| workspace.id());
-
-    cx.window_context().defer(move |cx| {
-        // Build the delegate before the workspace is put on the stack so we can find it when
-        // computing the actions. We should really not allow available_actions to be called
-        // if it's not reliable however.
-        let delegate = CommandPaletteDelegate::new(focused_view_id, cx);
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_modal(cx, |_, cx| cx.add_view(|cx| Picker::new(delegate, cx)));
-        })
+fn toggle_command_palette(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+    let focused_view_id = cx.focused_view_id().unwrap_or_else(|| cx.view_id());
+    workspace.toggle_modal(cx, |_, cx| {
+        cx.add_view(|cx| Picker::new(CommandPaletteDelegate::new(focused_view_id), cx))
     });
 }
 
 impl CommandPaletteDelegate {
-    pub fn new(focused_view_id: usize, cx: &mut WindowContext) -> Self {
-        let actions = cx
-            .available_actions(focused_view_id)
-            .filter_map(|(name, action, bindings)| {
-                if cx.has_global::<CommandPaletteFilter>() {
-                    let filter = cx.global::<CommandPaletteFilter>();
-                    if filter.filtered_namespaces.contains(action.namespace()) {
-                        return None;
-                    }
-                }
-
-                Some(Command {
-                    name: humanize_action_name(name),
-                    action,
-                    keystrokes: bindings
-                        .iter()
-                        .map(|binding| binding.keystrokes())
-                        .last()
-                        .map_or(Vec::new(), |keystrokes| keystrokes.to_vec()),
-                })
-            })
-            .collect();
-
+    pub fn new(focused_view_id: usize) -> Self {
         Self {
-            actions,
+            actions: Default::default(),
             matches: vec![],
             selected_ix: 0,
             focused_view_id,
@@ -111,17 +81,46 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        let candidates = self
-            .actions
-            .iter()
-            .enumerate()
-            .map(|(ix, command)| StringMatchCandidate {
-                id: ix,
-                string: command.name.to_string(),
-                char_bag: command.name.chars().collect(),
-            })
-            .collect::<Vec<_>>();
+        let window_id = cx.window_id();
+        let view_id = self.focused_view_id;
         cx.spawn(move |picker, mut cx| async move {
+            let actions = cx
+                .available_actions(window_id, view_id)
+                .into_iter()
+                .filter_map(|(name, action, bindings)| {
+                    let filtered = cx.read(|cx| {
+                        if cx.has_global::<CommandPaletteFilter>() {
+                            let filter = cx.global::<CommandPaletteFilter>();
+                            filter.filtered_namespaces.contains(action.namespace())
+                        } else {
+                            false
+                        }
+                    });
+
+                    if filtered {
+                        None
+                    } else {
+                        Some(Command {
+                            name: humanize_action_name(name),
+                            action,
+                            keystrokes: bindings
+                                .iter()
+                                .map(|binding| binding.keystrokes())
+                                .last()
+                                .map_or(Vec::new(), |keystrokes| keystrokes.to_vec()),
+                        })
+                    }
+                })
+                .collect::<Vec<_>>();
+            let candidates = actions
+                .iter()
+                .enumerate()
+                .map(|(ix, command)| StringMatchCandidate {
+                    id: ix,
+                    string: command.name.to_string(),
+                    char_bag: command.name.chars().collect(),
+                })
+                .collect::<Vec<_>>();
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -147,6 +146,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = picker.delegate_mut();
+                    delegate.actions = actions;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
                         delegate.selected_ix = 0;
@@ -304,8 +304,8 @@ mod tests {
         });
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let editor = cx.add_view(&workspace, |cx| {
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let editor = cx.add_view(window_id, |cx| {
             let mut editor = Editor::single_line(None, cx);
             editor.set_text("abc", cx);
             editor

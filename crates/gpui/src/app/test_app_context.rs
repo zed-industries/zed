@@ -1,17 +1,18 @@
 use crate::{
     executor,
     geometry::vector::Vector2F,
-    keymap_matcher::Keystroke,
+    keymap_matcher::{Binding, Keystroke},
     platform,
     platform::{Event, InputHandler, KeyDownEvent, Platform},
-    Action, AnyViewHandle, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache,
-    Handle, ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakHandle, WindowContext,
+    Action, AppContext, BorrowAppContext, BorrowWindowContext, Entity, FontCache, Handle,
+    ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakHandle,
+    WindowContext,
 };
 use collections::BTreeMap;
 use futures::Future;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
+use smallvec::SmallVec;
 use smol::stream::StreamExt;
 use std::{
     any::Any,
@@ -71,17 +72,24 @@ impl TestAppContext {
         cx
     }
 
-    pub fn dispatch_action<A: Action>(&self, window_id: usize, action: A) {
-        self.cx
-            .borrow_mut()
-            .update_window(window_id, |window| {
-                window.handle_dispatch_action_from_effect(window.focused_view_id(), &action);
-            })
-            .expect("window not found");
+    pub fn dispatch_action<A: Action>(&mut self, window_id: usize, action: A) {
+        self.update_window(window_id, |window| {
+            window.dispatch_action(window.focused_view_id(), &action);
+        })
+        .expect("window not found");
     }
 
-    pub fn dispatch_global_action<A: Action>(&self, action: A) {
-        self.cx.borrow_mut().dispatch_global_action_any(&action);
+    pub fn available_actions(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
+        self.read_window(window_id, |cx| cx.available_actions(view_id))
+            .unwrap_or_default()
+    }
+
+    pub fn dispatch_global_action<A: Action>(&mut self, action: A) {
+        self.update(|cx| cx.dispatch_global_action_any(&action));
     }
 
     pub fn dispatch_keystroke(&mut self, window_id: usize, keystroke: Keystroke, is_held: bool) {
@@ -153,12 +161,13 @@ impl TestAppContext {
         (window_id, view)
     }
 
-    pub fn add_view<T, F>(&mut self, parent_handle: &AnyViewHandle, build_view: F) -> ViewHandle<T>
+    pub fn add_view<T, F>(&mut self, window_id: usize, build_view: F) -> ViewHandle<T>
     where
         T: View,
         F: FnOnce(&mut ViewContext<T>) -> T,
     {
-        self.cx.borrow_mut().add_view(parent_handle, build_view)
+        self.update_window(window_id, |cx| cx.add_view(build_view))
+            .expect("window not found")
     }
 
     pub fn observe_global<E, F>(&mut self, callback: F) -> Subscription

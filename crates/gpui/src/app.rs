@@ -25,6 +25,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use postage::oneshot;
+use smallvec::SmallVec;
 use smol::prelude::*;
 use util::ResultExt;
 use uuid::Uuid;
@@ -336,9 +337,18 @@ impl AsyncAppContext {
         self.0
             .borrow_mut()
             .update_window(window_id, |window| {
-                window.handle_dispatch_action_from_effect(Some(view_id), action);
+                window.dispatch_action(Some(view_id), action);
             })
             .ok_or_else(|| anyhow!("window not found"))
+    }
+
+    pub fn available_actions(
+        &self,
+        window_id: usize,
+        view_id: usize,
+    ) -> Vec<(&'static str, Box<dyn Action>, SmallVec<[Binding; 1]>)> {
+        self.read_window(window_id, |cx| cx.available_actions(view_id))
+            .unwrap_or_default()
     }
 
     pub fn has_window(&self, window_id: usize) -> bool {
@@ -442,7 +452,6 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     views_metadata: HashMap<(usize, usize), ViewMetadata>,
-    pub(crate) parents: HashMap<(usize, usize), ParentId>,
     windows: HashMap<usize, Window>,
     globals: HashMap<TypeId, Box<dyn Any>>,
     element_states: HashMap<ElementStateId, Box<dyn Any>>,
@@ -505,7 +514,6 @@ impl AppContext {
             models: Default::default(),
             views: Default::default(),
             views_metadata: Default::default(),
-            parents: Default::default(),
             windows: Default::default(),
             globals: Default::default(),
             element_states: Default::default(),
@@ -1365,9 +1373,9 @@ impl AppContext {
         }));
 
         let mut window = Window::new(window_id, platform_window, self, build_root_view);
-        let scene = WindowContext::mutable(self, &mut window, window_id)
-            .build_scene()
-            .expect("initial scene should not error");
+        let mut cx = WindowContext::mutable(self, &mut window, window_id);
+        cx.layout(false).expect("initial layout should not error");
+        let scene = cx.paint().expect("initial paint should not error");
         window.platform_window.present_scene(scene);
         window
     }
@@ -1382,18 +1390,6 @@ impl AppContext {
         F: FnOnce(&mut ViewContext<V>) -> V,
     {
         self.update_window(window_id, |cx| cx.replace_root_view(build_root_view))
-    }
-
-    pub fn add_view<S, F>(&mut self, parent: &AnyViewHandle, build_view: F) -> ViewHandle<S>
-    where
-        S: View,
-        F: FnOnce(&mut ViewContext<S>) -> S,
-    {
-        self.update_window(parent.window_id, |cx| {
-            cx.build_and_insert_view(ParentId::View(parent.view_id), |cx| Some(build_view(cx)))
-                .unwrap()
-        })
-        .unwrap()
     }
 
     pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
@@ -1456,6 +1452,7 @@ impl AppContext {
                 let mut view = self.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
                 let change_focus_to = self.windows.get_mut(&window_id).and_then(|window| {
+                    window.parents.remove(&view_id);
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
@@ -1467,10 +1464,14 @@ impl AppContext {
                         None
                     }
                 });
-                self.parents.remove(&(window_id, view_id));
 
                 if let Some(view_id) = change_focus_to {
-                    self.handle_focus_effect(window_id, Some(view_id));
+                    self.pending_effects
+                        .push_back(Effect::Focus(FocusEffect::View {
+                            window_id,
+                            view_id: Some(view_id),
+                            is_forced: false,
+                        }));
                 }
 
                 self.pending_effects
@@ -1491,7 +1492,10 @@ impl AppContext {
             self.flushing_effects = true;
 
             let mut refreshing = false;
+            let mut updated_windows = HashSet::default();
+            let mut focus_effects = HashMap::<usize, FocusEffect>::default();
             loop {
+                self.remove_dropped_entities();
                 if let Some(effect) = self.pending_effects.pop_front() {
                     match effect {
                         Effect::Subscription {
@@ -1564,8 +1568,15 @@ impl AppContext {
                             self.handle_entity_release_effect(view_id, view.as_any())
                         }
 
-                        Effect::Focus { window_id, view_id } => {
-                            self.handle_focus_effect(window_id, view_id);
+                        Effect::Focus(mut effect) => {
+                            if focus_effects
+                                .get(&effect.window_id())
+                                .map_or(false, |prev_effect| prev_effect.is_forced())
+                            {
+                                effect.force();
+                            }
+
+                            focus_effects.insert(effect.window_id(), effect);
                         }
 
                         Effect::FocusObservation {
@@ -1606,7 +1617,22 @@ impl AppContext {
                         Effect::ActivateWindow {
                             window_id,
                             is_active,
-                        } => self.handle_window_activation_effect(window_id, is_active),
+                        } => {
+                            if self.handle_window_activation_effect(window_id, is_active)
+                                && is_active
+                            {
+                                focus_effects
+                                    .entry(window_id)
+                                    .or_insert_with(|| FocusEffect::View {
+                                        window_id,
+                                        view_id: self
+                                            .read_window(window_id, |cx| cx.focused_view_id())
+                                            .flatten(),
+                                        is_forced: true,
+                                    })
+                                    .force();
+                            }
+                        }
 
                         Effect::WindowFullscreenObservation {
                             window_id,
@@ -1665,19 +1691,45 @@ impl AppContext {
                         ),
                     }
                     self.pending_notifications.clear();
-                    self.remove_dropped_entities();
                 } else {
-                    self.remove_dropped_entities();
+                    for window_id in self.windows.keys().cloned().collect::<Vec<_>>() {
+                        self.update_window(window_id, |cx| {
+                            let invalidation = if refreshing {
+                                let mut invalidation =
+                                    cx.window.invalidation.take().unwrap_or_default();
+                                invalidation
+                                    .updated
+                                    .extend(cx.window.rendered_views.keys().copied());
+                                Some(invalidation)
+                            } else {
+                                cx.window.invalidation.take()
+                            };
 
-                    if refreshing {
-                        self.perform_window_refresh();
-                    } else {
-                        self.update_windows();
+                            if let Some(invalidation) = invalidation {
+                                let appearance = cx.window.platform_window.appearance();
+                                cx.invalidate(invalidation, appearance);
+                                if cx.layout(refreshing).log_err().is_some() {
+                                    updated_windows.insert(window_id);
+                                }
+                            }
+                        });
+                    }
+
+                    for (_, effect) in focus_effects.drain() {
+                        self.handle_focus_effect(effect);
                     }
 
                     if self.pending_effects.is_empty() {
                         for callback in after_window_update_callbacks.drain(..) {
                             callback(self);
+                        }
+
+                        for window_id in updated_windows.drain() {
+                            self.update_window(window_id, |cx| {
+                                if let Some(scene) = cx.paint().log_err() {
+                                    cx.window.platform_window.present_scene(scene);
+                                }
+                            });
                         }
 
                         if self.pending_effects.is_empty() {
@@ -1691,21 +1743,6 @@ impl AppContext {
                     refreshing = false;
                 }
             }
-        }
-    }
-
-    fn update_windows(&mut self) {
-        let window_ids = self.windows.keys().cloned().collect::<Vec<_>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
-                if let Some(mut invalidation) = cx.window.invalidation.take() {
-                    let appearance = cx.window.platform_window.appearance();
-                    cx.invalidate(&mut invalidation, appearance);
-                    if let Some(scene) = cx.build_scene().log_err() {
-                        cx.window.platform_window.present_scene(scene);
-                    }
-                }
-            });
         }
     }
 
@@ -1750,23 +1787,6 @@ impl AppContext {
 
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
-    }
-
-    fn perform_window_refresh(&mut self) {
-        let window_ids = self.windows.keys().cloned().collect::<Vec<_>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| {
-                let mut invalidation = cx.window.invalidation.take().unwrap_or_default();
-                invalidation
-                    .updated
-                    .extend(cx.window.rendered_views.keys().copied());
-                cx.invalidate(&mut invalidation, cx.window.platform_window.appearance());
-                cx.refreshing = true;
-                if let Some(scene) = cx.build_scene().log_err() {
-                    cx.window.platform_window.present_scene(scene);
-                }
-            });
-        }
     }
 
     fn emit_global_event(&mut self, payload: Box<dyn Any>) {
@@ -1849,69 +1869,58 @@ impl AppContext {
         });
     }
 
-    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) {
+    fn handle_window_activation_effect(&mut self, window_id: usize, active: bool) -> bool {
         self.update_window(window_id, |cx| {
             if cx.window.is_active == active {
-                return;
+                return false;
             }
             cx.window.is_active = active;
 
-            if let Some(focused_id) = cx.window.focused_view_id {
-                for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
-                    cx.update_any_view(view_id, |view, cx| {
-                        if active {
-                            view.focus_in(focused_id, cx, view_id);
-                        } else {
-                            view.focus_out(focused_id, cx, view_id);
-                        }
-                    });
-                }
-            }
-
             let mut observations = cx.window_activation_observations.clone();
             observations.emit(window_id, |callback| callback(active, cx));
-        });
+            true
+        })
+        .unwrap_or(false)
     }
 
-    fn handle_focus_effect(&mut self, window_id: usize, mut focused_id: Option<usize>) {
-        let mut blurred_id = None;
+    fn handle_focus_effect(&mut self, effect: FocusEffect) {
+        let window_id = effect.window_id();
         self.update_window(window_id, |cx| {
-            if cx.window.focused_view_id == focused_id {
-                focused_id = None;
-                return;
-            }
-            blurred_id = cx.window.focused_view_id;
+            let focused_id = match effect {
+                FocusEffect::View { view_id, .. } => view_id,
+                FocusEffect::ViewParent { view_id, .. } => cx.ancestors(view_id).skip(1).next(),
+            };
+
+            let focus_changed = cx.window.focused_view_id != focused_id;
+            let blurred_id = cx.window.focused_view_id;
             cx.window.focused_view_id = focused_id;
 
-            let blurred_parents = blurred_id
-                .map(|blurred_id| cx.ancestors(blurred_id).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let focused_parents = focused_id
-                .map(|focused_id| cx.ancestors(focused_id).collect::<Vec<_>>())
-                .unwrap_or_default();
-
-            if let Some(blurred_id) = blurred_id {
-                for view_id in blurred_parents.iter().copied() {
-                    if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
-                        view.focus_out(blurred_id, cx, view_id);
-                        cx.views.insert((window_id, view_id), view);
+            if focus_changed {
+                if let Some(blurred_id) = blurred_id {
+                    for view_id in cx.ancestors(blurred_id).collect::<Vec<_>>() {
+                        if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                            view.focus_out(blurred_id, cx, view_id);
+                            cx.views.insert((window_id, view_id), view);
+                        }
                     }
-                }
 
-                let mut subscriptions = cx.focus_observations.clone();
-                subscriptions.emit(blurred_id, |callback| callback(false, cx));
+                    let mut subscriptions = cx.focus_observations.clone();
+                    subscriptions.emit(blurred_id, |callback| callback(false, cx));
+                }
             }
 
-            if let Some(focused_id) = focused_id {
-                for view_id in focused_parents {
-                    if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
-                        view.focus_in(focused_id, cx, view_id);
-                        cx.views.insert((window_id, view_id), view);
+            if focus_changed || effect.is_forced() {
+                if let Some(focused_id) = focused_id {
+                    for view_id in cx.ancestors(focused_id).collect::<Vec<_>>() {
+                        if let Some(mut view) = cx.views.remove(&(window_id, view_id)) {
+                            view.focus_in(focused_id, cx, view_id);
+                            cx.views.insert((window_id, view_id), view);
+                        }
                     }
-                }
 
-                let mut subscriptions = cx.focus_observations.clone();
-                subscriptions.emit(focused_id, |callback| callback(true, cx));
+                    let mut subscriptions = cx.focus_observations.clone();
+                    subscriptions.emit(focused_id, |callback| callback(true, cx));
+                }
             }
         });
     }
@@ -1963,7 +1972,11 @@ impl AppContext {
 
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
         self.pending_effects
-            .push_back(Effect::Focus { window_id, view_id });
+            .push_back(Effect::Focus(FocusEffect::View {
+                window_id,
+                view_id,
+                is_forced: false,
+            }));
     }
 
     fn spawn_internal<F, Fut, T>(&mut self, task_name: Option<&'static str>, f: F) -> Task<T>
@@ -2059,6 +2072,43 @@ pub struct WindowInvalidation {
     pub removed: Vec<usize>,
 }
 
+#[derive(Debug)]
+pub enum FocusEffect {
+    View {
+        window_id: usize,
+        view_id: Option<usize>,
+        is_forced: bool,
+    },
+    ViewParent {
+        window_id: usize,
+        view_id: usize,
+        is_forced: bool,
+    },
+}
+
+impl FocusEffect {
+    fn window_id(&self) -> usize {
+        match self {
+            FocusEffect::View { window_id, .. } => *window_id,
+            FocusEffect::ViewParent { window_id, .. } => *window_id,
+        }
+    }
+
+    fn is_forced(&self) -> bool {
+        match self {
+            FocusEffect::View { is_forced, .. } => *is_forced,
+            FocusEffect::ViewParent { is_forced, .. } => *is_forced,
+        }
+    }
+
+    fn force(&mut self) {
+        match self {
+            FocusEffect::View { is_forced, .. } => *is_forced = true,
+            FocusEffect::ViewParent { is_forced, .. } => *is_forced = true,
+        }
+    }
+}
+
 pub enum Effect {
     Subscription {
         entity_id: usize,
@@ -2104,10 +2154,7 @@ pub enum Effect {
         view_id: usize,
         view: Box<dyn AnyView>,
     },
-    Focus {
-        window_id: usize,
-        view_id: Option<usize>,
-    },
+    Focus(FocusEffect),
     FocusObservation {
         view_id: usize,
         subscription_id: usize,
@@ -2223,11 +2270,7 @@ impl Debug for Effect {
                 .debug_struct("Effect::ViewRelease")
                 .field("view_id", view_id)
                 .finish(),
-            Effect::Focus { window_id, view_id } => f
-                .debug_struct("Effect::Focus")
-                .field("window_id", window_id)
-                .field("view_id", view_id)
-                .finish(),
+            Effect::Focus(focus) => f.debug_tuple("Effect::Focus").field(focus).finish(),
             Effect::FocusObservation {
                 view_id,
                 subscription_id,
@@ -2795,10 +2838,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
 
-    pub fn parent(&self) -> Option<usize> {
-        self.window_context.parent(self.view_id)
-    }
-
     pub fn window_id(&self) -> usize {
         self.window_id
     }
@@ -2849,30 +2888,15 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         self.window.focused_view_id == Some(self.view_id)
     }
 
-    pub fn is_parent_view_focused(&self) -> bool {
-        if let Some(parent_view_id) = self.ancestors(self.view_id).next().clone() {
-            self.focused_view_id() == Some(parent_view_id)
-        } else {
-            false
-        }
-    }
-
-    pub fn focus_parent_view(&mut self) {
-        let next = self.ancestors(self.view_id).next().clone();
-        if let Some(parent_view_id) = next {
-            let window_id = self.window_id;
-            self.window_context.focus(window_id, Some(parent_view_id));
-        }
-    }
-
-    pub fn is_child(&self, view: impl Into<AnyViewHandle>) -> bool {
-        let view = view.into();
-        if self.window_id != view.window_id {
-            return false;
-        }
-        self.ancestors(view.view_id)
-            .skip(1) // Skip self id
-            .any(|parent| parent == self.view_id)
+    pub fn focus_parent(&mut self) {
+        let window_id = self.window_id;
+        let view_id = self.view_id;
+        self.pending_effects
+            .push_back(Effect::Focus(FocusEffect::ViewParent {
+                window_id,
+                view_id,
+                is_forced: false,
+            }));
     }
 
     pub fn blur(&mut self) {
@@ -2900,38 +2924,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
                     .unwrap_or(true)
                 }),
             });
-    }
-
-    pub fn add_view<S, F>(&mut self, build_view: F) -> ViewHandle<S>
-    where
-        S: View,
-        F: FnOnce(&mut ViewContext<S>) -> S,
-    {
-        self.window_context
-            .build_and_insert_view(ParentId::View(self.view_id), |cx| Some(build_view(cx)))
-            .unwrap()
-    }
-
-    pub fn add_option_view<S, F>(&mut self, build_view: F) -> Option<ViewHandle<S>>
-    where
-        S: View,
-        F: FnOnce(&mut ViewContext<S>) -> Option<S>,
-    {
-        self.window_context
-            .build_and_insert_view(ParentId::View(self.view_id), build_view)
-    }
-
-    pub fn reparent(&mut self, view_handle: &AnyViewHandle) {
-        if self.window_id != view_handle.window_id {
-            panic!("Can't reparent view to a view from a different window");
-        }
-        self.parents
-            .remove(&(view_handle.window_id, view_handle.view_id));
-        let new_parent_id = self.view_id;
-        self.parents.insert(
-            (view_handle.window_id, view_handle.view_id),
-            ParentId::View(new_parent_id),
-        );
     }
 
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -3266,6 +3258,116 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
 
     fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
         BorrowWindowContext::update(&mut *self.window_context, window_id, f)
+    }
+}
+
+pub struct LayoutContext<'a, 'b, 'c, V: View> {
+    view_context: &'c mut ViewContext<'a, 'b, V>,
+    new_parents: &'c mut HashMap<usize, usize>,
+    views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
+    pub refreshing: bool,
+}
+
+impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
+    pub fn new(
+        view_context: &'c mut ViewContext<'a, 'b, V>,
+        new_parents: &'c mut HashMap<usize, usize>,
+        views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
+        refreshing: bool,
+    ) -> Self {
+        Self {
+            view_context,
+            new_parents,
+            views_to_notify_if_ancestors_change,
+            refreshing,
+        }
+    }
+
+    pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        self.view_context
+    }
+
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        self.notify_if_view_ancestors_change(view_id);
+
+        let window_id = self.window_id;
+        let mut contexts = Vec::new();
+        let mut handler_depth = None;
+        for (i, view_id) in self.ancestors(view_id).enumerate() {
+            if let Some(view_metadata) = self.views_metadata.get(&(window_id, view_id)) {
+                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
+                    if actions.contains_key(&action.as_any().type_id()) {
+                        handler_depth = Some(i);
+                    }
+                }
+                contexts.push(view_metadata.keymap_context.clone());
+            }
+        }
+
+        if self.global_actions.contains_key(&action.as_any().type_id()) {
+            handler_depth = Some(contexts.len())
+        }
+
+        self.keystroke_matcher
+            .bindings_for_action_type(action.as_any().type_id())
+            .find_map(|b| {
+                handler_depth
+                    .map(|highest_handler| {
+                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
+                            Some(b.keystrokes().into())
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+            })
+    }
+
+    fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
+        let self_view_id = self.view_id;
+        self.views_to_notify_if_ancestors_change
+            .entry(view_id)
+            .or_default()
+            .push(self_view_id);
+    }
+}
+
+impl<'a, 'b, 'c, V: View> Deref for LayoutContext<'a, 'b, 'c, V> {
+    type Target = ViewContext<'a, 'b, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view_context
+    }
+}
+
+impl<V: View> DerefMut for LayoutContext<'_, '_, '_, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.view_context
+    }
+}
+
+impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
+        BorrowAppContext::read_with(&*self.view_context, f)
+    }
+
+    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
+        BorrowAppContext::update(&mut *self.view_context, f)
+    }
+}
+
+impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
+    fn read_with<T, F: FnOnce(&WindowContext) -> T>(&self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::read_with(&*self.view_context, window_id, f)
+    }
+
+    fn update<T, F: FnOnce(&mut WindowContext) -> T>(&mut self, window_id: usize, f: F) -> T {
+        BorrowWindowContext::update(&mut *self.view_context, window_id, f)
     }
 }
 
@@ -4521,9 +4623,9 @@ mod tests {
             }
         }
 
-        let (_, root_view) = cx.add_window(|cx| View::new(None, cx));
-        let handle_1 = cx.add_view(&root_view, |cx| View::new(None, cx));
-        let handle_2 = cx.add_view(&root_view, |cx| View::new(Some(handle_1.clone()), cx));
+        let (window_id, _root_view) = cx.add_window(|cx| View::new(None, cx));
+        let handle_1 = cx.add_view(window_id, |cx| View::new(None, cx));
+        let handle_2 = cx.add_view(window_id, |cx| View::new(Some(handle_1.clone()), cx));
         assert_eq!(cx.read(|cx| cx.views.len()), 3);
 
         handle_1.update(cx, |view, cx| {
@@ -4683,8 +4785,8 @@ mod tests {
             type Event = String;
         }
 
-        let (_, handle_1) = cx.add_window(|_| TestView::default());
-        let handle_2 = cx.add_view(&handle_1, |_| TestView::default());
+        let (window_id, handle_1) = cx.add_window(|_| TestView::default());
+        let handle_2 = cx.add_view(window_id, |_| TestView::default());
         let handle_3 = cx.add_model(|_| Model);
 
         handle_1.update(cx, |_, cx| {
@@ -4910,9 +5012,9 @@ mod tests {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(|_| TestView::default());
-        let observing_view = cx.add_view(&root_view, |_| TestView::default());
-        let emitting_view = cx.add_view(&root_view, |_| TestView::default());
+        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
+        let observing_view = cx.add_view(window_id, |_| TestView::default());
+        let emitting_view = cx.add_view(window_id, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -5037,8 +5139,8 @@ mod tests {
             type Event = ();
         }
 
-        let (_, root_view) = cx.add_window(|_| TestView::default());
-        let observing_view = cx.add_view(&root_view, |_| TestView::default());
+        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
+        let observing_view = cx.add_view(window_id, |_| TestView::default());
         let observing_model = cx.add_model(|_| Model);
         let observed_model = cx.add_model(|_| Model);
 
@@ -5160,9 +5262,9 @@ mod tests {
             }
         }
 
-        let (_, root_view) = cx.add_window(|_| View);
-        let observing_view = cx.add_view(&root_view, |_| View);
-        let observed_view = cx.add_view(&root_view, |_| View);
+        let (window_id, _root_view) = cx.add_window(|_| View);
+        let observing_view = cx.add_view(window_id, |_| View);
+        let observed_view = cx.add_view(window_id, |_| View);
 
         let observation_count = Rc::new(RefCell::new(0));
         observing_view.update(cx, |_, cx| {
@@ -5211,6 +5313,7 @@ mod tests {
         struct View {
             name: String,
             events: Arc<Mutex<Vec<String>>>,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for View {
@@ -5218,8 +5321,11 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5243,11 +5349,22 @@ mod tests {
         let (window_id, view_1) = cx.add_window(|_| View {
             events: view_events.clone(),
             name: "view 1".to_string(),
+            child: None,
         });
-        let view_2 = cx.add_view(&view_1, |_| View {
-            events: view_events.clone(),
-            name: "view 2".to_string(),
-        });
+        let view_2 = cx
+            .update_window(window_id, |cx| {
+                let view_2 = cx.add_view(|_| View {
+                    events: view_events.clone(),
+                    name: "view 2".to_string(),
+                    child: None,
+                });
+                view_1.update(cx, |view_1, cx| {
+                    view_1.child = Some(view_2.clone().into_any());
+                    cx.notify();
+                });
+                view_2
+            })
+            .unwrap();
 
         let observed_events: Arc<Mutex<Vec<String>>> = Default::default();
         view_1.update(cx, |_, cx| {
@@ -5284,44 +5401,25 @@ mod tests {
         assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
 
         view_1.update(cx, |_, cx| {
-            // Ensure focus events are sent for all intermediate focuses
+            // Ensure only the last focus event is honored.
             cx.focus(&view_2);
             cx.focus(&view_1);
             cx.focus(&view_2);
         });
 
-        cx.read_window(window_id, |cx| {
-            assert!(cx.is_child_focused(&view_1));
-            assert!(!cx.is_child_focused(&view_2));
-        });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
-            [
-                "view 1 blurred",
-                "view 2 focused",
-                "view 2 blurred",
-                "view 1 focused",
-                "view 1 blurred",
-                "view 2 focused"
-            ],
+            ["view 1 blurred", "view 2 focused"],
         );
         assert_eq!(
             mem::take(&mut *observed_events.lock()),
             [
-                "view 2 observed view 1's blur",
-                "view 1 observed view 2's focus",
-                "view 1 observed view 2's blur",
-                "view 2 observed view 1's focus",
                 "view 2 observed view 1's blur",
                 "view 1 observed view 2's focus"
             ]
         );
 
         view_1.update(cx, |_, cx| cx.focus(&view_1));
-        cx.read_window(window_id, |cx| {
-            assert!(!cx.is_child_focused(&view_1));
-            assert!(!cx.is_child_focused(&view_2));
-        });
         assert_eq!(
             mem::take(&mut *view_events.lock()),
             ["view 2 blurred", "view 1 focused"],
@@ -5347,7 +5445,11 @@ mod tests {
             ]
         );
 
-        view_1.update(cx, |_, _| drop(view_2));
+        println!("=====================");
+        view_1.update(cx, |view, _| {
+            drop(view_2);
+            view.child = None;
+        });
         assert_eq!(mem::take(&mut *view_events.lock()), ["view 1 focused"]);
         assert_eq!(mem::take(&mut *observed_events.lock()), Vec::<&str>::new());
     }
@@ -5392,6 +5494,7 @@ mod tests {
     fn test_dispatch_action(cx: &mut AppContext) {
         struct ViewA {
             id: usize,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for ViewA {
@@ -5399,8 +5502,11 @@ mod tests {
         }
 
         impl View for ViewA {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5410,6 +5516,7 @@ mod tests {
 
         struct ViewB {
             id: usize,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for ViewB {
@@ -5417,8 +5524,11 @@ mod tests {
         }
 
         impl View for ViewB {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5455,7 +5565,7 @@ mod tests {
                 if view.id != 1 {
                     cx.add_view(|cx| {
                         cx.propagate_action(); // Still works on a nested ViewContext
-                        ViewB { id: 5 }
+                        ViewB { id: 5, child: None }
                     });
                 }
                 actions.borrow_mut().push(format!("{} b", view.id));
@@ -5493,13 +5603,41 @@ mod tests {
         })
         .detach();
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| ViewA { id: 1 });
-        let view_2 = cx.add_view(&view_1, |_| ViewB { id: 2 });
-        let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
-        let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
+        let (window_id, view_1) =
+            cx.add_window(Default::default(), |_| ViewA { id: 1, child: None });
+        let view_2 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewB { id: 2, child: None });
+                view_1.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
+        let view_3 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewA { id: 3, child: None });
+                view_2.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
+        let view_4 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewB { id: 4, child: None });
+                view_3.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
 
         cx.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(Some(view_4.id()), &Action("bar".to_string()))
+            cx.dispatch_action(Some(view_4.id()), &Action("bar".to_string()))
         });
 
         assert_eq!(
@@ -5520,13 +5658,32 @@ mod tests {
 
         // Remove view_1, which doesn't propagate the action
 
-        let (window_id, view_2) = cx.add_window(Default::default(), |_| ViewB { id: 2 });
-        let view_3 = cx.add_view(&view_2, |_| ViewA { id: 3 });
-        let view_4 = cx.add_view(&view_3, |_| ViewB { id: 4 });
+        let (window_id, view_2) =
+            cx.add_window(Default::default(), |_| ViewB { id: 2, child: None });
+        let view_3 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewA { id: 3, child: None });
+                view_2.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
+        let view_4 = cx
+            .update_window(window_id, |cx| {
+                let child = cx.add_view(|_| ViewB { id: 4, child: None });
+                view_3.update(cx, |view, cx| {
+                    view.child = Some(child.clone().into_any());
+                    cx.notify();
+                });
+                child
+            })
+            .unwrap();
 
         actions.borrow_mut().clear();
         cx.update_window(window_id, |cx| {
-            cx.handle_dispatch_action_from_effect(Some(view_4.id()), &Action("bar".to_string()))
+            cx.dispatch_action(Some(view_4.id()), &Action("bar".to_string()))
         });
 
         assert_eq!(
@@ -5558,6 +5715,7 @@ mod tests {
         struct View {
             id: usize,
             keymap_context: KeymapContext,
+            child: Option<AnyViewHandle>,
         }
 
         impl Entity for View {
@@ -5565,8 +5723,11 @@ mod tests {
         }
 
         impl super::View for View {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                self.child
+                    .as_ref()
+                    .map(|child| ChildView::new(child, cx).into_any())
+                    .unwrap_or(Empty::new().into_any())
             }
 
             fn ui_name() -> &'static str {
@@ -5583,6 +5744,7 @@ mod tests {
                 View {
                     id,
                     keymap_context: KeymapContext::default(),
+                    child: None,
                 }
             }
         }
@@ -5597,11 +5759,17 @@ mod tests {
         view_3.keymap_context.add_identifier("b");
         view_3.keymap_context.add_identifier("c");
 
-        let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
-        let view_2 = cx.add_view(&view_1, |_| view_2);
-        let _view_3 = cx.add_view(&view_2, |cx| {
-            cx.focus_self();
-            view_3
+        let (window_id, _view_1) = cx.add_window(Default::default(), |cx| {
+            let view_2 = cx.add_view(|cx| {
+                let view_3 = cx.add_view(|cx| {
+                    cx.focus_self();
+                    view_3
+                });
+                view_2.child = Some(view_3.into_any());
+                view_2
+            });
+            view_1.child = Some(view_2.into_any());
+            view_1
         });
 
         // This binding only dispatches an action on view 2 because that view will have
@@ -5681,7 +5849,9 @@ mod tests {
     fn test_keystrokes_for_action(cx: &mut TestAppContext) {
         actions!(test, [Action1, Action2, GlobalAction]);
 
-        struct View1 {}
+        struct View1 {
+            child: ViewHandle<View2>,
+        }
         struct View2 {}
 
         impl Entity for View1 {
@@ -5692,8 +5862,8 @@ mod tests {
         }
 
         impl super::View for View1 {
-            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
-                Empty::new().into_any()
+            fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+                ChildView::new(&self.child, cx).into_any()
             }
             fn ui_name() -> &'static str {
                 "View1"
@@ -5708,17 +5878,19 @@ mod tests {
             }
         }
 
-        let (_, view_1) = cx.add_window(|_| View1 {});
-        let view_2 = cx.add_view(&view_1, |cx| {
-            cx.focus_self();
-            View2 {}
+        let (window_id, view_1) = cx.add_window(|cx| {
+            let view_2 = cx.add_view(|cx| {
+                cx.focus_self();
+                View2 {}
+            });
+            View1 { child: view_2 }
         });
+        let view_2 = view_1.read_with(cx, |view, _| view.child.clone());
 
         cx.update(|cx| {
             cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
             cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
             cx.add_global_action(|_: &GlobalAction, _| {});
-
             cx.add_bindings(vec![
                 Binding::new("a", Action1, Some("View1")),
                 Binding::new("b", Action2, Some("View1 > View2")),
@@ -5726,19 +5898,28 @@ mod tests {
             ]);
         });
 
-        // Here we update the views to ensure that, even if they are on the stack,
-        // we can still retrieve keystrokes correctly.
+        let view_1_id = view_1.id();
         view_1.update(cx, |_, cx| {
             view_2.update(cx, |_, cx| {
                 // Sanity check
+                let mut new_parents = Default::default();
+                let mut notify_views_if_parents_change = Default::default();
+                let mut layout_cx = LayoutContext::new(
+                    cx,
+                    &mut new_parents,
+                    &mut notify_views_if_parents_change,
+                    false,
+                );
                 assert_eq!(
-                    cx.keystrokes_for_action(view_1.id(), &Action1)
+                    layout_cx
+                        .keystrokes_for_action(view_1_id, &Action1)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("a").unwrap()]
                 );
                 assert_eq!(
-                    cx.keystrokes_for_action(view_2.id(), &Action2)
+                    layout_cx
+                        .keystrokes_for_action(view_2.id(), &Action2)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("b").unwrap()]
@@ -5747,45 +5928,51 @@ mod tests {
                 // The 'a' keystroke propagates up the view tree from view_2
                 // to view_1. The action, Action1, is handled by view_1.
                 assert_eq!(
-                    cx.keystrokes_for_action(view_2.id(), &Action1)
+                    layout_cx
+                        .keystrokes_for_action(view_2.id(), &Action1)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("a").unwrap()]
                 );
 
                 // Actions that are handled below the current view don't have bindings
-                assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action2), None);
+                assert_eq!(layout_cx.keystrokes_for_action(view_1_id, &Action2), None);
 
                 // Actions that are handled in other branches of the tree should not have a binding
-                assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
-
-                // Check that global actions do not have a binding, even if a binding does exist in another view
                 assert_eq!(
-                    &available_actions(view_1.id(), cx),
-                    &[
-                        ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                        ("test::GlobalAction", vec![])
-                    ],
-                );
-
-                // Check that view 1 actions and bindings are available even when called from view 2
-                assert_eq!(
-                    &available_actions(view_2.id(), cx),
-                    &[
-                        ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                        ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
-                        ("test::GlobalAction", vec![]),
-                    ],
+                    layout_cx.keystrokes_for_action(view_2.id(), &GlobalAction),
+                    None
                 );
             });
         });
 
+        // Check that global actions do not have a binding, even if a binding does exist in another view
+        assert_eq!(
+            &available_actions(window_id, view_1.id(), cx),
+            &[
+                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                ("test::GlobalAction", vec![])
+            ],
+        );
+
+        // Check that view 1 actions and bindings are available even when called from view 2
+        assert_eq!(
+            &available_actions(window_id, view_2.id(), cx),
+            &[
+                ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
+                ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
+                ("test::GlobalAction", vec![]),
+            ],
+        );
+
         // Produces a list of actions and key bindings
         fn available_actions(
+            window_id: usize,
             view_id: usize,
-            cx: &WindowContext,
+            cx: &TestAppContext,
         ) -> Vec<(&'static str, Vec<Keystroke>)> {
-            cx.available_actions(view_id)
+            cx.available_actions(window_id, view_id)
+                .into_iter()
                 .map(|(action_name, _, bindings)| {
                     (
                         action_name,
@@ -5917,8 +6104,8 @@ mod tests {
     #[crate::test(self)]
     #[should_panic(expected = "view dropped with pending condition")]
     async fn test_view_condition_panic_on_drop(cx: &mut TestAppContext) {
-        let (_, root_view) = cx.add_window(|_| TestView::default());
-        let view = cx.add_view(&root_view, |_| TestView::default());
+        let (window_id, _root_view) = cx.add_window(|_| TestView::default());
+        let view = cx.add_view(window_id, |_| TestView::default());
 
         let condition = view.condition(cx, |_, _| false);
         cx.update(|_| drop(view));
@@ -5951,10 +6138,12 @@ mod tests {
             );
         });
 
-        let view = cx.add_view(&root_view, |cx| {
-            cx.refresh_windows();
-            View(0)
-        });
+        let view = cx
+            .update_window(window_id, |cx| {
+                cx.refresh_windows();
+                cx.add_view(|_| View(0))
+            })
+            .unwrap();
 
         cx.update_window(window_id, |cx| {
             assert_eq!(

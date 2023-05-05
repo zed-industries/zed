@@ -1227,6 +1227,7 @@ impl Editor {
         get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let editor_view_id = cx.view_id();
         let display_map = cx.add_model(|cx| {
             let settings = cx.global::<Settings>();
             let style = build_style(&*settings, get_field_editor_theme.as_deref(), None, cx);
@@ -1274,7 +1275,8 @@ impl Editor {
             background_highlights: Default::default(),
             nav_history: None,
             context_menu: None,
-            mouse_context_menu: cx.add_view(context_menu::ContextMenu::new),
+            mouse_context_menu: cx
+                .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             completion_tasks: Default::default(),
             next_completion_id: 0,
             available_code_actions: Default::default(),
