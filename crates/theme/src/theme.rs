@@ -636,6 +636,7 @@ pub struct Editor {
     pub composition_mark: HighlightStyle,
     pub jump_icon: Interactive<IconButton>,
     pub scrollbar: Scrollbar,
+    pub whitespace: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]

@@ -2202,7 +2202,7 @@ impl Element<Editor> for EditorElement {
 
         let invisible_symbol_font_size = self.style.text.font_size / 2.0;
         let invisible_symbol_style = RunStyle {
-            color: self.style.line_number,
+            color: self.style.whitespace,
             font_id: self.style.text.font_id,
             underline: Default::default(),
         };
