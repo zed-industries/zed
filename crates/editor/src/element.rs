@@ -1714,6 +1714,7 @@ fn layout_highlighted_chunks<'a>(
     let mut line = String::new();
     let mut invisibles = Vec::new();
     let mut styles = Vec::new();
+    let mut non_whitespace_added = false;
     let mut row = 0;
     let mut line_exceeded_max_len = false;
     for highlighted_chunk in chunks.chain([HighlightedChunk {
@@ -1732,6 +1733,7 @@ fn layout_highlighted_chunks<'a>(
                 styles.clear();
                 row += 1;
                 line_exceeded_max_len = false;
+                non_whitespace_added = false;
                 if row == max_line_count {
                     return layouts;
                 }
@@ -1765,16 +1767,26 @@ fn layout_highlighted_chunks<'a>(
                         underline: text_style.underline,
                     },
                 ));
+
+                // Line wrap pads its contents with fake whitespaces,
+                // avoid printing them.
+                let inside_wrapped_string = ix > 0;
                 if highlighted_chunk.is_tab {
-                    invisibles.push(Invisible::Tab {
-                        line_start_offset: line.len(),
-                    });
+                    if non_whitespace_added || !inside_wrapped_string {
+                        invisibles.push(Invisible::Tab {
+                            line_start_offset: line.len(),
+                        });
+                    }
                 } else {
                     invisibles.extend(
                         line_chunk
                             .chars()
                             .enumerate()
-                            .filter(|(_, line_char)| line_char.is_whitespace())
+                            .filter(|(_, line_char)| {
+                                let is_whitespace = line_char.is_whitespace();
+                                non_whitespace_added |= !is_whitespace;
+                                is_whitespace && (non_whitespace_added || !inside_wrapped_string)
+                            })
                             .map(|(whitespace_index, _)| Invisible::Whitespace {
                                 line_offset: line.len() + whitespace_index,
                             }),
