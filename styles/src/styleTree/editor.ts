@@ -3,7 +3,7 @@ import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import { buildSyntax } from "../themes/common/syntax"
+import { SyntaxHighlightStyle, buildSyntax } from "../themes/common/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
     let layer = colorScheme.highest
@@ -123,6 +123,7 @@ export default function editor(colorScheme: ColorScheme) {
         renameFade: 0.6,
         unnecessaryCodeFade: 0.5,
         selection: colorScheme.players[0],
+        whitespace: colorScheme.ramps.neutral(0.5).hex(),
         guestSelections: [
             colorScheme.players[1],
             colorScheme.players[2],
