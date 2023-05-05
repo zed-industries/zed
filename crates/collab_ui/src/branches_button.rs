@@ -111,11 +111,12 @@ impl View for BranchesButton {
 
 impl BranchesButton {
     pub fn new(workspace: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) -> Self {
+        let parent_id = cx.view_id();
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
         Self {
             workspace: workspace.downgrade(),
             popup_menu: cx.add_view(|cx| {
-                let mut menu = ContextMenu::new(cx);
+                let mut menu = ContextMenu::new(parent_id, cx);
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
