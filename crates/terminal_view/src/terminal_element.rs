@@ -370,7 +370,7 @@ impl TerminalElement {
         f: impl Fn(&mut Terminal, Vector2F, E, &mut ModelContext<Terminal>),
     ) -> impl Fn(E, &mut TerminalView, &mut EventContext<TerminalView>) {
         move |event, _: &mut TerminalView, cx| {
-            cx.focus_parent_view();
+            cx.focus_parent();
             if let Some(conn_handle) = connection.upgrade(cx) {
                 conn_handle.update(cx, |terminal, cx| {
                     f(terminal, origin, event, cx);

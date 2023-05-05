@@ -1466,10 +1466,11 @@ impl AppContext {
                 });
 
                 if let Some(view_id) = change_focus_to {
-                    self.pending_effects.push_back(Effect::Focus {
-                        window_id,
-                        view_id: Some(view_id),
-                    });
+                    self.pending_effects
+                        .push_back(Effect::Focus(FocusEffect::View {
+                            window_id,
+                            view_id: Some(view_id),
+                        }));
                 }
 
                 self.pending_effects
@@ -1491,7 +1492,7 @@ impl AppContext {
 
             let mut refreshing = false;
             let mut updated_windows = HashSet::default();
-            let mut focused_views = HashMap::default();
+            let mut focus_changes = HashMap::default();
             loop {
                 self.remove_dropped_entities();
                 if let Some(effect) = self.pending_effects.pop_front() {
@@ -1566,8 +1567,8 @@ impl AppContext {
                             self.handle_entity_release_effect(view_id, view.as_any())
                         }
 
-                        Effect::Focus { window_id, view_id } => {
-                            focused_views.insert(window_id, view_id);
+                        Effect::Focus(effect) => {
+                            focus_changes.insert(effect.window_id(), effect);
                         }
 
                         Effect::FocusObservation {
@@ -1691,8 +1692,8 @@ impl AppContext {
                         });
                     }
 
-                    for (window_id, view_id) in focused_views.drain() {
-                        self.handle_focus_effect(window_id, view_id);
+                    for (_, effect) in focus_changes.drain() {
+                        self.handle_focus_effect(effect);
                     }
 
                     if self.pending_effects.is_empty() {
@@ -1869,14 +1870,17 @@ impl AppContext {
         });
     }
 
-    fn handle_focus_effect(&mut self, window_id: usize, mut focused_id: Option<usize>) {
-        let mut blurred_id = None;
+    fn handle_focus_effect(&mut self, effect: FocusEffect) {
+        let window_id = effect.window_id();
         self.update_window(window_id, |cx| {
+            let focused_id = match effect {
+                FocusEffect::View { view_id, .. } => view_id,
+                FocusEffect::ViewParent { view_id, .. } => cx.ancestors(view_id).skip(1).next(),
+            };
             if cx.window.focused_view_id == focused_id {
-                focused_id = None;
                 return;
             }
-            blurred_id = cx.window.focused_view_id;
+            let blurred_id = cx.window.focused_view_id;
             cx.window.focused_view_id = focused_id;
 
             let blurred_parents = blurred_id
@@ -1959,7 +1963,7 @@ impl AppContext {
 
     pub fn focus(&mut self, window_id: usize, view_id: Option<usize>) {
         self.pending_effects
-            .push_back(Effect::Focus { window_id, view_id });
+            .push_back(Effect::Focus(FocusEffect::View { window_id, view_id }));
     }
 
     fn spawn_internal<F, Fut, T>(&mut self, task_name: Option<&'static str>, f: F) -> Task<T>
@@ -2055,6 +2059,27 @@ pub struct WindowInvalidation {
     pub removed: Vec<usize>,
 }
 
+#[derive(Debug)]
+pub enum FocusEffect {
+    View {
+        window_id: usize,
+        view_id: Option<usize>,
+    },
+    ViewParent {
+        window_id: usize,
+        view_id: usize,
+    },
+}
+
+impl FocusEffect {
+    fn window_id(&self) -> usize {
+        match self {
+            FocusEffect::View { window_id, .. } => *window_id,
+            FocusEffect::ViewParent { window_id, .. } => *window_id,
+        }
+    }
+}
+
 pub enum Effect {
     Subscription {
         entity_id: usize,
@@ -2100,10 +2125,7 @@ pub enum Effect {
         view_id: usize,
         view: Box<dyn AnyView>,
     },
-    Focus {
-        window_id: usize,
-        view_id: Option<usize>,
-    },
+    Focus(FocusEffect),
     FocusObservation {
         view_id: usize,
         subscription_id: usize,
@@ -2219,11 +2241,7 @@ impl Debug for Effect {
                 .debug_struct("Effect::ViewRelease")
                 .field("view_id", view_id)
                 .finish(),
-            Effect::Focus { window_id, view_id } => f
-                .debug_struct("Effect::Focus")
-                .field("window_id", window_id)
-                .field("view_id", view_id)
-                .finish(),
+            Effect::Focus(focus) => f.debug_tuple("Effect::Focus").field(focus).finish(),
             Effect::FocusObservation {
                 view_id,
                 subscription_id,
@@ -2849,12 +2867,14 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         }
     }
 
-    pub fn focus_parent_view(&mut self) {
-        let next = self.ancestors(self.view_id).next().clone();
-        if let Some(parent_view_id) = next {
-            let window_id = self.window_id;
-            self.window_context.focus(window_id, Some(parent_view_id));
-        }
+    pub fn focus_parent(&mut self) {
+        let window_id = self.window_id;
+        let view_id = self.view_id;
+        self.pending_effects
+            .push_back(Effect::Focus(FocusEffect::ViewParent {
+                window_id,
+                view_id,
+            }));
     }
 
     pub fn blur(&mut self) {

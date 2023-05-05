@@ -90,7 +90,7 @@ impl View for SharedScreen {
             .contained()
             .with_style(cx.global::<Settings>().theme.shared_screen)
         })
-        .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent_view())
+        .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent())
         .into_any()
     }
 }

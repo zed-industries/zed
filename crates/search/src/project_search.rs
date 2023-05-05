@@ -200,7 +200,7 @@ impl View for ProjectSearchView {
                     .flex(1., true)
             })
             .on_down(MouseButton::Left, |_, _, cx| {
-                cx.focus_parent_view();
+                cx.focus_parent();
             })
             .into_any_named("project search view")
         } else {
