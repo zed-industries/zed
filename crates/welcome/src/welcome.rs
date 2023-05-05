@@ -10,7 +10,7 @@ use gpui::{
 use settings::{settings_file::SettingsFile, Settings};
 
 use workspace::{
-    item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
+    item::Item, open_new, dock::DockPosition, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
 };
 
@@ -29,7 +29,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub fn show_welcome_experience(app_state: &Arc<AppState>, cx: &mut AppContext) {
     open_new(&app_state, cx, |workspace, cx| {
-        workspace.toggle_sidebar(SidebarSide::Left, cx);
+        workspace.toggle_dock(DockPosition::Left, cx);
         let welcome_page = cx.add_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item_to_center(Box::new(welcome_page.clone()), cx);
         cx.focus(&welcome_page);

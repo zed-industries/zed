@@ -89,7 +89,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Zoom Out", super::DecreaseBufferFontSize),
                 MenuItem::action("Reset Zoom", super::ResetBufferFontSize),
                 MenuItem::separator(),
-                MenuItem::action("Toggle Left Sidebar", workspace::ToggleLeftSidebar),
+                MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
                 MenuItem::submenu(Menu {
                     name: "Editor Layout",
                     items: vec![

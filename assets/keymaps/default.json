@@ -349,7 +349,7 @@
         "workspace::ActivatePane",
         8
       ],
-      "cmd-b": "workspace::ToggleLeftSidebar",
+      "cmd-b": "workspace::ToggleLeftDock",
       "cmd-shift-f": "workspace::NewSearch",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",

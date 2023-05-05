@@ -52,7 +52,7 @@ impl View for TerminalButton {
                         let style = theme
                             .workspace
                             .status_bar
-                            .sidebar_buttons
+                            .panel_buttons
                             .item
                             .style_for(state, active);
 

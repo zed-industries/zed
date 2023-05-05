@@ -36,7 +36,7 @@ use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
 use workspace::{
-    create_and_open_local_file, open_new, sidebar::SidebarSide, AppState, NewFile, NewWindow,
+    create_and_open_local_file, open_new, dock::DockPosition, AppState, NewFile, NewWindow,
     Workspace,
 };
 
@@ -242,7 +242,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         |workspace: &mut Workspace,
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
+            workspace.toggle_panel_focus(DockPosition::Left, 0, cx);
         },
     );
     cx.add_global_action({
@@ -312,8 +312,8 @@ pub fn initialize_workspace(
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
     let project_panel = ProjectPanel::new(workspace, cx);
-    workspace.left_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item(
+    workspace.left_dock().update(cx, |dock, cx| {
+        dock.add_item(
             "icons/folder_tree_16.svg",
             "Project Panel".to_string(),
             project_panel,
@@ -658,7 +658,7 @@ mod tests {
             .unwrap();
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
-            assert!(workspace.left_sidebar().read(cx).is_open());
+            assert!(workspace.left_dock().read(cx).is_open());
             assert!(workspace.active_pane().is_focused(cx));
         });
 
@@ -701,7 +701,7 @@ mod tests {
                     .collect::<Vec<_>>(),
                 &[Path::new("/root/c").into(), Path::new("/root/d").into()]
             );
-            assert!(workspace.left_sidebar().read(cx).is_open());
+            assert!(workspace.left_dock().read(cx).is_open());
             assert!(workspace.active_pane().is_focused(cx));
         });
     }

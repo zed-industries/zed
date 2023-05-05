@@ -1327,7 +1327,7 @@ impl Entity for ProjectPanel {
     type Event = Event;
 }
 
-impl workspace::sidebar::SidebarItem for ProjectPanel {
+impl workspace::dock::DockItem for ProjectPanel {
     fn should_show_badge(&self, _: &AppContext) -> bool {
         false
     }

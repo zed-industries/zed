@@ -7,7 +7,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::rc::Rc;
 
-pub trait SidebarItem: View {
+pub trait DockItem: View {
     fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
@@ -19,16 +19,16 @@ pub trait SidebarItem: View {
     }
 }
 
-pub trait SidebarItemHandle {
+pub trait DockItemHandle {
     fn id(&self) -> usize;
     fn should_show_badge(&self, cx: &WindowContext) -> bool;
     fn is_focused(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
 
-impl<T> SidebarItemHandle for ViewHandle<T>
+impl<T> DockItemHandle for ViewHandle<T>
 where
-    T: SidebarItem,
+    T: DockItem,
 {
     fn id(&self) -> usize {
         self.id()
@@ -47,26 +47,26 @@ where
     }
 }
 
-impl From<&dyn SidebarItemHandle> for AnyViewHandle {
-    fn from(val: &dyn SidebarItemHandle) -> Self {
+impl From<&dyn DockItemHandle> for AnyViewHandle {
+    fn from(val: &dyn DockItemHandle) -> Self {
         val.as_any().clone()
     }
 }
 
-pub struct Sidebar {
-    sidebar_side: SidebarSide,
+pub struct Dock {
+    position: DockPosition,
     items: Vec<Item>,
     is_open: bool,
     active_item_ix: usize,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-pub enum SidebarSide {
+pub enum DockPosition {
     Left,
     Right,
 }
 
-impl SidebarSide {
+impl DockPosition {
     fn to_resizable_side(self) -> Side {
         match self {
             Self::Left => Side::Right,
@@ -78,27 +78,27 @@ impl SidebarSide {
 struct Item {
     icon_path: &'static str,
     tooltip: String,
-    view: Rc<dyn SidebarItemHandle>,
+    view: Rc<dyn DockItemHandle>,
     _subscriptions: [Subscription; 2],
 }
 
-pub struct SidebarButtons {
-    sidebar: ViewHandle<Sidebar>,
+pub struct PanelButtons {
+    dock: ViewHandle<Dock>,
     workspace: WeakViewHandle<Workspace>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-pub struct ToggleSidebarItem {
-    pub sidebar_side: SidebarSide,
+pub struct ToggleDockItem {
+    pub dock_position: DockPosition,
     pub item_index: usize,
 }
 
-impl_actions!(workspace, [ToggleSidebarItem]);
+impl_actions!(workspace, [ToggleDockItem]);
 
-impl Sidebar {
-    pub fn new(sidebar_side: SidebarSide) -> Self {
+impl Dock {
+    pub fn new(position: DockPosition) -> Self {
         Self {
-            sidebar_side,
+            position,
             items: Default::default(),
             active_item_ix: 0,
             is_open: false,
@@ -126,7 +126,7 @@ impl Sidebar {
         cx.notify();
     }
 
-    pub fn add_item<T: SidebarItem>(
+    pub fn add_item<T: DockItem>(
         &mut self,
         icon_path: &'static str,
         tooltip: String,
@@ -171,7 +171,7 @@ impl Sidebar {
         cx.notify();
     }
 
-    pub fn active_item(&self) -> Option<&Rc<dyn SidebarItemHandle>> {
+    pub fn active_item(&self) -> Option<&Rc<dyn DockItemHandle>> {
         if self.is_open {
             self.items.get(self.active_item_ix).map(|item| &item.view)
         } else {
@@ -180,25 +180,25 @@ impl Sidebar {
     }
 }
 
-impl Entity for Sidebar {
+impl Entity for Dock {
     type Event = ();
 }
 
-impl View for Sidebar {
+impl View for Dock {
     fn ui_name() -> &'static str {
-        "Sidebar"
+        "Dock"
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
-            let style = &cx.global::<Settings>().theme.workspace.sidebar;
+            let style = &cx.global::<Settings>().theme.workspace.dock;
             ChildView::new(active_item.as_any(), cx)
                 .contained()
                 .with_style(style.container)
                 .with_resize_handle::<ResizeHandleTag>(
-                    self.sidebar_side as usize,
-                    self.sidebar_side.to_resizable_side(),
+                    self.position as usize,
+                    self.position.to_resizable_side(),
                     4.,
                     style.initial_size,
                     cx,
@@ -210,43 +210,43 @@ impl View for Sidebar {
     }
 }
 
-impl SidebarButtons {
+impl PanelButtons {
     pub fn new(
-        sidebar: ViewHandle<Sidebar>,
+        dock: ViewHandle<Dock>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.observe(&sidebar, |_, _, cx| cx.notify()).detach();
-        Self { sidebar, workspace }
+        cx.observe(&dock, |_, _, cx| cx.notify()).detach();
+        Self { dock, workspace }
     }
 }
 
-impl Entity for SidebarButtons {
+impl Entity for PanelButtons {
     type Event = ();
 }
 
-impl View for SidebarButtons {
+impl View for PanelButtons {
     fn ui_name() -> &'static str {
-        "SidebarToggleButton"
+        "DockToggleButton"
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
-        let theme = &theme.workspace.status_bar.sidebar_buttons;
-        let sidebar = self.sidebar.read(cx);
+        let theme = &theme.workspace.status_bar.panel_buttons;
+        let dock = self.dock.read(cx);
         let item_style = theme.item.clone();
         let badge_style = theme.badge;
-        let active_ix = sidebar.active_item_ix;
-        let is_open = sidebar.is_open;
-        let sidebar_side = sidebar.sidebar_side;
-        let group_style = match sidebar_side {
-            SidebarSide::Left => theme.group_left,
-            SidebarSide::Right => theme.group_right,
+        let active_ix = dock.active_item_ix;
+        let is_open = dock.is_open;
+        let dock_position = dock.position;
+        let group_style = match dock_position {
+            DockPosition::Left => theme.group_left,
+            DockPosition::Right => theme.group_right,
         };
 
         #[allow(clippy::needless_collect)]
-        let items = sidebar
+        let items = dock
             .items
             .iter()
             .map(|item| (item.icon_path, item.tooltip.clone(), item.view.clone()))
@@ -255,8 +255,8 @@ impl View for SidebarButtons {
         Flex::row()
             .with_children(items.into_iter().enumerate().map(
                 |(ix, (icon_path, tooltip, item_view))| {
-                    let action = ToggleSidebarItem {
-                        sidebar_side,
+                    let action = ToggleDockItem {
+                        dock_position,
                         item_index: ix,
                     };
                     MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
@@ -291,7 +291,7 @@ impl View for SidebarButtons {
                                 let action = action.clone();
                                 cx.window_context().defer(move |cx| {
                                     workspace.update(cx, |workspace, cx| {
-                                        workspace.toggle_sidebar_item(&action, cx)
+                                        workspace.toggle_panel(&action, cx)
                                     });
                                 });
                             }
@@ -312,7 +312,7 @@ impl View for SidebarButtons {
     }
 }
 
-impl StatusItemView for SidebarButtons {
+impl StatusItemView for PanelButtons {
     fn set_active_pane_item(
         &mut self,
         _: Option<&dyn crate::ItemHandle>,

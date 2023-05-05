@@ -93,7 +93,7 @@ export default function statusBar(colorScheme: ColorScheme) {
                 },
             },
         },
-        sidebarButtons: {
+        panelButtons: {
             groupLeft: {},
             groupRight: {},
             item: {

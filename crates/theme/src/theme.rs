@@ -61,7 +61,7 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
-    pub sidebar: Sidebar,
+    pub dock: Dock,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub breadcrumb_height: f32,
@@ -335,16 +335,16 @@ pub struct StatusBar {
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
     pub lsp_status: Interactive<StatusBarLspStatus>,
-    pub sidebar_buttons: StatusBarSidebarButtons,
+    pub panel_buttons: StatusBarPanelButtons,
     pub diagnostic_summary: Interactive<StatusBarDiagnosticSummary>,
     pub diagnostic_message: Interactive<ContainedText>,
 }
 
 #[derive(Deserialize, Default)]
-pub struct StatusBarSidebarButtons {
+pub struct StatusBarPanelButtons {
     pub group_left: ContainerStyle,
     pub group_right: ContainerStyle,
-    pub item: Interactive<SidebarItem>,
+    pub item: Interactive<DockItem>,
     pub badge: ContainerStyle,
 }
 
@@ -375,14 +375,14 @@ pub struct StatusBarLspStatus {
 }
 
 #[derive(Deserialize, Default)]
-pub struct Sidebar {
+pub struct Dock {
     pub initial_size: f32,
     #[serde(flatten)]
     pub container: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct SidebarItem {
+pub struct DockItem {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub icon_color: Color,

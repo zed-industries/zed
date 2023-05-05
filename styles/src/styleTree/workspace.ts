@@ -118,7 +118,7 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             cursor: "Arrow",
         },
-        sidebar: {
+        dock: {
             initialSize: 240,
             border: border(layer, { left: true, right: true }),
         },
@@ -309,19 +309,6 @@ export default function workspace(colorScheme: ColorScheme) {
         notifications: {
             width: 400,
             margin: { right: 10, bottom: 10 },
-        },
-        dock: {
-            initialSizeRight: 640,
-            initialSizeBottom: 304,
-            wash_color: withOpacity(background(colorScheme.highest), 0.5),
-            panel: {
-                border: border(colorScheme.middle),
-            },
-            maximized: {
-                margin: 32,
-                border: border(colorScheme.highest, { overlay: true }),
-                shadow: colorScheme.modalShadow,
-            },
         },
         dropTargetOverlayColor: withOpacity(foreground(layer, "variant"), 0.5),
     }
