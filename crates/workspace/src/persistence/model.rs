@@ -1,5 +1,5 @@
 use crate::{
-    dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
+    ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
@@ -11,7 +11,6 @@ use gpui::{
     platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WeakViewHandle,
 };
 use project::Project;
-use settings::DockAnchor;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -62,9 +61,7 @@ impl Column for WorkspaceLocation {
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
-    pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
-    pub dock_pane: SerializedPane,
     pub left_sidebar_open: bool,
     pub bounds: Option<WindowBounds>,
     pub display: Option<Uuid>,
@@ -278,64 +275,39 @@ impl Column for SerializedItem {
     }
 }
 
-impl StaticColumnCount for DockPosition {
-    fn column_count() -> usize {
-        2
-    }
-}
-impl Bind for DockPosition {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(self.is_visible(), start_index)?;
-        statement.bind(self.anchor(), next_index)
-    }
-}
-
-impl Column for DockPosition {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (visible, next_index) = bool::column(statement, start_index)?;
-        let (dock_anchor, next_index) = DockAnchor::column(statement, next_index)?;
-        let position = if visible {
-            DockPosition::Shown(dock_anchor)
-        } else {
-            DockPosition::Hidden(dock_anchor)
-        };
-        Ok((position, next_index))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use db::sqlez::connection::Connection;
-    use settings::DockAnchor;
 
-    use super::WorkspaceLocation;
+    // use super::WorkspaceLocation;
 
     #[test]
     fn test_workspace_round_trips() {
-        let db = Connection::open_memory(Some("workspace_id_round_trips"));
+        let _db = Connection::open_memory(Some("workspace_id_round_trips"));
 
-        db.exec(indoc::indoc! {"
-                CREATE TABLE workspace_id_test(
-                    workspace_id INTEGER,
-                    dock_anchor TEXT
-                );"})
-            .unwrap()()
-        .unwrap();
+        todo!();
+        // db.exec(indoc::indoc! {"
+        //         CREATE TABLE workspace_id_test(
+        //             workspace_id INTEGER,
+        //             dock_anchor TEXT
+        //         );"})
+        //     .unwrap()()
+        // .unwrap();
 
-        let workspace_id: WorkspaceLocation = WorkspaceLocation::from(&["\test2", "\test1"]);
+        // let workspace_id: WorkspaceLocation = WorkspaceLocation::from(&["\test2", "\test1"]);
 
-        db.exec_bound("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
-            .unwrap()((&workspace_id, DockAnchor::Bottom))
-        .unwrap();
+        // db.exec_bound("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
+        //     .unwrap()((&workspace_id, DockAnchor::Bottom))
+        // .unwrap();
 
-        assert_eq!(
-            db.select_row("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
-                .unwrap()()
-            .unwrap(),
-            Some((
-                WorkspaceLocation::from(&["\test1", "\test2"]),
-                DockAnchor::Bottom
-            ))
-        );
+        // assert_eq!(
+        //     db.select_row("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
+        //         .unwrap()()
+        //     .unwrap(),
+        //     Some((
+        //         WorkspaceLocation::from(&["\test1", "\test2"]),
+        //         DockAnchor::Bottom
+        //     ))
+        // );
     }
 }

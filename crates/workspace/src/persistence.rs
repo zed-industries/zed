@@ -11,7 +11,6 @@ use gpui::{platform::WindowBounds, Axis};
 use util::{unzip_option, ResultExt};
 use uuid::Uuid;
 
-use crate::dock::DockPosition;
 use crate::WorkspaceId;
 
 use model::{
@@ -25,9 +24,9 @@ define_connection! {
     // workspaces(
     //   workspace_id: usize, // Primary key for workspaces
     //   workspace_location: Bincode<Vec<PathBuf>>,
-    //   dock_visible: bool,
-    //   dock_anchor: DockAnchor, // 'Bottom' / 'Right' / 'Expanded'
-    //   dock_pane: Option<usize>, // PaneId
+    //   dock_visible: bool, // Deprecated
+    //   dock_anchor: DockAnchor, // Deprecated
+    //   dock_pane: Option<usize>, // Deprecated
     //   left_sidebar_open: boolean,
     //   timestamp: String, // UTC YYYY-MM-DD HH:MM:SS
     //   window_state: String, // WindowBounds Discriminant
@@ -71,10 +70,10 @@ define_connection! {
         CREATE TABLE workspaces(
             workspace_id INTEGER PRIMARY KEY,
             workspace_location BLOB UNIQUE,
-            dock_visible INTEGER, // Boolean
-            dock_anchor TEXT, // Enum: 'Bottom' / 'Right' / 'Expanded'
-            dock_pane INTEGER, // NULL indicates that we don't have a dock pane yet
-            left_sidebar_open INTEGER, //Boolean
+            dock_visible INTEGER, // Deprecated. Preserving so users can downgrade Zed.
+            dock_anchor TEXT, // Deprecated. Preserving so users can downgrade Zed.
+            dock_pane INTEGER, // Deprecated.  Preserving so users can downgrade Zed.
+            left_sidebar_open INTEGER, // Boolean
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
             FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
         ) STRICT;
@@ -146,11 +145,10 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, left_sidebar_open, dock_position, bounds, display): (
+        let (workspace_id, workspace_location, left_sidebar_open, bounds, display): (
             WorkspaceId,
             WorkspaceLocation,
             bool,
-            DockPosition,
             Option<WindowBounds>,
             Option<Uuid>,
         ) = self
@@ -159,8 +157,6 @@ impl WorkspaceDb {
                     workspace_id,
                     workspace_location,
                     left_sidebar_open,
-                    dock_visible,
-                    dock_anchor,
                     window_state,
                     window_x,
                     window_y,
@@ -178,15 +174,10 @@ impl WorkspaceDb {
         Some(SerializedWorkspace {
             id: workspace_id,
             location: workspace_location.clone(),
-            dock_pane: self
-                .get_dock_pane(workspace_id)
-                .context("Getting dock pane")
-                .log_err()?,
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            dock_position,
             left_sidebar_open,
             bounds,
             display,
@@ -200,7 +191,6 @@ impl WorkspaceDb {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
                 conn.exec_bound(sql!(
-                    UPDATE workspaces SET dock_pane = NULL WHERE workspace_id = ?1;
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .expect("Clearing old panes");
@@ -216,40 +206,23 @@ impl WorkspaceDb {
                         workspace_id,
                         workspace_location,
                         left_sidebar_open,
-                        dock_visible,
-                        dock_anchor,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         workspace_location = ?2,
                         left_sidebar_open = ?3,
-                        dock_visible = ?4,
-                        dock_anchor = ?5,
                         timestamp = CURRENT_TIMESTAMP
                 ))?((
                     workspace.id,
                     &workspace.location,
-                    workspace.left_sidebar_open,
-                    workspace.dock_position,
                 ))
                 .context("Updating workspace")?;
 
-                // Save center pane group and dock pane
+                // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
                     .context("save pane group in save workspace")?;
-
-                let dock_id = Self::save_pane(conn, workspace.id, &workspace.dock_pane, None, true)
-                    .context("save pane in save workspace")?;
-
-                // Complete workspace initialization
-                conn.exec_bound(sql!(
-                    UPDATE workspaces
-                    SET dock_pane = ?
-                        WHERE workspace_id = ?
-                ))?((dock_id, workspace.id))
-                .context("Finishing initialization with dock pane")?;
 
                 Ok(())
             })
@@ -402,32 +375,17 @@ impl WorkspaceDb {
                 Ok(())
             }
             SerializedPaneGroup::Pane(pane) => {
-                Self::save_pane(conn, workspace_id, &pane, parent, false)?;
+                Self::save_pane(conn, workspace_id, &pane, parent)?;
                 Ok(())
             }
         }
-    }
-
-    fn get_dock_pane(&self, workspace_id: WorkspaceId) -> Result<SerializedPane> {
-        let (pane_id, active) = self.select_row_bound(sql!(
-            SELECT pane_id, active
-            FROM panes
-            WHERE pane_id = (SELECT dock_pane FROM workspaces WHERE workspace_id = ?)
-        ))?(workspace_id)?
-        .context("No dock pane for workspace")?;
-
-        Ok(SerializedPane::new(
-            self.get_items(pane_id).context("Reading items")?,
-            active,
-        ))
     }
 
     fn save_pane(
         conn: &Connection,
         workspace_id: WorkspaceId,
         pane: &SerializedPane,
-        parent: Option<(GroupId, usize)>, // None indicates BOTH dock pane AND center_pane
-        dock: bool,
+        parent: Option<(GroupId, usize)>,
     ) -> Result<PaneId> {
         let pane_id = conn.select_row_bound::<_, i64>(sql!(
             INSERT INTO panes(workspace_id, active)
@@ -436,13 +394,11 @@ impl WorkspaceDb {
         ))?((workspace_id, pane.active))?
         .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
 
-        if !dock {
-            let (parent_id, order) = unzip_option(parent);
-            conn.exec_bound(sql!(
-                INSERT INTO center_panes(pane_id, parent_group_id, position)
-                VALUES (?, ?, ?)
-            ))?((pane_id, parent_id, order))?;
-        }
+        let (parent_id, order) = unzip_option(parent);
+        conn.exec_bound(sql!(
+            INSERT INTO center_panes(pane_id, parent_group_id, position)
+            VALUES (?, ?, ?)
+        ))?((pane_id, parent_id, order))?;
 
         Self::save_items(conn, workspace_id, pane_id, &pane.children).context("Saving items")?;
 
@@ -498,10 +454,8 @@ impl WorkspaceDb {
 #[cfg(test)]
 mod tests {
 
-    use std::sync::Arc;
 
     use db::open_test_db;
-    use settings::DockAnchor;
 
     use super::*;
 
@@ -578,20 +532,16 @@ mod tests {
         let mut workspace_1 = SerializedWorkspace {
             id: 1,
             location: (["/tmp", "/tmp2"]).into(),
-            dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
-            dock_pane: Default::default(),
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
         };
 
-        let mut workspace_2 = SerializedWorkspace {
+        let mut _workspace_2 = SerializedWorkspace {
             id: 2,
             location: (["/tmp"]).into(),
-            dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
-            dock_pane: Default::default(),
             left_sidebar_open: false,
             bounds: Default::default(),
             display: Default::default(),
@@ -606,7 +556,7 @@ mod tests {
         })
         .await;
 
-        db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace(_workspace_2.clone()).await;
 
         db.write(|conn| {
             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
@@ -619,26 +569,27 @@ mod tests {
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
 
-        workspace_2.dock_pane.children.push(SerializedItem {
-            kind: Arc::from("Test"),
-            item_id: 10,
-            active: true,
-        });
-        db.save_workspace(workspace_2).await;
+        todo!();
+        // workspace_2.dock_pane.children.push(SerializedItem {
+        //     kind: Arc::from("Test"),
+        //     item_id: 10,
+        //     active: true,
+        // });
+        // db.save_workspace(workspace_2).await;
 
-        let test_text_2 = db
-            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-            .unwrap()(2)
-        .unwrap()
-        .unwrap();
-        assert_eq!(test_text_2, "test-text-2");
+        // let test_text_2 = db
+        //     .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+        //     .unwrap()(2)
+        // .unwrap()
+        // .unwrap();
+        // assert_eq!(test_text_2, "test-text-2");
 
-        let test_text_1 = db
-            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-            .unwrap()(1)
-        .unwrap()
-        .unwrap();
-        assert_eq!(test_text_1, "test-text-1");
+        // let test_text_1 = db
+        //     .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+        //     .unwrap()(1)
+        // .unwrap()
+        // .unwrap();
+        // assert_eq!(test_text_1, "test-text-1");
     }
 
     #[gpui::test]
@@ -646,16 +597,6 @@ mod tests {
         env_logger::try_init().ok();
 
         let db = WorkspaceDb(open_test_db("test_full_workspace_serialization").await);
-
-        let dock_pane = crate::persistence::model::SerializedPane {
-            children: vec![
-                SerializedItem::new("Terminal", 1, false),
-                SerializedItem::new("Terminal", 2, false),
-                SerializedItem::new("Terminal", 3, true),
-                SerializedItem::new("Terminal", 4, false),
-            ],
-            active: false,
-        };
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -697,9 +638,7 @@ mod tests {
         let workspace = SerializedWorkspace {
             id: 5,
             location: (["/tmp", "/tmp2"]).into(),
-            dock_position: DockPosition::Shown(DockAnchor::Bottom),
             center_group,
-            dock_pane,
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
@@ -727,9 +666,7 @@ mod tests {
         let workspace_1 = SerializedWorkspace {
             id: 1,
             location: (["/tmp", "/tmp2"]).into(),
-            dock_position: crate::dock::DockPosition::Shown(DockAnchor::Bottom),
             center_group: Default::default(),
-            dock_pane: Default::default(),
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
@@ -738,9 +675,7 @@ mod tests {
         let mut workspace_2 = SerializedWorkspace {
             id: 2,
             location: (["/tmp"]).into(),
-            dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Expanded),
             center_group: Default::default(),
-            dock_pane: Default::default(),
             left_sidebar_open: false,
             bounds: Default::default(),
             display: Default::default(),
@@ -776,9 +711,7 @@ mod tests {
         let mut workspace_3 = SerializedWorkspace {
             id: 3,
             location: (&["/tmp", "/tmp2"]).into(),
-            dock_position: DockPosition::Shown(DockAnchor::Right),
             center_group: Default::default(),
-            dock_pane: Default::default(),
             left_sidebar_open: false,
             bounds: Default::default(),
             display: Default::default(),
@@ -801,50 +734,21 @@ mod tests {
         );
     }
 
-    use crate::dock::DockPosition;
     use crate::persistence::model::SerializedWorkspace;
     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
 
     fn default_workspace<P: AsRef<Path>>(
         workspace_id: &[P],
-        dock_pane: SerializedPane,
         center_group: &SerializedPaneGroup,
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: 4,
             location: workspace_id.into(),
-            dock_position: crate::dock::DockPosition::Hidden(DockAnchor::Right),
             center_group: center_group.clone(),
-            dock_pane,
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
         }
-    }
-
-    #[gpui::test]
-    async fn test_basic_dock_pane() {
-        env_logger::try_init().ok();
-
-        let db = WorkspaceDb(open_test_db("basic_dock_pane").await);
-
-        let dock_pane = crate::persistence::model::SerializedPane::new(
-            vec![
-                SerializedItem::new("Terminal", 1, false),
-                SerializedItem::new("Terminal", 4, false),
-                SerializedItem::new("Terminal", 2, false),
-                SerializedItem::new("Terminal", 3, true),
-            ],
-            false,
-        );
-
-        let workspace = default_workspace(&["/tmp"], dock_pane, &Default::default());
-
-        db.save_workspace(workspace.clone()).await;
-
-        let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
-
-        assert_eq!(workspace.dock_pane, new_workspace.dock_pane);
     }
 
     #[gpui::test]
@@ -890,7 +794,7 @@ mod tests {
             ],
         };
 
-        let workspace = default_workspace(&["/tmp"], Default::default(), &center_pane);
+        let workspace = default_workspace(&["/tmp"], &center_pane);
 
         db.save_workspace(workspace.clone()).await;
 
@@ -939,7 +843,7 @@ mod tests {
 
         let id = &["/tmp"];
 
-        let mut workspace = default_workspace(id, Default::default(), &center_pane);
+        let mut workspace = default_workspace(id, &center_pane);
 
         db.save_workspace(workspace.clone()).await;
 

@@ -2,7 +2,6 @@
 ///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
-pub mod dock;
 pub mod item;
 pub mod notifications;
 pub mod pane;
@@ -22,7 +21,6 @@ use client::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockDefaultItemFactory, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use futures::{
     channel::{mpsc, oneshot},
@@ -63,7 +61,6 @@ use crate::{
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
 use lazy_static::lazy_static;
-use log::warn;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
@@ -75,7 +72,7 @@ pub use persistence::{
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::{Autosave, DockAnchor, Settings};
+use settings::{Autosave, Settings};
 use shared_screen::SharedScreen;
 use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use status_bar::StatusBar;
@@ -185,7 +182,6 @@ impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     pane::init(cx);
-    dock::init(cx);
     notifications::init(cx);
 
     cx.add_global_action({
@@ -362,7 +358,6 @@ pub struct AppState {
     pub build_window_options:
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
     pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
-    pub dock_default_item_factory: DockDefaultItemFactory,
     pub background_actions: BackgroundActions,
 }
 
@@ -386,7 +381,6 @@ impl AppState {
             user_store,
             initialize_workspace: |_, _, _| {},
             build_window_options: |_, _, _| Default::default(),
-            dock_default_item_factory: |_, _| None,
             background_actions: || &[],
         })
     }
@@ -439,7 +433,6 @@ impl DelayedDebouncedEditAction {
 }
 
 pub enum Event {
-    DockAnchorChanged,
     PaneAdded(ViewHandle<Pane>),
     ContactRequestedJoin(u64),
 }
@@ -457,7 +450,6 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
     titlebar_item: Option<AnyViewHandle>,
-    dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
@@ -535,16 +527,10 @@ impl Workspace {
         let weak_handle = cx.weak_handle();
 
         let center_pane = cx
-            .add_view(|cx| Pane::new(weak_handle.clone(), None, app_state.background_actions, cx));
+            .add_view(|cx| Pane::new(weak_handle.clone(), app_state.background_actions, cx));
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(
-            app_state.dock_default_item_factory,
-            app_state.background_actions,
-            cx,
-        );
-        let dock_pane = dock.pane().clone();
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user();
         let mut connection_status = app_state.client.status();
@@ -559,7 +545,6 @@ impl Workspace {
             }
             anyhow::Ok(())
         });
-        let handle = cx.handle();
 
         // All leader updates are enqueued and then processed in a single task, so
         // that each asynchronous operation can be run in order.
@@ -581,14 +566,12 @@ impl Workspace {
         let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
         let left_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), weak_handle.clone(), cx));
-        let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(handle, cx));
         let right_sidebar_buttons =
             cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), weak_handle.clone(), cx));
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_sidebar_buttons, cx);
             status_bar.add_right_item(right_sidebar_buttons, cx);
-            status_bar.add_right_item(toggle_dock, cx);
             status_bar
         });
 
@@ -630,11 +613,7 @@ impl Workspace {
             modal: None,
             weak_self: weak_handle.clone(),
             center: PaneGroup::new(center_pane.clone()),
-            dock,
-            // When removing an item, the last element remaining in this array
-            // is used to find where focus should fallback to. As such, the order
-            // of these two variables is important.
-            panes: vec![dock_pane.clone(), center_pane.clone()],
+            panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
@@ -664,10 +643,6 @@ impl Workspace {
             cx.defer(move |_, cx| {
                 Self::load_from_serialized_workspace(weak_handle, serialized_workspace, cx)
             });
-        } else if project.read(cx).is_local() {
-            if cx.global::<Settings>().default_dock_anchor != DockAnchor::Expanded {
-                Dock::show(&mut this, false, cx);
-            }
         }
 
         this
@@ -1336,15 +1311,10 @@ impl Workspace {
             SidebarSide::Left => &mut self.left_sidebar,
             SidebarSide::Right => &mut self.right_sidebar,
         };
-        let open = sidebar.update(cx, |sidebar, cx| {
+        sidebar.update(cx, |sidebar, cx| {
             let open = !sidebar.is_open();
             sidebar.set_open(open, cx);
-            open
         });
-
-        if open {
-            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
-        }
 
         self.serialize_workspace(cx);
 
@@ -1369,8 +1339,6 @@ impl Workspace {
         });
 
         if let Some(active_item) = active_item {
-            Dock::hide_on_sidebar_shown(self, action.sidebar_side, cx);
-
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
@@ -1401,8 +1369,6 @@ impl Workspace {
             sidebar.active_item().cloned()
         });
         if let Some(active_item) = active_item {
-            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
-
             if active_item.is_focused(cx) {
                 cx.focus_self();
             } else {
@@ -1424,7 +1390,6 @@ impl Workspace {
         let pane = cx.add_view(|cx| {
             Pane::new(
                 self.weak_handle(),
-                None,
                 self.app_state.background_actions,
                 cx,
             )
@@ -1466,16 +1431,12 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = pane.unwrap_or_else(|| {
-            if !self.dock_active() {
-                self.active_pane().downgrade()
-            } else {
-                self.last_active_center_pane.clone().unwrap_or_else(|| {
-                    self.panes
-                        .first()
-                        .expect("There must be an active pane")
-                        .downgrade()
-                })
-            }
+            self.last_active_center_pane.clone().unwrap_or_else(|| {
+                self.panes
+                    .first()
+                    .expect("There must be an active pane")
+                    .downgrade()
+            })
         });
 
         let task = self.load_path(path.into(), cx);
@@ -1599,15 +1560,7 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
-
-            if &pane == self.dock_pane() {
-                Dock::show(self, true, cx);
-            } else {
                 self.last_active_center_pane = Some(pane.downgrade());
-                if self.dock.is_anchored_at(DockAnchor::Expanded) {
-                    Dock::hide(self, cx);
-                }
-            }
             cx.notify();
         }
 
@@ -1630,13 +1583,11 @@ impl Workspace {
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        let is_dock = &pane == self.dock.pane();
         match event {
-            pane::Event::Split(direction) if !is_dock => {
+            pane::Event::Split(direction) => {
                 self.split_pane(pane, *direction, cx);
             }
-            pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
-            pane::Event::Remove if is_dock => Dock::hide(self, cx),
+            pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
                 if *local {
                     self.unfollow(&pane, cx);
@@ -1662,7 +1613,6 @@ impl Workspace {
             pane::Event::Focus => {
                 self.handle_pane_focused(pane.clone(), cx);
             }
-            _ => {}
         }
 
         self.serialize_workspace(cx);
@@ -1674,11 +1624,6 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) -> Option<ViewHandle<Pane>> {
-        if &pane == self.dock_pane() {
-            warn!("Can't split dock pane.");
-            return None;
-        }
-
         let item = pane.read(cx).active_item()?;
         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
             let new_pane = self.add_pane(cx);
@@ -1702,10 +1647,6 @@ impl Workspace {
     ) {
         let Some(pane_to_split) = pane_to_split.upgrade(cx) else { return; };
         let Some(from) = from.upgrade(cx) else { return; };
-        if &pane_to_split == self.dock_pane() {
-            warn!("Can't split dock pane.");
-            return;
-        }
 
         let new_pane = self.add_pane(cx);
         Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
@@ -1723,11 +1664,6 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane_to_split = pane_to_split.upgrade(cx)?;
-        if &pane_to_split == self.dock_pane() {
-            warn!("Can't split dock pane.");
-            return None;
-        }
-
         let new_pane = self.add_pane(cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
@@ -1762,14 +1698,6 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
-    }
-
-    pub fn dock_pane(&self) -> &ViewHandle<Pane> {
-        self.dock.pane()
-    }
-
-    fn dock_active(&self) -> bool {
-        &self.active_pane == self.dock.pane()
     }
 
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
@@ -2518,14 +2446,11 @@ impl Workspace {
             //  - with_local_workspace() relies on this to not have other stuff open
             //    when you open your log
             if !location.paths().is_empty() {
-                let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
 
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
                     location,
-                    dock_position: self.dock.position(),
-                    dock_pane,
                     center_group,
                     left_sidebar_open: self.left_sidebar.read(cx).is_open(),
                     bounds: Default::default(),
@@ -2545,25 +2470,13 @@ impl Workspace {
         cx: &mut AppContext,
     ) {
         cx.spawn(|mut cx| async move {
-            let (project, dock_pane_handle, old_center_pane) =
+            let (project, old_center_pane) =
                 workspace.read_with(&cx, |workspace, _| {
                     (
                         workspace.project().clone(),
-                        workspace.dock_pane().downgrade(),
                         workspace.last_active_center_pane.clone(),
                     )
                 })?;
-
-            serialized_workspace
-                .dock_pane
-                .deserialize_to(
-                    &project,
-                    &dock_pane_handle,
-                    serialized_workspace.id,
-                    &workspace,
-                    &mut cx,
-                )
-                .await?;
 
             // Traverse the splits tree and add to things
             let center_group = serialized_workspace
@@ -2602,18 +2515,6 @@ impl Workspace {
                     workspace.toggle_sidebar(SidebarSide::Left, cx);
                 }
 
-                // Note that without after_window, the focus_self() and
-                // the focus the dock generates start generating alternating
-                // focus due to the deferred execution each triggering each other
-                cx.after_window_update(move |workspace, cx| {
-                    Dock::set_dock_position(
-                        workspace,
-                        serialized_workspace.dock_position,
-                        true,
-                        cx,
-                    );
-                });
-
                 cx.notify();
             })?;
 
@@ -2634,7 +2535,6 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| {},
-            dock_default_item_factory: |_, _| None,
             background_actions: || &[],
         });
         Self::new(None, 0, project, app_state, cx)
@@ -2729,15 +2629,9 @@ impl View for Workspace {
                                                     ))
                                                     .flex(1., true),
                                                 )
-                                                .with_children(self.dock.render(
-                                                    &theme,
-                                                    DockAnchor::Bottom,
-                                                    cx,
-                                                )),
                                         )
                                         .flex(1., true),
                                     )
-                                    .with_children(self.dock.render(&theme, DockAnchor::Right, cx))
                                     .with_children(
                                         if self.right_sidebar.read(cx).active_item().is_some() {
                                             Some(
@@ -2760,11 +2654,6 @@ impl View for Workspace {
                             })
                             .with_child(Overlay::new(
                                 Stack::new()
-                                    .with_children(self.dock.render(
-                                        &theme,
-                                        DockAnchor::Expanded,
-                                        cx,
-                                    ))
                                     .with_children(self.modal.as_ref().map(|modal| {
                                         ChildView::new(modal, cx)
                                             .contained()

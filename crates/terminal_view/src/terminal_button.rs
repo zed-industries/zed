@@ -8,7 +8,6 @@ use gpui::{
 use settings::Settings;
 use std::any::TypeId;
 use workspace::{
-    dock::{Dock, FocusDock},
     item::ItemHandle,
     NewTerminal, StatusItemView, Workspace,
 };
@@ -85,8 +84,8 @@ impl View for TerminalButton {
                     } else {
                         if !active {
                             if let Some(workspace) = this.workspace.upgrade(cx) {
-                                workspace.update(cx, |workspace, cx| {
-                                    Dock::focus_dock(workspace, &Default::default(), cx)
+                                workspace.update(cx, |_workspace, _cx| {
+                                    todo!()
                                 })
                             }
                         }
@@ -95,7 +94,7 @@ impl View for TerminalButton {
                 .with_tooltip::<Self>(
                     0,
                     "Show Terminal".into(),
-                    Some(Box::new(FocusDock)),
+                    None, // TODO! We need a new action here.
                     theme.tooltip.clone(),
                     cx,
                 ),

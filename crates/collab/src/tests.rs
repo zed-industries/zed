@@ -195,7 +195,6 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| unimplemented!(),
-            dock_default_item_factory: |_, _| None,
             background_actions: || &[],
         });
 

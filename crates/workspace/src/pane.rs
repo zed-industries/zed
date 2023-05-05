@@ -2,7 +2,6 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, Dock, ExpandDock},
     item::WeakItemHandle,
     toolbar::Toolbar,
     Item, NewFile, NewSearch, NewTerminal, Workspace,
@@ -29,7 +28,7 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::{Autosave, DockAnchor, Settings};
+use settings::{Autosave, Settings};
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use theme::Theme;
 use util::ResultExt;
@@ -148,7 +147,6 @@ pub struct Pane {
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: TabBarContextMenu,
     tab_context_menu: ViewHandle<ContextMenu>,
-    docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
@@ -204,7 +202,6 @@ pub enum ReorderBehavior {
 enum TabBarContextMenuKind {
     New,
     Split,
-    Dock,
 }
 
 struct TabBarContextMenu {
@@ -224,7 +221,6 @@ impl TabBarContextMenu {
 impl Pane {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
-        docked: Option<DockAnchor>,
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -256,7 +252,6 @@ impl Pane {
                 handle: context_menu,
             },
             tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
-            docked,
             _background_actions: background_actions,
             workspace,
             has_focus: false,
@@ -278,11 +273,6 @@ impl Pane {
 
     pub fn has_focus(&self) -> bool {
         self.has_focus
-    }
-
-    pub fn set_docked(&mut self, docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) {
-        self.docked = docked;
-        cx.notify();
     }
 
     pub fn nav_history_for_item<T: Item>(&self, item: &ViewHandle<T>) -> ItemNavHistory {
@@ -1157,23 +1147,6 @@ impl Pane {
         self.tab_bar_context_menu.kind = TabBarContextMenuKind::Split;
     }
 
-    fn deploy_dock_menu(&mut self, cx: &mut ViewContext<Self>) {
-        self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
-            menu.show(
-                Default::default(),
-                AnchorCorner::TopRight,
-                vec![
-                    ContextMenuItem::action("Anchor Dock Right", AnchorDockRight),
-                    ContextMenuItem::action("Anchor Dock Bottom", AnchorDockBottom),
-                    ContextMenuItem::action("Expand Dock", ExpandDock),
-                ],
-                cx,
-            );
-        });
-
-        self.tab_bar_context_menu.kind = TabBarContextMenuKind::Dock;
-    }
-
     fn deploy_new_menu(&mut self, cx: &mut ViewContext<Self>) {
         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
@@ -1616,51 +1589,13 @@ impl Pane {
                 self.tab_bar_context_menu
                     .handle_if_kind(TabBarContextMenuKind::New),
             ))
-            .with_child(
-                self.docked
-                    .map(|anchor| {
-                        // Add the dock menu button if this pane is a dock
-                        let dock_icon = icon_for_dock_anchor(anchor);
-
-                        render_tab_bar_button(
-                            1,
-                            dock_icon,
-                            cx,
-                            |pane, cx| pane.deploy_dock_menu(cx),
-                            self.tab_bar_context_menu
-                                .handle_if_kind(TabBarContextMenuKind::Dock),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        // Add the split menu if this pane is not a dock
-                        render_tab_bar_button(
-                            2,
-                            "icons/split_12.svg",
-                            cx,
-                            |pane, cx| pane.deploy_split_menu(cx),
-                            self.tab_bar_context_menu
-                                .handle_if_kind(TabBarContextMenuKind::Split),
-                        )
-                    }),
-            )
-            // Add the close dock button if this pane is a dock
-            .with_children(self.docked.map(|_| {
-                render_tab_bar_button(
-                    3,
-                    "icons/x_mark_8.svg",
-                    cx,
-                    |this, cx| {
-                        if let Some(workspace) = this.workspace.upgrade(cx) {
-                            cx.window_context().defer(move |cx| {
-                                workspace.update(cx, |workspace, cx| {
-                                    Dock::hide_dock(workspace, &Default::default(), cx)
-                                })
-                            });
-                        }
-                    },
-                    None,
-                )
-            }))
+            .with_child(render_tab_bar_button(
+                2,
+                "icons/split_12.svg",
+                cx,
+                |pane, cx| pane.deploy_split_menu(cx),
+                self.tab_bar_context_menu.handle_if_kind(TabBarContextMenuKind::Split),
+            ))
             .contained()
             .with_style(theme.workspace.tab_bar.pane_button_container)
             .flex(1., false)
@@ -1737,11 +1672,7 @@ impl View for Pane {
                             0,
                             self.active_item_index + 1,
                             false,
-                            if self.docked.is_some() {
-                                None
-                            } else {
-                                Some(100.)
-                            },
+                            Some(100.),
                             cx,
                             {
                                 let toolbar = self.toolbar.clone();
@@ -1843,9 +1774,6 @@ impl View for Pane {
 
     fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
         Self::reset_to_default_keymap_context(keymap);
-        if self.docked.is_some() {
-            keymap.add_identifier("docked");
-        }
     }
 }
 

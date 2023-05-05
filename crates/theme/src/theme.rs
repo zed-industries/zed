@@ -73,7 +73,6 @@ pub struct Workspace {
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
     pub external_location_message: ContainedText,
-    pub dock: Dock,
     pub drop_target_overlay_color: Color,
 }
 
@@ -294,15 +293,6 @@ pub struct Toolbar {
     pub height: f32,
     pub item_spacing: f32,
     pub nav_button: Interactive<IconButton>,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct Dock {
-    pub initial_size_right: f32,
-    pub initial_size_bottom: f32,
-    pub wash_color: Color,
-    pub panel: ContainerStyle,
-    pub maximized: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

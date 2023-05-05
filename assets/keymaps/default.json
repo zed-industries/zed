@@ -444,32 +444,6 @@
     }
   },
   {
-    "context": "Workspace",
-    "bindings": {
-      "shift-escape": "dock::FocusDock"
-    }
-  },
-  {
-    "bindings": {
-      "cmd-shift-k cmd-shift-right": "dock::AnchorDockRight",
-      "cmd-shift-k cmd-shift-down": "dock::AnchorDockBottom",
-      "cmd-shift-k cmd-shift-up": "dock::ExpandDock"
-    }
-  },
-  {
-    "context": "Pane",
-    "bindings": {
-      "cmd-escape": "dock::AddTabToDock"
-    }
-  },
-  {
-    "context": "Pane && docked",
-    "bindings": {
-      "shift-escape": "dock::HideDock",
-      "cmd-escape": "dock::RemoveTabFromDock"
-    }
-  },
-  {
     "context": "ProjectPanel",
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",

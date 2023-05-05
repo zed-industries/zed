@@ -62,9 +62,5 @@
       "ctrl-f": "project_panel::ExpandSelectedEntry",
       "ctrl-shift-c": "project_panel::CopyPath"
     }
-  },
-  {
-    "context": "Dock",
-    "bindings": {}
   }
 ]

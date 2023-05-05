@@ -2,7 +2,7 @@ mod keymap_file;
 pub mod settings_file;
 pub mod watched_json;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use gpui::{
     font_cache::{FamilyId, FontCache},
     fonts, AssetSource,
@@ -15,10 +15,6 @@ use schemars::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use sqlez::{
-    bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
-};
 use std::{
     borrow::Cow, collections::HashMap, num::NonZeroU32, ops::Range, path::Path, str, sync::Arc,
 };
@@ -48,7 +44,6 @@ pub struct Settings {
     pub show_call_status_icon: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
-    pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
     pub git: GitSettings,
@@ -340,43 +335,6 @@ impl TerminalSettings {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DockAnchor {
-    #[default]
-    Bottom,
-    Right,
-    Expanded,
-}
-
-impl StaticColumnCount for DockAnchor {}
-impl Bind for DockAnchor {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        match self {
-            DockAnchor::Bottom => "Bottom",
-            DockAnchor::Right => "Right",
-            DockAnchor::Expanded => "Expanded",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl Column for DockAnchor {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
-            Ok((
-                match anchor_text.as_ref() {
-                    "Bottom" => DockAnchor::Bottom,
-                    "Right" => DockAnchor::Right,
-                    "Expanded" => DockAnchor::Expanded,
-                    _ => bail!("Stored dock anchor is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
@@ -403,8 +361,6 @@ pub struct SettingsFileContent {
     pub vim_mode: Option<bool>,
     #[serde(default)]
     pub autosave: Option<Autosave>,
-    #[serde(default)]
-    pub default_dock_anchor: Option<DockAnchor>,
     #[serde(flatten)]
     pub editor: EditorSettings,
     #[serde(default)]
@@ -501,7 +457,6 @@ impl Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
-            default_dock_anchor: defaults.default_dock_anchor.unwrap(),
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
@@ -596,7 +551,6 @@ impl Settings {
         );
         merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
-        merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
         merge(&mut self.features.copilot, data.features.copilot);
 
@@ -796,7 +750,6 @@ impl Settings {
             show_call_status_icon: true,
             vim_mode: false,
             autosave: Autosave::Off,
-            default_dock_anchor: DockAnchor::Bottom,
             editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),

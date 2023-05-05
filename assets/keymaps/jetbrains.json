@@ -66,14 +66,7 @@
       "cmd-shift-a": "command_palette::Toggle",
       "cmd-alt-o": "project_symbols::Toggle",
       "cmd-1": "workspace::ToggleLeftSidebar",
-      "cmd-6": "diagnostics::Deploy",
-      "alt-f12": "dock::FocusDock"
-    }
-  },
-  {
-    "context": "Dock",
-    "bindings": {
-      "alt-f12": "dock::HideDock"
+      "cmd-6": "diagnostics::Deploy"
     }
   }
 ]
