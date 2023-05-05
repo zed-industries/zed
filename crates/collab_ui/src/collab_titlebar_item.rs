@@ -24,6 +24,8 @@ use theme::{AvatarStyle, Theme};
 use util::ResultExt;
 use workspace::{FollowNextCollaborator, Workspace};
 
+const MAX_TITLE_LENGTH: usize = 75;
+
 actions!(
     collab,
     [
@@ -48,7 +50,6 @@ pub struct CollabTitlebarItem {
     workspace: WeakViewHandle<Workspace>,
     contacts_popover: Option<ViewHandle<ContactsPopover>>,
     user_menu: ViewHandle<ContextMenu>,
-    branches: ViewHandle<BranchesButton>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -73,10 +74,7 @@ impl View for CollabTitlebarItem {
         let mut left_container = Flex::row();
         let mut right_container = Flex::row().align_children_center();
 
-        let project_title = self.collect_title_root_names(&project, cx);
-        left_container.add_child(self.render_title_root_names(&project_title, theme.clone()));
-
-        left_container.add_child(ChildView::new(&self.branches.clone().into_any(), cx));
+        left_container.add_child(self.collect_title_root_names(&project, theme.clone(), cx));
 
         let user = self.user_store.read(cx).current_user();
         let peer_id = self.client.peer_id();
@@ -106,7 +104,14 @@ impl View for CollabTitlebarItem {
 
         Stack::new()
             .with_child(left_container)
-            .with_child(right_container.aligned().right())
+            .with_child(
+                Flex::row()
+                    .with_child(right_container.contained().with_background_color(
+                        theme.workspace.titlebar.container.background_color.unwrap(),
+                    ))
+                    .aligned()
+                    .right(),
+            )
             .into_any()
     }
 }
@@ -163,25 +168,60 @@ impl CollabTitlebarItem {
                 menu.set_position_mode(OverlayPositionMode::Local);
                 menu
             }),
-            branches: cx.add_view(|cx| BranchesButton::new(workspace_handle.to_owned(), cx)),
             _subscriptions: subscriptions,
         }
     }
 
-    fn collect_title_root_names(&self, project: &Project, cx: &ViewContext<Self>) -> String {
-        let decorated_root_names: Vec<&str> = project.worktree_root_names(cx).collect();
-        if decorated_root_names.is_empty() {
-            "empty project".to_owned()
-        } else {
-            decorated_root_names.join(", ")
-        }
-    }
+    fn collect_title_root_names(
+        &self,
+        project: &Project,
+        theme: Arc<Theme>,
+        cx: &ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        let names_and_branches = project.visible_worktrees(cx).map(|worktree| {
+            let worktree = worktree.read(cx);
+            (worktree.root_name(), worktree.root_git_entry())
+        });
 
-    fn render_title_root_names(&self, title: &str, theme: Arc<Theme>) -> AnyElement<Self> {
+        fn push_str(buffer: &mut String, index: &mut usize, str: &str) {
+            buffer.push_str(str);
+            *index += str.chars().count();
+        }
+
+        let mut indices = Vec::new();
+        let mut index = 0;
+        let mut title = String::new();
+        let mut names_and_branches = names_and_branches.peekable();
+        while let Some((name, entry)) = names_and_branches.next() {
+            push_str(&mut title, &mut index, name);
+            if let Some(branch) = entry.and_then(|entry| entry.branch()) {
+                push_str(&mut title, &mut index, "/");
+                let pre_index = index;
+                push_str(&mut title, &mut index, &branch);
+                indices.extend((pre_index..index).into_iter())
+            }
+            if names_and_branches.peek().is_some() {
+                push_str(&mut title, &mut index, ", ");
+                if index >= MAX_TITLE_LENGTH {
+                    title.push_str(" …");
+                    break;
+                }
+            }
+        }
+
         let text_style = theme.workspace.titlebar.title.clone();
         let item_spacing = theme.workspace.titlebar.item_spacing;
 
-        Label::new(title.to_owned(), text_style)
+        let mut highlight = text_style.clone();
+        highlight.color = theme.workspace.titlebar.highlight_color;
+
+        let style = LabelStyle {
+            text: text_style,
+            highlight_text: Some(highlight),
+        };
+
+        Label::new(title, style)
+            .with_highlights(indices)
             .contained()
             .with_margin_right(item_spacing)
             .aligned()

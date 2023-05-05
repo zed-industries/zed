@@ -7,6 +7,8 @@ use gpui::{
 use settings::Settings;
 use workspace::Workspace;
 
+///! TODO: This file will hold the branch switching UI once we build it.
+
 pub struct BranchesButton {
     workspace: WeakViewHandle<Workspace>,
     popup_menu: ViewHandle<ContextMenu>,

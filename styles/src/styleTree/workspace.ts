@@ -140,6 +140,7 @@ export default function workspace(colorScheme: ColorScheme) {
 
             // Project
             title: text(layer, "sans", "variant"),
+            highlight_color: text(layer, "sans", "active").color,
 
             // Collaborators
             leaderAvatar: {
