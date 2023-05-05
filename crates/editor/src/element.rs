@@ -37,7 +37,7 @@ use itertools::Itertools;
 use json::json;
 use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Selection};
 use project::ProjectPath;
-use settings::{GitGutter, Settings, ShowInvisibles};
+use settings::{GitGutter, Settings, ShowWhitespaces};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -1657,13 +1657,13 @@ fn draw_invisibles(
     let settings = cx.global::<Settings>();
     let regions_to_hit = match settings
         .editor_overrides
-        .show_invisibles
-        .or(settings.editor_defaults.show_invisibles)
+        .show_whitespaces
+        .or(settings.editor_defaults.show_whitespaces)
         .unwrap_or_default()
     {
-        ShowInvisibles::None => return,
-        ShowInvisibles::Selection => Some(selection_ranges),
-        ShowInvisibles::All => None,
+        ShowWhitespaces::None => return,
+        ShowWhitespaces::Selection => Some(selection_ranges),
+        ShowWhitespaces::All => None,
     };
 
     for invisible in &line_with_invisibles.invisibles {
@@ -2895,7 +2895,7 @@ mod tests {
 
         cx.update(|cx| {
             let mut test_settings = Settings::test(cx);
-            test_settings.editor_defaults.show_invisibles = Some(ShowInvisibles::All);
+            test_settings.editor_defaults.show_whitespaces = Some(ShowWhitespaces::All);
             test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(tab_size).unwrap());
             cx.set_global(test_settings);
         });
