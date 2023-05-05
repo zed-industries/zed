@@ -42,7 +42,7 @@
   //   "none"
   // 3. Draw all invisible symbols:
   //   "all"
-  "show_invisibles": "selection",
+  "show_whitespaces": "selection",
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.

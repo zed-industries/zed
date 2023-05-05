@@ -173,7 +173,7 @@ pub struct EditorSettings {
     pub formatter: Option<Formatter>,
     pub enable_language_server: Option<bool>,
     pub show_copilot_suggestions: Option<bool>,
-    pub show_invisibles: Option<ShowInvisibles>,
+    pub show_whitespaces: Option<ShowWhitespaces>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -449,7 +449,7 @@ pub struct FeaturesContent {
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ShowInvisibles {
+pub enum ShowWhitespaces {
     #[default]
     Selection,
     None,
@@ -517,7 +517,7 @@ impl Settings {
                 formatter: required(defaults.editor.formatter),
                 enable_language_server: required(defaults.editor.enable_language_server),
                 show_copilot_suggestions: required(defaults.editor.show_copilot_suggestions),
-                show_invisibles: required(defaults.editor.show_invisibles),
+                show_whitespaces: required(defaults.editor.show_whitespaces),
             },
             editor_overrides: Default::default(),
             copilot: CopilotSettings {
@@ -668,8 +668,8 @@ impl Settings {
         self.language_setting(language, |settings| settings.tab_size)
     }
 
-    pub fn show_invisibles(&self, language: Option<&str>) -> ShowInvisibles {
-        self.language_setting(language, |settings| settings.show_invisibles)
+    pub fn show_whitespaces(&self, language: Option<&str>) -> ShowWhitespaces {
+        self.language_setting(language, |settings| settings.show_whitespaces)
     }
 
     pub fn hard_tabs(&self, language: Option<&str>) -> bool {
@@ -808,7 +808,7 @@ impl Settings {
                 formatter: Some(Formatter::LanguageServer),
                 enable_language_server: Some(true),
                 show_copilot_suggestions: Some(true),
-                show_invisibles: Some(ShowInvisibles::None),
+                show_whitespaces: Some(ShowWhitespaces::None),
             },
             editor_overrides: Default::default(),
             copilot: Default::default(),
