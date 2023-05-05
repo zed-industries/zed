@@ -29,7 +29,7 @@ use gpui::{
     },
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
-    text_layout::{self, Invisible, Line, RunStyle, TextLayoutCache},
+    text_layout::{self, Line, RunStyle, TextLayoutCache},
     AnyElement, Axis, Border, CursorRegion, Element, EventContext, FontCache, LayoutContext,
     MouseRegion, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
 };
@@ -1696,12 +1696,28 @@ struct HighlightedChunk<'a> {
     is_tab: bool,
 }
 
+#[derive(Debug)]
 pub struct LineWithInvisibles {
     pub line: Line,
     invisibles: Vec<Invisible>,
 }
 
-// TODO kb deduplicate? + tests
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Invisible {
+    Tab { line_start_offset: usize },
+    Whitespace { line_offset: usize },
+}
+
+impl Invisible {
+    #[cfg(test)]
+    fn offset(&self) -> usize {
+        *match self {
+            Self::Tab { line_start_offset } => line_start_offset,
+            Self::Whitespace { line_offset } => line_offset,
+        }
+    }
+}
+
 fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = HighlightedChunk<'a>>,
     text_style: &TextStyle,
@@ -1769,7 +1785,7 @@ fn layout_highlighted_chunks<'a>(
                 ));
 
                 // Line wrap pads its contents with fake whitespaces,
-                // avoid printing them.
+                // avoid printing them
                 let inside_wrapped_string = ix > 0;
                 if highlighted_chunk.is_tab {
                     if non_whitespace_added || !inside_wrapped_string {
@@ -2753,7 +2769,7 @@ mod tests {
     };
     use gpui::TestAppContext;
     use settings::Settings;
-    use std::sync::Arc;
+    use std::{num::NonZeroU32, sync::Arc};
     use util::test::sample_text;
 
     #[gpui::test]
@@ -2832,5 +2848,88 @@ mod tests {
         editor.update(cx, |editor, cx| {
             element.paint(&mut scene, bounds, bounds, &mut state, editor, cx);
         });
+    }
+
+    #[gpui::test]
+    fn test_invisible_drawing(cx: &mut TestAppContext) {
+        let tab_size = 4;
+        let initial_str = "\t\t\t\t\t\t\t\t| | a b c d ";
+        let (input_text, expected_invisibles) = {
+            let mut input_text = String::new();
+            let mut expected_invisibles = Vec::new();
+            let mut offset = 0;
+
+            let mut push_char = |char_symbol| {
+                input_text.push(char_symbol);
+                let new_offset = match char_symbol {
+                    '\t' => {
+                        expected_invisibles.push(Invisible::Tab {
+                            line_start_offset: offset,
+                        });
+                        tab_size as usize
+                    }
+                    ' ' => {
+                        expected_invisibles.push(Invisible::Whitespace {
+                            line_offset: offset,
+                        });
+                        1
+                    }
+                    _ => 1,
+                };
+                offset += new_offset;
+            };
+
+            for input_char in initial_str.chars() {
+                push_char(input_char)
+            }
+
+            (input_text, expected_invisibles)
+        };
+        assert_eq!(
+            expected_invisibles.len(),
+            initial_str
+                .chars()
+                .filter(|initial_char| initial_char.is_whitespace())
+                .count()
+        );
+
+        cx.update(|cx| {
+            let mut test_settings = Settings::test(cx);
+            test_settings.editor_defaults.show_invisibles = Some(ShowInvisibles::All);
+            test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(tab_size).unwrap());
+            cx.set_global(test_settings);
+        });
+        let (_, editor) = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            Editor::new(EditorMode::Full, buffer, None, None, cx)
+        });
+
+        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+        let (_, layout_state) = editor.update(cx, |editor, cx| {
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            element.layout(
+                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+                editor,
+                &mut layout_cx,
+            )
+        });
+
+        let line_layouts = &layout_state.position_map.line_layouts;
+        let actual_invisibles = line_layouts
+            .iter()
+            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
+            .flatten()
+            .sorted_by(|invisible_1, invisible_2| invisible_1.offset().cmp(&invisible_2.offset()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert_eq!(expected_invisibles, actual_invisibles);
     }
 }
