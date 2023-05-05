@@ -1422,10 +1422,11 @@ impl Snapshot {
                 scan_id: repository.scan_id as usize,
                 branch: repository.branch.map(Into::into),
             };
-            // TODO: Double check this logic
             if let Some(entry) = self.entry_for_id(repository.work_directory_id()) {
                 self.repository_entries
                     .insert(RepositoryWorkDirectory(entry.path.clone()), repository)
+            } else {
+                log::error!("no work directory entry for repository {:?}", repository)
             }
         }
 
@@ -2528,23 +2529,21 @@ impl BackgroundScanner {
         let mut snapshot = self.snapshot.lock();
 
         let mut git_repositories = mem::take(&mut snapshot.git_repositories);
-        git_repositories.retain(|project_entry_id, _| {
+        git_repositories.retain(|work_directory_id, _| {
             snapshot
-                .entry_for_id(*project_entry_id)
-                .map_or(false, |entry| entry.path.file_name() == Some(&DOT_GIT))
+                .entry_for_id(*work_directory_id)
+                .map_or(false, |entry| {
+                    snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
+                })
         });
         snapshot.git_repositories = git_repositories;
 
         let mut git_repository_entries = mem::take(&mut snapshot.snapshot.repository_entries);
         git_repository_entries.retain(|_, entry| {
-            entry
-                .work_directory(&snapshot)
-                .map(|directory| {
-                    snapshot
-                        .entry_for_path((directory.as_ref()).join(".git"))
-                        .is_some()
-                })
-                .unwrap_or(false)
+            snapshot
+                .git_repositories
+                .get(&entry.work_directory.0)
+                .is_some()
         });
         snapshot.snapshot.repository_entries = git_repository_entries;
 

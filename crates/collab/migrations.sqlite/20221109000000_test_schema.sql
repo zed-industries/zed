@@ -85,14 +85,13 @@ CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree
 CREATE TABLE "worktree_repositories" (
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,
-    "dot_git_entry_id" INTEGER NOT NULL,
+    "work_directory_id" INTEGER NOT NULL,
     "scan_id" INTEGER NOT NULL,
     "branch" VARCHAR,
-    "work_directory_path" VARCHAR NOT NULL,
     "is_deleted" BOOL NOT NULL,
-    PRIMARY KEY(project_id, worktree_id, dot_git_entry_id),
+    PRIMARY KEY(project_id, worktree_id, work_directory_id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
-    FOREIGN KEY(project_id, worktree_id, dot_git_entry_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
+    FOREIGN KEY(project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
 );
 CREATE INDEX "index_worktree_repositories_on_project_id" ON "worktree_repositories" ("project_id");
 CREATE INDEX "index_worktree_repositories_on_project_id_and_worktree_id" ON "worktree_repositories" ("project_id", "worktree_id");

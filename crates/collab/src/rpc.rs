@@ -1063,9 +1063,8 @@ async fn rejoin_room(
                     removed_entries: worktree.removed_entries,
                     scan_id: worktree.scan_id,
                     is_last_update: worktree.completed_scan_id == worktree.scan_id,
-                    //TODO repo
-                    updated_repositories: vec![],
-                    removed_repositories: vec![],
+                    updated_repositories: worktree.updated_repositories,
+                    removed_repositories: worktree.removed_repositories,
                 };
                 for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
                     session.peer.send(session.connection_id, update.clone())?;
