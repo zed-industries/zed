@@ -982,9 +982,8 @@ message Entry {
 }
 
 message RepositoryEntry {
-    uint64 scan_id = 1;
-    uint64 work_directory_id = 2;
-    optional string branch = 3;
+    uint64 work_directory_id = 1;
+    optional string branch = 2;
 }
 
 message BufferState {

@@ -1566,7 +1566,6 @@ impl Database {
                                     .push(db_repository.work_directory_id as u64);
                             } else {
                                 worktree.updated_repositories.push(proto::RepositoryEntry {
-                                    scan_id: db_repository.scan_id as u64,
                                     work_directory_id: db_repository.work_directory_id as u64,
                                     branch: db_repository.branch,
                                 });
@@ -2647,7 +2646,6 @@ impl Database {
                         worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
                     {
                         worktree.repository_entries.push(proto::RepositoryEntry {
-                            scan_id: db_repository_entry.scan_id as u64,
                             work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
                         });

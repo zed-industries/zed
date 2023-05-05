@@ -4697,7 +4697,7 @@ impl Project {
     fn update_local_worktree_buffers_git_repos(
         &mut self,
         worktree_handle: ModelHandle<Worktree>,
-        repos: &Vec<RepositoryEntry>,
+        repos: &HashMap<Arc<Path>, LocalRepositoryEntry>,
         cx: &mut ModelContext<Self>,
     ) {
         debug_assert!(worktree_handle.read(cx).is_local());
@@ -4715,15 +4715,16 @@ impl Project {
                 let path = file.path().clone();
 
                 let worktree = worktree_handle.read(cx);
-                let repo = match repos
+
+                let (work_directory, repo) = match repos
                     .iter()
-                    .find(|repository| repository.work_directory.contains(worktree, &path))
+                    .find(|(work_directory, _)| path.starts_with(work_directory))
                 {
                     Some(repo) => repo.clone(),
                     None => return,
                 };
 
-                let relative_repo = match repo.work_directory.relativize(worktree, &path) {
+                let relative_repo = match path.strip_prefix(work_directory).log_err() {
                     Some(relative_repo) => relative_repo.to_owned(),
                     None => return,
                 };
@@ -4732,12 +4733,10 @@ impl Project {
 
                 let remote_id = self.remote_id();
                 let client = self.client.clone();
-                let diff_base_task = worktree_handle.update(cx, move |worktree, cx| {
-                    worktree
-                        .as_local()
-                        .unwrap()
-                        .load_index_text(repo, relative_repo, cx)
-                });
+                let git_ptr = repo.repo_ptr.clone();
+                let diff_base_task = cx
+                    .background()
+                    .spawn(async move { git_ptr.lock().load_index_text(&relative_repo) });
 
                 cx.spawn(|_, mut cx| async move {
                     let diff_base = diff_base_task.await;
