@@ -1283,6 +1283,7 @@ impl EditorElement {
     fn layout_lines(
         &mut self,
         rows: Range<u32>,
+        line_number_layouts: &[Option<Line>],
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
@@ -1380,6 +1381,7 @@ impl EditorElement {
                 cx.font_cache(),
                 MAX_LINE_LEN,
                 rows.len() as usize,
+                line_number_layouts,
             )
         }
     }
@@ -1725,6 +1727,7 @@ fn layout_highlighted_chunks<'a>(
     font_cache: &Arc<FontCache>,
     max_line_len: usize,
     max_line_count: usize,
+    line_number_layouts: &[Option<Line>],
 ) -> Vec<LineWithInvisibles> {
     let mut layouts = Vec::with_capacity(max_line_count);
     let mut line = String::new();
@@ -1786,7 +1789,7 @@ fn layout_highlighted_chunks<'a>(
 
                 // Line wrap pads its contents with fake whitespaces,
                 // avoid printing them
-                let inside_wrapped_string = ix > 0;
+                let inside_wrapped_string = line_number_layouts[row].is_none();
                 if highlighted_chunk.is_tab {
                     if non_whitespace_added || !inside_wrapped_string {
                         invisibles.push(Invisible::Tab {
@@ -2041,7 +2044,8 @@ impl Element<Editor> for EditorElement {
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts = self.layout_lines(start_row..end_row, &snapshot, cx);
+        let line_layouts =
+            self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
         for line_with_invisibles in &line_layouts {
             if line_with_invisibles.line.width() > max_visible_line_width {
                 max_visible_line_width = line_with_invisibles.line.width();
@@ -2851,43 +2855,32 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_invisible_drawing(cx: &mut TestAppContext) {
+    fn test_both_invisible_kinds_drawing(cx: &mut TestAppContext) {
         let tab_size = 4;
-        let initial_str = "\t\t\t\t\t\t\t\t| | a b c d ";
-        let (input_text, expected_invisibles) = {
-            let mut input_text = String::new();
-            let mut expected_invisibles = Vec::new();
-            let mut offset = 0;
-
-            let mut push_char = |char_symbol| {
-                input_text.push(char_symbol);
-                let new_offset = match char_symbol {
-                    '\t' => {
-                        expected_invisibles.push(Invisible::Tab {
-                            line_start_offset: offset,
-                        });
-                        tab_size as usize
-                    }
-                    ' ' => {
-                        expected_invisibles.push(Invisible::Whitespace {
-                            line_offset: offset,
-                        });
-                        1
-                    }
-                    _ => 1,
-                };
-                offset += new_offset;
-            };
-
-            for input_char in initial_str.chars() {
-                push_char(input_char)
-            }
-
-            (input_text, expected_invisibles)
-        };
+        let input_text = "\t\t\t| | a b";
+        let expected_invisibles = vec![
+            Invisible::Tab {
+                line_start_offset: 0,
+            },
+            Invisible::Tab {
+                line_start_offset: tab_size as usize,
+            },
+            Invisible::Tab {
+                line_start_offset: tab_size as usize * 2,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize * 3 + 1,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize * 3 + 3,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize * 3 + 5,
+            },
+        ];
         assert_eq!(
             expected_invisibles.len(),
-            initial_str
+            input_text
                 .chars()
                 .filter(|initial_char| initial_char.is_whitespace())
                 .count()
