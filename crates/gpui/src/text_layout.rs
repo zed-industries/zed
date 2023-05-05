@@ -211,12 +211,6 @@ pub struct Glyph {
     pub is_emoji: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum Invisible {
-    Tab { line_start_offset: usize },
-    Whitespace { line_offset: usize },
-}
-
 impl Line {
     fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
         let mut style_runs = SmallVec::new();
