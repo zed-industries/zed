@@ -2859,14 +2859,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         self.window.focused_view_id == Some(self.view_id)
     }
 
-    pub fn is_parent_view_focused(&self) -> bool {
-        if let Some(parent_view_id) = self.ancestors(self.view_id).next().clone() {
-            self.focused_view_id() == Some(parent_view_id)
-        } else {
-            false
-        }
-    }
-
     pub fn focus_parent(&mut self) {
         let window_id = self.window_id;
         let view_id = self.view_id;

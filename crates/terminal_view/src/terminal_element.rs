@@ -408,7 +408,7 @@ impl TerminalElement {
             )
             // Update drag selections
             .on_drag(MouseButton::Left, move |event, _: &mut TerminalView, cx| {
-                if cx.is_parent_view_focused() {
+                if cx.is_self_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_drag(event, origin);
@@ -444,7 +444,7 @@ impl TerminalElement {
                 },
             )
             .on_move(move |event, _: &mut TerminalView, cx| {
-                if cx.is_parent_view_focused() {
+                if cx.is_self_focused() {
                     if let Some(conn_handle) = connection.upgrade(cx) {
                         conn_handle.update(cx, |terminal, cx| {
                             terminal.mouse_move(&event, origin);
