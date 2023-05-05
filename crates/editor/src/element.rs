@@ -1382,6 +1382,7 @@ impl EditorElement {
                 MAX_LINE_LEN,
                 rows.len() as usize,
                 line_number_layouts,
+                snapshot.mode,
             )
         }
     }
@@ -1728,6 +1729,7 @@ fn layout_highlighted_chunks<'a>(
     max_line_len: usize,
     max_line_count: usize,
     line_number_layouts: &[Option<Line>],
+    editor_mode: EditorMode,
 ) -> Vec<LineWithInvisibles> {
     let mut layouts = Vec::with_capacity(max_line_count);
     let mut line = String::new();
@@ -1787,30 +1789,37 @@ fn layout_highlighted_chunks<'a>(
                     },
                 ));
 
-                // Line wrap pads its contents with fake whitespaces,
-                // avoid printing them
-                let inside_wrapped_string = line_number_layouts[row].is_none();
-                if highlighted_chunk.is_tab {
-                    if non_whitespace_added || !inside_wrapped_string {
-                        invisibles.push(Invisible::Tab {
-                            line_start_offset: line.len(),
-                        });
+                if editor_mode == EditorMode::Full {
+                    // Line wrap pads its contents with fake whitespaces,
+                    // avoid printing them
+                    let inside_wrapped_string = line_number_layouts
+                        .get(row)
+                        .and_then(|layout| layout.as_ref())
+                        .is_none();
+                    if highlighted_chunk.is_tab {
+                        if non_whitespace_added || !inside_wrapped_string {
+                            invisibles.push(Invisible::Tab {
+                                line_start_offset: line.len(),
+                            });
+                        }
+                    } else {
+                        invisibles.extend(
+                            line_chunk
+                                .chars()
+                                .enumerate()
+                                .filter(|(_, line_char)| {
+                                    let is_whitespace = line_char.is_whitespace();
+                                    non_whitespace_added |= !is_whitespace;
+                                    is_whitespace
+                                        && (non_whitespace_added || !inside_wrapped_string)
+                                })
+                                .map(|(whitespace_index, _)| Invisible::Whitespace {
+                                    line_offset: line.len() + whitespace_index,
+                                }),
+                        )
                     }
-                } else {
-                    invisibles.extend(
-                        line_chunk
-                            .chars()
-                            .enumerate()
-                            .filter(|(_, line_char)| {
-                                let is_whitespace = line_char.is_whitespace();
-                                non_whitespace_added |= !is_whitespace;
-                                is_whitespace && (non_whitespace_added || !inside_wrapped_string)
-                            })
-                            .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                line_offset: line.len() + whitespace_index,
-                            }),
-                    )
                 }
+
                 line.push_str(line_chunk);
             }
         }
@@ -2924,5 +2933,57 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(expected_invisibles, actual_invisibles);
+    }
+
+    #[gpui::test]
+    fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut test_settings = Settings::test(cx);
+            test_settings.editor_defaults.show_whitespaces = Some(ShowWhitespaces::All);
+            test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
+            cx.set_global(test_settings);
+        });
+
+        for editor_mode_without_invisibles in [
+            EditorMode::SingleLine,
+            EditorMode::AutoHeight { max_lines: 100 },
+        ] {
+            let (_, editor) = cx.add_window(|cx| {
+                let buffer = MultiBuffer::build_simple("\t\t\t| | a b", cx);
+                Editor::new(editor_mode_without_invisibles, buffer, None, None, cx)
+            });
+
+            let mut element =
+                EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+            let (_, layout_state) = editor.update(cx, |editor, cx| {
+                let mut new_parents = Default::default();
+                let mut notify_views_if_parents_change = Default::default();
+                let mut layout_cx = LayoutContext::new(
+                    cx,
+                    &mut new_parents,
+                    &mut notify_views_if_parents_change,
+                    false,
+                );
+                element.layout(
+                    SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
+                    editor,
+                    &mut layout_cx,
+                )
+            });
+
+            let line_layouts = &layout_state.position_map.line_layouts;
+            let invisibles = line_layouts
+                .iter()
+                .map(|line_with_invisibles| &line_with_invisibles.invisibles)
+                .flatten()
+                .sorted_by(|invisible_1, invisible_2| {
+                    invisible_1.offset().cmp(&invisible_2.offset())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            assert!(invisibles.is_empty(),
+                "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+        }
     }
 }
