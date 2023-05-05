@@ -4696,11 +4696,11 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
-        worktree: ModelHandle<Worktree>,
+        worktree_handle: ModelHandle<Worktree>,
         repos: &Vec<RepositoryEntry>,
         cx: &mut ModelContext<Self>,
     ) {
-        debug_assert!(worktree.read(cx).is_local());
+        debug_assert!(worktree_handle.read(cx).is_local());
 
         for (_, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
@@ -4708,28 +4708,31 @@ impl Project {
                     Some(file) => file,
                     None => continue,
                 };
-                if file.worktree != worktree {
+                if file.worktree != worktree_handle {
                     continue;
                 }
 
                 let path = file.path().clone();
 
+                let worktree = worktree_handle.read(cx);
                 let repo = match repos
                     .iter()
-                    .find(|entry| entry.work_directory.contains(&path))
+                    .find(|repository| repository.work_directory.contains(worktree, &path))
                 {
                     Some(repo) => repo.clone(),
                     None => return,
                 };
 
-                let relative_repo = match repo.work_directory.relativize(&path) {
+                let relative_repo = match repo.work_directory.relativize(worktree, &path) {
                     Some(relative_repo) => relative_repo.to_owned(),
                     None => return,
                 };
 
+                drop(worktree);
+
                 let remote_id = self.remote_id();
                 let client = self.client.clone();
-                let diff_base_task = worktree.update(cx, move |worktree, cx| {
+                let diff_base_task = worktree_handle.update(cx, move |worktree, cx| {
                     worktree
                         .as_local()
                         .unwrap()

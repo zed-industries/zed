@@ -120,7 +120,7 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepositoryEntry {
     pub(crate) scan_id: usize,
-    pub(crate) work_directory_id: ProjectEntryId,
+    pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
 }
 
@@ -130,7 +130,17 @@ impl RepositoryEntry {
     }
 
     pub fn work_directory_id(&self) -> ProjectEntryId {
-        self.work_directory_id
+        *self.work_directory
+    }
+
+    pub fn work_directory(&self, snapshot: &Snapshot) -> Option<RepositoryWorkDirectory> {
+        snapshot
+            .entry_for_id(self.work_directory_id())
+            .map(|entry| RepositoryWorkDirectory(entry.path.clone()))
+    }
+
+    pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
+        self.work_directory.contains(snapshot, path)
     }
 }
 
@@ -138,7 +148,7 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
     fn from(value: &RepositoryEntry) -> Self {
         proto::RepositoryEntry {
             scan_id: value.scan_id as u64,
-            work_directory_id: value.work_directory_id.to_proto(),
+            work_directory_id: value.work_directory.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
         }
     }
@@ -148,36 +158,44 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct RepositoryWorkDirectory(Arc<Path>);
 
-impl RepositoryWorkDirectory {
-    // Note that these paths should be relative to the worktree root.
-    pub(crate) fn contains(&self, path: &Path) -> bool {
-        path.starts_with(self.0.as_ref())
-    }
-
-    pub(crate) fn relativize(&self, path: &Path) -> Option<RepoPath> {
-        path.strip_prefix(self.0.as_ref())
-            .ok()
-            .map(move |path| RepoPath(path.to_owned()))
-    }
-}
-
-impl Deref for RepositoryWorkDirectory {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
-    }
-}
-
-impl<'a> From<&'a str> for RepositoryWorkDirectory {
-    fn from(value: &'a str) -> Self {
-        RepositoryWorkDirectory(Path::new(value).into())
-    }
-}
-
 impl Default for RepositoryWorkDirectory {
     fn default() -> Self {
         RepositoryWorkDirectory(Arc::from(Path::new("")))
+    }
+}
+
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct WorkDirectoryEntry(ProjectEntryId);
+
+impl WorkDirectoryEntry {
+    // Note that these paths should be relative to the worktree root.
+    pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
+        snapshot
+            .entry_for_id(self.0)
+            .map(|entry| path.starts_with(&entry.path))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Option<RepoPath> {
+        worktree.entry_for_id(self.0).and_then(|entry| {
+            path.strip_prefix(&entry.path)
+                .ok()
+                .map(move |path| RepoPath(path.to_owned()))
+        })
+    }
+}
+
+impl Deref for WorkDirectoryEntry {
+    type Target = ProjectEntryId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
+    fn from(value: ProjectEntryId) -> Self {
+        WorkDirectoryEntry(value)
     }
 }
 
@@ -698,12 +716,12 @@ impl LocalWorktree {
         ) {
             for a_repo in a {
                 let matched = b.find(|b_repo| {
-                    a_repo.work_directory_id == b_repo.work_directory_id
+                    a_repo.work_directory == b_repo.work_directory
                         && a_repo.scan_id == b_repo.scan_id
                 });
 
                 if matched.is_none() {
-                    updated.insert(a_repo.work_directory_id, a_repo.clone());
+                    updated.insert(*a_repo.work_directory, a_repo.clone());
                 }
             }
         }
@@ -757,8 +775,8 @@ impl LocalWorktree {
         let mut index_task = None;
 
         if let Some(repo) = snapshot.repo_for(&path) {
-            let repo_path = repo.work_directory.relativize(&path).unwrap();
-            if let Some(repo) = self.git_repositories.get(&repo.dot_git_entry_id) {
+            let repo_path = repo.work_directory.relativize(self, &path).unwrap();
+            if let Some(repo) = self.git_repositories.get(&*repo.work_directory) {
                 let repo = repo.repo_ptr.to_owned();
                 index_task = Some(
                     cx.background()
@@ -1155,7 +1173,7 @@ impl LocalWorktree {
         repo_path: RepoPath,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Option<String>> {
-        let Some(git_ptr) = self.git_repositories.get(&repo.work_directory_id).map(|git_ptr| git_ptr.to_owned()) else {
+        let Some(git_ptr) = self.git_repositories.get(&repo.work_directory).map(|git_ptr| git_ptr.to_owned()) else {
             return Task::Ready(Some(None))
         };
         let git_ptr = git_ptr.repo_ptr;
@@ -1390,7 +1408,7 @@ impl Snapshot {
         self.repository_entries.retain(|_, entry| {
             if let Ok(_) = update
                 .removed_repositories
-                .binary_search(&entry.dot_git_entry_id.to_proto())
+                .binary_search(&entry.work_directory.to_proto())
             {
                 false
             } else {
@@ -1400,15 +1418,15 @@ impl Snapshot {
 
         for repository in update.updated_repositories {
             let repository = RepositoryEntry {
-                dot_git_entry_id: ProjectEntryId::from_proto(repository.dot_git_entry_id),
-                work_directory: RepositoryWorkDirectory(
-                    Path::new(&repository.work_directory).into(),
-                ),
+                work_directory: ProjectEntryId::from_proto(repository.work_directory_id).into(),
                 scan_id: repository.scan_id as usize,
                 branch: repository.branch.map(Into::into),
             };
-            self.repository_entries
-                .insert(repository.work_directory.clone(), repository)
+            // TODO: Double check this logic
+            if let Some(entry) = self.entry_for_id(repository.work_directory_id()) {
+                self.repository_entries
+                    .insert(RepositoryWorkDirectory(entry.path.clone()), repository)
+            }
         }
 
         self.scan_id = update.scan_id as usize;
@@ -1509,7 +1527,7 @@ impl Snapshot {
 
     pub fn root_git_entry(&self) -> Option<RepositoryEntry> {
         self.repository_entries
-            .get(&"".into())
+            .get(&RepositoryWorkDirectory(Path::new("").into()))
             .map(|entry| entry.to_owned())
     }
 
@@ -1549,7 +1567,7 @@ impl LocalSnapshot {
         let mut max_len = 0;
         let mut current_candidate = None;
         for (work_directory, repo) in (&self.repository_entries).iter() {
-            if work_directory.contains(path) {
+            if repo.contains(self, path) {
                 if work_directory.0.as_os_str().len() >= max_len {
                     current_candidate = Some(repo);
                     max_len = work_directory.0.as_os_str().len();
@@ -1575,8 +1593,8 @@ impl LocalSnapshot {
             .snapshot
             .repository_entries
             .iter()
-            .find(|(_, entry)| entry.dot_git_entry_id == *entry_id)
-            .map(|(_, entry)| entry.work_directory.to_owned())?;
+            .find(|(_, entry)| *entry.work_directory == *entry_id)
+            .and_then(|(_, entry)| entry.work_directory(self))?;
 
         Some((work_dir, local_repo.repo_ptr.to_owned()))
     }
@@ -1675,7 +1693,7 @@ impl LocalSnapshot {
                             other_repos.next();
                         }
                         Ordering::Greater => {
-                            removed_repositories.push(other_repo.dot_git_entry_id.to_proto());
+                            removed_repositories.push(other_repo.work_directory.to_proto());
                             other_repos.next();
                         }
                     }
@@ -1685,7 +1703,7 @@ impl LocalSnapshot {
                     self_repos.next();
                 }
                 (None, Some(other_repo)) => {
-                    removed_repositories.push(other_repo.dot_git_entry_id.to_proto());
+                    removed_repositories.push(other_repo.work_directory.to_proto());
                     other_repos.next();
                 }
                 (None, None) => break,
@@ -1794,28 +1812,32 @@ impl LocalSnapshot {
             let abs_path = self.abs_path.join(&parent_path);
             let content_path: Arc<Path> = parent_path.parent().unwrap().into();
 
-            let key = RepositoryWorkDirectory(content_path.clone());
-            if self.repository_entries.get(&key).is_none() {
-                if let Some(repo) = fs.open_repo(abs_path.as_path()) {
-                    let repo_lock = repo.lock();
-                    self.repository_entries.insert(
-                        key.clone(),
-                        RepositoryEntry {
-                            dot_git_entry_id: parent_entry.id,
-                            work_directory: key,
-                            scan_id: 0,
-                            branch: repo_lock.branch_name().map(Into::into),
-                        },
-                    );
-                    drop(repo_lock);
+            if let Some(work_dir_id) = self
+                .entry_for_path(content_path.clone())
+                .map(|entry| entry.id)
+            {
+                let key = RepositoryWorkDirectory(content_path.clone());
+                if self.repository_entries.get(&key).is_none() {
+                    if let Some(repo) = fs.open_repo(abs_path.as_path()) {
+                        let repo_lock = repo.lock();
+                        self.repository_entries.insert(
+                            key.clone(),
+                            RepositoryEntry {
+                                work_directory: work_dir_id.into(),
+                                scan_id: 0,
+                                branch: repo_lock.branch_name().map(Into::into),
+                            },
+                        );
+                        drop(repo_lock);
 
-                    self.git_repositories.insert(
-                        parent_entry.id,
-                        LocalRepositoryEntry {
-                            repo_ptr: repo,
-                            git_dir_path: parent_path.clone(),
-                        },
-                    )
+                        self.git_repositories.insert(
+                            work_dir_id,
+                            LocalRepositoryEntry {
+                                repo_ptr: repo,
+                                git_dir_path: parent_path.clone(),
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -2514,7 +2536,16 @@ impl BackgroundScanner {
         snapshot.git_repositories = git_repositories;
 
         let mut git_repository_entries = mem::take(&mut snapshot.snapshot.repository_entries);
-        git_repository_entries.retain(|_, entry| snapshot.contains_entry(entry.dot_git_entry_id));
+        git_repository_entries.retain(|_, entry| {
+            entry
+                .work_directory(&snapshot)
+                .map(|directory| {
+                    snapshot
+                        .entry_for_path((directory.as_ref()).join(".git"))
+                        .is_some()
+                })
+                .unwrap_or(false)
+        });
         snapshot.snapshot.repository_entries = git_repository_entries;
 
         snapshot.removed_entry_ids.clear();
@@ -3594,23 +3625,19 @@ mod tests {
             assert!(tree.repo_for("c.txt".as_ref()).is_none());
 
             let entry = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
-            assert_eq!(entry.work_directory.0.as_ref(), Path::new("dir1"));
             assert_eq!(
-                tree.entry_for_id(entry.dot_git_entry_id)
-                    .unwrap()
-                    .path
-                    .as_ref(),
-                Path::new("dir1/.git")
+                entry
+                    .work_directory(tree)
+                    .map(|directory| directory.as_ref().to_owned()),
+                Some(Path::new("dir1").to_owned())
             );
 
             let entry = tree.repo_for("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
-            assert_eq!(entry.work_directory.deref(), Path::new("dir1/deps/dep1"));
             assert_eq!(
-                tree.entry_for_id(entry.dot_git_entry_id)
-                    .unwrap()
-                    .path
-                    .as_ref(),
-                Path::new("dir1/deps/dep1/.git"),
+                entry
+                    .work_directory(tree)
+                    .map(|directory| directory.as_ref().to_owned()),
+                Some(Path::new("dir1/deps/dep1").to_owned())
             );
         });
 
@@ -3647,13 +3674,10 @@ mod tests {
 
     #[test]
     fn test_changed_repos() {
-        fn fake_entry(dot_git_id: usize, scan_id: usize) -> RepositoryEntry {
+        fn fake_entry(work_dir_id: usize, scan_id: usize) -> RepositoryEntry {
             RepositoryEntry {
                 scan_id,
-                dot_git_entry_id: ProjectEntryId(dot_git_id),
-                work_directory: RepositoryWorkDirectory(
-                    Path::new(&format!("don't-care-{}", scan_id)).into(),
-                ),
+                work_directory: ProjectEntryId(work_dir_id).into(),
                 branch: None,
             }
         }
@@ -3691,25 +3715,25 @@ mod tests {
         // Deletion retained
         assert!(res
             .iter()
-            .find(|repo| repo.dot_git_entry_id.0 == 1 && repo.scan_id == 0)
+            .find(|repo| repo.work_directory.0 .0 == 1 && repo.scan_id == 0)
             .is_some());
 
         // Update retained
         assert!(res
             .iter()
-            .find(|repo| repo.dot_git_entry_id.0 == 2 && repo.scan_id == 1)
+            .find(|repo| repo.work_directory.0 .0 == 2 && repo.scan_id == 1)
             .is_some());
 
         // Addition retained
         assert!(res
             .iter()
-            .find(|repo| repo.dot_git_entry_id.0 == 4 && repo.scan_id == 0)
+            .find(|repo| repo.work_directory.0 .0 == 4 && repo.scan_id == 0)
             .is_some());
 
         // Nochange, not retained
         assert!(res
             .iter()
-            .find(|repo| repo.dot_git_entry_id.0 == 3 && repo.scan_id == 0)
+            .find(|repo| repo.work_directory.0 .0 == 3 && repo.scan_id == 0)
             .is_none());
     }
 

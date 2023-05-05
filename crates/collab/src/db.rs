@@ -1563,12 +1563,11 @@ impl Database {
                             if db_repository.is_deleted {
                                 worktree
                                     .removed_repositories
-                                    .push(db_repository.dot_git_entry_id as u64);
+                                    .push(db_repository.work_directory_id as u64);
                             } else {
                                 worktree.updated_repositories.push(proto::RepositoryEntry {
-                                    dot_git_entry_id: db_repository.dot_git_entry_id as u64,
                                     scan_id: db_repository.scan_id as u64,
-                                    work_directory: db_repository.work_directory_path,
+                                    work_directory_id: db_repository.work_directory_id as u64,
                                     branch: db_repository.branch,
                                 });
                             }
@@ -2377,8 +2376,7 @@ impl Database {
                     |repository| worktree_repository::ActiveModel {
                         project_id: ActiveValue::set(project_id),
                         worktree_id: ActiveValue::set(worktree_id),
-                        dot_git_entry_id: ActiveValue::set(repository.dot_git_entry_id as i64),
-                        work_directory_path: ActiveValue::set(repository.work_directory.clone()),
+                        work_directory_id: ActiveValue::set(repository.work_directory_id as i64),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         branch: ActiveValue::set(repository.branch.clone()),
                         is_deleted: ActiveValue::set(false),
@@ -2388,11 +2386,10 @@ impl Database {
                     OnConflict::columns([
                         worktree_repository::Column::ProjectId,
                         worktree_repository::Column::WorktreeId,
-                        worktree_repository::Column::DotGitEntryId,
+                        worktree_repository::Column::WorkDirectoryId,
                     ])
                     .update_columns([
                         worktree_repository::Column::ScanId,
-                        worktree_repository::Column::WorkDirectoryPath,
                         worktree_repository::Column::Branch,
                     ])
                     .to_owned(),
@@ -2408,7 +2405,7 @@ impl Database {
                             .eq(project_id)
                             .and(worktree_repository::Column::WorktreeId.eq(worktree_id))
                             .and(
-                                worktree_repository::Column::DotGitEntryId
+                                worktree_repository::Column::WorkDirectoryId
                                     .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
                             ),
                     )
@@ -2650,9 +2647,8 @@ impl Database {
                         worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
                     {
                         worktree.repository_entries.push(proto::RepositoryEntry {
-                            dot_git_entry_id: db_repository_entry.dot_git_entry_id as u64,
                             scan_id: db_repository_entry.scan_id as u64,
-                            work_directory: db_repository_entry.work_directory_path,
+                            work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
                         });
                     }

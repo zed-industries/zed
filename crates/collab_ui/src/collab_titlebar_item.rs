@@ -1,6 +1,6 @@
 use crate::{
     contact_notification::ContactNotification, contacts_popover, face_pile::FacePile,
-    toggle_screen_sharing, BranchesButton, ToggleScreenSharing,
+    toggle_screen_sharing, ToggleScreenSharing,
 };
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};

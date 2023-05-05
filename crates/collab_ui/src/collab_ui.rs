@@ -1,4 +1,3 @@
-mod branches_button;
 mod collab_titlebar_item;
 mod contact_finder;
 mod contact_list;
@@ -10,7 +9,6 @@ mod notifications;
 mod project_shared_notification;
 mod sharing_status_indicator;
 
-pub use branches_button::BranchesButton;
 use call::ActiveCall;
 pub use collab_titlebar_item::{CollabTitlebarItem, ToggleContactsMenu};
 use gpui::{actions, AppContext, Task};

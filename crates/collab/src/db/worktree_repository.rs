@@ -9,10 +9,9 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub worktree_id: i64,
     #[sea_orm(primary_key)]
-    pub dot_git_entry_id: i64,
+    pub work_directory_id: i64,
     pub scan_id: i64,
     pub branch: Option<String>,
-    pub work_directory_path: String,
     pub is_deleted: bool,
 }
 
