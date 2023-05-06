@@ -1673,12 +1673,12 @@ impl LocalSnapshot {
 
         let mut updated_repositories: Vec<proto::RepositoryEntry> = Vec::new();
         let mut removed_repositories = Vec::new();
-        let mut self_repos = self.snapshot.repository_entries.values().peekable();
-        let mut other_repos = other.snapshot.repository_entries.values().peekable();
+        let mut self_repos = self.snapshot.repository_entries.iter().peekable();
+        let mut other_repos = other.snapshot.repository_entries.iter().peekable();
         loop {
             match (self_repos.peek(), other_repos.peek()) {
-                (Some(self_repo), Some(other_repo)) => {
-                    match Ord::cmp(&self_repo.work_directory, &other_repo.work_directory) {
+                (Some((self_work_dir, self_repo)), Some((other_work_dir, other_repo))) => {
+                    match Ord::cmp(self_work_dir, other_work_dir) {
                         Ordering::Less => {
                             updated_repositories.push((*self_repo).into());
                             self_repos.next();
@@ -1697,11 +1697,11 @@ impl LocalSnapshot {
                         }
                     }
                 }
-                (Some(self_repo), None) => {
+                (Some((_, self_repo)), None) => {
                     updated_repositories.push((*self_repo).into());
                     self_repos.next();
                 }
-                (None, Some(other_repo)) => {
+                (None, Some((_, other_repo))) => {
                     removed_repositories.push(other_repo.work_directory.to_proto());
                     other_repos.next();
                 }
