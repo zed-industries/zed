@@ -1711,16 +1711,6 @@ enum Invisible {
     Whitespace { line_offset: usize },
 }
 
-impl Invisible {
-    #[cfg(test)]
-    fn offset(&self) -> usize {
-        *match self {
-            Self::Tab { line_start_offset } => line_start_offset,
-            Self::Whitespace { line_offset } => line_offset,
-        }
-    }
-}
-
 fn layout_highlighted_chunks<'a>(
     chunks: impl Iterator<Item = HighlightedChunk<'a>>,
     text_style: &TextStyle,
@@ -2781,6 +2771,7 @@ mod tests {
         Editor, MultiBuffer,
     };
     use gpui::TestAppContext;
+    use log::info;
     use settings::Settings;
     use std::{num::NonZeroU32, sync::Arc};
     use util::test::sample_text;
@@ -2864,18 +2855,21 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_both_invisible_kinds_drawing(cx: &mut TestAppContext) {
+    fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
         let tab_size = 4;
-        let input_text = "\t\t\t| | a b";
+        let input_text = "\t \t|\t| a b";
         let expected_invisibles = vec![
             Invisible::Tab {
                 line_start_offset: 0,
             },
-            Invisible::Tab {
-                line_start_offset: tab_size as usize,
+            Invisible::Whitespace {
+                line_offset: tab_size as usize,
             },
             Invisible::Tab {
-                line_start_offset: tab_size as usize * 2,
+                line_start_offset: tab_size as usize + 1,
+            },
+            Invisible::Tab {
+                line_start_offset: tab_size as usize * 2 + 1,
             },
             Invisible::Whitespace {
                 line_offset: tab_size as usize * 3 + 1,
@@ -2883,16 +2877,14 @@ mod tests {
             Invisible::Whitespace {
                 line_offset: tab_size as usize * 3 + 3,
             },
-            Invisible::Whitespace {
-                line_offset: tab_size as usize * 3 + 5,
-            },
         ];
         assert_eq!(
             expected_invisibles.len(),
             input_text
                 .chars()
                 .filter(|initial_char| initial_char.is_whitespace())
-                .count()
+                .count(),
+            "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
         );
 
         cx.update(|cx| {
@@ -2901,36 +2893,8 @@ mod tests {
             test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(tab_size).unwrap());
             cx.set_global(test_settings);
         });
-        let (_, editor) = cx.add_window(|cx| {
-            let buffer = MultiBuffer::build_simple(&input_text, cx);
-            Editor::new(EditorMode::Full, buffer, None, None, cx)
-        });
-
-        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-        let (_, layout_state) = editor.update(cx, |editor, cx| {
-            let mut new_parents = Default::default();
-            let mut notify_views_if_parents_change = Default::default();
-            let mut layout_cx = LayoutContext::new(
-                cx,
-                &mut new_parents,
-                &mut notify_views_if_parents_change,
-                false,
-            );
-            element.layout(
-                SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
-                editor,
-                &mut layout_cx,
-            )
-        });
-
-        let line_layouts = &layout_state.position_map.line_layouts;
-        let actual_invisibles = line_layouts
-            .iter()
-            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
-            .flatten()
-            .sorted_by(|invisible_1, invisible_2| invisible_1.offset().cmp(&invisible_2.offset()))
-            .cloned()
-            .collect::<Vec<_>>();
+        let actual_invisibles =
+            collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, 500.0);
 
         assert_eq!(expected_invisibles, actual_invisibles);
     }
@@ -2948,42 +2912,135 @@ mod tests {
             EditorMode::SingleLine,
             EditorMode::AutoHeight { max_lines: 100 },
         ] {
-            let (_, editor) = cx.add_window(|cx| {
-                let buffer = MultiBuffer::build_simple("\t\t\t| | a b", cx);
-                Editor::new(editor_mode_without_invisibles, buffer, None, None, cx)
-            });
-
-            let mut element =
-                EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
-            let (_, layout_state) = editor.update(cx, |editor, cx| {
-                let mut new_parents = Default::default();
-                let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx = LayoutContext::new(
-                    cx,
-                    &mut new_parents,
-                    &mut notify_views_if_parents_change,
-                    false,
-                );
-                element.layout(
-                    SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
-                    editor,
-                    &mut layout_cx,
-                )
-            });
-
-            let line_layouts = &layout_state.position_map.line_layouts;
-            let invisibles = line_layouts
-                .iter()
-                .map(|line_with_invisibles| &line_with_invisibles.invisibles)
-                .flatten()
-                .sorted_by(|invisible_1, invisible_2| {
-                    invisible_1.offset().cmp(&invisible_2.offset())
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-
+            let invisibles = collect_invisibles_from_new_editor(
+                cx,
+                editor_mode_without_invisibles,
+                "\t\t\t| | a b",
+                500.0,
+            );
             assert!(invisibles.is_empty(),
                 "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
         }
+    }
+
+    #[gpui::test]
+    fn test_wrapped_invisibles_drawing(cx: &mut TestAppContext) {
+        let tab_size = 4;
+        let input_text = "a\tbcd   ".repeat(9);
+        let repeated_invisibles = [
+            Invisible::Tab {
+                line_start_offset: 1,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 3,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 4,
+            },
+            Invisible::Whitespace {
+                line_offset: tab_size as usize + 5,
+            },
+        ];
+        let expected_invisibles = std::iter::once(repeated_invisibles)
+            .cycle()
+            .take(9)
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expected_invisibles.len(),
+            input_text
+                .chars()
+                .filter(|initial_char| initial_char.is_whitespace())
+                .count(),
+            "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
+        );
+        info!("Expected invisibles: {expected_invisibles:?}");
+
+        // Put the same string with repeating whitespace pattern into editors of various size,
+        // take deliberately small steps during resizing, to put all whitespace kinds near the wrap point.
+        let resize_step = 10.0;
+        let mut editor_width = 200.0;
+        while editor_width <= 1000.0 {
+            cx.update(|cx| {
+                let mut test_settings = Settings::test(cx);
+                test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(tab_size).unwrap());
+                test_settings.editor_defaults.show_whitespaces = Some(ShowWhitespaces::All);
+                test_settings.editor_defaults.preferred_line_length = Some(editor_width as u32);
+                test_settings.editor_defaults.soft_wrap =
+                    Some(settings::SoftWrap::PreferredLineLength);
+                cx.set_global(test_settings);
+            });
+
+            let actual_invisibles =
+                collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, editor_width);
+
+            // Whatever the editor size is, ensure it has the same invisible kinds in the same order
+            // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
+            let mut i = 0;
+            for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
+                i = actual_index;
+                match expected_invisibles.get(i) {
+                    Some(expected_invisible) => match (expected_invisible, actual_invisible) {
+                        (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
+                        | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
+                        _ => {
+                            panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                        }
+                    },
+                    None => panic!("Unexpected extra invisible {actual_invisible:?} at index {i}"),
+                }
+            }
+            let missing_expected_invisibles = &expected_invisibles[i + 1..];
+            assert!(
+                missing_expected_invisibles.is_empty(),
+                "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
+            );
+
+            editor_width += resize_step;
+        }
+    }
+
+    fn collect_invisibles_from_new_editor(
+        cx: &mut TestAppContext,
+        editor_mode: EditorMode,
+        input_text: &str,
+        editor_width: f32,
+    ) -> Vec<Invisible> {
+        info!(
+            "Creating editor with mode {editor_mode:?}, witdh {editor_width} and text '{input_text}'"
+        );
+        let (_, editor) = cx.add_window(|cx| {
+            let buffer = MultiBuffer::build_simple(&input_text, cx);
+            Editor::new(editor_mode, buffer, None, None, cx)
+        });
+
+        let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
+        let (_, layout_state) = editor.update(cx, |editor, cx| {
+            editor.set_soft_wrap_mode(settings::SoftWrap::EditorWidth, cx);
+            editor.set_wrap_width(Some(editor_width), cx);
+
+            let mut new_parents = Default::default();
+            let mut notify_views_if_parents_change = Default::default();
+            let mut layout_cx = LayoutContext::new(
+                cx,
+                &mut new_parents,
+                &mut notify_views_if_parents_change,
+                false,
+            );
+            element.layout(
+                SizeConstraint::new(vec2f(editor_width, 500.), vec2f(editor_width, 500.)),
+                editor,
+                &mut layout_cx,
+            )
+        });
+
+        layout_state
+            .position_map
+            .line_layouts
+            .iter()
+            .map(|line_with_invisibles| &line_with_invisibles.invisibles)
+            .flatten()
+            .cloned()
+            .collect()
     }
 }
