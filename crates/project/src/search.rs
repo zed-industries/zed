@@ -8,10 +8,11 @@ use smol::future::yield_now;
 use std::{
     io::{BufRead, BufReader, Read},
     ops::Range,
+    path::Path,
     sync::Arc,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
         search: Arc<AhoCorasick<usize>>,
@@ -97,11 +98,13 @@ impl SearchQuery {
                 message
                     .files_to_include
                     .split(',')
+                    .filter(|glob_str| !glob_str.trim().is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
                 message
                     .files_to_exclude
                     .split(',')
+                    .filter(|glob_str| !glob_str.trim().is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
             )
@@ -113,11 +116,13 @@ impl SearchQuery {
                 message
                     .files_to_include
                     .split(',')
+                    .filter(|glob_str| !glob_str.trim().is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
                 message
                     .files_to_exclude
                     .split(',')
+                    .filter(|glob_str| !glob_str.trim().is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
             ))
@@ -290,6 +295,7 @@ impl SearchQuery {
             } => files_to_include,
         }
     }
+
     pub fn files_to_exclude(&self) -> &[glob::Pattern] {
         match self {
             Self::Text {
@@ -298,6 +304,23 @@ impl SearchQuery {
             Self::Regex {
                 files_to_exclude, ..
             } => files_to_exclude,
+        }
+    }
+
+    pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
+        match file_path {
+            Some(file_path) => {
+                !self
+                    .files_to_exclude()
+                    .iter()
+                    .any(|exclude_glob| exclude_glob.matches_path(file_path))
+                    && (self.files_to_include().is_empty()
+                        || self
+                            .files_to_include()
+                            .iter()
+                            .any(|include_glob| include_glob.matches_path(file_path)))
+            }
+            None => self.files_to_include().is_empty(),
         }
     }
 }
