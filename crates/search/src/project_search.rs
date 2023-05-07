@@ -86,6 +86,8 @@ pub struct ProjectSearchView {
     active_match_index: Option<usize>,
     search_id: usize,
     query_editor_was_focused: bool,
+    included_files_editor: ViewHandle<Editor>,
+    excluded_files_editor: ViewHandle<Editor>,
 }
 
 pub struct ProjectSearchBar {
@@ -448,6 +450,32 @@ impl ProjectSearchView {
         })
         .detach();
 
+        let included_files_editor = cx.add_view(|cx| {
+            let editor = Editor::single_line(
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            );
+            editor
+        });
+        // Subcribe to include_files_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&included_files_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
+
+        let excluded_files_editor = cx.add_view(|cx| {
+            let editor = Editor::single_line(
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            );
+            editor
+        });
+        // Subcribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&excluded_files_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
+
         let mut this = ProjectSearchView {
             search_id: model.read(cx).search_id,
             model,
@@ -459,6 +487,8 @@ impl ProjectSearchView {
             query_contains_error: false,
             active_match_index: None,
             query_editor_was_focused: false,
+            included_files_editor,
+            excluded_files_editor,
         };
         this.model_changed(cx);
         this
@@ -525,8 +555,31 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
+        let included_files = self
+            .included_files_editor
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(|glob_str| glob::Pattern::new(glob_str))
+            .collect::<Result<_, _>>()
+            // TODO kb validation
+            .unwrap_or_default();
+        let excluded_files = self
+            .excluded_files_editor
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(|glob_str| glob::Pattern::new(glob_str))
+            .collect::<Result<_, _>>()
+            .unwrap_or_default();
         if self.regex {
-            match SearchQuery::regex(text, self.whole_word, self.case_sensitive) {
+            match SearchQuery::regex(
+                text,
+                self.whole_word,
+                self.case_sensitive,
+                included_files,
+                excluded_files,
+            ) {
                 Ok(query) => Some(query),
                 Err(_) => {
                     self.query_contains_error = true;
@@ -539,6 +592,8 @@ impl ProjectSearchView {
                 text,
                 self.whole_word,
                 self.case_sensitive,
+                included_files,
+                excluded_files,
             ))
         }
     }
@@ -869,6 +924,16 @@ impl View for ProjectSearchBar {
             } else {
                 theme.search.editor.input.container
             };
+
+            let included_files_view = ChildView::new(&search.included_files_editor, cx)
+                .aligned()
+                .left()
+                .flex(1., true);
+            let excluded_files_view = ChildView::new(&search.excluded_files_editor, cx)
+                .aligned()
+                .left()
+                .flex(1., true);
+
             Flex::row()
                 .with_child(
                     Flex::row()
@@ -917,6 +982,31 @@ impl View for ProjectSearchBar {
                         .contained()
                         .with_style(theme.search.option_button_group)
                         .aligned(),
+                )
+                .with_child(
+                    // TODO kb better layout
+                    Flex::row()
+                        .with_child(
+                            Label::new("Include files:", theme.search.match_index.text.clone())
+                                .contained()
+                                .with_style(theme.search.match_index.container)
+                                .aligned(),
+                        )
+                        .with_child(included_files_view)
+                        .with_child(
+                            Label::new("Exclude files:", theme.search.match_index.text.clone())
+                                .contained()
+                                .with_style(theme.search.match_index.container)
+                                .aligned(),
+                        )
+                        .with_child(excluded_files_view)
+                        .contained()
+                        .with_style(editor_container)
+                        .aligned()
+                        .constrained()
+                        .with_min_width(theme.search.editor.min_width)
+                        .with_max_width(theme.search.editor.max_width)
+                        .flex(1., false),
                 )
                 .contained()
                 .with_style(theme.search.container)

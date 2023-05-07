@@ -4548,7 +4548,10 @@ async fn test_project_search(
     // Perform a search as the guest.
     let results = project_b
         .update(cx_b, |project, cx| {
-            project.search(SearchQuery::text("world", false, false), cx)
+            project.search(
+                SearchQuery::text("world", false, false, Vec::new(), Vec::new()),
+                cx,
+            )
         })
         .await
         .unwrap();

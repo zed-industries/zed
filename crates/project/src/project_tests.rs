@@ -3297,9 +3297,13 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
-        search(&project, SearchQuery::text("TWO", false, true), cx)
-            .await
-            .unwrap(),
+        search(
+            &project,
+            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()),
+            cx
+        )
+        .await
+        .unwrap(),
         HashMap::from_iter([
             ("two.rs".to_string(), vec![6..9]),
             ("three.rs".to_string(), vec![37..40])
@@ -3318,9 +3322,13 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     });
 
     assert_eq!(
-        search(&project, SearchQuery::text("TWO", false, true), cx)
-            .await
-            .unwrap(),
+        search(
+            &project,
+            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()),
+            cx
+        )
+        .await
+        .unwrap(),
         HashMap::from_iter([
             ("two.rs".to_string(), vec![6..9]),
             ("three.rs".to_string(), vec![37..40]),
