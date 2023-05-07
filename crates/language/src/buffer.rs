@@ -39,7 +39,7 @@ use std::{
 };
 use sum_tree::TreeMap;
 use text::operation_queue::OperationQueue;
-pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, Operation as _, *};
+pub use text::{Buffer as TextBuffer, BufferSnapshot as TextBufferSnapshot, *};
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;

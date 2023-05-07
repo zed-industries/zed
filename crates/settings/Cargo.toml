@@ -31,7 +31,6 @@ schemars = "0.8"
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-serde_path_to_error = "0.1.4"
 toml = "0.5"
 tree-sitter = "*"
 tree-sitter-json = "*"
