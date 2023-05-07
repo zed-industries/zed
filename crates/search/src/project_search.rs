@@ -555,23 +555,30 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
-        let included_files = self
+        let Ok(included_files) = self
             .included_files_editor
             .read(cx)
             .text(cx)
             .split(',')
+            .filter(|glob_str| !glob_str.trim().is_empty())
             .map(|glob_str| glob::Pattern::new(glob_str))
-            .collect::<Result<_, _>>()
-            // TODO kb validation
-            .unwrap_or_default();
-        let excluded_files = self
+            .collect::<Result<_, _>>() else {
+                self.query_contains_error = true;
+                cx.notify();
+                return None
+            };
+        let Ok(excluded_files) = self
             .excluded_files_editor
             .read(cx)
             .text(cx)
             .split(',')
+            .filter(|glob_str| !glob_str.trim().is_empty())
             .map(|glob_str| glob::Pattern::new(glob_str))
-            .collect::<Result<_, _>>()
-            .unwrap_or_default();
+            .collect::<Result<_, _>>() else {
+                self.query_contains_error = true;
+                cx.notify();
+                return None
+            };
         if self.regex {
             match SearchQuery::regex(
                 text,
@@ -928,11 +935,11 @@ impl View for ProjectSearchBar {
             let included_files_view = ChildView::new(&search.included_files_editor, cx)
                 .aligned()
                 .left()
-                .flex(1., true);
+                .flex(0.5, true);
             let excluded_files_view = ChildView::new(&search.excluded_files_editor, cx)
                 .aligned()
-                .left()
-                .flex(1., true);
+                .right()
+                .flex(0.5, true);
 
             Flex::row()
                 .with_child(
@@ -983,25 +990,41 @@ impl View for ProjectSearchBar {
                         .with_style(theme.search.option_button_group)
                         .aligned(),
                 )
+                // TODO kb better layout
                 .with_child(
-                    // TODO kb better layout
                     Flex::row()
                         .with_child(
-                            Label::new("Include files:", theme.search.match_index.text.clone())
-                                .contained()
-                                .with_style(theme.search.match_index.container)
-                                .aligned(),
+                            Label::new(
+                                "Include:",
+                                theme.search.include_exclude_inputs.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.search.include_exclude_inputs.container)
+                            .aligned(),
                         )
                         .with_child(included_files_view)
+                        .contained()
+                        .with_style(theme.search.editor.input.container)
+                        .aligned()
+                        .constrained()
+                        .with_min_width(theme.search.editor.min_width)
+                        .with_max_width(theme.search.editor.max_width)
+                        .flex(1., false),
+                )
+                .with_child(
+                    Flex::row()
                         .with_child(
-                            Label::new("Exclude files:", theme.search.match_index.text.clone())
-                                .contained()
-                                .with_style(theme.search.match_index.container)
-                                .aligned(),
+                            Label::new(
+                                "Exclude:",
+                                theme.search.include_exclude_inputs.text.clone(),
+                            )
+                            .contained()
+                            .with_style(theme.search.include_exclude_inputs.container)
+                            .aligned(),
                         )
                         .with_child(excluded_files_view)
                         .contained()
-                        .with_style(editor_container)
+                        .with_style(theme.search.editor.input.container)
                         .aligned()
                         .constrained()
                         .with_min_width(theme.search.editor.min_width)

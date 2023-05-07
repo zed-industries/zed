@@ -74,6 +74,10 @@ export default function search(colorScheme: ColorScheme) {
                 right: 12,
             },
         },
+        includeExcludeInputs: {
+            ...text(layer, "mono", "variant"),
+            padding: 6,
+        },
         resultsStatus: {
             ...text(layer, "mono", "on"),
             size: 18,
