@@ -716,7 +716,10 @@ async fn apply_client_operation(
             );
 
             let search = project.update(cx, |project, cx| {
-                project.search(SearchQuery::text(query, false, false), cx)
+                project.search(
+                    SearchQuery::text(query, false, false, Vec::new(), Vec::new()),
+                    cx,
+                )
             });
             drop(project);
             let search = cx.background().spawn(async move {
