@@ -107,7 +107,7 @@ impl View for CollabTitlebarItem {
             .with_child(
                 Flex::row()
                     .with_child(right_container.contained().with_background_color(
-                        theme.workspace.titlebar.container.background_color.unwrap(),
+                        theme.workspace.titlebar.container.background_color.unwrap_or_else(|| Color::transparent_black()),
                     ))
                     .aligned()
                     .right(),
