@@ -784,14 +784,18 @@ impl EditorElement {
 
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
         let corner_radius = 0.15 * layout.position_map.line_height;
-        let mut selection_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
+        let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
         for (replica_id, selections) in &layout.selections {
-            let selection_style = style.replica_selection_style(*replica_id);
+            let replica_id = *replica_id;
+            let selection_style = style.replica_selection_style(replica_id);
 
             for selection in selections {
-                if !selection.range.is_empty() && *replica_id == local_replica_id {
-                    selection_ranges.push(selection.range.clone());
+                if !selection.range.is_empty()
+                    && (replica_id == local_replica_id
+                        || Some(replica_id) == editor.leader_replica_id)
+                {
+                    invisible_display_ranges.push(selection.range.clone());
                 }
                 self.paint_highlighted_range(
                     scene,
@@ -806,7 +810,7 @@ impl EditorElement {
                     bounds,
                 );
 
-                if editor.show_local_cursors(cx) || *replica_id != local_replica_id {
+                if editor.show_local_cursors(cx) || replica_id != local_replica_id {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range
@@ -879,7 +883,7 @@ impl EditorElement {
                     scroll_left,
                     visible_text_bounds,
                     cx,
-                    &selection_ranges,
+                    &invisible_display_ranges,
                     visible_bounds,
                 )
             }
@@ -1777,7 +1781,7 @@ impl LineWithInvisibles {
         line_height: f32,
     ) {
         let settings = cx.global::<Settings>();
-        let regions_to_hit = match settings
+        let allowed_invisibles_regions = match settings
             .editor_overrides
             .show_whitespaces
             .or(settings.editor_defaults.show_whitespaces)
@@ -1799,9 +1803,9 @@ impl LineWithInvisibles {
                 (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
             let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
 
-            if let Some(regions_to_hit) = regions_to_hit {
+            if let Some(allowed_regions) = allowed_invisibles_regions {
                 let invisible_point = DisplayPoint::new(row, token_offset as u32);
-                if !regions_to_hit
+                if !allowed_regions
                     .iter()
                     .any(|region| region.start <= invisible_point && invisible_point < region.end)
                 {
