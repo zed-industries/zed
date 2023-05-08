@@ -1609,7 +1609,8 @@ impl Element<Editor> for EditorElement {
         let gutter_width;
         let gutter_margin;
         if snapshot.mode == EditorMode::Full {
-            gutter_padding = style.text.em_width(cx.font_cache()) * style.gutter_padding_factor;
+            let em_width = style.text.em_width(cx.font_cache());
+            gutter_padding = (em_width * style.gutter_padding_factor).round();
             gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
             gutter_margin = -style.text.descent(cx.font_cache());
         } else {
