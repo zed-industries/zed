@@ -1962,12 +1962,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f94fa09c2aeea5b8839e414b7b841bf429fd25b9c522116ac97ee87856d88b2"
 
 [[package]]
-name = "easy-parallel"
-version = "3.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6907e25393cdcc1f4f3f513d9aac1e840eb1cc341a0fccb01171f7d14d10b946"
-
-[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -5895,15 +5889,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde_path_to_error"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "184c643044780f7ceb59104cef98a5a6f12cb2288a7bc701ab93a362b49fd47d"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "serde_repr"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5978,7 +5963,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "serde_path_to_error",
  "sqlez",
  "staff_mode",
  "theme",
@@ -6700,7 +6684,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "serde_path_to_error",
  "toml",
 ]
 
@@ -8572,7 +8555,6 @@ dependencies = [
  "ctor",
  "db",
  "diagnostics",
- "easy-parallel",
  "editor",
  "env_logger",
  "feedback",
@@ -8615,7 +8597,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "serde_path_to_error",
  "settings",
  "simplelog",
  "smallvec",
