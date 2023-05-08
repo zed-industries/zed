@@ -1701,8 +1701,6 @@ impl TestPlan {
                         .fs
                         .directories()
                         .into_iter()
-                        .filter(|dir| dir.ends_with(".git"))
-                        .collect::<Vec<_>>()
                         .choose(&mut self.rng)
                         .unwrap()
                         .clone();
@@ -1738,9 +1736,6 @@ impl TestPlan {
                     let repo_path = client
                         .fs
                         .directories()
-                        .into_iter()
-                        .filter(|dir| dir.ends_with(".git"))
-                        .collect::<Vec<_>>()
                         .choose(&mut self.rng)
                         .unwrap()
                         .clone();
