@@ -1808,36 +1808,7 @@ impl LocalSnapshot {
         }
 
         if parent_path.file_name() == Some(&DOT_GIT) {
-            let abs_path = self.abs_path.join(&parent_path);
-            let work_dir: Arc<Path> = parent_path.parent().unwrap().into();
-
-            if let Some(work_dir_id) = self.entry_for_path(work_dir.clone()).map(|entry| entry.id) {
-                if self.git_repositories.get(&work_dir_id).is_none() {
-                    if let Some(repo) = fs.open_repo(abs_path.as_path()) {
-                        let work_directory = RepositoryWorkDirectory(work_dir.clone());
-
-                        let repo_lock = repo.lock();
-                        let scan_id = self.scan_id;
-                        self.repository_entries.insert(
-                            work_directory,
-                            RepositoryEntry {
-                                work_directory: work_dir_id.into(),
-                                branch: repo_lock.branch_name().map(Into::into),
-                            },
-                        );
-                        drop(repo_lock);
-
-                        self.git_repositories.insert(
-                            work_dir_id,
-                            LocalRepositoryEntry {
-                                scan_id,
-                                repo_ptr: repo,
-                                git_dir_path: parent_path.clone(),
-                            },
-                        )
-                    }
-                }
-            }
+            self.build_repo(parent_path, fs);
         }
 
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
@@ -1858,6 +1829,50 @@ impl LocalSnapshot {
         self.entries_by_id.edit(entries_by_id_edits, &());
     }
 
+    fn build_repo(&mut self, parent_path: Arc<Path>, fs: &dyn Fs) -> Option<()> {
+        let abs_path = self.abs_path.join(&parent_path);
+        let work_dir: Arc<Path> = parent_path.parent().unwrap().into();
+
+        // Guard against repositories inside the repository metadata
+        if work_dir
+            .components()
+            .find(|component| component.as_os_str() == *DOT_GIT)
+            .is_some()
+        {
+            return None;
+        };
+
+        let work_dir_id = self
+            .entry_for_path(work_dir.clone())
+            .map(|entry| entry.id)?;
+
+        if self.git_repositories.get(&work_dir_id).is_none() {
+            let repo = fs.open_repo(abs_path.as_path())?;
+            let work_directory = RepositoryWorkDirectory(work_dir.clone());
+            let scan_id = self.scan_id;
+
+            let repo_lock = repo.lock();
+            self.repository_entries.insert(
+                work_directory,
+                RepositoryEntry {
+                    work_directory: work_dir_id.into(),
+                    branch: repo_lock.branch_name().map(Into::into),
+                },
+            );
+            drop(repo_lock);
+
+            self.git_repositories.insert(
+                work_dir_id,
+                LocalRepositoryEntry {
+                    scan_id,
+                    repo_ptr: repo,
+                    git_dir_path: parent_path.clone(),
+                },
+            )
+        }
+
+        Some(())
+    }
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
             entry.id = removed_entry_id;
@@ -3670,71 +3685,6 @@ mod tests {
             assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
         });
     }
-
-    // #[test]
-    // fn test_changed_repos() {
-    //     fn fake_entry(work_dir_id: usize, scan_id: usize) -> RepositoryEntry {
-    //         RepositoryEntry {
-    //             scan_id,
-    //             work_directory: ProjectEntryId(work_dir_id).into(),
-    //             branch: None,
-    //         }
-    //     }
-
-    //     let mut prev_repos = TreeMap::<RepositoryWorkDirectory, RepositoryEntry>::default();
-    //     prev_repos.insert(
-    //         RepositoryWorkDirectory(Path::new("don't-care-1").into()),
-    //         fake_entry(1, 0),
-    //     );
-    //     prev_repos.insert(
-    //         RepositoryWorkDirectory(Path::new("don't-care-2").into()),
-    //         fake_entry(2, 0),
-    //     );
-    //     prev_repos.insert(
-    //         RepositoryWorkDirectory(Path::new("don't-care-3").into()),
-    //         fake_entry(3, 0),
-    //     );
-
-    //     let mut new_repos = TreeMap::<RepositoryWorkDirectory, RepositoryEntry>::default();
-    //     new_repos.insert(
-    //         RepositoryWorkDirectory(Path::new("don't-care-4").into()),
-    //         fake_entry(2, 1),
-    //     );
-    //     new_repos.insert(
-    //         RepositoryWorkDirectory(Path::new("don't-care-5").into()),
-    //         fake_entry(3, 0),
-    //     );
-    //     new_repos.insert(
-    //         RepositoryWorkDirectory(Path::new("don't-care-6").into()),
-    //         fake_entry(4, 0),
-    //     );
-
-    //     let res = LocalWorktree::changed_repos(&prev_repos, &new_repos);
-
-    //     // Deletion retained
-    //     assert!(res
-    //         .iter()
-    //         .find(|repo| repo.work_directory.0 .0 == 1 && repo.scan_id == 0)
-    //         .is_some());
-
-    //     // Update retained
-    //     assert!(res
-    //         .iter()
-    //         .find(|repo| repo.work_directory.0 .0 == 2 && repo.scan_id == 1)
-    //         .is_some());
-
-    //     // Addition retained
-    //     assert!(res
-    //         .iter()
-    //         .find(|repo| repo.work_directory.0 .0 == 4 && repo.scan_id == 0)
-    //         .is_some());
-
-    //     // Nochange, not retained
-    //     assert!(res
-    //         .iter()
-    //         .find(|repo| repo.work_directory.0 .0 == 3 && repo.scan_id == 0)
-    //         .is_none());
-    // }
 
     #[gpui::test]
     async fn test_write_file(cx: &mut TestAppContext) {

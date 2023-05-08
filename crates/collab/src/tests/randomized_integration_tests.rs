@@ -29,7 +29,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
-    }, ffi::OsStr,
+    },
 };
 use util::ResultExt;
 
@@ -765,7 +765,7 @@ async fn apply_client_operation(
             contents,
         } => {
             if !client.fs.directories().contains(&repo_path) {
-                client.fs.create_dir(&repo_path).await?;
+                return Err(TestError::Inapplicable);
             }
 
             log::info!(
@@ -791,7 +791,7 @@ async fn apply_client_operation(
             new_branch,
         } => {
             if !client.fs.directories().contains(&repo_path) {
-                client.fs.create_dir(&repo_path).await?;
+                return Err(TestError::Inapplicable);
             }
 
             log::info!(
@@ -1700,15 +1700,12 @@ impl TestPlan {
                     let repo_path = client
                         .fs
                         .directories()
+                        .into_iter()
+                        .filter(|dir| dir.ends_with(".git"))
+                        .collect::<Vec<_>>()
                         .choose(&mut self.rng)
                         .unwrap()
                         .clone();
-
-                    let repo_path = if repo_path.file_name() == Some(&OsStr::new(".git")) {
-                        repo_path.parent().unwrap().join(Alphanumeric.sample_string(&mut self.rng, 16))
-                    } else {
-                        repo_path
-                    };
 
                     let mut file_paths = client
                         .fs
@@ -1741,15 +1738,12 @@ impl TestPlan {
                     let repo_path = client
                         .fs
                         .directories()
+                        .into_iter()
+                        .filter(|dir| dir.ends_with(".git"))
+                        .collect::<Vec<_>>()
                         .choose(&mut self.rng)
                         .unwrap()
                         .clone();
-
-                    let repo_path = if repo_path.file_name() == Some(&OsStr::new(".git")) {
-                        repo_path.parent().unwrap().join(Alphanumeric.sample_string(&mut self.rng, 16))
-                    } else {
-                        repo_path
-                    };
 
                     let new_branch = (self.rng.gen_range(0..10) > 3)
                         .then(|| Alphanumeric.sample_string(&mut self.rng, 8));
