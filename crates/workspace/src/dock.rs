@@ -20,7 +20,6 @@ pub trait Panel: View {
 }
 
 pub trait PanelHandle {
-
     fn id(&self) -> usize;
     fn should_show_badge(&self, cx: &WindowContext) -> bool;
     fn is_focused(&self, cx: &WindowContext) -> bool;
@@ -64,6 +63,7 @@ pub struct Dock {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum DockPosition {
     Left,
+    Bottom,
     Right,
 }
 
@@ -71,6 +71,7 @@ impl DockPosition {
     fn to_resizable_side(self) -> Side {
         match self {
             Self::Left => Side::Right,
+            Self::Bottom => Side::Bottom,
             Self::Right => Side::Left,
         }
     }
@@ -243,6 +244,7 @@ impl View for PanelButtons {
         let dock_position = dock.position;
         let group_style = match dock_position {
             DockPosition::Left => theme.group_left,
+            DockPosition::Bottom => theme.group_bottom,
             DockPosition::Right => theme.group_right,
         };
 

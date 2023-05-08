@@ -2,9 +2,7 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle,
-    toolbar::Toolbar,
-    Item, NewFile, NewSearch, NewTerminal, Workspace,
+    item::WeakItemHandle, toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, Workspace,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -485,7 +483,7 @@ impl Pane {
         }
     }
 
-    pub(crate) fn add_item(
+    pub fn add_item(
         workspace: &mut Workspace,
         pane: &ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
@@ -1594,7 +1592,8 @@ impl Pane {
                 "icons/split_12.svg",
                 cx,
                 |pane, cx| pane.deploy_split_menu(cx),
-                self.tab_bar_context_menu.handle_if_kind(TabBarContextMenuKind::Split),
+                self.tab_bar_context_menu
+                    .handle_if_kind(TabBarContextMenuKind::Split),
             ))
             .contained()
             .with_style(theme.workspace.tab_bar.pane_button_container)

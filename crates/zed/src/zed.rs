@@ -31,12 +31,12 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{Settings, DEFAULT_SETTINGS_ASSET_PATH};
 use std::{borrow::Cow, str, sync::Arc};
-use terminal_view::terminal_button::TerminalButton;
+use terminal_view::terminal_panel::TerminalPanel;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
 use workspace::{
-    create_and_open_local_file, open_new, dock::DockPosition, AppState, NewFile, NewWindow,
+    create_and_open_local_file, dock::DockPosition, open_new, AppState, NewFile, NewWindow,
     Workspace,
 };
 
@@ -318,10 +318,19 @@ pub fn initialize_workspace(
             "Project Panel".to_string(),
             project_panel,
             cx,
-        )
+        );
     });
 
-    let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
+    let terminal_panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
+    workspace.bottom_dock().update(cx, |dock, cx| {
+        dock.add_item(
+            "icons/terminal_12.svg",
+            "Terminals".to_string(),
+            terminal_panel,
+            cx,
+        );
+    });
+
     let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
@@ -335,7 +344,6 @@ pub fn initialize_workspace(
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic_summary, cx);
         status_bar.add_left_item(activity_indicator, cx);
-        status_bar.add_right_item(toggle_terminal, cx);
         status_bar.add_right_item(feedback_button, cx);
         status_bar.add_right_item(copilot, cx);
         status_bar.add_right_item(active_buffer_language, cx);

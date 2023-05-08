@@ -1,6 +1,7 @@
 mod persistence;
 pub mod terminal_button;
 pub mod terminal_element;
+pub mod terminal_panel;
 
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;

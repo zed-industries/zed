@@ -1,3 +1,4 @@
+pub mod dock;
 /// NOTE: Focus only 'takes' after an update has flushed_effects.
 ///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
@@ -9,7 +10,6 @@ pub mod pane_group;
 mod persistence;
 pub mod searchable;
 pub mod shared_screen;
-pub mod dock;
 mod status_bar;
 mod toolbar;
 
@@ -60,6 +60,7 @@ use crate::{
     notifications::simple_message_notification::MessageNotification,
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
+use dock::{Dock, DockPosition, PanelButtons, TogglePanel};
 use lazy_static::lazy_static;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
@@ -74,7 +75,6 @@ use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use settings::{Autosave, Settings};
 use shared_screen::SharedScreen;
-use dock::{Dock, PanelButtons, DockPosition, TogglePanel};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
@@ -443,6 +443,7 @@ pub struct Workspace {
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
     left_dock: ViewHandle<Dock>,
+    bottom_dock: ViewHandle<Dock>,
     right_dock: ViewHandle<Dock>,
     panes: Vec<ViewHandle<Pane>>,
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
@@ -526,8 +527,8 @@ impl Workspace {
 
         let weak_handle = cx.weak_handle();
 
-        let center_pane = cx
-            .add_view(|cx| Pane::new(weak_handle.clone(), app_state.background_actions, cx));
+        let center_pane =
+            cx.add_view(|cx| Pane::new(weak_handle.clone(), app_state.background_actions, cx));
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
@@ -563,14 +564,18 @@ impl Workspace {
         cx.emit_global(WorkspaceCreated(weak_handle.clone()));
 
         let left_dock = cx.add_view(|_| Dock::new(DockPosition::Left));
+        let bottom_dock = cx.add_view(|_| Dock::new(DockPosition::Bottom));
         let right_dock = cx.add_view(|_| Dock::new(DockPosition::Right));
         let left_dock_buttons =
             cx.add_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
+        let bottom_dock_buttons =
+            cx.add_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
         let right_dock_buttons =
             cx.add_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_dock_buttons, cx);
+            status_bar.add_right_item(bottom_dock_buttons, cx);
             status_bar.add_right_item(right_dock_buttons, cx);
             status_bar
         });
@@ -621,8 +626,9 @@ impl Workspace {
             titlebar_item: None,
             notifications: Default::default(),
             remote_entity_subscription: None,
-            left_dock: left_dock,
-            right_dock: right_dock,
+            left_dock,
+            bottom_dock,
+            right_dock,
             project: project.clone(),
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
@@ -815,6 +821,10 @@ impl Workspace {
 
     pub fn left_dock(&self) -> &ViewHandle<Dock> {
         &self.left_dock
+    }
+
+    pub fn bottom_dock(&self) -> &ViewHandle<Dock> {
+        &self.bottom_dock
     }
 
     pub fn right_dock(&self) -> &ViewHandle<Dock> {
@@ -1309,6 +1319,7 @@ impl Workspace {
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
         let dock = match dock_side {
             DockPosition::Left => &mut self.left_dock,
+            DockPosition::Bottom => &mut self.bottom_dock,
             DockPosition::Right => &mut self.right_dock,
         };
         dock.update(cx, |dock, cx| {
@@ -1325,6 +1336,7 @@ impl Workspace {
     pub fn toggle_panel(&mut self, action: &TogglePanel, cx: &mut ViewContext<Self>) {
         let dock = match action.dock_position {
             DockPosition::Left => &mut self.left_dock,
+            DockPosition::Bottom => &mut self.bottom_dock,
             DockPosition::Right => &mut self.right_dock,
         };
         let active_item = dock.update(cx, move |dock, cx| {
@@ -1361,6 +1373,7 @@ impl Workspace {
     ) {
         let dock = match dock_position {
             DockPosition::Left => &mut self.left_dock,
+            DockPosition::Bottom => &mut self.bottom_dock,
             DockPosition::Right => &mut self.right_dock,
         };
         let active_item = dock.update(cx, |dock, cx| {
@@ -1387,13 +1400,8 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
-        let pane = cx.add_view(|cx| {
-            Pane::new(
-                self.weak_handle(),
-                self.app_state.background_actions,
-                cx,
-            )
-        });
+        let pane =
+            cx.add_view(|cx| Pane::new(self.weak_handle(), self.app_state.background_actions, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         self.panes.push(pane.clone());
         cx.focus(&pane);
@@ -1560,7 +1568,7 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
-                self.last_active_center_pane = Some(pane.downgrade());
+            self.last_active_center_pane = Some(pane.downgrade());
             cx.notify();
         }
 
@@ -2470,13 +2478,12 @@ impl Workspace {
         cx: &mut AppContext,
     ) {
         cx.spawn(|mut cx| async move {
-            let (project, old_center_pane) =
-                workspace.read_with(&cx, |workspace, _| {
-                    (
-                        workspace.project().clone(),
-                        workspace.last_active_center_pane.clone(),
-                    )
-                })?;
+            let (project, old_center_pane) = workspace.read_with(&cx, |workspace, _| {
+                (
+                    workspace.project().clone(),
+                    workspace.last_active_center_pane.clone(),
+                )
+            })?;
 
             // Traverse the splits tree and add to things
             let center_group = serialized_workspace
@@ -2615,22 +2622,28 @@ impl View for Workspace {
                                         },
                                     )
                                     .with_child(
-                                        FlexItem::new(
-                                            Flex::column()
-                                                .with_child(
-                                                    FlexItem::new(self.center.render(
-                                                        &project,
-                                                        &theme,
-                                                        &self.follower_states_by_leader,
-                                                        self.active_call(),
-                                                        self.active_pane(),
-                                                        &self.app_state,
-                                                        cx,
-                                                    ))
-                                                    .flex(1., true),
-                                                )
-                                        )
-                                        .flex(1., true),
+                                        Flex::column()
+                                            .with_child(
+                                                FlexItem::new(self.center.render(
+                                                    &project,
+                                                    &theme,
+                                                    &self.follower_states_by_leader,
+                                                    self.active_call(),
+                                                    self.active_pane(),
+                                                    &self.app_state,
+                                                    cx,
+                                                ))
+                                                .flex(1., true),
+                                            )
+                                            .with_children(
+                                                if self.bottom_dock.read(cx).active_item().is_some()
+                                                {
+                                                    Some(ChildView::new(&self.bottom_dock, cx))
+                                                } else {
+                                                    None
+                                                },
+                                            )
+                                            .flex(1., true),
                                     )
                                     .with_children(
                                         if self.right_dock.read(cx).active_item().is_some() {

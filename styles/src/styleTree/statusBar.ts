@@ -95,6 +95,7 @@ export default function statusBar(colorScheme: ColorScheme) {
         },
         panelButtons: {
             groupLeft: {},
+            groupBottom: {},
             groupRight: {},
             button: {
                 ...statusContainer,
