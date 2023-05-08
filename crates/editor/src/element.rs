@@ -790,7 +790,7 @@ impl EditorElement {
             let selection_style = style.replica_selection_style(*replica_id);
 
             for selection in selections {
-                if !selection.range.is_empty() {
+                if !selection.range.is_empty() && *replica_id == local_replica_id {
                     selection_ranges.push(selection.range.clone());
                 }
                 self.paint_highlighted_range(
@@ -868,18 +868,21 @@ impl EditorElement {
         }
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
-            draw_line_glyphs(
-                layout,
-                start_row,
-                scroll_top,
-                scene,
-                content_origin,
-                scroll_left,
-                visible_text_bounds,
-                cx,
-                selection_ranges,
-                visible_bounds,
-            );
+            for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
+                let row = start_row + ix as u32;
+                line_with_invisibles.draw(
+                    layout,
+                    row,
+                    scroll_top,
+                    scene,
+                    content_origin,
+                    scroll_left,
+                    visible_text_bounds,
+                    cx,
+                    &selection_ranges,
+                    visible_bounds,
+                )
+            }
         }
 
         scene.paint_layer(Some(bounds), |scene| {
@@ -1374,7 +1377,7 @@ impl EditorElement {
                     }
                 });
 
-            layout_highlighted_chunks(
+            LineWithInvisibles::from_chunks(
                 chunks,
                 &style.text,
                 cx.text_layout_cache(),
@@ -1602,97 +1605,6 @@ impl EditorElement {
     }
 }
 
-fn draw_line_glyphs(
-    layout: &mut LayoutState,
-    start_row: u32,
-    scroll_top: f32,
-    scene: &mut SceneBuilder,
-    content_origin: Vector2F,
-    scroll_left: f32,
-    visible_text_bounds: RectF,
-    cx: &mut ViewContext<Editor>,
-    selection_ranges: SmallVec<[Range<DisplayPoint>; 32]>,
-    visible_bounds: RectF,
-) {
-    let line_height = layout.position_map.line_height;
-
-    for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
-        let row = start_row + ix as u32;
-        let line_y = row as f32 * line_height - scroll_top;
-
-        line_with_invisibles.line.paint(
-            scene,
-            content_origin + vec2f(-scroll_left, line_y),
-            visible_text_bounds,
-            line_height,
-            cx,
-        );
-
-        draw_invisibles(
-            cx,
-            &selection_ranges,
-            line_with_invisibles,
-            layout,
-            content_origin,
-            scroll_left,
-            line_y,
-            row,
-            scene,
-            visible_bounds,
-            line_height,
-        );
-    }
-}
-
-fn draw_invisibles(
-    cx: &mut ViewContext<Editor>,
-    selection_ranges: &SmallVec<[Range<DisplayPoint>; 32]>,
-    line_with_invisibles: &LineWithInvisibles,
-    layout: &LayoutState,
-    content_origin: Vector2F,
-    scroll_left: f32,
-    line_y: f32,
-    row: u32,
-    scene: &mut SceneBuilder,
-    visible_bounds: RectF,
-    line_height: f32,
-) {
-    let settings = cx.global::<Settings>();
-    let regions_to_hit = match settings
-        .editor_overrides
-        .show_whitespaces
-        .or(settings.editor_defaults.show_whitespaces)
-        .unwrap_or_default()
-    {
-        ShowWhitespaces::None => return,
-        ShowWhitespaces::Selection => Some(selection_ranges),
-        ShowWhitespaces::All => None,
-    };
-
-    for invisible in &line_with_invisibles.invisibles {
-        let (&token_offset, invisible_symbol) = match invisible {
-            Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
-            Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
-        };
-
-        let x_offset = line_with_invisibles.line.x_for_index(token_offset);
-        let invisible_offset =
-            (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
-        let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
-
-        if let Some(regions_to_hit) = regions_to_hit {
-            let invisible_point = DisplayPoint::new(row, token_offset as u32);
-            if !regions_to_hit
-                .iter()
-                .any(|region| region.start <= invisible_point && invisible_point < region.end)
-            {
-                continue;
-            }
-        }
-        invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
-    }
-}
-
 struct HighlightedChunk<'a> {
     chunk: &'a str,
     style: Option<HighlightStyle>,
@@ -1705,117 +1617,206 @@ pub struct LineWithInvisibles {
     invisibles: Vec<Invisible>,
 }
 
+impl LineWithInvisibles {
+    fn from_chunks<'a>(
+        chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+        text_style: &TextStyle,
+        text_layout_cache: &TextLayoutCache,
+        font_cache: &Arc<FontCache>,
+        max_line_len: usize,
+        max_line_count: usize,
+        line_number_layouts: &[Option<Line>],
+        editor_mode: EditorMode,
+    ) -> Vec<Self> {
+        let mut layouts = Vec::with_capacity(max_line_count);
+        let mut line = String::new();
+        let mut invisibles = Vec::new();
+        let mut styles = Vec::new();
+        let mut non_whitespace_added = false;
+        let mut row = 0;
+        let mut line_exceeded_max_len = false;
+        for highlighted_chunk in chunks.chain([HighlightedChunk {
+            chunk: "\n",
+            style: None,
+            is_tab: false,
+        }]) {
+            for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
+                if ix > 0 {
+                    layouts.push(Self {
+                        line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
+                        invisibles: invisibles.drain(..).collect(),
+                    });
+
+                    line.clear();
+                    styles.clear();
+                    row += 1;
+                    line_exceeded_max_len = false;
+                    non_whitespace_added = false;
+                    if row == max_line_count {
+                        return layouts;
+                    }
+                }
+
+                if !line_chunk.is_empty() && !line_exceeded_max_len {
+                    let text_style = if let Some(style) = highlighted_chunk.style {
+                        text_style
+                            .clone()
+                            .highlight(style, font_cache)
+                            .map(Cow::Owned)
+                            .unwrap_or_else(|_| Cow::Borrowed(text_style))
+                    } else {
+                        Cow::Borrowed(text_style)
+                    };
+
+                    if line.len() + line_chunk.len() > max_line_len {
+                        let mut chunk_len = max_line_len - line.len();
+                        while !line_chunk.is_char_boundary(chunk_len) {
+                            chunk_len -= 1;
+                        }
+                        line_chunk = &line_chunk[..chunk_len];
+                        line_exceeded_max_len = true;
+                    }
+
+                    styles.push((
+                        line_chunk.len(),
+                        RunStyle {
+                            font_id: text_style.font_id,
+                            color: text_style.color,
+                            underline: text_style.underline,
+                        },
+                    ));
+
+                    if editor_mode == EditorMode::Full {
+                        // Line wrap pads its contents with fake whitespaces,
+                        // avoid printing them
+                        let inside_wrapped_string = line_number_layouts
+                            .get(row)
+                            .and_then(|layout| layout.as_ref())
+                            .is_none();
+                        if highlighted_chunk.is_tab {
+                            if non_whitespace_added || !inside_wrapped_string {
+                                invisibles.push(Invisible::Tab {
+                                    line_start_offset: line.len(),
+                                });
+                            }
+                        } else {
+                            invisibles.extend(
+                                line_chunk
+                                    .chars()
+                                    .enumerate()
+                                    .filter(|(_, line_char)| {
+                                        let is_whitespace = line_char.is_whitespace();
+                                        non_whitespace_added |= !is_whitespace;
+                                        is_whitespace
+                                            && (non_whitespace_added || !inside_wrapped_string)
+                                    })
+                                    .map(|(whitespace_index, _)| Invisible::Whitespace {
+                                        line_offset: line.len() + whitespace_index,
+                                    }),
+                            )
+                        }
+                    }
+
+                    line.push_str(line_chunk);
+                }
+            }
+        }
+
+        layouts
+    }
+
+    fn draw(
+        &self,
+        layout: &LayoutState,
+        row: u32,
+        scroll_top: f32,
+        scene: &mut SceneBuilder,
+        content_origin: Vector2F,
+        scroll_left: f32,
+        visible_text_bounds: RectF,
+        cx: &mut ViewContext<Editor>,
+        selection_ranges: &[Range<DisplayPoint>],
+        visible_bounds: RectF,
+    ) {
+        let line_height = layout.position_map.line_height;
+        let line_y = row as f32 * line_height - scroll_top;
+
+        self.line.paint(
+            scene,
+            content_origin + vec2f(-scroll_left, line_y),
+            visible_text_bounds,
+            line_height,
+            cx,
+        );
+
+        self.draw_invisibles(
+            cx,
+            &selection_ranges,
+            layout,
+            content_origin,
+            scroll_left,
+            line_y,
+            row,
+            scene,
+            visible_bounds,
+            line_height,
+        );
+    }
+
+    fn draw_invisibles(
+        &self,
+        cx: &mut ViewContext<Editor>,
+        selection_ranges: &[Range<DisplayPoint>],
+        layout: &LayoutState,
+        content_origin: Vector2F,
+        scroll_left: f32,
+        line_y: f32,
+        row: u32,
+        scene: &mut SceneBuilder,
+        visible_bounds: RectF,
+        line_height: f32,
+    ) {
+        let settings = cx.global::<Settings>();
+        let regions_to_hit = match settings
+            .editor_overrides
+            .show_whitespaces
+            .or(settings.editor_defaults.show_whitespaces)
+            .unwrap_or_default()
+        {
+            ShowWhitespaces::None => return,
+            ShowWhitespaces::Selection => Some(selection_ranges),
+            ShowWhitespaces::All => None,
+        };
+
+        for invisible in &self.invisibles {
+            let (&token_offset, invisible_symbol) = match invisible {
+                Invisible::Tab { line_start_offset } => (line_start_offset, &layout.tab_invisible),
+                Invisible::Whitespace { line_offset } => (line_offset, &layout.space_invisible),
+            };
+
+            let x_offset = self.line.x_for_index(token_offset);
+            let invisible_offset =
+                (layout.position_map.em_width - invisible_symbol.width()).max(0.0) / 2.0;
+            let origin = content_origin + vec2f(-scroll_left + x_offset + invisible_offset, line_y);
+
+            if let Some(regions_to_hit) = regions_to_hit {
+                let invisible_point = DisplayPoint::new(row, token_offset as u32);
+                if !regions_to_hit
+                    .iter()
+                    .any(|region| region.start <= invisible_point && invisible_point < region.end)
+                {
+                    continue;
+                }
+            }
+            invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Invisible {
     Tab { line_start_offset: usize },
     Whitespace { line_offset: usize },
-}
-
-fn layout_highlighted_chunks<'a>(
-    chunks: impl Iterator<Item = HighlightedChunk<'a>>,
-    text_style: &TextStyle,
-    text_layout_cache: &TextLayoutCache,
-    font_cache: &Arc<FontCache>,
-    max_line_len: usize,
-    max_line_count: usize,
-    line_number_layouts: &[Option<Line>],
-    editor_mode: EditorMode,
-) -> Vec<LineWithInvisibles> {
-    let mut layouts = Vec::with_capacity(max_line_count);
-    let mut line = String::new();
-    let mut invisibles = Vec::new();
-    let mut styles = Vec::new();
-    let mut non_whitespace_added = false;
-    let mut row = 0;
-    let mut line_exceeded_max_len = false;
-    for highlighted_chunk in chunks.chain([HighlightedChunk {
-        chunk: "\n",
-        style: None,
-        is_tab: false,
-    }]) {
-        for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
-            if ix > 0 {
-                layouts.push(LineWithInvisibles {
-                    line: text_layout_cache.layout_str(&line, text_style.font_size, &styles),
-                    invisibles: invisibles.drain(..).collect(),
-                });
-
-                line.clear();
-                styles.clear();
-                row += 1;
-                line_exceeded_max_len = false;
-                non_whitespace_added = false;
-                if row == max_line_count {
-                    return layouts;
-                }
-            }
-
-            if !line_chunk.is_empty() && !line_exceeded_max_len {
-                let text_style = if let Some(style) = highlighted_chunk.style {
-                    text_style
-                        .clone()
-                        .highlight(style, font_cache)
-                        .map(Cow::Owned)
-                        .unwrap_or_else(|_| Cow::Borrowed(text_style))
-                } else {
-                    Cow::Borrowed(text_style)
-                };
-
-                if line.len() + line_chunk.len() > max_line_len {
-                    let mut chunk_len = max_line_len - line.len();
-                    while !line_chunk.is_char_boundary(chunk_len) {
-                        chunk_len -= 1;
-                    }
-                    line_chunk = &line_chunk[..chunk_len];
-                    line_exceeded_max_len = true;
-                }
-
-                styles.push((
-                    line_chunk.len(),
-                    RunStyle {
-                        font_id: text_style.font_id,
-                        color: text_style.color,
-                        underline: text_style.underline,
-                    },
-                ));
-
-                if editor_mode == EditorMode::Full {
-                    // Line wrap pads its contents with fake whitespaces,
-                    // avoid printing them
-                    let inside_wrapped_string = line_number_layouts
-                        .get(row)
-                        .and_then(|layout| layout.as_ref())
-                        .is_none();
-                    if highlighted_chunk.is_tab {
-                        if non_whitespace_added || !inside_wrapped_string {
-                            invisibles.push(Invisible::Tab {
-                                line_start_offset: line.len(),
-                            });
-                        }
-                    } else {
-                        invisibles.extend(
-                            line_chunk
-                                .chars()
-                                .enumerate()
-                                .filter(|(_, line_char)| {
-                                    let is_whitespace = line_char.is_whitespace();
-                                    non_whitespace_added |= !is_whitespace;
-                                    is_whitespace
-                                        && (non_whitespace_added || !inside_wrapped_string)
-                                })
-                                .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                    line_offset: line.len() + whitespace_index,
-                                }),
-                        )
-                    }
-                }
-
-                line.push_str(line_chunk);
-            }
-        }
-    }
-
-    layouts
 }
 
 impl Element<Editor> for EditorElement {
