@@ -504,7 +504,7 @@ pub fn split_worktree_update(
 
         done = message.updated_entries.is_empty() && message.removed_entries.is_empty();
 
-        // Wait to send repositories until after we've guarnteed that their associated entries
+        // Wait to send repositories until after we've guaranteed that their associated entries
         // will be read
         let updated_repositories = if done {
             mem::take(&mut message.updated_repositories)

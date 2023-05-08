@@ -201,12 +201,12 @@ impl CollabTitlebarItem {
         let mut title = String::new();
         let mut names_and_branches = names_and_branches.peekable();
         while let Some((name, entry)) = names_and_branches.next() {
+            let pre_index = index;
             push_str(&mut title, &mut index, name);
+            indices.extend((pre_index..index).into_iter());
             if let Some(branch) = entry.and_then(|entry| entry.branch()) {
                 push_str(&mut title, &mut index, "/");
-                let pre_index = index;
                 push_str(&mut title, &mut index, &branch);
-                indices.extend((pre_index..index).into_iter())
             }
             if names_and_branches.peek().is_some() {
                 push_str(&mut title, &mut index, ", ");
