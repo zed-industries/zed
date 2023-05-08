@@ -14,6 +14,7 @@ mod user;
 mod worktree;
 mod worktree_diagnostic_summary;
 mod worktree_entry;
+mod worktree_repository;
 
 use crate::executor::Executor;
 use crate::{Error, Result};
@@ -1489,6 +1490,8 @@ impl Database {
                         visible: db_worktree.visible,
                         updated_entries: Default::default(),
                         removed_entries: Default::default(),
+                        updated_repositories: Default::default(),
+                        removed_repositories: Default::default(),
                         diagnostic_summaries: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
                         completed_scan_id: db_worktree.completed_scan_id as u64,
@@ -1498,38 +1501,75 @@ impl Database {
                         .worktrees
                         .iter()
                         .find(|worktree| worktree.id == db_worktree.id as u64);
-                    let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
-                        worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id)
-                    } else {
-                        worktree_entry::Column::IsDeleted.eq(false)
-                    };
 
-                    let mut db_entries = worktree_entry::Entity::find()
-                        .filter(
-                            Condition::all()
-                                .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
-                                .add(entry_filter),
-                        )
-                        .stream(&*tx)
-                        .await?;
-
-                    while let Some(db_entry) = db_entries.next().await {
-                        let db_entry = db_entry?;
-                        if db_entry.is_deleted {
-                            worktree.removed_entries.push(db_entry.id as u64);
+                    // File entries
+                    {
+                        let entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
+                            worktree_entry::Column::ScanId.gt(rejoined_worktree.scan_id)
                         } else {
-                            worktree.updated_entries.push(proto::Entry {
-                                id: db_entry.id as u64,
-                                is_dir: db_entry.is_dir,
-                                path: db_entry.path,
-                                inode: db_entry.inode as u64,
-                                mtime: Some(proto::Timestamp {
-                                    seconds: db_entry.mtime_seconds as u64,
-                                    nanos: db_entry.mtime_nanos as u32,
-                                }),
-                                is_symlink: db_entry.is_symlink,
-                                is_ignored: db_entry.is_ignored,
-                            });
+                            worktree_entry::Column::IsDeleted.eq(false)
+                        };
+
+                        let mut db_entries = worktree_entry::Entity::find()
+                            .filter(
+                                Condition::all()
+                                    .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
+                                    .add(entry_filter),
+                            )
+                            .stream(&*tx)
+                            .await?;
+
+                        while let Some(db_entry) = db_entries.next().await {
+                            let db_entry = db_entry?;
+                            if db_entry.is_deleted {
+                                worktree.removed_entries.push(db_entry.id as u64);
+                            } else {
+                                worktree.updated_entries.push(proto::Entry {
+                                    id: db_entry.id as u64,
+                                    is_dir: db_entry.is_dir,
+                                    path: db_entry.path,
+                                    inode: db_entry.inode as u64,
+                                    mtime: Some(proto::Timestamp {
+                                        seconds: db_entry.mtime_seconds as u64,
+                                        nanos: db_entry.mtime_nanos as u32,
+                                    }),
+                                    is_symlink: db_entry.is_symlink,
+                                    is_ignored: db_entry.is_ignored,
+                                });
+                            }
+                        }
+                    }
+
+                    // Repository Entries
+                    {
+                        let repository_entry_filter =
+                            if let Some(rejoined_worktree) = rejoined_worktree {
+                                worktree_repository::Column::ScanId.gt(rejoined_worktree.scan_id)
+                            } else {
+                                worktree_repository::Column::IsDeleted.eq(false)
+                            };
+
+                        let mut db_repositories = worktree_repository::Entity::find()
+                            .filter(
+                                Condition::all()
+                                    .add(worktree_repository::Column::WorktreeId.eq(worktree.id))
+                                    .add(repository_entry_filter),
+                            )
+                            .stream(&*tx)
+                            .await?;
+
+                        while let Some(db_repository) = db_repositories.next().await {
+                            let db_repository = db_repository?;
+                            if db_repository.is_deleted {
+                                worktree
+                                    .removed_repositories
+                                    .push(db_repository.work_directory_id as u64);
+                            } else {
+                                worktree.updated_repositories.push(proto::RepositoryEntry {
+                                    work_directory_id: db_repository.work_directory_id as u64,
+                                    branch: db_repository.branch,
+                                });
+                            }
                         }
                     }
 
@@ -2330,6 +2370,53 @@ impl Database {
                     .await?;
             }
 
+            if !update.updated_repositories.is_empty() {
+                worktree_repository::Entity::insert_many(update.updated_repositories.iter().map(
+                    |repository| worktree_repository::ActiveModel {
+                        project_id: ActiveValue::set(project_id),
+                        worktree_id: ActiveValue::set(worktree_id),
+                        work_directory_id: ActiveValue::set(repository.work_directory_id as i64),
+                        scan_id: ActiveValue::set(update.scan_id as i64),
+                        branch: ActiveValue::set(repository.branch.clone()),
+                        is_deleted: ActiveValue::set(false),
+                    },
+                ))
+                .on_conflict(
+                    OnConflict::columns([
+                        worktree_repository::Column::ProjectId,
+                        worktree_repository::Column::WorktreeId,
+                        worktree_repository::Column::WorkDirectoryId,
+                    ])
+                    .update_columns([
+                        worktree_repository::Column::ScanId,
+                        worktree_repository::Column::Branch,
+                    ])
+                    .to_owned(),
+                )
+                .exec(&*tx)
+                .await?;
+            }
+
+            if !update.removed_repositories.is_empty() {
+                worktree_repository::Entity::update_many()
+                    .filter(
+                        worktree_repository::Column::ProjectId
+                            .eq(project_id)
+                            .and(worktree_repository::Column::WorktreeId.eq(worktree_id))
+                            .and(
+                                worktree_repository::Column::WorkDirectoryId
+                                    .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
+                            ),
+                    )
+                    .set(worktree_repository::ActiveModel {
+                        is_deleted: ActiveValue::Set(true),
+                        scan_id: ActiveValue::Set(update.scan_id as i64),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+            }
+
             let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
             Ok(connection_ids)
         })
@@ -2505,6 +2592,7 @@ impl Database {
                             root_name: db_worktree.root_name,
                             visible: db_worktree.visible,
                             entries: Default::default(),
+                            repository_entries: Default::default(),
                             diagnostic_summaries: Default::default(),
                             scan_id: db_worktree.scan_id as u64,
                             completed_scan_id: db_worktree.completed_scan_id as u64,
@@ -2537,6 +2625,29 @@ impl Database {
                             }),
                             is_symlink: db_entry.is_symlink,
                             is_ignored: db_entry.is_ignored,
+                        });
+                    }
+                }
+            }
+
+            // Populate repository entries.
+            {
+                let mut db_repository_entries = worktree_repository::Entity::find()
+                    .filter(
+                        Condition::all()
+                            .add(worktree_repository::Column::ProjectId.eq(project_id))
+                            .add(worktree_repository::Column::IsDeleted.eq(false)),
+                    )
+                    .stream(&*tx)
+                    .await?;
+                while let Some(db_repository_entry) = db_repository_entries.next().await {
+                    let db_repository_entry = db_repository_entry?;
+                    if let Some(worktree) =
+                        worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
+                    {
+                        worktree.repository_entries.push(proto::RepositoryEntry {
+                            work_directory_id: db_repository_entry.work_directory_id as u64,
+                            branch: db_repository_entry.branch,
                         });
                     }
                 }
@@ -3223,6 +3334,8 @@ pub struct RejoinedWorktree {
     pub visible: bool,
     pub updated_entries: Vec<proto::Entry>,
     pub removed_entries: Vec<u64>,
+    pub updated_repositories: Vec<proto::RepositoryEntry>,
+    pub removed_repositories: Vec<u64>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
@@ -3277,6 +3390,7 @@ pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
     pub entries: Vec<proto::Entry>,
+    pub repository_entries: Vec<proto::RepositoryEntry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
     pub completed_scan_id: u64,

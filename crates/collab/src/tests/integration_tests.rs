@@ -13,8 +13,8 @@ use editor::{
 use fs::{FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
-    executor::Deterministic, geometry::vector::vec2f, test::EmptyView, ModelHandle, TestAppContext,
-    ViewHandle,
+    executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
+    TestAppContext, ViewHandle,
 };
 use indoc::indoc;
 use language::{
@@ -2601,6 +2601,92 @@ async fn test_git_diff_base_change(
             &diff_base,
             &[(2..3, "", "three\n")],
         );
+    });
+}
+
+#[gpui::test]
+async fn test_git_branch_name(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+            ".git": {},
+            }),
+        )
+        .await;
+
+    let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_remote = client_b.build_remote_project(project_id, cx_b).await;
+    client_a
+        .fs
+        .as_fake()
+        .set_branch_name(Path::new("/dir/.git"), Some("branch-1"))
+        .await;
+
+    // Wait for it to catch up to the new branch
+    deterministic.run_until_parked();
+
+    #[track_caller]
+    fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &AppContext) {
+        let branch_name = branch_name.map(Into::into);
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        let worktree = worktrees[0].clone();
+        let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
+        assert_eq!(root_entry.branch(), branch_name.map(Into::into));
+    }
+
+    // Smoke test branch reading
+    project_local.read_with(cx_a, |project, cx| {
+        assert_branch(Some("branch-1"), project, cx)
+    });
+    project_remote.read_with(cx_b, |project, cx| {
+        assert_branch(Some("branch-1"), project, cx)
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_branch_name(Path::new("/dir/.git"), Some("branch-2"))
+        .await;
+
+    // Wait for buffer_local_a to receive it
+    deterministic.run_until_parked();
+
+    // Smoke test branch reading
+    project_local.read_with(cx_a, |project, cx| {
+        assert_branch(Some("branch-2"), project, cx)
+    });
+    project_remote.read_with(cx_b, |project, cx| {
+        assert_branch(Some("branch-2"), project, cx)
+    });
+
+    let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
+    project_remote_c.read_with(cx_c, |project, cx| {
+        assert_branch(Some("branch-2"), project, cx)
     });
 }
 

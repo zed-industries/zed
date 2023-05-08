@@ -93,6 +93,7 @@ pub struct Titlebar {
     pub container: ContainerStyle,
     pub height: f32,
     pub title: TextStyle,
+    pub highlight_color: Color,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,

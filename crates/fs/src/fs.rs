@@ -619,7 +619,10 @@ impl FakeFs {
         .boxed()
     }
 
-    pub async fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
+    pub fn with_git_state<F>(&self, dot_git: &Path, f: F)
+    where
+        F: FnOnce(&mut FakeGitRepositoryState),
+    {
         let mut state = self.state.lock();
         let entry = state.read_path(dot_git).unwrap();
         let mut entry = entry.lock();
@@ -628,17 +631,27 @@ impl FakeFs {
             let repo_state = git_repo_state.get_or_insert_with(Default::default);
             let mut repo_state = repo_state.lock();
 
-            repo_state.index_contents.clear();
-            repo_state.index_contents.extend(
-                head_state
-                    .iter()
-                    .map(|(path, content)| (path.to_path_buf(), content.clone())),
-            );
+            f(&mut repo_state);
 
             state.emit_event([dot_git]);
         } else {
             panic!("not a directory");
         }
+    }
+
+    pub async fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
+        self.with_git_state(dot_git, |state| state.branch_name = branch.map(Into::into))
+    }
+
+    pub async fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
+        self.with_git_state(dot_git, |state| {
+            state.index_contents.clear();
+            state.index_contents.extend(
+                head_state
+                    .iter()
+                    .map(|(path, content)| (path.to_path_buf(), content.clone())),
+            );
+        });
     }
 
     pub fn paths(&self) -> Vec<PathBuf> {

@@ -2,13 +2,13 @@ use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
     K: Clone + Debug + Default + Ord,
     V: Clone + Debug;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapEntry<K, V> {
     key: K,
     value: V,
@@ -73,8 +73,57 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         removed
     }
 
+    /// Returns the key-value pair with the greatest key less than or equal to the given key.
+    pub fn closest(&self, key: &K) -> Option<(&K, &V)> {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let key = MapKeyRef(Some(key));
+        cursor.seek(&key, Bias::Right, &());
+        cursor.prev(&());
+        cursor.item().map(|item| (&item.key, &item.value))
+    }
+
+    pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut V) -> T,
+    {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let key = MapKeyRef(Some(key));
+        let mut new_tree = cursor.slice(&key, Bias::Left, &());
+        let mut result = None;
+        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+            let mut updated = cursor.item().unwrap().clone();
+            result = Some(f(&mut updated.value));
+            new_tree.push(updated, &());
+            cursor.next(&());
+        }
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+        result
+    }
+
+    pub fn retain<F: FnMut(&K, &V) -> bool>(&mut self, mut predicate: F) {
+        let mut new_map = SumTree::<MapEntry<K, V>>::default();
+
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        cursor.next(&());
+        while let Some(item) = cursor.item() {
+            if predicate(&item.key, &item.value) {
+                new_map.push(item.clone(), &());
+            }
+            cursor.next(&());
+        }
+        drop(cursor);
+
+        self.0 = new_map;
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
         self.0.iter().map(|entry| (&entry.key, &entry.value))
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
+        self.0.iter().map(|entry| &entry.value)
     }
 }
 
@@ -199,9 +248,15 @@ mod tests {
             vec![(&1, &"a"), (&2, &"b"), (&3, &"c")]
         );
 
+        assert_eq!(map.closest(&0), None);
+        assert_eq!(map.closest(&1), Some((&1, &"a")));
+        assert_eq!(map.closest(&10), Some((&3, &"c")));
+
         map.remove(&2);
         assert_eq!(map.get(&2), None);
         assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&1, &"a"), (&3, &"c")]);
+
+        assert_eq!(map.closest(&2), Some((&1, &"a")));
 
         map.remove(&3);
         assert_eq!(map.get(&3), None);
@@ -210,5 +265,11 @@ mod tests {
         map.remove(&1);
         assert_eq!(map.get(&1), None);
         assert_eq!(map.iter().collect::<Vec<_>>(), vec![]);
+
+        map.insert(4, "d");
+        map.insert(5, "e");
+        map.insert(6, "f");
+        map.retain(|key, _| *key % 2 == 0);
+        assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&4, &"d"), (&6, &"f")]);
     }
 }

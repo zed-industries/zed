@@ -82,6 +82,20 @@ CREATE TABLE "worktree_entries" (
 CREATE INDEX "index_worktree_entries_on_project_id" ON "worktree_entries" ("project_id");
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
+CREATE TABLE "worktree_repositories" (
+    "project_id" INTEGER NOT NULL,
+    "worktree_id" INTEGER NOT NULL,
+    "work_directory_id" INTEGER NOT NULL,
+    "scan_id" INTEGER NOT NULL,
+    "branch" VARCHAR,
+    "is_deleted" BOOL NOT NULL,
+    PRIMARY KEY(project_id, worktree_id, work_directory_id),
+    FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
+);
+CREATE INDEX "index_worktree_repositories_on_project_id" ON "worktree_repositories" ("project_id");
+CREATE INDEX "index_worktree_repositories_on_project_id_and_worktree_id" ON "worktree_repositories" ("project_id", "worktree_id");
+
 CREATE TABLE "worktree_diagnostic_summaries" (
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,
@@ -153,7 +167,7 @@ CREATE TABLE "followers" (
     "follower_connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "follower_connection_id" INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX 
+CREATE UNIQUE INDEX
     "index_followers_on_project_id_and_leader_connection_server_id_and_leader_connection_id_and_follower_connection_server_id_and_follower_connection_id"
 ON "followers" ("project_id", "leader_connection_server_id", "leader_connection_id", "follower_connection_server_id", "follower_connection_id");
 CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");

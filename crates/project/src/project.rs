@@ -64,6 +64,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
+
 use terminals::Terminals;
 
 use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
@@ -4695,40 +4696,50 @@ impl Project {
 
     fn update_local_worktree_buffers_git_repos(
         &mut self,
-        worktree: ModelHandle<Worktree>,
-        repos: &[GitRepositoryEntry],
+        worktree_handle: ModelHandle<Worktree>,
+        repos: &HashMap<Arc<Path>, LocalRepositoryEntry>,
         cx: &mut ModelContext<Self>,
     ) {
+        debug_assert!(worktree_handle.read(cx).is_local());
+
         for (_, buffer) in &self.opened_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let file = match File::from_dyn(buffer.read(cx).file()) {
                     Some(file) => file,
                     None => continue,
                 };
-                if file.worktree != worktree {
+                if file.worktree != worktree_handle {
                     continue;
                 }
 
                 let path = file.path().clone();
 
-                let repo = match repos.iter().find(|repo| repo.manages(&path)) {
+                let worktree = worktree_handle.read(cx);
+
+                let (work_directory, repo) = match repos
+                    .iter()
+                    .find(|(work_directory, _)| path.starts_with(work_directory))
+                {
                     Some(repo) => repo.clone(),
                     None => return,
                 };
 
-                let relative_repo = match path.strip_prefix(repo.content_path) {
-                    Ok(relative_repo) => relative_repo.to_owned(),
-                    Err(_) => return,
+                let relative_repo = match path.strip_prefix(work_directory).log_err() {
+                    Some(relative_repo) => relative_repo.to_owned(),
+                    None => return,
                 };
+
+                drop(worktree);
 
                 let remote_id = self.remote_id();
                 let client = self.client.clone();
+                let git_ptr = repo.repo_ptr.clone();
+                let diff_base_task = cx
+                    .background()
+                    .spawn(async move { git_ptr.lock().load_index_text(&relative_repo) });
 
                 cx.spawn(|_, mut cx| async move {
-                    let diff_base = cx
-                        .background()
-                        .spawn(async move { repo.repo.lock().load_index_text(&relative_repo) })
-                        .await;
+                    let diff_base = diff_base_task.await;
 
                     let buffer_id = buffer.update(&mut cx, |buffer, cx| {
                         buffer.set_diff_base(diff_base.clone(), cx);

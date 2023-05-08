@@ -1063,6 +1063,8 @@ async fn rejoin_room(
                     removed_entries: worktree.removed_entries,
                     scan_id: worktree.scan_id,
                     is_last_update: worktree.completed_scan_id == worktree.scan_id,
+                    updated_repositories: worktree.updated_repositories,
+                    removed_repositories: worktree.removed_repositories,
                 };
                 for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
                     session.peer.send(session.connection_id, update.clone())?;
@@ -1383,6 +1385,8 @@ async fn join_project(
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
             is_last_update: worktree.scan_id == worktree.completed_scan_id,
+            updated_repositories: worktree.repository_entries,
+            removed_repositories: Default::default(),
         };
         for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
             session.peer.send(session.connection_id, update.clone())?;

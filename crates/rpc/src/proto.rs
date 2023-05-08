@@ -5,13 +5,13 @@ use futures::{SinkExt as _, StreamExt as _};
 use prost::Message as _;
 use serde::Serialize;
 use std::any::{Any, TypeId};
-use std::fmt;
 use std::{
     cmp,
     fmt::Debug,
     io, iter,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use std::{fmt, mem};
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
@@ -503,6 +503,21 @@ pub fn split_worktree_update(
             .collect();
 
         done = message.updated_entries.is_empty() && message.removed_entries.is_empty();
+
+        // Wait to send repositories until after we've guaranteed that their associated entries
+        // will be read
+        let updated_repositories = if done {
+            mem::take(&mut message.updated_repositories)
+        } else {
+            Default::default()
+        };
+
+        let removed_repositories = if done {
+            mem::take(&mut message.removed_repositories)
+        } else {
+            Default::default()
+        };
+
         Some(UpdateWorktree {
             project_id: message.project_id,
             worktree_id: message.worktree_id,
@@ -512,6 +527,8 @@ pub fn split_worktree_update(
             removed_entries,
             scan_id: message.scan_id,
             is_last_update: done && message.is_last_update,
+            updated_repositories,
+            removed_repositories,
         })
     })
 }
