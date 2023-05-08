@@ -128,6 +128,7 @@ impl CollabTitlebarItem {
         let active_call = ActiveCall::global(cx);
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(workspace_handle, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(|this, active, cx| {
             this.window_activation_changed(active, cx)
