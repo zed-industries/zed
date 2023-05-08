@@ -199,7 +199,7 @@ impl<V: View> DragAndDrop<V> {
                             return None;
                         }
 
-                        let position = position - region_offset;
+                        let position = (position - region_offset).round();
                         Some(
                             Overlay::new(
                                 MouseEventHandler::<DraggedElementHandler, V>::new(
