@@ -223,41 +223,41 @@ impl HandlerSet {
 
         set.insert(
             HandlerKey::new(MouseEvent::move_disc(), None),
-            SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+            SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
         );
         set.insert(
             HandlerKey::new(MouseEvent::hover_disc(), None),
-            SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+            SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
         );
         for button in MouseButton::all() {
             set.insert(
                 HandlerKey::new(MouseEvent::drag_disc(), Some(button)),
-                SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
             set.insert(
                 HandlerKey::new(MouseEvent::down_disc(), Some(button)),
-                SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
             set.insert(
                 HandlerKey::new(MouseEvent::up_disc(), Some(button)),
-                SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
             set.insert(
                 HandlerKey::new(MouseEvent::click_disc(), Some(button)),
-                SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
             set.insert(
                 HandlerKey::new(MouseEvent::down_out_disc(), Some(button)),
-                SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
             set.insert(
                 HandlerKey::new(MouseEvent::up_out_disc(), Some(button)),
-                SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+                SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
             );
         }
         set.insert(
             HandlerKey::new(MouseEvent::scroll_wheel_disc(), None),
-            SmallVec::from_buf([Rc::new(|_, _, _, _| false)]),
+            SmallVec::from_buf([Rc::new(|_, _, _, _| true)]),
         );
 
         HandlerSet { set }
