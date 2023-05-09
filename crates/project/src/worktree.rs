@@ -2399,8 +2399,13 @@ struct BackgroundScanner {
     status_updates_tx: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
     refresh_requests_rx: channel::Receiver<(Vec<PathBuf>, barrier::Sender)>,
-    prev_state: Mutex<(Snapshot, Vec<Arc<Path>>)>,
+    prev_state: Mutex<BackgroundScannerState>,
     finished_initial_scan: bool,
+}
+
+struct BackgroundScannerState {
+    snapshot: Snapshot,
+    event_paths: Vec<Arc<Path>>,
 }
 
 impl BackgroundScanner {
@@ -2416,7 +2421,10 @@ impl BackgroundScanner {
             status_updates_tx,
             executor,
             refresh_requests_rx,
-            prev_state: Mutex::new((snapshot.snapshot.clone(), Vec::new())),
+            prev_state: Mutex::new(BackgroundScannerState {
+                snapshot: snapshot.snapshot.clone(),
+                event_paths: Default::default(),
+            }),
             snapshot: Mutex::new(snapshot),
             finished_initial_scan: false,
         }
@@ -2526,7 +2534,12 @@ impl BackgroundScanner {
             .await
         {
             paths.sort_unstable();
-            util::extend_sorted(&mut self.prev_state.lock().1, paths, usize::MAX, Ord::cmp);
+            util::extend_sorted(
+                &mut self.prev_state.lock().event_paths,
+                paths,
+                usize::MAX,
+                Ord::cmp,
+            );
         }
         drop(scan_job_tx);
         self.scan_dirs(false, scan_job_rx).await;
@@ -2560,6 +2573,7 @@ impl BackgroundScanner {
         drop(snapshot);
 
         self.send_status_update(false, None);
+        self.prev_state.lock().event_paths.clear();
     }
 
     async fn scan_dirs(
@@ -2637,14 +2651,18 @@ impl BackgroundScanner {
 
     fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
         let mut prev_state = self.prev_state.lock();
-        let snapshot = self.snapshot.lock().clone();
-        let mut old_snapshot = snapshot.snapshot.clone();
-        mem::swap(&mut old_snapshot, &mut prev_state.0);
-        let changed_paths = mem::take(&mut prev_state.1);
-        let changes = self.build_change_set(&old_snapshot, &snapshot.snapshot, changed_paths);
+        let new_snapshot = self.snapshot.lock().clone();
+        let old_snapshot = mem::replace(&mut prev_state.snapshot, new_snapshot.snapshot.clone());
+
+        let changes = self.build_change_set(
+            &old_snapshot,
+            &new_snapshot.snapshot,
+            &prev_state.event_paths,
+        );
+
         self.status_updates_tx
             .unbounded_send(ScanState::Updated {
-                snapshot,
+                snapshot: new_snapshot,
                 changes,
                 scanning,
                 barrier,
@@ -3012,7 +3030,7 @@ impl BackgroundScanner {
         &self,
         old_snapshot: &Snapshot,
         new_snapshot: &Snapshot,
-        event_paths: Vec<Arc<Path>>,
+        event_paths: &[Arc<Path>],
     ) -> HashMap<Arc<Path>, PathChange> {
         use PathChange::{Added, AddedOrUpdated, Removed, Updated};
 
@@ -3022,7 +3040,7 @@ impl BackgroundScanner {
         let received_before_initialized = !self.finished_initial_scan;
 
         for path in event_paths {
-            let path = PathKey(path);
+            let path = PathKey(path.clone());
             old_paths.seek(&path, Bias::Left, &());
             new_paths.seek(&path, Bias::Left, &());
 
