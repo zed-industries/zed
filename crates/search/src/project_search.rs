@@ -562,7 +562,8 @@ impl ProjectSearchView {
             .read(cx)
             .text(cx)
             .split(',')
-            .filter(|glob_str| !glob_str.trim().is_empty())
+            .map(str::trim)
+            .filter(|glob_str| !glob_str.is_empty())
             .map(|glob_str| glob::Pattern::new(glob_str))
             .collect::<Result<_, _>>() else {
                 self.query_contains_error = true;
@@ -574,7 +575,8 @@ impl ProjectSearchView {
             .read(cx)
             .text(cx)
             .split(',')
-            .filter(|glob_str| !glob_str.trim().is_empty())
+            .map(str::trim)
+            .filter(|glob_str| !glob_str.is_empty())
             .map(|glob_str| glob::Pattern::new(glob_str))
             .collect::<Result<_, _>>() else {
                 self.query_contains_error = true;
