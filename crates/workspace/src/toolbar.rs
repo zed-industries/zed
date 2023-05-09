@@ -23,6 +23,9 @@ pub trait ToolbarItemView: View {
 
     fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
 
+    /// Number of times toolbar's height will be repeated to get the effective height.
+    /// Useful when multiple rows one under each other are needed.
+    /// The rows have the same width and act as a whole when reacting to resizes and similar events.
     fn row_count(&self) -> usize {
         1
     }

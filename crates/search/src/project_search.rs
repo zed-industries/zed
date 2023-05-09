@@ -428,7 +428,7 @@ impl ProjectSearchView {
             editor.set_text(query_text, cx);
             editor
         });
-        // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
+        // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&query_editor, |_, _, event, cx| {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
@@ -462,7 +462,7 @@ impl ProjectSearchView {
 
             editor
         });
-        // Subcribe to include_files_editor in order to reraise editor events for workspace item activation purposes
+        // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&included_files_editor, |_, _, event, cx| {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
@@ -479,7 +479,7 @@ impl ProjectSearchView {
 
             editor
         });
-        // Subcribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
+        // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&excluded_files_editor, |_, _, event, cx| {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
