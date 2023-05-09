@@ -734,6 +734,7 @@ mod tests {
             .unwrap()
             .downcast::<Workspace>()
             .unwrap();
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -756,9 +757,9 @@ mod tests {
         assert!(cx.is_window_edited(workspace.window_id()));
 
         // Closing the item restores the window's edited state.
-        let close = workspace.update(cx, |workspace, cx| {
+        let close = pane.update(cx, |pane, cx| {
             drop(editor);
-            Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
+            pane.close_active_item(&Default::default(), cx).unwrap()
         });
         executor.run_until_parked();
         cx.simulate_prompt_answer(workspace.window_id(), 1);
@@ -1384,6 +1385,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1501,14 +1503,13 @@ mod tests {
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
         // location.
-        workspace
-            .update(cx, |workspace, cx| {
-                let editor3_id = editor3.id();
-                drop(editor3);
-                Pane::close_item_by_id(workspace, workspace.active_pane().clone(), editor3_id, cx)
-            })
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            let editor3_id = editor3.id();
+            drop(editor3);
+            pane.close_item_by_id(editor3_id, cx)
+        })
+        .await
+        .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await
@@ -1537,14 +1538,13 @@ mod tests {
         );
 
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
-        workspace
-            .update(cx, |workspace, cx| {
-                let editor2_id = editor2.id();
-                drop(editor2);
-                Pane::close_item_by_id(workspace, workspace.active_pane().clone(), editor2_id, cx)
-            })
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            let editor2_id = editor2.id();
+            drop(editor2);
+            pane.close_item_by_id(editor2_id, cx)
+        })
+        .await
+        .unwrap();
         app_state
             .fs
             .remove_file(Path::new("/root/a/file2"), Default::default())
@@ -1693,34 +1693,22 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         // Close all the pane items in some arbitrary order.
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file1_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file1_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file4_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file4_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file2_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file2_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file3_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file3_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), None);

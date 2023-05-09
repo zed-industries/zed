@@ -3125,6 +3125,7 @@ mod tests {
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3167,12 +3168,11 @@ mod tests {
         });
 
         // Close the active item
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
-            })
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&Default::default(), cx).unwrap()
+        })
+        .await
+        .unwrap();
         assert_eq!(
             cx.current_window_title(window_id).as_deref(),
             Some("one.txt — root1")
@@ -3281,18 +3281,13 @@ mod tests {
             workspace.active_pane().clone()
         });
 
-        let close_items = workspace.update(cx, |workspace, cx| {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, cx);
-                assert_eq!(pane.active_item().unwrap().id(), item2.id());
-            });
-
+        let close_items = pane.update(cx, |pane, cx| {
+            pane.activate_item(1, true, true, cx);
+            assert_eq!(pane.active_item().unwrap().id(), item2.id());
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            Pane::close_items(workspace, pane.clone(), cx, move |id| {
-                [item1_id, item3_id, item4_id].contains(&id)
-            })
+            pane.close_items(cx, move |id| [item1_id, item3_id, item4_id].contains(&id))
         });
         cx.foreground().run_until_parked();
 
@@ -3426,10 +3421,7 @@ mod tests {
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
 
-        let close = workspace.update(cx, |workspace, cx| {
-            Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
-        });
-
+        let close = left_pane.update(cx, |pane, cx| pane.close_items(cx, |_| true));
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(
@@ -3464,6 +3456,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let item = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3536,11 +3529,7 @@ mod tests {
             item.is_dirty = true;
         });
 
-        workspace
-            .update(cx, |workspace, cx| {
-                let pane = workspace.active_pane().clone();
-                Pane::close_items(workspace, pane, cx, move |id| id == item_id)
-            })
+        pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
             .await
             .unwrap();
         assert!(!cx.has_pending_prompt(window_id));
@@ -3561,10 +3550,8 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
-        let _close_items = workspace.update(cx, |workspace, cx| {
-            let pane = workspace.active_pane().clone();
-            Pane::close_items(workspace, pane, cx, move |id| id == item_id)
-        });
+        let _close_items =
+            pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
         deterministic.run_until_parked();
         assert!(cx.has_pending_prompt(window_id));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));

@@ -681,187 +681,108 @@ impl Pane {
     }
 
     pub fn close_active_item(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseActiveItem,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-
-        if pane.items.is_empty() {
+        if self.items.is_empty() {
             return None;
         }
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_item_by_id(workspace, pane_handle, active_item_id, cx);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_item_by_id(active_item_id, cx))
     }
 
     pub fn close_item_by_id(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         item_id_to_close: usize,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        Self::close_items(workspace, pane, cx, move |view_id| {
-            view_id == item_id_to_close
-        })
+        self.close_items(cx, move |view_id| view_id == item_id_to_close)
     }
 
     pub fn close_inactive_items(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseInactiveItems,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_id != active_item_id
-        });
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_items(cx, move |item_id| item_id != active_item_id))
     }
 
     pub fn close_clean_items(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseCleanItems,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-
-        let item_ids: Vec<_> = pane
+        let item_ids: Vec<_> = self
             .items()
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.id())
             .collect();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        Some(self.close_items(cx, move |item_id| item_ids.contains(&item_id)))
     }
 
     pub fn close_items_to_the_left(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseItemsToTheLeft,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_items_to_the_left_by_id(workspace, pane_handle, active_item_id, cx);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_items_to_the_left_by_id(active_item_id, cx))
     }
 
     pub fn close_items_to_the_left_by_id(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         item_id: usize,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let item_ids: Vec<_> = pane
-            .read(cx)
+        let item_ids: Vec<_> = self
             .items()
             .take_while(|item| item.id() != item_id)
             .map(|item| item.id())
             .collect();
-
-        let task = Self::close_items(workspace, pane, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
-
-        cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        })
+        self.close_items(cx, move |item_id| item_ids.contains(&item_id))
     }
 
     pub fn close_items_to_the_right(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseItemsToTheRight,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_items_to_the_right_by_id(workspace, pane_handle, active_item_id, cx);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_items_to_the_right_by_id(active_item_id, cx))
     }
 
     pub fn close_items_to_the_right_by_id(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         item_id: usize,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let item_ids: Vec<_> = pane
-            .read(cx)
+        let item_ids: Vec<_> = self
             .items()
             .rev()
             .take_while(|item| item.id() != item_id)
             .map(|item| item.id())
             .collect();
-
-        let task = Self::close_items(workspace, pane, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
-
-        cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        })
+        self.close_items(cx, move |item_id| item_ids.contains(&item_id))
     }
 
     pub fn close_all_items(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseAllItems,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |_| true);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        Some(self.close_items(cx, move |_| true))
     }
 
     pub fn close_items(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        &mut self,
+        cx: &mut ViewContext<Pane>,
         should_close: impl 'static + Fn(usize) -> bool,
     ) -> Task<Result<()>> {
-        let project = workspace.project().clone();
-
         // Find the items to close.
         let mut items_to_close = Vec::new();
-        for item in &pane.read(cx).items {
+        for item in &self.items {
             if should_close(item.id()) {
                 items_to_close.push(item.boxed_clone());
             }
@@ -873,8 +794,8 @@ impl Pane {
         // of what content they would be saving.
         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
-        let pane = pane.downgrade();
-        cx.spawn(|workspace, mut cx| async move {
+        let workspace = self.workspace.clone();
+        cx.spawn(|pane, mut cx| async move {
             let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
                 // Find the item's current index and its set of project item models. Avoid
@@ -892,7 +813,7 @@ impl Pane {
                 // Check if this view has any project items that are not open anywhere else
                 // in the workspace, AND that the user has not already been prompted to save.
                 // If there are any such project entries, prompt the user to save this item.
-                workspace.read_with(&cx, |workspace, cx| {
+                let project = workspace.read_with(&cx, |workspace, cx| {
                     for item in workspace.items(cx) {
                         if !items_to_close
                             .iter()
@@ -902,6 +823,7 @@ impl Pane {
                             project_item_ids.retain(|id| !other_project_item_ids.contains(id));
                         }
                     }
+                    workspace.project().clone()
                 })?;
                 let should_save = project_item_ids
                     .iter()
@@ -1200,14 +1122,11 @@ impl Pane {
                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
                     vec![
                         ContextMenuItem::handler("Close Inactive Item", {
-                            let workspace = self.workspace.clone();
                             let pane = target_pane.clone();
                             move |cx| {
-                                if let Some((workspace, pane)) =
-                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Self::close_item_by_id(workspace, pane, target_item_id, cx)
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_item_by_id(target_item_id, cx)
                                             .detach_and_log_err(cx);
                                     })
                                 }
@@ -1216,39 +1135,23 @@ impl Pane {
                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
                         ContextMenuItem::handler("Close Items To The Left", {
-                            let workspace = self.workspace.clone();
                             let pane = target_pane.clone();
                             move |cx| {
-                                if let Some((workspace, pane)) =
-                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Self::close_items_to_the_left_by_id(
-                                            workspace,
-                                            pane,
-                                            target_item_id,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_items_to_the_left_by_id(target_item_id, cx)
+                                            .detach_and_log_err(cx);
                                     })
                                 }
                             }
                         }),
                         ContextMenuItem::handler("Close Items To The Right", {
-                            let workspace = self.workspace.clone();
                             let pane = target_pane.clone();
                             move |cx| {
-                                if let Some((workspace, pane)) =
-                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Self::close_items_to_the_right_by_id(
-                                            workspace,
-                                            pane,
-                                            target_item_id,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_items_to_the_right_by_id(target_item_id, cx)
+                                            .detach_and_log_err(cx);
                                     })
                                 }
                             }
@@ -1336,20 +1239,7 @@ impl Pane {
                                 .on_click(MouseButton::Middle, {
                                     let item_id = item.id();
                                     move |_, pane, cx| {
-                                        let workspace = pane.workspace.clone();
-                                        let pane = cx.weak_handle();
-                                        cx.window_context().defer(move |cx| {
-                                            if let Some((workspace, pane)) =
-                                                workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                            {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    Self::close_item_by_id(
-                                                        workspace, pane, item_id, cx,
-                                                    )
-                                                    .detach_and_log_err(cx);
-                                                });
-                                            }
-                                        });
+                                        pane.close_item_by_id(item_id, cx).detach_and_log_err(cx);
                                     }
                                 })
                                 .on_down(
@@ -1556,12 +1446,9 @@ impl Pane {
                             let pane = pane.clone();
                             cx.window_context().defer(move |cx| {
                                 if let Some(pane) = pane.upgrade(cx) {
-                                    if let Some(workspace) = pane.read(cx).workspace.upgrade(cx) {
-                                        workspace.update(cx, |workspace, cx| {
-                                            Self::close_item_by_id(workspace, pane, item_id, cx)
-                                                .detach_and_log_err(cx);
-                                        });
-                                    }
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_item_by_id(item_id, cx).detach_and_log_err(cx);
+                                    });
                                 }
                             });
                         }
@@ -2028,9 +1915,10 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        workspace.update(cx, |workspace, cx| {
-            assert!(Pane::close_active_item(workspace, &CloseActiveItem, cx).is_none())
+        pane.update(cx, |pane, cx| {
+            assert!(pane.close_active_item(&CloseActiveItem, cx).is_none())
         });
     }
 
@@ -2327,30 +2215,22 @@ mod tests {
         add_labeled_item(&workspace, &pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A", "C*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A*"], cx);
     }
@@ -2366,8 +2246,8 @@ mod tests {
 
         set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_inactive_items(workspace, &CloseInactiveItems, cx);
+        pane.update(cx, |pane, cx| {
+            pane.close_inactive_items(&CloseInactiveItems, cx)
         });
 
         deterministic.run_until_parked();
@@ -2390,9 +2270,7 @@ mod tests {
         add_labeled_item(&workspace, &pane, "E", false, cx);
         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_clean_items(workspace, &CloseCleanItems, cx);
-        });
+        pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx));
 
         deterministic.run_until_parked();
         assert_item_labels(&pane, ["A^", "C*^"], cx);
@@ -2412,8 +2290,8 @@ mod tests {
 
         set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_items_to_the_left(workspace, &CloseItemsToTheLeft, cx);
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
         });
 
         deterministic.run_until_parked();
@@ -2434,8 +2312,8 @@ mod tests {
 
         set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_items_to_the_right(workspace, &CloseItemsToTheRight, cx);
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
         });
 
         deterministic.run_until_parked();
@@ -2456,9 +2334,7 @@ mod tests {
         add_labeled_item(&workspace, &pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_all_items(workspace, &CloseAllItems, cx);
-        });
+        pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx));
 
         deterministic.run_until_parked();
         assert_item_labels(&pane, [], cx);
