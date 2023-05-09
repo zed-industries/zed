@@ -2,7 +2,7 @@ use gpui::{elements::*, Entity, ModelHandle, View, ViewContext, ViewHandle, Weak
 use project::Project;
 use settings::{Settings, WorkingDirectory};
 use util::ResultExt;
-use workspace::{dock::Panel, Pane, Workspace};
+use workspace::{dock::Panel, DraggedItem, Pane, Workspace};
 
 use crate::TerminalView;
 
@@ -17,11 +17,20 @@ impl TerminalPanel {
         Self {
             project: workspace.project().clone(),
             pane: cx.add_view(|cx| {
-                Pane::new(
+                let window_id = cx.window_id();
+                let mut pane = Pane::new(
                     workspace.weak_handle(),
                     workspace.app_state().background_actions,
                     cx,
-                )
+                );
+                pane.on_can_drop(move |drag_and_drop, cx| {
+                    drag_and_drop
+                        .currently_dragged::<DraggedItem>(window_id)
+                        .map_or(false, |(_, item)| {
+                            item.handle.act_as::<TerminalView>(cx).is_some()
+                        })
+                });
+                pane
             }),
             workspace: workspace.weak_handle(),
         }

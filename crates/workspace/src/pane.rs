@@ -7,8 +7,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::Draggable;
-pub use dragged_item_receiver::{dragged_item_receiver, handle_dropped_item};
+use drag_and_drop::{DragAndDrop, Draggable};
+use dragged_item_receiver::dragged_item_receiver;
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -148,6 +148,7 @@ pub struct Pane {
     _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
+    can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
 }
 
 pub struct ItemNavHistory {
@@ -185,9 +186,9 @@ pub struct NavigationEntry {
     pub data: Option<Box<dyn Any>>,
 }
 
-struct DraggedItem {
-    item: Box<dyn ItemHandle>,
-    pane: WeakViewHandle<Pane>,
+pub struct DraggedItem {
+    pub handle: Box<dyn ItemHandle>,
+    pub pane: WeakViewHandle<Pane>,
 }
 
 pub enum ReorderBehavior {
@@ -253,6 +254,7 @@ impl Pane {
             _background_actions: background_actions,
             workspace,
             has_focus: false,
+            can_drop: Rc::new(|_, _| true),
         }
     }
 
@@ -271,6 +273,13 @@ impl Pane {
 
     pub fn has_focus(&self) -> bool {
         self.has_focus
+    }
+
+    pub fn on_can_drop<F>(&mut self, can_drop: F)
+    where
+        F: 'static + Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool,
+    {
+        self.can_drop = Rc::new(can_drop);
     }
 
     pub fn nav_history_for_item<T: Item>(&self, item: &ViewHandle<T>) -> ItemNavHistory {
@@ -1293,7 +1302,7 @@ impl Pane {
             row.add_child({
                 enum TabDragReceiver {}
                 let mut receiver =
-                    dragged_item_receiver::<TabDragReceiver, _, _>(ix, ix, true, None, cx, {
+                    dragged_item_receiver::<TabDragReceiver, _, _>(self, ix, ix, true, None, cx, {
                         let item = item.clone();
                         let pane = pane.clone();
                         let detail = detail.clone();
@@ -1372,7 +1381,7 @@ impl Pane {
 
                 receiver.as_draggable(
                     DraggedItem {
-                        item,
+                        handle: item,
                         pane: pane.clone(),
                     },
                     {
@@ -1382,7 +1391,7 @@ impl Pane {
                         move |dragged_item: &DraggedItem, cx: &mut ViewContext<Workspace>| {
                             let tab_style = &theme.workspace.tab_bar.dragged_tab;
                             Self::render_dragged_tab(
-                                &dragged_item.item,
+                                &dragged_item.handle,
                                 dragged_item.pane.clone(),
                                 false,
                                 detail,
@@ -1402,7 +1411,7 @@ impl Pane {
         let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
         enum Filler {}
         row.add_child(
-            dragged_item_receiver::<Filler, _, _>(0, filler_index, true, None, cx, |_, _| {
+            dragged_item_receiver::<Filler, _, _>(self, 0, filler_index, true, None, cx, |_, _| {
                 Empty::new()
                     .contained()
                     .with_style(filler_style.container)
@@ -1601,11 +1610,7 @@ impl Pane {
             .into_any()
     }
 
-    fn render_blank_pane(
-        &mut self,
-        theme: &Theme,
-        _cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
+    fn render_blank_pane(&self, theme: &Theme, _cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
@@ -1668,6 +1673,7 @@ impl View for Pane {
                     .with_child({
                         enum PaneContentTabDropTarget {}
                         dragged_item_receiver::<PaneContentTabDropTarget, _, _>(
+                            self,
                             0,
                             self.active_item_index + 1,
                             false,
@@ -1696,7 +1702,7 @@ impl View for Pane {
                 enum EmptyPane {}
                 let theme = cx.global::<Settings>().theme.clone();
 
-                dragged_item_receiver::<EmptyPane, _, _>(0, 0, false, None, cx, |_, cx| {
+                dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
                     self.render_blank_pane(&theme, cx)
                 })
                 .on_down(MouseButton::Left, |_, _, cx| {
