@@ -5,6 +5,7 @@ use futures::stream::StreamExt;
 use gpui::{
     actions,
     anyhow::{anyhow, Result},
+    color::Color,
     elements::{
         AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
@@ -13,10 +14,13 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
     AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle, color::Color,
+    ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId, repository::GitStatus};
+use project::{
+    repository::GitStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
+    WorktreeId,
+};
 use settings::Settings;
 use std::{
     cmp::Ordering,
@@ -86,7 +90,7 @@ pub struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
-    git_status: Option<GitStatus>
+    git_status: Option<GitStatus>,
 }
 
 actions!(
@@ -1010,11 +1014,9 @@ impl ProjectPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in &visible_worktree_entries[entry_range] {
                     let path = &entry.path;
-                    let status = snapshot.repo_for(path)
-                        .and_then(|entry| {
-                            entry.status_for(&snapshot, path)
-                        });
-
+                    let status = snapshot
+                        .repo_for(path)
+                        .and_then(|entry| entry.status_for(&snapshot, path));
 
                     let mut details = EntryDetails {
                         filename: entry
@@ -1036,7 +1038,7 @@ impl ProjectPanel {
                         is_cut: self
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
-                        git_status: status
+                        git_status: status,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1078,14 +1080,16 @@ impl ProjectPanel {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
-        let git_color = details.git_status.as_ref().and_then(|status| {
-            match status {
+        let git_color = details
+            .git_status
+            .as_ref()
+            .and_then(|status| match status {
                 GitStatus::Added => Some(Color::green()),
                 GitStatus::Modified => Some(Color::blue()),
                 GitStatus::Conflict => Some(Color::red()),
                 GitStatus::Untracked => None,
-            }
-        }).unwrap_or(Color::transparent_black());
+            })
+            .unwrap_or(Color::transparent_black());
 
         Flex::row()
             .with_child(

@@ -3787,14 +3787,9 @@ mod tests {
             let oid = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(oid).unwrap();
             if let Some(head) = repo.head().ok() {
-                let parent_obj = head
-                    .peel(git2::ObjectType::Commit)
-                    .unwrap();
+                let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
 
-                let parent_commit = parent_obj
-                    .as_commit()
-                    .unwrap();
-
+                let parent_commit = parent_obj.as_commit().unwrap();
 
                 repo.commit(
                     Some("HEAD"),
@@ -3806,15 +3801,8 @@ mod tests {
                 )
                 .expect("Failed to commit with parent");
             } else {
-                repo.commit(
-                    Some("HEAD"),
-                    &signature,
-                    &signature,
-                    msg,
-                    &tree,
-                    &[],
-                )
-                .expect("Failed to commit");
+                repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
+                    .expect("Failed to commit");
             }
         }
 
@@ -3842,14 +3830,13 @@ mod tests {
                 .expect("Could not reset");
         }
 
+        #[allow(dead_code)]
         #[track_caller]
         fn git_status(repo: &git2::Repository) -> HashMap<String, git2::Status> {
             repo.statuses(None)
                 .unwrap()
                 .iter()
-                .map(|status| {
-                    (status.path().unwrap().to_string(), status.status())
-                })
+                .map(|status| (status.path().unwrap().to_string(), status.status()))
                 .collect()
         }
 
@@ -3931,9 +3918,7 @@ mod tests {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-
             dbg!(&repo.statuses);
-
 
             assert_eq!(repo.statuses.iter().count(), 1);
             assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
