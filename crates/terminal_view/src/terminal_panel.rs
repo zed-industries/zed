@@ -16,7 +16,7 @@ pub struct TerminalPanel {
     project: ModelHandle<Project>,
     pane: ViewHandle<Pane>,
     workspace: WeakViewHandle<Workspace>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl TerminalPanel {
@@ -37,12 +37,15 @@ impl TerminalPanel {
             });
             pane
         });
-        let subscription = cx.subscribe(&pane, Self::handle_pane_event);
+        let subscriptions = vec![
+            cx.observe(&pane, |_, _, cx| cx.notify()),
+            cx.subscribe(&pane, Self::handle_pane_event),
+        ];
         Self {
             project: workspace.project().clone(),
             pane,
             workspace: workspace.weak_handle(),
-            _subscription: subscription,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -107,5 +110,14 @@ impl View for TerminalPanel {
 impl Panel for TerminalPanel {
     fn should_close_on_event(&self, event: &Event, _: &AppContext) -> bool {
         matches!(event, Event::Close)
+    }
+
+    fn label(&self, cx: &AppContext) -> Option<String> {
+        let count = self.pane.read(cx).items_len();
+        if count == 0 {
+            None
+        } else {
+            Some(count.to_string())
+        }
     }
 }

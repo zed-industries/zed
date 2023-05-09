@@ -346,7 +346,6 @@ pub struct StatusBarPanelButtons {
     pub group_bottom: ContainerStyle,
     pub group_right: ContainerStyle,
     pub button: Interactive<PanelButton>,
-    pub badge: ContainerStyle,
 }
 
 #[derive(Deserialize, Default)]

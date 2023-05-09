@@ -14,8 +14,8 @@ pub trait Panel: View {
     fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
-    fn should_show_badge(&self, _: &AppContext) -> bool {
-        false
+    fn label(&self, _: &AppContext) -> Option<String> {
+        None
     }
     fn contains_focused_view(&self, _: &AppContext) -> bool {
         false
@@ -24,7 +24,7 @@ pub trait Panel: View {
 
 pub trait PanelHandle {
     fn id(&self) -> usize;
-    fn should_show_badge(&self, cx: &WindowContext) -> bool;
+    fn label(&self, cx: &WindowContext) -> Option<String>;
     fn is_focused(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
@@ -37,8 +37,8 @@ where
         self.id()
     }
 
-    fn should_show_badge(&self, cx: &WindowContext) -> bool {
-        self.read(cx).should_show_badge(cx)
+    fn label(&self, cx: &WindowContext) -> Option<String> {
+        self.read(cx).label(cx)
     }
 
     fn is_focused(&self, cx: &WindowContext) -> bool {
@@ -247,7 +247,6 @@ impl View for PanelButtons {
         let theme = &theme.workspace.status_bar.panel_buttons;
         let dock = self.dock.read(cx);
         let item_style = theme.button.clone();
-        let badge_style = theme.badge;
         let active_ix = dock.active_item_ix;
         let is_open = dock.is_open;
         let dock_position = dock.position;
@@ -274,23 +273,25 @@ impl View for PanelButtons {
                     MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
                         let is_active = is_open && ix == active_ix;
                         let style = item_style.style_for(state, is_active);
-                        Stack::new()
-                            .with_child(Svg::new(icon_path).with_color(style.icon_color))
-                            .with_children(if !is_active && item_view.should_show_badge(cx) {
+                        Flex::row()
+                            .with_child(
+                                Svg::new(icon_path)
+                                    .with_color(style.icon_color)
+                                    .constrained()
+                                    .with_width(style.icon_size)
+                                    .aligned(),
+                            )
+                            .with_children(if let Some(label) = item_view.label(cx) {
                                 Some(
-                                    Empty::new()
-                                        .collapsed()
+                                    Label::new(label, style.label.text.clone())
                                         .contained()
-                                        .with_style(badge_style)
-                                        .aligned()
-                                        .bottom()
-                                        .right(),
+                                        .with_style(style.label.container)
+                                        .aligned(),
                                 )
                             } else {
                                 None
                             })
                             .constrained()
-                            .with_width(style.icon_size)
                             .with_height(style.icon_size)
                             .contained()
                             .with_style(style.container)

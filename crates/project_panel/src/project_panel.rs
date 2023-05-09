@@ -1327,11 +1327,7 @@ impl Entity for ProjectPanel {
     type Event = Event;
 }
 
-impl workspace::dock::Panel for ProjectPanel {
-    fn should_show_badge(&self, _: &AppContext) -> bool {
-        false
-    }
-}
+impl workspace::dock::Panel for ProjectPanel {}
 
 impl ClipboardEntry {
     fn is_cut(&self) -> bool {
