@@ -98,13 +98,15 @@ impl SearchQuery {
                 message
                     .files_to_include
                     .split(',')
-                    .filter(|glob_str| !glob_str.trim().is_empty())
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
                 message
                     .files_to_exclude
                     .split(',')
-                    .filter(|glob_str| !glob_str.trim().is_empty())
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
             )
@@ -116,13 +118,15 @@ impl SearchQuery {
                 message
                     .files_to_include
                     .split(',')
-                    .filter(|glob_str| !glob_str.trim().is_empty())
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
                 message
                     .files_to_exclude
                     .split(',')
-                    .filter(|glob_str| !glob_str.trim().is_empty())
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
                     .map(|glob_str| glob::Pattern::new(glob_str))
                     .collect::<Result<_, _>>()?,
             ))
