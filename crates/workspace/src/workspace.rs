@@ -1601,7 +1601,7 @@ impl Workspace {
             self.active_item_path_changed(cx);
 
             if &pane == self.dock_pane() {
-                Dock::show(self, true, cx);
+                Dock::show(self, false, cx);
             } else {
                 self.last_active_center_pane = Some(pane.downgrade());
                 if self.dock.is_anchored_at(DockAnchor::Expanded) {
@@ -2609,7 +2609,7 @@ impl Workspace {
                     Dock::set_dock_position(
                         workspace,
                         serialized_workspace.dock_position,
-                        true,
+                        false,
                         cx,
                     );
                 });
