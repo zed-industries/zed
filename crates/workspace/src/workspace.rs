@@ -575,8 +575,8 @@ impl Workspace {
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
             status_bar.add_left_item(left_dock_buttons, cx);
-            status_bar.add_right_item(bottom_dock_buttons, cx);
             status_bar.add_right_item(right_dock_buttons, cx);
+            status_bar.add_right_item(bottom_dock_buttons, cx);
             status_bar
         });
 
