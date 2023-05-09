@@ -4717,6 +4717,7 @@ dependencies = [
  "futures 0.3.25",
  "fuzzy",
  "git",
+ "git2",
  "glob",
  "gpui",
  "ignore",

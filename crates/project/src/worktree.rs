@@ -120,6 +120,25 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
+impl Snapshot {
+    pub fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
+        let mut max_len = 0;
+        let mut current_candidate = None;
+        for (work_directory, repo) in (&self.repository_entries).iter() {
+            if repo.contains(self, path) {
+                if work_directory.0.as_os_str().len() >= max_len {
+                    current_candidate = Some(repo);
+                    max_len = work_directory.0.as_os_str().len();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        current_candidate.map(|entry| entry.to_owned())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
@@ -144,6 +163,13 @@ impl RepositoryEntry {
 
     pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
         self.work_directory.contains(snapshot, path)
+    }
+
+    pub fn status_for(&self, snapshot: &Snapshot, path: &Path) -> Option<GitStatus> {
+        self.work_directory
+            .relativize(snapshot, path)
+            .and_then(|repo_path| self.statuses.get(&repo_path))
+            .cloned()
     }
 }
 
@@ -1560,23 +1586,6 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
-    pub(crate) fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
-        let mut max_len = 0;
-        let mut current_candidate = None;
-        for (work_directory, repo) in (&self.repository_entries).iter() {
-            if repo.contains(self, path) {
-                if work_directory.0.as_os_str().len() >= max_len {
-                    current_candidate = Some(repo);
-                    max_len = work_directory.0.as_os_str().len();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        current_candidate.map(|entry| entry.to_owned())
-    }
-
     pub(crate) fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
         self.git_repositories.get(&repo.work_directory.0)
     }
@@ -3748,6 +3757,203 @@ mod tests {
             let tree = tree.as_local().unwrap();
 
             assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_git_status(cx: &mut TestAppContext) {
+        #[track_caller]
+        fn git_init(path: &Path) -> git2::Repository {
+            git2::Repository::init(path).expect("Failed to initialize git repository")
+        }
+
+        #[track_caller]
+        fn git_add(path: &Path, repo: &git2::Repository) {
+            let mut index = repo.index().expect("Failed to get index");
+            index.add_path(path).expect("Failed to add a.txt");
+            index.write().expect("Failed to write index");
+        }
+
+        #[track_caller]
+        fn git_remove_index(path: &Path, repo: &git2::Repository) {
+            let mut index = repo.index().expect("Failed to get index");
+            index.remove_path(path).expect("Failed to add a.txt");
+            index.write().expect("Failed to write index");
+        }
+
+        #[track_caller]
+        fn git_commit(msg: &'static str, repo: &git2::Repository) {
+            let signature = repo.signature().unwrap();
+            let oid = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(oid).unwrap();
+            if let Some(head) = repo.head().ok() {
+                let parent_obj = head
+                    .peel(git2::ObjectType::Commit)
+                    .unwrap();
+
+                let parent_commit = parent_obj
+                    .as_commit()
+                    .unwrap();
+
+
+                repo.commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    msg,
+                    &tree,
+                    &[parent_commit],
+                )
+                .expect("Failed to commit with parent");
+            } else {
+                repo.commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    msg,
+                    &tree,
+                    &[],
+                )
+                .expect("Failed to commit");
+            }
+        }
+
+        #[track_caller]
+        fn git_stash(repo: &mut git2::Repository) {
+            let signature = repo.signature().unwrap();
+            repo.stash_save(&signature, "N/A", None)
+                .expect("Failed to stash");
+        }
+
+        #[track_caller]
+        fn git_reset(offset: usize, repo: &git2::Repository) {
+            let head = repo.head().expect("Couldn't get repo head");
+            let object = head.peel(git2::ObjectType::Commit).unwrap();
+            let commit = object.as_commit().unwrap();
+            let new_head = commit
+                .parents()
+                .inspect(|parnet| {
+                    parnet.message();
+                })
+                .skip(offset)
+                .next()
+                .expect("Not enough history");
+            repo.reset(&new_head.as_object(), git2::ResetType::Soft, None)
+                .expect("Could not reset");
+        }
+
+        #[track_caller]
+        fn git_status(repo: &git2::Repository) -> HashMap<String, git2::Status> {
+            repo.statuses(None)
+                .unwrap()
+                .iter()
+                .map(|status| {
+                    (status.path().unwrap().to_string(), status.status())
+                })
+                .collect()
+        }
+
+        let root = temp_tree(json!({
+            "project": {
+                "a.txt": "a",
+                "b.txt": "bb",
+            },
+
+        }));
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = cx.read(|cx| Client::new(http_client, cx));
+        let tree = Worktree::local(
+            client,
+            root.path(),
+            true,
+            Arc::new(RealFs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        const A_TXT: &'static str = "a.txt";
+        const B_TXT: &'static str = "b.txt";
+        let work_dir = root.path().join("project");
+
+        let mut repo = git_init(work_dir.as_path());
+        git_add(Path::new(A_TXT), &repo);
+        git_commit("Initial commit", &repo);
+
+        std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
+
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        tree.flush_fs_events(cx).await;
+
+        // Check that the right git state is observed on startup
+        tree.read_with(cx, |tree, _cx| {
+            let snapshot = tree.snapshot();
+            assert_eq!(snapshot.repository_entries.iter().count(), 1);
+            let (dir, repo) = snapshot.repository_entries.iter().next().unwrap();
+            assert_eq!(dir.0.as_ref(), Path::new("project"));
+
+            assert_eq!(repo.statuses.iter().count(), 2);
+            assert_eq!(
+                repo.statuses.get(&Path::new(A_TXT).into()),
+                Some(&GitStatus::Modified)
+            );
+            assert_eq!(
+                repo.statuses.get(&Path::new(B_TXT).into()),
+                Some(&GitStatus::Added)
+            );
+        });
+
+        git_add(Path::new(A_TXT), &repo);
+        git_add(Path::new(B_TXT), &repo);
+        git_commit("Committing modified and added", &repo);
+        tree.flush_fs_events(cx).await;
+
+        // Check that repo only changes are tracked
+        tree.read_with(cx, |tree, _cx| {
+            let snapshot = tree.snapshot();
+            let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
+
+            assert_eq!(repo.statuses.iter().count(), 0);
+            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
+            assert_eq!(repo.statuses.get(&Path::new(B_TXT).into()), None);
+        });
+
+        git_reset(0, &repo);
+        git_remove_index(Path::new(B_TXT), &repo);
+        git_stash(&mut repo);
+        tree.flush_fs_events(cx).await;
+
+        // Check that more complex repo changes are tracked
+        tree.read_with(cx, |tree, _cx| {
+            let snapshot = tree.snapshot();
+            let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
+
+
+            dbg!(&repo.statuses);
+
+
+            assert_eq!(repo.statuses.iter().count(), 1);
+            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
+            assert_eq!(
+                repo.statuses.get(&Path::new(B_TXT).into()),
+                Some(&GitStatus::Added)
+            );
+        });
+
+        std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
+        tree.flush_fs_events(cx).await;
+
+        // Check that non-repo behavior is tracked
+        tree.read_with(cx, |tree, _cx| {
+            let snapshot = tree.snapshot();
+            let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
+
+            assert_eq!(repo.statuses.iter().count(), 0);
+            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
+            assert_eq!(repo.statuses.get(&Path::new(B_TXT).into()), None);
         });
     }
 

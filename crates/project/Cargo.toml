@@ -74,5 +74,6 @@ lsp = { path = "../lsp", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
+git2 = { version = "0.15", default-features = false }
 tempdir.workspace = true
 unindent.workspace = true
