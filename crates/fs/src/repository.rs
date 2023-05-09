@@ -1,11 +1,14 @@
 use anyhow::Result;
 use collections::HashMap;
+use git2::Status;
 use parking_lot::Mutex;
-use sum_tree::TreeMap;
 use std::{
+    ffi::OsStr,
+    os::unix::prelude::OsStrExt,
     path::{Component, Path, PathBuf},
-    sync::Arc, ffi::OsStr, os::unix::prelude::OsStrExt,
+    sync::Arc,
 };
+use sum_tree::TreeMap;
 use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
@@ -19,6 +22,8 @@ pub trait GitRepository: Send {
     fn branch_name(&self) -> Option<String>;
 
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>>;
+
+    fn file_status(&self, path: &RepoPath) -> Option<GitStatus>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -70,72 +75,22 @@ impl GitRepository for LibGitRepository {
 
         let mut map = TreeMap::default();
 
-        for status in statuses.iter() {
+        for status in statuses
+            .iter()
+            .filter(|status| !status.status().contains(git2::Status::IGNORED))
+        {
             let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
 
-            let status_data = status.status();
-
-            let status = if status_data.contains(git2::Status::CONFLICTED) {
-                GitStatus::Conflict
-            } else if status_data.intersects(git2::Status::INDEX_MODIFIED
-                | git2::Status::WT_MODIFIED
-                | git2::Status::INDEX_RENAMED
-                | git2::Status::WT_RENAMED) {
-                GitStatus::Modified
-            } else if status_data.intersects(git2::Status::INDEX_NEW | git2::Status::WT_NEW) {
-                GitStatus::Added
-            } else {
-                GitStatus::Untracked
-            };
-
-            map.insert(path, status)
+            map.insert(path, status.status().into())
         }
 
         Some(map)
     }
-}
 
-#[derive(Debug, Clone, Default)]
-pub enum GitStatus {
-    Added,
-    Modified,
-    Conflict,
-    #[default]
-    Untracked,
-}
+    fn file_status(&self, path: &RepoPath) -> Option<GitStatus> {
+        let status = self.status_file(path).log_err()?;
 
-#[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(PathBuf);
-
-impl From<&Path> for RepoPath {
-    fn from(value: &Path) -> Self {
-        RepoPath(value.to_path_buf())
-    }
-}
-
-impl From<PathBuf> for RepoPath {
-    fn from(value: PathBuf) -> Self {
-        RepoPath(value)
-    }
-}
-
-impl Default for RepoPath {
-    fn default() -> Self {
-        RepoPath(PathBuf::new())
-    }
-}
-
-impl AsRef<Path> for RepoPath {
-    fn as_ref(&self) -> &Path {
-        self.0.as_ref()
-    }
-}
-
-impl std::ops::Deref for RepoPath {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        Some(status.into())
     }
 }
 
@@ -170,7 +125,11 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>>{
+    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>> {
+        todo!()
+    }
+
+    fn file_status(&self, _: &RepoPath) -> Option<GitStatus> {
         todo!()
     }
 }
@@ -201,5 +160,76 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
             )
         }
         _ => Ok(()),
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum GitStatus {
+    Added,
+    Modified,
+    Conflict,
+    #[default]
+    Untracked,
+}
+
+impl From<Status> for GitStatus {
+    fn from(value: Status) -> Self {
+        if value.contains(git2::Status::CONFLICTED) {
+            GitStatus::Conflict
+        } else if value.intersects(
+            git2::Status::INDEX_MODIFIED
+                | git2::Status::WT_MODIFIED
+                | git2::Status::INDEX_RENAMED
+                | git2::Status::WT_RENAMED,
+        ) {
+            GitStatus::Modified
+        } else if value.intersects(git2::Status::INDEX_NEW | git2::Status::WT_NEW) {
+            GitStatus::Added
+        } else {
+            GitStatus::Untracked
+        }
+    }
+}
+
+#[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
+pub struct RepoPath(PathBuf);
+
+impl RepoPath {
+    fn new(path: PathBuf) -> Self {
+        debug_assert!(path.is_relative(), "Repo paths must be relative");
+
+        RepoPath(path)
+    }
+}
+
+impl From<&Path> for RepoPath {
+    fn from(value: &Path) -> Self {
+        RepoPath::new(value.to_path_buf())
+    }
+}
+
+impl From<PathBuf> for RepoPath {
+    fn from(value: PathBuf) -> Self {
+        RepoPath::new(value)
+    }
+}
+
+impl Default for RepoPath {
+    fn default() -> Self {
+        RepoPath(PathBuf::new())
+    }
+}
+
+impl AsRef<Path> for RepoPath {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
+    }
+}
+
+impl std::ops::Deref for RepoPath {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

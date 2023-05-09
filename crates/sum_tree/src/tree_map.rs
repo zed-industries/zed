@@ -2,13 +2,13 @@ use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
     K: Clone + Debug + Default + Ord,
     V: Clone + Debug;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapEntry<K, V> {
     key: K,
     value: V,
