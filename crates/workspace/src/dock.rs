@@ -78,7 +78,7 @@ impl DockPosition {
     fn to_resizable_side(self) -> Side {
         match self {
             Self::Left => Side::Right,
-            Self::Bottom => Side::Bottom,
+            Self::Bottom => Side::Top,
             Self::Right => Side::Left,
         }
     }
