@@ -126,6 +126,7 @@ impl View for Toolbar {
 
         let container_style = theme.container;
         let height = theme.height * primary_items_row_count as f32;
+        let nav_button_height = theme.height;
         let button_style = theme.nav_button;
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
@@ -135,6 +136,7 @@ impl View for Toolbar {
                     .with_child(nav_button(
                         "icons/arrow_left_16.svg",
                         button_style,
+                        nav_button_height,
                         tooltip_style.clone(),
                         enable_go_backward,
                         spacing,
@@ -163,6 +165,7 @@ impl View for Toolbar {
                     .with_child(nav_button(
                         "icons/arrow_right_16.svg",
                         button_style,
+                        nav_button_height,
                         tooltip_style,
                         enable_go_forward,
                         spacing,
@@ -204,6 +207,7 @@ impl View for Toolbar {
 fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
     svg_path: &'static str,
     style: theme::Interactive<theme::IconButton>,
+    nav_button_height: f32,
     tooltip_style: TooltipStyle,
     enabled: bool,
     spacing: f32,
@@ -227,8 +231,9 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
             .with_style(style.container)
             .constrained()
             .with_width(style.button_width)
-            .with_height(style.button_width)
+            .with_height(nav_button_height)
             .aligned()
+            .top()
     })
     .with_cursor_style(if enabled {
         CursorStyle::PointingHand

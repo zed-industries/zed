@@ -1011,7 +1011,6 @@ impl View for ProjectSearchBar {
                 )
                 .with_child(
                     Flex::row()
-                        // TODO kb better layout
                         .with_child(
                             Flex::row()
                                 .with_child(
