@@ -1061,11 +1061,11 @@ pub(crate) mod test {
     }
 
     impl Panel for TestItem {
-        fn position(&self, cx: &gpui::WindowContext) -> crate::dock::DockPosition {
+        fn position(&self, _cx: &gpui::WindowContext) -> crate::dock::DockPosition {
             unimplemented!()
         }
 
-        fn position_is_valid(&self, position: crate::dock::DockPosition) -> bool {
+        fn position_is_valid(&self, _position: crate::dock::DockPosition) -> bool {
             unimplemented!()
         }
 

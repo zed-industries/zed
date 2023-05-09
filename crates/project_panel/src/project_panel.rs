@@ -1329,7 +1329,7 @@ impl Entity for ProjectPanel {
 
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        todo!()
+        cx.global::<Settings>().project_panel_overrides.dock.into()
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {

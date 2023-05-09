@@ -6,7 +6,7 @@ use gpui::{
 use project::Project;
 use settings::{Settings, WorkingDirectory};
 use util::ResultExt;
-use workspace::{dock::Panel, pane, DraggedItem, Pane, Workspace};
+use workspace::{dock::{Panel, DockPosition}, pane, DraggedItem, Pane, Workspace};
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalPanel::add_terminal);
@@ -135,8 +135,20 @@ impl View for TerminalPanel {
 }
 
 impl Panel for TerminalPanel {
-    fn should_close_on_event(&self, event: &Event, _: &AppContext) -> bool {
-        matches!(event, Event::Close)
+    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+        cx.global::<Settings>().terminal_overrides.dock.into()
+    }
+
+    fn position_is_valid(&self, _: DockPosition) -> bool {
+        true
+    }
+
+    fn icon_path(&self) -> &'static str {
+        "icons/terminal_12.svg"
+    }
+
+    fn icon_tooltip(&self) -> String {
+        "Terminals".to_string()
     }
 
     fn icon_label(&self, cx: &AppContext) -> Option<String> {
@@ -146,5 +158,17 @@ impl Panel for TerminalPanel {
         } else {
             Some(count.to_string())
         }
+    }
+
+    fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        todo!()
+    }
+
+    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        todo!()
+    }
+
+    fn should_close_on_event(&self, event: &Event, _: &AppContext) -> bool {
+        matches!(event, Event::Close)
     }
 }

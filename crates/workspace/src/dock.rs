@@ -92,6 +92,16 @@ pub enum DockPosition {
     Right,
 }
 
+impl From<settings::DockPosition> for DockPosition {
+    fn from(value: settings::DockPosition) -> Self {
+        match value {
+            settings::DockPosition::Left => Self::Left,
+            settings::DockPosition::Bottom => Self::Bottom,
+            settings::DockPosition::Right => Self::Right,
+        }
+    }
+}
+
 impl DockPosition {
     fn to_resizable_side(self) -> Side {
         match self {

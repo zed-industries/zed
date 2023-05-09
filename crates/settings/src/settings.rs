@@ -44,6 +44,8 @@ pub struct Settings {
     pub show_call_status_icon: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
+    pub project_panel_defaults: ProjectPanelSettings,
+    pub project_panel_overrides: ProjectPanelSettings,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
     pub git: GitSettings,
@@ -129,6 +131,14 @@ impl TelemetrySettings {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all="lowercase")]
+pub enum DockPosition {
+    Left,
+    Right,
+    Bottom,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     pub disabled_globs: Vec<glob::Pattern>,
@@ -155,6 +165,19 @@ pub enum GitGutter {
 }
 
 pub struct GitGutterConfig {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectPanelSettings {
+    pub dock: DockPosition
+}
+
+impl Default for ProjectPanelSettings {
+    fn default() -> Self {
+        Self {
+            dock: DockPosition::Left
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettings {
@@ -237,7 +260,7 @@ impl Default for HourFormat {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettings {
     pub shell: Option<Shell>,
     pub working_directory: Option<WorkingDirectory>,
@@ -250,7 +273,28 @@ pub struct TerminalSettings {
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
     pub copy_on_select: Option<bool>,
+    pub dock: DockPosition,
 }
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            shell:Default::default(),
+            working_directory:Default::default(),
+            font_size:Default::default(),
+            font_family:Default::default(),
+            line_height:Default::default(),
+            font_features:Default::default(),
+            env:Default::default(),
+            blinking:Default::default(),
+            alternate_scroll:Default::default(),
+            option_as_meta:Default::default(),
+            copy_on_select:Default::default(),
+            dock: DockPosition::Bottom,
+        }
+    }
+}
+
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -457,6 +501,8 @@ impl Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
+            project_panel_defaults: Default::default(),
+            project_panel_overrides: Default::default(),
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
@@ -750,6 +796,8 @@ impl Settings {
             show_call_status_icon: true,
             vim_mode: false,
             autosave: Autosave::Off,
+            project_panel_defaults: Default::default(),
+            project_panel_overrides: Default::default(),
             editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),
