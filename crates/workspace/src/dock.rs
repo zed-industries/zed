@@ -15,7 +15,7 @@ pub trait Panel: View {
     fn icon_label(&self, _: &AppContext) -> Option<String> {
         None
     }
-    fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
+    fn should_change_position_on_event(_: &Self::Event) -> bool;
     fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
     fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
 }
@@ -80,7 +80,7 @@ pub enum Event {
 
 pub struct Dock {
     position: DockPosition,
-    items: Vec<Item>,
+    panels: Vec<PanelEntry>,
     is_open: bool,
     active_item_ix: usize,
 }
@@ -112,8 +112,8 @@ impl DockPosition {
     }
 }
 
-struct Item {
-    view: Rc<dyn PanelHandle>,
+struct PanelEntry {
+    panel: Rc<dyn PanelHandle>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -134,7 +134,7 @@ impl Dock {
     pub fn new(position: DockPosition) -> Self {
         Self {
             position,
-            items: Default::default(),
+            panels: Default::default(),
             active_item_ix: 0,
             is_open: false,
         }
@@ -161,15 +161,15 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn add_panel<T: Panel>(&mut self, view: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let subscriptions = [
-            cx.observe(&view, |_, _, cx| cx.notify()),
-            cx.subscribe(&view, |this, view, event, cx| {
+            cx.observe(&panel, |_, _, cx| cx.notify()),
+            cx.subscribe(&panel, |this, view, event, cx| {
                 if view.read(cx).should_activate_on_event(event, cx) {
                     if let Some(ix) = this
-                        .items
+                        .panels
                         .iter()
-                        .position(|item| item.view.id() == view.id())
+                        .position(|item| item.panel.id() == view.id())
                     {
                         this.activate_item(ix, cx);
                     }
@@ -179,11 +179,16 @@ impl Dock {
             }),
         ];
 
-        self.items.push(Item {
-            view: Rc::new(view),
+        self.panels.push(PanelEntry {
+            panel: Rc::new(panel),
             _subscriptions: subscriptions,
         });
         cx.notify()
+    }
+
+    pub fn remove_panel<T: Panel>(&mut self, panel: &ViewHandle<T>, cx: &mut ViewContext<Self>) {
+        self.panels.retain(|entry| entry.panel.id() != panel.id());
+        cx.notify();
     }
 
     pub fn activate_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
@@ -202,7 +207,7 @@ impl Dock {
 
     pub fn active_item(&self) -> Option<&Rc<dyn PanelHandle>> {
         if self.is_open {
-            self.items.get(self.active_item_ix).map(|item| &item.view)
+            self.panels.get(self.active_item_ix).map(|item| &item.panel)
         } else {
             None
         }
@@ -275,9 +280,9 @@ impl View for PanelButtons {
         };
 
         let items = dock
-            .items
+            .panels
             .iter()
-            .map(|item| item.view.clone())
+            .map(|item| item.panel.clone())
             .collect::<Vec<_>>();
         Flex::row()
             .with_children(items.into_iter().enumerate().map(|(ix, view)| {

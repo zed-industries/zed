@@ -1077,7 +1077,7 @@ pub(crate) mod test {
             unimplemented!()
         }
 
-        fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        fn should_change_position_on_event(_: &Self::Event) -> bool {
             unimplemented!()
         }
 

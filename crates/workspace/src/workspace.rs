@@ -836,10 +836,26 @@ impl Workspace {
 
     pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let dock = match panel.position(cx) {
-            DockPosition::Left => &mut self.left_dock,
-            DockPosition::Bottom => &mut self.bottom_dock,
-            DockPosition::Right => &mut self.right_dock,
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
         };
+
+        cx.subscribe(&panel, {
+            let mut dock = dock.clone();
+            move |this, panel, event, cx| {
+                if T::should_change_position_on_event(event) {
+                    dock.update(cx, |dock, cx| dock.remove_panel(&panel, cx));
+                    dock = match panel.read(cx).position(cx) {
+                        DockPosition::Left => &this.left_dock,
+                        DockPosition::Bottom => &this.bottom_dock,
+                        DockPosition::Right => &this.right_dock,
+                    }.clone();
+                    dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+                }
+            }
+        }).detach();
+
         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     }
 

@@ -107,6 +107,9 @@
   // Automatically update Zed
   "auto_update": true,
   // Git gutter behavior configuration.
+  "project_panel": {
+      "dock": "left"
+  },
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
@@ -149,6 +152,8 @@
     //         }
     //     }
     "shell": "system",
+    // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
+    "dock": "bottom",
     // What working directory to use when launching the terminal.
     // May take 4 values:
     // 1. Use the current file's project directory.  Will Fallback to the

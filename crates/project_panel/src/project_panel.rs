@@ -135,12 +135,25 @@ pub enum Event {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
     },
+    DockPositionChanged,
 }
 
 impl ProjectPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
+            // Update the dock position when the setting changes.
+            let mut old_dock_position = cx.global::<Settings>().project_panel_overrides.dock;
+            dbg!(old_dock_position);
+            cx.observe_global::<Settings, _>(move |_, cx| {
+                let new_dock_position = cx.global::<Settings>().project_panel_overrides.dock;
+                dbg!(new_dock_position);
+                if new_dock_position != old_dock_position {
+                    old_dock_position = new_dock_position;
+                    cx.emit(Event::DockPositionChanged);
+                }
+            }).detach();
+
             cx.observe(&project, |this, _, cx| {
                 this.update_visible_entries(None, cx);
                 cx.notify();
@@ -242,7 +255,8 @@ impl ProjectPanel {
                             }
                         }
                     }
-                }
+                },
+                Event::DockPositionChanged => {},
             }
         })
         .detach();
@@ -1344,8 +1358,8 @@ impl workspace::dock::Panel for ProjectPanel {
         "Project Panel".into()
     }
 
-    fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
-        todo!()
+    fn should_change_position_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::DockPositionChanged)
     }
 
     fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {

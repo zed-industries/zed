@@ -131,7 +131,7 @@ impl TelemetrySettings {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq)]
 #[serde(rename_all="lowercase")]
 pub enum DockPosition {
     Left,
@@ -407,6 +407,7 @@ pub struct SettingsFileContent {
     pub autosave: Option<Autosave>,
     #[serde(flatten)]
     pub editor: EditorSettings,
+    pub project_panel: ProjectPanelSettings,
     #[serde(default)]
     pub journal: JournalSettings,
     #[serde(default)]
@@ -609,6 +610,7 @@ impl Settings {
             }
         }
         self.editor_overrides = data.editor;
+        self.project_panel_overrides = data.project_panel;
         self.git_overrides = data.git.unwrap_or_default();
         self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;
