@@ -144,10 +144,8 @@ impl ProjectPanel {
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
             // Update the dock position when the setting changes.
             let mut old_dock_position = cx.global::<Settings>().project_panel_overrides.dock;
-            dbg!(old_dock_position);
             cx.observe_global::<Settings, _>(move |_, cx| {
                 let new_dock_position = cx.global::<Settings>().project_panel_overrides.dock;
-                dbg!(new_dock_position);
                 if new_dock_position != old_dock_position {
                     old_dock_position = new_dock_position;
                     cx.emit(Event::DockPositionChanged);

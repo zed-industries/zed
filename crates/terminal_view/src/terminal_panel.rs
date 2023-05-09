@@ -14,6 +14,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub enum Event {
     Close,
+    DockPositionChanged,
 }
 
 pub struct TerminalPanel {
@@ -25,6 +26,15 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+        let mut old_dock_position = cx.global::<Settings>().terminal_overrides.dock;
+        cx.observe_global::<Settings, _>(move |_, cx| {
+            let new_dock_position = cx.global::<Settings>().terminal_overrides.dock;
+            if new_dock_position != old_dock_position {
+                old_dock_position = new_dock_position;
+                cx.emit(Event::DockPositionChanged);
+            }
+        }).detach();
+
         let this = cx.weak_handle();
         let pane = cx.add_view(|cx| {
             let window_id = cx.window_id();
@@ -160,12 +170,12 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn should_change_position_on_event(_: &Self::Event) -> bool {
-        todo!()
+    fn should_change_position_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::DockPositionChanged)
     }
 
     fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
-        todo!()
+        false
     }
 
     fn should_close_on_event(&self, event: &Event, _: &AppContext) -> bool {
