@@ -2459,7 +2459,14 @@ impl Workspace {
                     self.remove_panes(child.clone(), cx)
                 }
             }
-            Member::Pane(pane) => self.remove_pane(pane.clone(), cx),
+            Member::Pane(pane) => {
+                self.panes.retain(|p| p != &pane);
+                cx.focus(self.panes.last().unwrap());
+                if self.last_active_center_pane == Some(pane.downgrade()) {
+                    self.last_active_center_pane = None;
+                }
+                cx.notify();
+            },
         }
     }
 
