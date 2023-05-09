@@ -461,7 +461,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
-    _window_subscriptions: [Subscription; 3],
+    _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
 }
@@ -592,7 +592,7 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let subscriptions = [
+        let subscriptions = vec![
             cx.observe_fullscreen(|_, _, cx| cx.notify()),
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
@@ -612,6 +612,9 @@ impl Workspace {
                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
                     .detach_and_log_err(cx);
             }),
+            Self::register_dock(&left_dock, cx),
+            Self::register_dock(&bottom_dock, cx),
+            Self::register_dock(&right_dock, cx),
         ];
 
         let mut this = Workspace {
@@ -640,7 +643,7 @@ impl Workspace {
             _observe_current_user,
             _apply_leader_updates,
             leader_updates_tx,
-            _window_subscriptions: subscriptions,
+            _subscriptions: subscriptions,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -1313,6 +1316,26 @@ impl Workspace {
             }
         } else {
             Task::ready(Ok(()))
+        }
+    }
+
+    fn register_dock(dock: &ViewHandle<Dock>, cx: &mut ViewContext<Self>) -> Subscription {
+        cx.subscribe(dock, Self::handle_dock_event)
+    }
+
+    fn handle_dock_event(
+        &mut self,
+        dock: ViewHandle<Dock>,
+        event: &dock::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            dock::Event::Close => {
+                dock.update(cx, |dock, cx| dock.set_open(false, cx));
+                self.serialize_workspace(cx);
+                cx.focus_self();
+                cx.notify();
+            }
         }
     }
 

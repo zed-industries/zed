@@ -8,7 +8,10 @@ use settings::Settings;
 use std::rc::Rc;
 
 pub trait Panel: View {
-    fn should_activate_item_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        false
+    }
+    fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
         false
     }
     fn should_show_badge(&self, _: &AppContext) -> bool {
@@ -51,6 +54,10 @@ impl From<&dyn PanelHandle> for AnyViewHandle {
     fn from(val: &dyn PanelHandle) -> Self {
         val.as_any().clone()
     }
+}
+
+pub enum Event {
+    Close,
 }
 
 pub struct Dock {
@@ -138,7 +145,7 @@ impl Dock {
         let subscriptions = [
             cx.observe(&view, |_, _, cx| cx.notify()),
             cx.subscribe(&view, |this, view, event, cx| {
-                if view.read(cx).should_activate_item_on_event(event, cx) {
+                if view.read(cx).should_activate_on_event(event, cx) {
                     if let Some(ix) = this
                         .items
                         .iter()
@@ -146,6 +153,8 @@ impl Dock {
                     {
                         this.activate_item(ix, cx);
                     }
+                } else if view.read(cx).should_close_on_event(event, cx) {
+                    cx.emit(Event::Close);
                 }
             }),
         ];
@@ -183,7 +192,7 @@ impl Dock {
 }
 
 impl Entity for Dock {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for Dock {

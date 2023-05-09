@@ -1,44 +1,66 @@
-use gpui::{elements::*, Entity, ModelHandle, View, ViewContext, ViewHandle, WeakViewHandle};
+use crate::TerminalView;
+use gpui::{
+    elements::*, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle,
+};
 use project::Project;
 use settings::{Settings, WorkingDirectory};
 use util::ResultExt;
-use workspace::{dock::Panel, DraggedItem, Pane, Workspace};
+use workspace::{dock::Panel, pane, DraggedItem, Pane, Workspace};
 
-use crate::TerminalView;
+pub enum Event {
+    Close,
+}
 
 pub struct TerminalPanel {
     project: ModelHandle<Project>,
     pane: ViewHandle<Pane>,
     workspace: WeakViewHandle<Workspace>,
+    _subscription: Subscription,
 }
 
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+        let pane = cx.add_view(|cx| {
+            let window_id = cx.window_id();
+            let mut pane = Pane::new(
+                workspace.weak_handle(),
+                workspace.app_state().background_actions,
+                cx,
+            );
+            pane.on_can_drop(move |drag_and_drop, cx| {
+                drag_and_drop
+                    .currently_dragged::<DraggedItem>(window_id)
+                    .map_or(false, |(_, item)| {
+                        item.handle.act_as::<TerminalView>(cx).is_some()
+                    })
+            });
+            pane
+        });
+        let subscription = cx.subscribe(&pane, Self::handle_pane_event);
         Self {
             project: workspace.project().clone(),
-            pane: cx.add_view(|cx| {
-                let window_id = cx.window_id();
-                let mut pane = Pane::new(
-                    workspace.weak_handle(),
-                    workspace.app_state().background_actions,
-                    cx,
-                );
-                pane.on_can_drop(move |drag_and_drop, cx| {
-                    drag_and_drop
-                        .currently_dragged::<DraggedItem>(window_id)
-                        .map_or(false, |(_, item)| {
-                            item.handle.act_as::<TerminalView>(cx).is_some()
-                        })
-                });
-                pane
-            }),
+            pane,
             workspace: workspace.weak_handle(),
+            _subscription: subscription,
+        }
+    }
+
+    fn handle_pane_event(
+        &mut self,
+        _pane: ViewHandle<Pane>,
+        event: &pane::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            pane::Event::Remove => cx.emit(Event::Close),
+            _ => {}
         }
     }
 }
 
 impl Entity for TerminalPanel {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for TerminalPanel {
@@ -82,4 +104,8 @@ impl View for TerminalPanel {
     }
 }
 
-impl Panel for TerminalPanel {}
+impl Panel for TerminalPanel {
+    fn should_close_on_event(&self, event: &Event, _: &AppContext) -> bool {
+        matches!(event, Event::Close)
+    }
+}
