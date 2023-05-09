@@ -4208,11 +4208,9 @@ impl Project {
                                                     if matching_paths_tx.is_closed() {
                                                         break;
                                                     }
-                                                    let matches = if !query
+                                                    let matches = if query
                                                         .file_matches(Some(&entry.path))
                                                     {
-                                                        false
-                                                    } else {
                                                         abs_path.clear();
                                                         abs_path.push(&snapshot.abs_path());
                                                         abs_path.push(&entry.path);
@@ -4223,6 +4221,8 @@ impl Project {
                                                         } else {
                                                             false
                                                         }
+                                                    } else {
+                                                        false
                                                     };
 
                                                     if matches {
