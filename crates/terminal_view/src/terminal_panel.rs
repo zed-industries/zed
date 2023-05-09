@@ -28,6 +28,7 @@ impl TerminalPanel {
                 workspace.app_state().background_actions,
                 cx,
             );
+            pane.set_can_split(false, cx);
             pane.on_can_drop(move |drag_and_drop, cx| {
                 drag_and_drop
                     .currently_dragged::<DraggedItem>(window_id)

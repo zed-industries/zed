@@ -149,6 +149,7 @@ pub struct Pane {
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
+    can_split: bool,
 }
 
 pub struct ItemNavHistory {
@@ -255,6 +256,7 @@ impl Pane {
             workspace,
             has_focus: false,
             can_drop: Rc::new(|_, _| true),
+            can_split: true,
         }
     }
 
@@ -280,6 +282,11 @@ impl Pane {
         F: 'static + Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool,
     {
         self.can_drop = Rc::new(can_drop);
+    }
+
+    pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
+        self.can_split = can_split;
+        cx.notify();
     }
 
     pub fn nav_history_for_item<T: Item>(&self, item: &ViewHandle<T>) -> ItemNavHistory {
@@ -1563,8 +1570,8 @@ impl View for Pane {
                             self,
                             0,
                             self.active_item_index + 1,
-                            false,
-                            Some(100.),
+                            !self.can_split,
+                            if self.can_split { Some(100.) } else { None },
                             cx,
                             {
                                 let toolbar = self.toolbar.clone();
