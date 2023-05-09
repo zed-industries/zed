@@ -1600,7 +1600,6 @@ impl Workspace {
             });
             self.active_item_path_changed(cx);
 
-
             if &pane == self.dock_pane() {
                 Dock::show(self, false, cx);
             } else {
