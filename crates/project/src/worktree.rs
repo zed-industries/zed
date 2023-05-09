@@ -3944,6 +3944,7 @@ mod tests {
 
         let mut snapshots = Vec::new();
         let mut mutations_len = operations;
+        fs.as_fake().pause_events().await;
         while mutations_len > 1 {
             randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
             let buffered_event_count = fs.as_fake().buffered_event_count().await;
