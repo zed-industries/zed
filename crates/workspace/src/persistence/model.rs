@@ -197,7 +197,7 @@ impl SerializedPane {
                     let pane_handle = pane_handle
                         .upgrade(cx)
                         .ok_or_else(|| anyhow!("pane was dropped"))?;
-                    Pane::add_item(workspace, &pane_handle, item_handle, false, false, None, cx);
+                    Pane::add_item(workspace, &pane_handle, item_handle, true, true, None, cx);
                     anyhow::Ok(())
                 })??;
             }

@@ -2610,7 +2610,7 @@ impl Workspace {
                     Dock::set_dock_position(
                         workspace,
                         serialized_workspace.dock_position,
-                        true,
+                        false,
                         cx,
                     );
                 });
