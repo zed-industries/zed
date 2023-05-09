@@ -1060,5 +1060,33 @@ pub(crate) mod test {
         }
     }
 
-    impl Panel for TestItem {}
+    impl Panel for TestItem {
+        fn position(&self, cx: &gpui::WindowContext) -> crate::dock::DockPosition {
+            unimplemented!()
+        }
+
+        fn position_is_valid(&self, position: crate::dock::DockPosition) -> bool {
+            unimplemented!()
+        }
+
+        fn icon_path(&self) -> &'static str {
+            unimplemented!()
+        }
+
+        fn icon_tooltip(&self) -> String {
+            unimplemented!()
+        }
+
+        fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+            unimplemented!()
+        }
+
+        fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+            unimplemented!()
+        }
+
+        fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+            unimplemented!()
+        }
+    }
 }

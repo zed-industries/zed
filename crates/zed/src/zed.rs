@@ -311,19 +311,12 @@ pub fn initialize_workspace(
         cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-    let project_panel = ProjectPanel::new(workspace, cx);
-    workspace.left_dock().update(cx, |dock, cx| {
-        dock.add_item(
-            "icons/folder_tree_16.svg",
-            "Project Panel".to_string(),
-            project_panel,
-            cx,
-        );
-    });
+    let project_panel = cx.add_view(|cx| ProjectPanel::new(workspace, cx));
+    workspace.add_panel(panel, cx);
 
     let terminal_panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
     workspace.bottom_dock().update(cx, |dock, cx| {
-        dock.add_item(
+        dock.add_panel(
             "icons/terminal_12.svg",
             "Terminals".to_string(),
             terminal_panel,

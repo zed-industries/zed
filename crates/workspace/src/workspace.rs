@@ -60,7 +60,7 @@ use crate::{
     notifications::simple_message_notification::MessageNotification,
     persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
 };
-use dock::{Dock, DockPosition, PanelButtons, TogglePanel};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, TogglePanel};
 use lazy_static::lazy_static;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
@@ -832,6 +832,15 @@ impl Workspace {
 
     pub fn right_dock(&self) -> &ViewHandle<Dock> {
         &self.right_dock
+    }
+
+    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+        let dock = match panel.position(cx) {
+            DockPosition::Left => &mut self.left_dock,
+            DockPosition::Bottom => &mut self.bottom_dock,
+            DockPosition::Right => &mut self.right_dock,
+        };
+        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     }
 
     pub fn status_bar(&self) -> &ViewHandle<StatusBar> {

@@ -8,20 +8,25 @@ use settings::Settings;
 use std::rc::Rc;
 
 pub trait Panel: View {
-    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
-        false
-    }
-    fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
-        false
-    }
-    fn label(&self, _: &AppContext) -> Option<String> {
+    fn position(&self, cx: &WindowContext) -> DockPosition;
+    fn position_is_valid(&self, position: DockPosition) -> bool;
+    fn icon_path(&self) -> &'static str;
+    fn icon_tooltip(&self) -> String;
+    fn icon_label(&self, _: &AppContext) -> Option<String> {
         None
     }
+    fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
+    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
+    fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
 }
 
 pub trait PanelHandle {
     fn id(&self) -> usize;
-    fn label(&self, cx: &WindowContext) -> Option<String>;
+    fn position(&self, cx: &WindowContext) -> DockPosition;
+    fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
+    fn icon_path(&self, cx: &WindowContext) -> &'static str;
+    fn icon_tooltip(&self, cx: &WindowContext) -> String;
+    fn icon_label(&self, cx: &WindowContext) -> Option<String>;
     fn is_focused(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
@@ -34,8 +39,24 @@ where
         self.id()
     }
 
-    fn label(&self, cx: &WindowContext) -> Option<String> {
-        self.read(cx).label(cx)
+    fn position(&self, cx: &WindowContext) -> DockPosition {
+        self.read(cx).position(cx)
+    }
+
+    fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool {
+        self.read(cx).position_is_valid(position)
+    }
+
+    fn icon_path(&self, cx: &WindowContext) -> &'static str {
+        self.read(cx).icon_path()
+    }
+
+    fn icon_tooltip(&self, cx: &WindowContext) -> String {
+        self.read(cx).icon_tooltip()
+    }
+
+    fn icon_label(&self, cx: &WindowContext) -> Option<String> {
+        self.read(cx).icon_label(cx)
     }
 
     fn is_focused(&self, cx: &WindowContext) -> bool {
@@ -82,8 +103,6 @@ impl DockPosition {
 }
 
 struct Item {
-    icon_path: &'static str,
-    tooltip: String,
     view: Rc<dyn PanelHandle>,
     _subscriptions: [Subscription; 2],
 }
@@ -132,13 +151,7 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn add_item<T: Panel>(
-        &mut self,
-        icon_path: &'static str,
-        tooltip: String,
-        view: ViewHandle<T>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn add_panel<T: Panel>(&mut self, view: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let subscriptions = [
             cx.observe(&view, |_, _, cx| cx.notify()),
             cx.subscribe(&view, |this, view, event, cx| {
@@ -157,8 +170,6 @@ impl Dock {
         ];
 
         self.items.push(Item {
-            icon_path,
-            tooltip,
             view: Rc::new(view),
             _subscriptions: subscriptions,
         });
@@ -235,15 +246,15 @@ impl Entity for PanelButtons {
 
 impl View for PanelButtons {
     fn ui_name() -> &'static str {
-        "DockToggleButton"
+        "PanelButtons"
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.panel_buttons;
-        let dock = self.dock.read(cx);
         let item_style = theme.button.clone();
+        let dock = self.dock.read(cx);
         let active_ix = dock.active_item_ix;
         let is_open = dock.is_open;
         let dock_position = dock.position;
@@ -253,69 +264,65 @@ impl View for PanelButtons {
             DockPosition::Right => theme.group_right,
         };
 
-        #[allow(clippy::needless_collect)]
         let items = dock
             .items
             .iter()
-            .map(|item| (item.icon_path, item.tooltip.clone(), item.view.clone()))
+            .map(|item| item.view.clone())
             .collect::<Vec<_>>();
-
         Flex::row()
-            .with_children(items.into_iter().enumerate().map(
-                |(ix, (icon_path, tooltip, item_view))| {
-                    let action = TogglePanel {
-                        dock_position,
-                        item_index: ix,
-                    };
-                    MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
-                        let is_active = is_open && ix == active_ix;
-                        let style = item_style.style_for(state, is_active);
-                        Flex::row()
-                            .with_child(
-                                Svg::new(icon_path)
-                                    .with_color(style.icon_color)
-                                    .constrained()
-                                    .with_width(style.icon_size)
+            .with_children(items.into_iter().enumerate().map(|(ix, view)| {
+                let action = TogglePanel {
+                    dock_position,
+                    item_index: ix,
+                };
+                MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
+                    let is_active = is_open && ix == active_ix;
+                    let style = item_style.style_for(state, is_active);
+                    Flex::row()
+                        .with_child(
+                            Svg::new(view.icon_path(cx))
+                                .with_color(style.icon_color)
+                                .constrained()
+                                .with_width(style.icon_size)
+                                .aligned(),
+                        )
+                        .with_children(if let Some(label) = view.icon_label(cx) {
+                            Some(
+                                Label::new(label, style.label.text.clone())
+                                    .contained()
+                                    .with_style(style.label.container)
                                     .aligned(),
                             )
-                            .with_children(if let Some(label) = item_view.label(cx) {
-                                Some(
-                                    Label::new(label, style.label.text.clone())
-                                        .contained()
-                                        .with_style(style.label.container)
-                                        .aligned(),
-                                )
-                            } else {
-                                None
-                            })
-                            .constrained()
-                            .with_height(style.icon_size)
-                            .contained()
-                            .with_style(style.container)
-                    })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, {
-                        let action = action.clone();
-                        move |_, this, cx| {
-                            if let Some(workspace) = this.workspace.upgrade(cx) {
-                                let action = action.clone();
-                                cx.window_context().defer(move |cx| {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.toggle_panel(&action, cx)
-                                    });
+                        } else {
+                            None
+                        })
+                        .constrained()
+                        .with_height(style.icon_size)
+                        .contained()
+                        .with_style(style.container)
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, {
+                    let action = action.clone();
+                    move |_, this, cx| {
+                        if let Some(workspace) = this.workspace.upgrade(cx) {
+                            let action = action.clone();
+                            cx.window_context().defer(move |cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.toggle_panel(&action, cx)
                                 });
-                            }
+                            });
                         }
-                    })
-                    .with_tooltip::<Self>(
-                        ix,
-                        tooltip,
-                        Some(Box::new(action)),
-                        tooltip_style.clone(),
-                        cx,
-                    )
-                },
-            ))
+                    }
+                })
+                .with_tooltip::<Self>(
+                    ix,
+                    view.icon_tooltip(cx),
+                    Some(Box::new(action)),
+                    tooltip_style.clone(),
+                    cx,
+                )
+            }))
             .contained()
             .with_style(group_style)
             .into_any()

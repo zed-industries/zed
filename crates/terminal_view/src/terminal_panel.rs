@@ -139,7 +139,7 @@ impl Panel for TerminalPanel {
         matches!(event, Event::Close)
     }
 
-    fn label(&self, cx: &AppContext) -> Option<String> {
+    fn icon_label(&self, cx: &AppContext) -> Option<String> {
         let count = self.pane.read(cx).items_len();
         if count == 0 {
             None

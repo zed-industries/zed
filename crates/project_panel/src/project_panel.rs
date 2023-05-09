@@ -28,7 +28,7 @@ use std::{
 };
 use theme::ProjectPanelEntry;
 use unicase::UniCase;
-use workspace::Workspace;
+use workspace::{dock::DockPosition, Workspace};
 
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -1327,7 +1327,35 @@ impl Entity for ProjectPanel {
     type Event = Event;
 }
 
-impl workspace::dock::Panel for ProjectPanel {}
+impl workspace::dock::Panel for ProjectPanel {
+    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+        todo!()
+    }
+
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        matches!(position, DockPosition::Left | DockPosition::Right)
+    }
+
+    fn icon_path(&self) -> &'static str {
+        "icons/folder_tree_16.svg"
+    }
+
+    fn icon_tooltip(&self) -> String {
+        "Project Panel".into()
+    }
+
+    fn should_change_position_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        todo!()
+    }
+
+    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        false
+    }
+
+    fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+        false
+    }
+}
 
 impl ClipboardEntry {
     fn is_cut(&self) -> bool {
