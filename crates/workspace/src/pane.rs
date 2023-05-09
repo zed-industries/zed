@@ -150,6 +150,7 @@ pub struct Pane {
     has_focus: bool,
     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     can_split: bool,
+    render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
 }
 
 pub struct ItemNavHistory {
@@ -257,6 +258,27 @@ impl Pane {
             has_focus: false,
             can_drop: Rc::new(|_, _| true),
             can_split: true,
+            render_tab_bar_buttons: Rc::new(|pane, cx| {
+                Flex::row()
+                    // New menu
+                    .with_child(Self::render_tab_bar_button(
+                        0,
+                        "icons/plus_12.svg",
+                        cx,
+                        |pane, cx| pane.deploy_new_menu(cx),
+                        pane.tab_bar_context_menu
+                            .handle_if_kind(TabBarContextMenuKind::New),
+                    ))
+                    .with_child(Self::render_tab_bar_button(
+                        2,
+                        "icons/split_12.svg",
+                        cx,
+                        |pane, cx| pane.deploy_split_menu(cx),
+                        pane.tab_bar_context_menu
+                            .handle_if_kind(TabBarContextMenuKind::Split),
+                    ))
+                    .into_any()
+            }),
         }
     }
 
@@ -286,6 +308,14 @@ impl Pane {
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
+        cx.notify();
+    }
+
+    pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
+    where
+        F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>,
+    {
+        self.render_tab_bar_buttons = Rc::new(render);
         cx.notify();
     }
 
@@ -1475,33 +1505,37 @@ impl Pane {
             .into_any()
     }
 
-    fn render_tab_bar_buttons(
-        &mut self,
-        theme: &Theme,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        Flex::row()
-            // New menu
-            .with_child(render_tab_bar_button(
-                0,
-                "icons/plus_12.svg",
-                cx,
-                |pane, cx| pane.deploy_new_menu(cx),
-                self.tab_bar_context_menu
-                    .handle_if_kind(TabBarContextMenuKind::New),
-            ))
-            .with_child(render_tab_bar_button(
-                2,
-                "icons/split_12.svg",
-                cx,
-                |pane, cx| pane.deploy_split_menu(cx),
-                self.tab_bar_context_menu
-                    .handle_if_kind(TabBarContextMenuKind::Split),
-            ))
-            .contained()
-            .with_style(theme.workspace.tab_bar.pane_button_container)
+    pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
+        index: usize,
+        icon: &'static str,
+        cx: &mut ViewContext<Pane>,
+        on_click: F,
+        context_menu: Option<ViewHandle<ContextMenu>>,
+    ) -> AnyElement<Pane> {
+        enum TabBarButton {}
+
+        Stack::new()
+            .with_child(
+                MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
+                    let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
+                    let style = theme.pane_button.style_for(mouse_state, false);
+                    Svg::new(icon)
+                        .with_color(style.color)
+                        .constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx)),
+            )
+            .with_children(
+                context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
+            )
             .flex(1., false)
-            .into_any()
+            .into_any_named("tab bar button")
     }
 
     fn render_blank_pane(&self, theme: &Theme, _cx: &mut ViewContext<Self>) -> AnyElement<Self> {
@@ -1554,7 +1588,14 @@ impl View for Pane {
                             .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
 
                         if self.is_active {
-                            tab_row.add_child(self.render_tab_bar_buttons(&theme, cx))
+                            let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
+                            tab_row.add_child(
+                                (render_tab_bar_buttons)(self, cx)
+                                    .contained()
+                                    .with_style(theme.workspace.tab_bar.pane_button_container)
+                                    .flex(1., false)
+                                    .into_any(),
+                            )
                         }
 
                         stack.add_child(tab_row);
@@ -1674,39 +1715,6 @@ impl View for Pane {
     fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
         Self::reset_to_default_keymap_context(keymap);
     }
-}
-
-fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
-    index: usize,
-    icon: &'static str,
-    cx: &mut ViewContext<Pane>,
-    on_click: F,
-    context_menu: Option<ViewHandle<ContextMenu>>,
-) -> AnyElement<Pane> {
-    enum TabBarButton {}
-
-    Stack::new()
-        .with_child(
-            MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
-                let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
-                let style = theme.pane_button.style_for(mouse_state, false);
-                Svg::new(icon)
-                    .with_color(style.color)
-                    .constrained()
-                    .with_width(style.icon_width)
-                    .aligned()
-                    .constrained()
-                    .with_width(style.button_width)
-                    .with_height(style.button_width)
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx)),
-        )
-        .with_children(
-            context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
-        )
-        .flex(1., false)
-        .into_any_named("tab bar button")
 }
 
 impl ItemNavHistory {

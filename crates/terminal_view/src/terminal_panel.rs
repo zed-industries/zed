@@ -21,6 +21,7 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+        let this = cx.weak_handle();
         let pane = cx.add_view(|cx| {
             let window_id = cx.window_id();
             let mut pane = Pane::new(
@@ -35,6 +36,23 @@ impl TerminalPanel {
                     .map_or(false, |(_, item)| {
                         item.handle.act_as::<TerminalView>(cx).is_some()
                     })
+            });
+            pane.set_render_tab_bar_buttons(cx, move |_, cx| {
+                let this = this.clone();
+                Pane::render_tab_bar_button(
+                    0,
+                    "icons/plus_12.svg",
+                    cx,
+                    move |_, cx| {
+                        let this = this.clone();
+                        cx.window_context().defer(move |cx| {
+                            if let Some(this) = this.upgrade(cx) {
+                                this.update(cx, |this, cx| this.add_terminal(cx));
+                            }
+                        })
+                    },
+                    None,
+                )
             });
             pane
         });
@@ -61,6 +79,33 @@ impl TerminalPanel {
             _ => {}
         }
     }
+
+    fn add_terminal(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            let working_directory_strategy = cx
+                .global::<Settings>()
+                .terminal_overrides
+                .working_directory
+                .clone()
+                .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+            let working_directory =
+                crate::get_working_directory(workspace.read(cx), cx, working_directory_strategy);
+            let window_id = cx.window_id();
+            if let Some(terminal) = self.project.update(cx, |project, cx| {
+                project
+                    .create_terminal(working_directory, window_id, cx)
+                    .log_err()
+            }) {
+                workspace.update(cx, |workspace, cx| {
+                    let terminal =
+                        Box::new(cx.add_view(|cx| {
+                            TerminalView::new(terminal, workspace.database_id(), cx)
+                        }));
+                    Pane::add_item(workspace, &self.pane, terminal, true, true, None, cx);
+                });
+            }
+        }
+    }
 }
 
 impl Entity for TerminalPanel {
@@ -78,32 +123,7 @@ impl View for TerminalPanel {
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if self.pane.read(cx).items_len() == 0 {
-            if let Some(workspace) = self.workspace.upgrade(cx) {
-                let working_directory_strategy = cx
-                    .global::<Settings>()
-                    .terminal_overrides
-                    .working_directory
-                    .clone()
-                    .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-                let working_directory = crate::get_working_directory(
-                    workspace.read(cx),
-                    cx,
-                    working_directory_strategy,
-                );
-                let window_id = cx.window_id();
-                if let Some(terminal) = self.project.update(cx, |project, cx| {
-                    project
-                        .create_terminal(working_directory, window_id, cx)
-                        .log_err()
-                }) {
-                    workspace.update(cx, |workspace, cx| {
-                        let terminal = Box::new(cx.add_view(|cx| {
-                            TerminalView::new(terminal, workspace.database_id(), cx)
-                        }));
-                        Pane::add_item(workspace, &self.pane, terminal, true, true, None, cx);
-                    });
-                }
-            }
+            self.add_terminal(cx)
         }
     }
 }
