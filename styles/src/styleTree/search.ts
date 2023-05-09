@@ -64,9 +64,16 @@ export default function search(colorScheme: ColorScheme) {
             ...editor,
             border: border(layer, "negative"),
         },
+        includeExcludeEditor: {
+            ...editor,
+            minWidth: 100,
+            maxWidth: 250,
+        },
         matchIndex: {
             ...text(layer, "mono", "variant"),
-            padding: 6,
+            padding: {
+                left: 6,
+            },
         },
         optionButtonGroup: {
             padding: {
@@ -76,7 +83,9 @@ export default function search(colorScheme: ColorScheme) {
         },
         includeExcludeInputs: {
             ...text(layer, "mono", "variant"),
-            padding: 6,
+            padding: {
+                right: 6,
+            },
         },
         resultsStatus: {
             ...text(layer, "mono", "on"),

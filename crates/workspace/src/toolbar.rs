@@ -22,6 +22,10 @@ pub trait ToolbarItemView: View {
     }
 
     fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
+
+    fn row_count(&self) -> usize {
+        1
+    }
 }
 
 trait ToolbarItemViewHandle {
@@ -33,6 +37,7 @@ trait ToolbarItemViewHandle {
         cx: &mut WindowContext,
     ) -> ToolbarItemLocation;
     fn pane_focus_update(&mut self, pane_focused: bool, cx: &mut WindowContext);
+    fn row_count(&self, cx: &WindowContext) -> usize;
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -66,12 +71,14 @@ impl View for Toolbar {
         let mut primary_right_items = Vec::new();
         let mut secondary_item = None;
         let spacing = theme.item_spacing;
+        let mut primary_items_row_count = 1;
 
         for (item, position) in &self.items {
             match *position {
                 ToolbarItemLocation::Hidden => {}
 
                 ToolbarItemLocation::PrimaryLeft { flex } => {
+                    primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
                     let left_item = ChildView::new(item.as_any(), cx)
                         .aligned()
                         .contained()
@@ -84,6 +91,7 @@ impl View for Toolbar {
                 }
 
                 ToolbarItemLocation::PrimaryRight { flex } => {
+                    primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
                     let right_item = ChildView::new(item.as_any(), cx)
                         .aligned()
                         .contained()
@@ -100,7 +108,7 @@ impl View for Toolbar {
                     secondary_item = Some(
                         ChildView::new(item.as_any(), cx)
                             .constrained()
-                            .with_height(theme.height)
+                            .with_height(theme.height * item.row_count(cx) as f32)
                             .into_any(),
                     );
                 }
@@ -117,7 +125,7 @@ impl View for Toolbar {
         }
 
         let container_style = theme.container;
-        let height = theme.height;
+        let height = theme.height * primary_items_row_count as f32;
         let button_style = theme.nav_button;
         let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
 
@@ -337,6 +345,10 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for ViewHandle<T> {
             this.pane_focus_update(pane_focused, cx);
             cx.notify();
         });
+    }
+
+    fn row_count(&self, cx: &WindowContext) -> usize {
+        self.read(cx).row_count()
     }
 }
 
