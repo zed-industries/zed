@@ -17,9 +17,6 @@ pub trait Panel: View {
     fn label(&self, _: &AppContext) -> Option<String> {
         None
     }
-    fn contains_focused_view(&self, _: &AppContext) -> bool {
-        false
-    }
 }
 
 pub trait PanelHandle {
@@ -42,7 +39,7 @@ where
     }
 
     fn is_focused(&self, cx: &WindowContext) -> bool {
-        ViewHandle::is_focused(self, cx) || self.read(cx).contains_focused_view(cx)
+        ViewHandle::is_focused(self, cx)
     }
 
     fn as_any(&self) -> &AnyViewHandle {
