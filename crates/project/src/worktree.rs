@@ -3946,7 +3946,17 @@ mod tests {
         let mut mutations_len = operations;
         fs.as_fake().pause_events().await;
         while mutations_len > 1 {
-            randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
+            if rng.gen_bool(0.2) {
+                worktree
+                    .update(cx, |worktree, cx| {
+                        randomly_mutate_worktree(worktree, &mut rng, cx)
+                    })
+                    .await
+                    .unwrap();
+            } else {
+                randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
+            }
+
             let buffered_event_count = fs.as_fake().buffered_event_count().await;
             if buffered_event_count > 0 && rng.gen_bool(0.3) {
                 let len = rng.gen_range(0..=buffered_event_count);
