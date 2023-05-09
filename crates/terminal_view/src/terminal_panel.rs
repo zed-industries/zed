@@ -8,6 +8,10 @@ use settings::{Settings, WorkingDirectory};
 use util::ResultExt;
 use workspace::{dock::Panel, pane, DraggedItem, Pane, Workspace};
 
+pub fn init(cx: &mut AppContext) {
+    cx.add_action(TerminalPanel::add_terminal);
+}
+
 pub enum Event {
     Close,
 }
@@ -47,7 +51,9 @@ impl TerminalPanel {
                         let this = this.clone();
                         cx.window_context().defer(move |cx| {
                             if let Some(this) = this.upgrade(cx) {
-                                this.update(cx, |this, cx| this.add_terminal(cx));
+                                this.update(cx, |this, cx| {
+                                    this.add_terminal(&Default::default(), cx);
+                                });
                             }
                         })
                     },
@@ -80,7 +86,7 @@ impl TerminalPanel {
         }
     }
 
-    fn add_terminal(&mut self, cx: &mut ViewContext<Self>) {
+    fn add_terminal(&mut self, _: &workspace::NewTerminal, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
             let working_directory_strategy = cx
                 .global::<Settings>()
@@ -123,7 +129,7 @@ impl View for TerminalPanel {
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if self.pane.read(cx).items_len() == 0 {
-            self.add_terminal(cx)
+            self.add_terminal(&Default::default(), cx)
         }
     }
 }

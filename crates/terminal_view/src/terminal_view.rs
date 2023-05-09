@@ -64,6 +64,7 @@ actions!(
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
+    terminal_panel::init(cx);
     cx.add_action(TerminalView::deploy);
 
     register_deserializable_item::<TerminalView>(cx);
