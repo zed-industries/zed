@@ -2892,6 +2892,8 @@ impl BackgroundScanner {
                 entry.statuses = statuses;
             });
         } else if let Some(repo) = snapshot.repo_for(&path) {
+            let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
+
             let status = {
                 let local_repo = snapshot.get_local_repo(&repo)?;
                 // Short circuit if we've already scanned everything
@@ -2899,7 +2901,6 @@ impl BackgroundScanner {
                     return None;
                 }
 
-                let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
                 let git_ptr = local_repo.repo_ptr.lock();
                 git_ptr.file_status(&repo_path)?
             };
