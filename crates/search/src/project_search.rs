@@ -34,7 +34,7 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
-actions!(project_search, [SearchInNew, ToggleFocus]);
+actions!(project_search, [SearchInNew, ToggleFocus, NextField]);
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
@@ -48,6 +48,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.add_action(ProjectSearchBar::toggle_focus);
     cx.capture_action(ProjectSearchBar::tab);
+    cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
     add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
@@ -789,19 +790,50 @@ impl ProjectSearchBar {
     }
 
     fn tab(&mut self, _: &editor::Tab, cx: &mut ViewContext<Self>) {
-        if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| {
-                if search_view.query_editor.is_focused(cx) {
-                    if !search_view.model.read(cx).match_ranges.is_empty() {
-                        search_view.focus_results_editor(cx);
-                    }
-                } else {
+        self.cycle_field(Direction::Next, cx);
+    }
+
+    fn tab_previous(&mut self, _: &editor::TabPrev, cx: &mut ViewContext<Self>) {
+        self.cycle_field(Direction::Prev, cx);
+    }
+
+    fn cycle_field(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+        let active_project_search = match &self.active_project_search {
+            Some(active_project_search) => active_project_search,
+
+            None => {
+                cx.propagate_action();
+                return;
+            }
+        };
+
+        active_project_search.update(cx, |project_view, cx| {
+            let views = &[
+                &project_view.query_editor,
+                &project_view.included_files_editor,
+                &project_view.excluded_files_editor,
+            ];
+
+            let current_index = match views
+                .iter()
+                .enumerate()
+                .find(|(_, view)| view.is_focused(cx))
+            {
+                Some((index, _)) => index,
+
+                None => {
                     cx.propagate_action();
+                    return;
                 }
-            });
-        } else {
-            cx.propagate_action();
-        }
+            };
+
+            let new_index = match direction {
+                Direction::Next => (current_index + 1) % views.len(),
+                Direction::Prev if current_index == 0 => views.len() - 1,
+                Direction::Prev => (current_index - 1) % views.len(),
+            };
+            cx.focus(views[new_index]);
+        });
     }
 
     fn toggle_search_option(&mut self, option: SearchOption, cx: &mut ViewContext<Self>) -> bool {
