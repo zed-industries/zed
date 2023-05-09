@@ -452,12 +452,15 @@ impl ProjectSearchView {
         .detach();
 
         let included_files_editor = cx.add_view(|cx| {
-            Editor::single_line(
+            let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
                     theme.search.include_exclude_editor.input.clone()
                 })),
                 cx,
-            )
+            );
+            editor.set_placeholder_text("Include: crates/**/*.toml", cx);
+
+            editor
         });
         // Subcribe to include_files_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&included_files_editor, |_, _, event, cx| {
@@ -466,12 +469,15 @@ impl ProjectSearchView {
         .detach();
 
         let excluded_files_editor = cx.add_view(|cx| {
-            Editor::single_line(
+            let mut editor = Editor::single_line(
                 Some(Arc::new(|theme| {
                     theme.search.include_exclude_editor.input.clone()
                 })),
                 cx,
-            )
+            );
+            editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
+
+            editor
         });
         // Subcribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&excluded_files_editor, |_, _, event, cx| {
@@ -1045,15 +1051,6 @@ impl View for ProjectSearchBar {
                     Flex::row()
                         .with_child(
                             Flex::row()
-                                .with_child(
-                                    Label::new(
-                                        "Include:",
-                                        theme.search.include_exclude_inputs.text.clone(),
-                                    )
-                                    .contained()
-                                    .with_style(theme.search.include_exclude_inputs.container)
-                                    .aligned(),
-                                )
                                 .with_child(included_files_view)
                                 .contained()
                                 .with_style(theme.search.include_exclude_editor.input.container)
@@ -1065,15 +1062,6 @@ impl View for ProjectSearchBar {
                         )
                         .with_child(
                             Flex::row()
-                                .with_child(
-                                    Label::new(
-                                        "Exclude:",
-                                        theme.search.include_exclude_inputs.text.clone(),
-                                    )
-                                    .contained()
-                                    .with_style(theme.search.include_exclude_inputs.container)
-                                    .aligned(),
-                                )
                                 .with_child(excluded_files_view)
                                 .contained()
                                 .with_style(theme.search.include_exclude_editor.input.container)
