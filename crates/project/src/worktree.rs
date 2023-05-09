@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
-use fs::{repository::GitRepository, Fs, LineEnding};
+use fs::{repository::{GitRepository, RepoPath, GitStatus}, Fs, LineEnding};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -117,10 +117,11 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
+    // pub(crate) statuses: TreeMap<RepoPath, GitStatus>
 }
 
 impl RepositoryEntry {
@@ -162,6 +163,13 @@ impl Default for RepositoryWorkDirectory {
     }
 }
 
+impl AsRef<Path> for RepositoryWorkDirectory {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
+    }
+}
+
+
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct WorkDirectoryEntry(ProjectEntryId);
 
@@ -178,7 +186,7 @@ impl WorkDirectoryEntry {
         worktree.entry_for_id(self.0).and_then(|entry| {
             path.strip_prefix(&entry.path)
                 .ok()
-                .map(move |path| RepoPath(path.to_owned()))
+                .map(move |path| path.into())
         })
     }
 }
@@ -194,29 +202,6 @@ impl Deref for WorkDirectoryEntry {
 impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
     fn from(value: ProjectEntryId) -> Self {
         WorkDirectoryEntry(value)
-    }
-}
-
-#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(PathBuf);
-
-impl AsRef<Path> for RepoPath {
-    fn as_ref(&self) -> &Path {
-        self.0.as_ref()
-    }
-}
-
-impl Deref for RepoPath {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<Path> for RepositoryWorkDirectory {
-    fn as_ref(&self) -> &Path {
-        self.0.as_ref()
     }
 }
 
