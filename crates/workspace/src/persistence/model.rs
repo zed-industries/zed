@@ -147,7 +147,7 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade(cx)?;
                     workspace
-                        .update(cx, |workspace, cx| workspace.remove_pane(pane, cx))
+                        .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
                         .log_err()?;
                     None
                 }
