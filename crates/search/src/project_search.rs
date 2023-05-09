@@ -451,11 +451,12 @@ impl ProjectSearchView {
         .detach();
 
         let included_files_editor = cx.add_view(|cx| {
-            let editor = Editor::single_line(
-                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+            Editor::single_line(
+                Some(Arc::new(|theme| {
+                    theme.search.include_exclude_editor.input.clone()
+                })),
                 cx,
-            );
-            editor
+            )
         });
         // Subcribe to include_files_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&included_files_editor, |_, _, event, cx| {
@@ -464,11 +465,12 @@ impl ProjectSearchView {
         .detach();
 
         let excluded_files_editor = cx.add_view(|cx| {
-            let editor = Editor::single_line(
-                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+            Editor::single_line(
+                Some(Arc::new(|theme| {
+                    theme.search.include_exclude_editor.input.clone()
+                })),
                 cx,
-            );
-            editor
+            )
         });
         // Subcribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&excluded_files_editor, |_, _, event, cx| {
@@ -935,101 +937,119 @@ impl View for ProjectSearchBar {
             let included_files_view = ChildView::new(&search.included_files_editor, cx)
                 .aligned()
                 .left()
-                .flex(0.5, true);
+                .flex(1.0, true);
             let excluded_files_view = ChildView::new(&search.excluded_files_editor, cx)
                 .aligned()
                 .right()
-                .flex(0.5, true);
+                .flex(1.0, true);
 
-            Flex::row()
+            let row_spacing = theme.workspace.toolbar.container.padding.bottom;
+
+            Flex::column()
                 .with_child(
                     Flex::row()
                         .with_child(
-                            ChildView::new(&search.query_editor, cx)
+                            Flex::row()
+                                .with_child(
+                                    ChildView::new(&search.query_editor, cx)
+                                        .aligned()
+                                        .left()
+                                        .flex(1., true),
+                                )
+                                .with_children(search.active_match_index.map(|match_ix| {
+                                    Label::new(
+                                        format!(
+                                            "{}/{}",
+                                            match_ix + 1,
+                                            search.model.read(cx).match_ranges.len()
+                                        ),
+                                        theme.search.match_index.text.clone(),
+                                    )
+                                    .contained()
+                                    .with_style(theme.search.match_index.container)
+                                    .aligned()
+                                }))
+                                .contained()
+                                .with_style(editor_container)
                                 .aligned()
-                                .left()
-                                .flex(1., true),
+                                .constrained()
+                                .with_min_width(theme.search.editor.min_width)
+                                .with_max_width(theme.search.editor.max_width)
+                                .flex(1., false),
                         )
-                        .with_children(search.active_match_index.map(|match_ix| {
-                            Label::new(
-                                format!(
-                                    "{}/{}",
-                                    match_ix + 1,
-                                    search.model.read(cx).match_ranges.len()
-                                ),
-                                theme.search.match_index.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.search.match_index.container)
-                            .aligned()
-                        }))
-                        .contained()
-                        .with_style(editor_container)
-                        .aligned()
-                        .constrained()
-                        .with_min_width(theme.search.editor.min_width)
-                        .with_max_width(theme.search.editor.max_width)
-                        .flex(1., false),
-                )
-                .with_child(
-                    Flex::row()
-                        .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                        .with_child(self.render_nav_button(">", Direction::Next, cx))
-                        .aligned(),
-                )
-                .with_child(
-                    Flex::row()
-                        .with_child(self.render_option_button(
-                            "Case",
-                            SearchOption::CaseSensitive,
-                            cx,
-                        ))
-                        .with_child(self.render_option_button("Word", SearchOption::WholeWord, cx))
-                        .with_child(self.render_option_button("Regex", SearchOption::Regex, cx))
-                        .contained()
-                        .with_style(theme.search.option_button_group)
-                        .aligned(),
-                )
-                // TODO kb better layout
-                .with_child(
-                    Flex::row()
                         .with_child(
-                            Label::new(
-                                "Include:",
-                                theme.search.include_exclude_inputs.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.search.include_exclude_inputs.container)
-                            .aligned(),
+                            Flex::row()
+                                .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                                .with_child(self.render_nav_button(">", Direction::Next, cx))
+                                .aligned(),
                         )
-                        .with_child(included_files_view)
+                        .with_child(
+                            Flex::row()
+                                .with_child(self.render_option_button(
+                                    "Case",
+                                    SearchOption::CaseSensitive,
+                                    cx,
+                                ))
+                                .with_child(self.render_option_button(
+                                    "Word",
+                                    SearchOption::WholeWord,
+                                    cx,
+                                ))
+                                .with_child(self.render_option_button(
+                                    "Regex",
+                                    SearchOption::Regex,
+                                    cx,
+                                ))
+                                .contained()
+                                .with_style(theme.search.option_button_group)
+                                .aligned(),
+                        )
                         .contained()
-                        .with_style(theme.search.editor.input.container)
-                        .aligned()
-                        .constrained()
-                        .with_min_width(theme.search.editor.min_width)
-                        .with_max_width(theme.search.editor.max_width)
-                        .flex(1., false),
+                        .with_margin_bottom(row_spacing),
                 )
                 .with_child(
                     Flex::row()
+                        // TODO kb better layout
                         .with_child(
-                            Label::new(
-                                "Exclude:",
-                                theme.search.include_exclude_inputs.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.search.include_exclude_inputs.container)
-                            .aligned(),
+                            Flex::row()
+                                .with_child(
+                                    Label::new(
+                                        "Include:",
+                                        theme.search.include_exclude_inputs.text.clone(),
+                                    )
+                                    .contained()
+                                    .with_style(theme.search.include_exclude_inputs.container)
+                                    .aligned(),
+                                )
+                                .with_child(included_files_view)
+                                .contained()
+                                .with_style(theme.search.include_exclude_editor.input.container)
+                                .aligned()
+                                .constrained()
+                                .with_min_width(theme.search.include_exclude_editor.min_width)
+                                .with_max_width(theme.search.include_exclude_editor.max_width)
+                                .flex(1., false),
                         )
-                        .with_child(excluded_files_view)
-                        .contained()
-                        .with_style(theme.search.editor.input.container)
-                        .aligned()
-                        .constrained()
-                        .with_min_width(theme.search.editor.min_width)
-                        .with_max_width(theme.search.editor.max_width)
-                        .flex(1., false),
+                        .with_child(
+                            Flex::row()
+                                .with_child(
+                                    Label::new(
+                                        "Exclude:",
+                                        theme.search.include_exclude_inputs.text.clone(),
+                                    )
+                                    .contained()
+                                    .with_style(theme.search.include_exclude_inputs.container)
+                                    .aligned(),
+                                )
+                                .with_child(excluded_files_view)
+                                .contained()
+                                .with_style(theme.search.include_exclude_editor.input.container)
+                                .aligned()
+                                .constrained()
+                                .with_min_width(theme.search.include_exclude_editor.min_width)
+                                .with_max_width(theme.search.include_exclude_editor.max_width)
+                                .flex(1., false),
+                        ),
                 )
                 .contained()
                 .with_style(theme.search.container)
@@ -1060,6 +1080,10 @@ impl ToolbarItemView for ProjectSearchBar {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+
+    fn row_count(&self) -> usize {
+        2
     }
 }
 
