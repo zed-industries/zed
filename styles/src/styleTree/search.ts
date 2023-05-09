@@ -26,6 +26,12 @@ export default function search(colorScheme: ColorScheme) {
         },
     }
 
+    const includeExcludeEditor = {
+        ...editor,
+        minWidth: 100,
+        maxWidth: 250,
+    };
+
     return {
         // TODO: Add an activeMatchBackground on the rust side to differenciate between active and inactive
         matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
@@ -64,10 +70,10 @@ export default function search(colorScheme: ColorScheme) {
             ...editor,
             border: border(layer, "negative"),
         },
-        includeExcludeEditor: {
-            ...editor,
-            minWidth: 100,
-            maxWidth: 250,
+        includeExcludeEditor,
+        invalidIncludeExcludeEditor: {
+            ...includeExcludeEditor,
+            border: border(layer, "negative"),
         },
         matchIndex: {
             ...text(layer, "mono", "variant"),

@@ -22,6 +22,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
+    collections::HashSet,
     mem,
     ops::Range,
     path::PathBuf,
@@ -76,6 +77,13 @@ struct ProjectSearch {
     search_id: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum InputPanel {
+    Query,
+    Exclude,
+    Include,
+}
+
 pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
@@ -83,7 +91,7 @@ pub struct ProjectSearchView {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
-    query_contains_error: bool,
+    panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
     query_editor_was_focused: bool,
@@ -493,7 +501,7 @@ impl ProjectSearchView {
             case_sensitive,
             whole_word,
             regex,
-            query_contains_error: false,
+            panels_with_errors: HashSet::new(),
             active_match_index: None,
             query_editor_was_focused: false,
             included_files_editor,
@@ -564,7 +572,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
-        let Ok(included_files) = self
+        let included_files = match self
             .included_files_editor
             .read(cx)
             .text(cx)
@@ -572,12 +580,19 @@ impl ProjectSearchView {
             .map(str::trim)
             .filter(|glob_str| !glob_str.is_empty())
             .map(|glob_str| glob::Pattern::new(glob_str))
-            .collect::<Result<_, _>>() else {
-                self.query_contains_error = true;
+            .collect::<Result<_, _>>()
+        {
+            Ok(included_files) => {
+                self.panels_with_errors.remove(&InputPanel::Include);
+                included_files
+            }
+            Err(_e) => {
+                self.panels_with_errors.insert(InputPanel::Include);
                 cx.notify();
-                return None
-            };
-        let Ok(excluded_files) = self
+                return None;
+            }
+        };
+        let excluded_files = match self
             .excluded_files_editor
             .read(cx)
             .text(cx)
@@ -585,11 +600,18 @@ impl ProjectSearchView {
             .map(str::trim)
             .filter(|glob_str| !glob_str.is_empty())
             .map(|glob_str| glob::Pattern::new(glob_str))
-            .collect::<Result<_, _>>() else {
-                self.query_contains_error = true;
+            .collect::<Result<_, _>>()
+        {
+            Ok(excluded_files) => {
+                self.panels_with_errors.remove(&InputPanel::Exclude);
+                excluded_files
+            }
+            Err(_e) => {
+                self.panels_with_errors.insert(InputPanel::Exclude);
                 cx.notify();
-                return None
-            };
+                return None;
+            }
+        };
         if self.regex {
             match SearchQuery::regex(
                 text,
@@ -598,9 +620,12 @@ impl ProjectSearchView {
                 included_files,
                 excluded_files,
             ) {
-                Ok(query) => Some(query),
-                Err(_) => {
-                    self.query_contains_error = true;
+                Ok(query) => {
+                    self.panels_with_errors.remove(&InputPanel::Query);
+                    Some(query)
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Query);
                     cx.notify();
                     None
                 }
@@ -968,11 +993,23 @@ impl View for ProjectSearchBar {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
             let theme = cx.global::<Settings>().theme.clone();
-            let editor_container = if search.query_contains_error {
+            let query_container_style = if search.panels_with_errors.contains(&InputPanel::Query) {
                 theme.search.invalid_editor
             } else {
                 theme.search.editor.input.container
             };
+            let include_container_style =
+                if search.panels_with_errors.contains(&InputPanel::Include) {
+                    theme.search.invalid_include_exclude_editor
+                } else {
+                    theme.search.include_exclude_editor.input.container
+                };
+            let exclude_container_style =
+                if search.panels_with_errors.contains(&InputPanel::Exclude) {
+                    theme.search.invalid_include_exclude_editor
+                } else {
+                    theme.search.include_exclude_editor.input.container
+                };
 
             let included_files_view = ChildView::new(&search.included_files_editor, cx)
                 .aligned()
@@ -1010,7 +1047,7 @@ impl View for ProjectSearchBar {
                                     .aligned()
                                 }))
                                 .contained()
-                                .with_style(editor_container)
+                                .with_style(query_container_style)
                                 .aligned()
                                 .constrained()
                                 .with_min_width(theme.search.editor.min_width)
@@ -1053,7 +1090,7 @@ impl View for ProjectSearchBar {
                             Flex::row()
                                 .with_child(included_files_view)
                                 .contained()
-                                .with_style(theme.search.include_exclude_editor.input.container)
+                                .with_style(include_container_style)
                                 .aligned()
                                 .constrained()
                                 .with_min_width(theme.search.include_exclude_editor.min_width)
@@ -1064,7 +1101,7 @@ impl View for ProjectSearchBar {
                             Flex::row()
                                 .with_child(excluded_files_view)
                                 .contained()
-                                .with_style(theme.search.include_exclude_editor.input.container)
+                                .with_style(exclude_container_style)
                                 .aligned()
                                 .constrained()
                                 .with_min_width(theme.search.include_exclude_editor.min_width)
