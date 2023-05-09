@@ -2853,7 +2853,9 @@ impl BackgroundScanner {
                         }
                     }
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    self.remove_repo_path(&path, &mut snapshot);
+                }
                 Err(err) => {
                     // TODO - create a special 'error' entry in the entries tree to mark this
                     log::error!("error reading file on event {:?}", err);
@@ -2862,6 +2864,31 @@ impl BackgroundScanner {
         }
 
         Some(event_paths)
+    }
+
+    fn remove_repo_path(&self, path: &Path, snapshot: &mut LocalSnapshot) -> Option<()> {
+        if !path
+            .components()
+            .any(|component| component.as_os_str() == *DOT_GIT)
+        {
+            let scan_id = snapshot.scan_id;
+            let repo = snapshot.repo_for(&path)?;
+
+            let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
+
+            let work_dir = repo.work_directory(snapshot)?;
+            let work_dir_id = repo.work_directory;
+
+            snapshot
+                .git_repositories
+                .update(&work_dir_id, |entry| entry.scan_id = scan_id);
+
+            snapshot
+                .repository_entries
+                .update(&work_dir, |entry| entry.statuses.remove(&repo_path));
+        }
+
+        Some(())
     }
 
     fn reload_repo_for_path(&self, path: &Path, snapshot: &mut LocalSnapshot) -> Option<()> {
@@ -2891,11 +2918,14 @@ impl BackgroundScanner {
                 entry.branch = branch.map(Into::into);
                 entry.statuses = statuses;
             });
-        } else if let Some(repo) = snapshot.repo_for(&path) {
+        } else {
+            let repo = snapshot.repo_for(&path)?;
+
             let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
 
             let status = {
                 let local_repo = snapshot.get_local_repo(&repo)?;
+
                 // Short circuit if we've already scanned everything
                 if local_repo.full_scan_id == scan_id {
                     return None;
