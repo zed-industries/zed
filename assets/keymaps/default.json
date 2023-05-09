@@ -200,6 +200,18 @@
     }
   },
   {
+    "context": "ProjectSearchBar > Editor",
+    "bindings": {
+      "escape": "project_search::ToggleFocus"
+    }
+  },
+  {
+    "context": "ProjectSearchView > Editor",
+    "bindings": {
+      "escape": "project_search::ToggleFocus"
+    }
+  },
+  {
     "context": "Pane",
     "bindings": {
       "cmd-f": "project_search::ToggleFocus",
