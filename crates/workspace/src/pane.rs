@@ -903,7 +903,8 @@ impl Pane {
                 // to activating the item to the left
                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
-            self.activate_item(index_to_activate, activate_pane, activate_pane, cx);
+            let should_activate = activate_pane || self.has_focus;
+            self.activate_item(index_to_activate, should_activate, should_activate, cx);
         }
 
         let item = self.items.remove(item_index);
