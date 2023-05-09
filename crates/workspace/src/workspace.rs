@@ -1743,15 +1743,11 @@ impl Workspace {
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.center.remove(&pane).unwrap() {
-            self.panes.retain(|p| p != &pane);
-            cx.focus(self.panes.last().unwrap());
+            self.force_remove_pane(&pane, cx);
             self.unfollow(&pane, cx);
             self.last_leaders_by_pane.remove(&pane.downgrade());
             for removed_item in pane.read(cx).items() {
                 self.panes_by_item.remove(&removed_item.id());
-            }
-            if self.last_active_center_pane == Some(pane.downgrade()) {
-                self.last_active_center_pane = None;
             }
 
             cx.notify();
@@ -2460,14 +2456,18 @@ impl Workspace {
                 }
             }
             Member::Pane(pane) => {
-                self.panes.retain(|p| p != &pane);
-                cx.focus(self.panes.last().unwrap());
-                if self.last_active_center_pane == Some(pane.downgrade()) {
-                    self.last_active_center_pane = None;
-                }
-                cx.notify();
-            },
+                self.force_remove_pane(&pane, cx);
+            }
         }
+    }
+
+    fn force_remove_pane(&mut self, pane: &ViewHandle<Pane>, cx: &mut ViewContext<Workspace>) {
+        self.panes.retain(|p| p != pane);
+        cx.focus(self.panes.last().unwrap());
+        if self.last_active_center_pane == Some(pane.downgrade()) {
+            self.last_active_center_pane = None;
+        }
+        cx.notify();
     }
 
     fn serialize_workspace(&self, cx: &AppContext) {

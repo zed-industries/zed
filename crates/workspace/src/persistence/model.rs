@@ -147,14 +147,7 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade(cx)?;
                     workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.panes.retain(|p| p != &pane);
-                            cx.focus(workspace.panes.last().unwrap());
-                            if workspace.last_active_center_pane == Some(pane.downgrade()) {
-                                workspace.last_active_center_pane = None;
-                            }
-                            cx.notify();
-                        })
+                        .update(cx, |workspace, cx| workspace.force_remove_pane(&pane, cx))
                         .log_err()?;
                     None
                 }
