@@ -1170,7 +1170,7 @@ mod tests {
         }
 
         fn mtime(&self) -> std::time::SystemTime {
-            todo!()
+            unimplemented!()
         }
 
         fn path(&self) -> &Arc<Path> {
@@ -1178,23 +1178,23 @@ mod tests {
         }
 
         fn full_path(&self, _: &AppContext) -> PathBuf {
-            todo!()
+            unimplemented!()
         }
 
         fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
-            todo!()
+            unimplemented!()
         }
 
         fn is_deleted(&self) -> bool {
-            todo!()
+            unimplemented!()
         }
 
         fn as_any(&self) -> &dyn std::any::Any {
-            todo!()
+            unimplemented!()
         }
 
         fn to_proto(&self) -> rpc::proto::File {
-            todo!()
+            unimplemented!()
         }
     }
 
@@ -1204,7 +1204,7 @@ mod tests {
         }
 
         fn load(&self, _: &AppContext) -> Task<Result<String>> {
-            todo!()
+            unimplemented!()
         }
 
         fn buffer_reloaded(
@@ -1216,7 +1216,7 @@ mod tests {
             _: std::time::SystemTime,
             _: &mut AppContext,
         ) {
-            todo!()
+            unimplemented!()
         }
     }
 }

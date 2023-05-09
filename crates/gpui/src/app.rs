@@ -3963,6 +3963,15 @@ impl Drop for AnyViewHandle {
     }
 }
 
+impl Debug for AnyViewHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnyViewHandle")
+            .field("window_id", &self.window_id)
+            .field("view_id", &self.view_id)
+            .finish()
+    }
+}
+
 pub struct AnyModelHandle {
     model_id: usize,
     model_type: TypeId,
@@ -4072,10 +4081,18 @@ impl AnyWeakModelHandle {
     }
 }
 
-#[derive(Debug, Copy)]
+#[derive(Copy)]
 pub struct WeakViewHandle<T> {
     any_handle: AnyWeakViewHandle,
     view_type: PhantomData<T>,
+}
+
+impl<T> Debug for WeakViewHandle<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(&format!("WeakViewHandle<{}>", type_name::<T>()))
+            .field("any_handle", &self.any_handle)
+            .finish()
+    }
 }
 
 impl<T> WeakHandle for WeakViewHandle<T> {
