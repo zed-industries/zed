@@ -102,6 +102,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone, Default)]
 pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
+    pub git_statuses: HashMap<RepoPath, GitStatus>,
     pub branch_name: Option<String>,
 }
 
@@ -126,11 +127,17 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>> {
-        todo!()
+        let state = self.state.lock();
+        let mut map = TreeMap::default();
+        for (repo_path, status) in state.git_statuses.iter() {
+            map.insert(repo_path.to_owned(), status.to_owned());
+        }
+        Some(map)
     }
 
-    fn file_status(&self, _: &RepoPath) -> Option<GitStatus> {
-        todo!()
+    fn file_status(&self, path: &RepoPath) -> Option<GitStatus> {
+        let state = self.state.lock();
+        state.git_statuses.get(path).cloned()
     }
 }
 

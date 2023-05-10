@@ -178,6 +178,9 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: value.work_directory.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
+            // TODO: Status
+            removed_statuses: Default::default(),
+            updated_statuses: Default::default(),
         }
     }
 }
@@ -1855,6 +1858,7 @@ impl LocalSnapshot {
             let scan_id = self.scan_id;
 
             let repo_lock = repo.lock();
+
             self.repository_entries.insert(
                 work_directory,
                 RepositoryEntry {

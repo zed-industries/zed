@@ -986,7 +986,21 @@ message Entry {
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
+    repeated uint64 removed_statuses = 3;
+    repeated StatusEntry updated_statuses = 4;
 }
+
+message StatusEntry {
+    uint64 entry_id = 1;
+    GitStatus status = 2;
+}
+
+enum GitStatus {
+    Added = 0;
+    Modified = 1;
+    Conflict = 2;
+}
+
 
 message BufferState {
     uint64 id = 1;
