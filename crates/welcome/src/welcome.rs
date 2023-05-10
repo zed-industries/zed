@@ -10,7 +10,7 @@ use gpui::{
 use settings::{settings_file::SettingsFile, Settings};
 
 use workspace::{
-    item::Item, open_new, dock::DockPosition, AppState, PaneBackdrop, Welcome, Workspace,
+    dock::DockPosition, item::Item, open_new, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
 };
 

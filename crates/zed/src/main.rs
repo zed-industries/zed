@@ -52,8 +52,7 @@ use staff_mode::StaffMode;
 use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings,
-    Workspace,
+    item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings, Workspace,
 };
 use zed::{self, build_window_options, initialize_workspace, languages, menus};
 

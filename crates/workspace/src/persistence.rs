@@ -214,10 +214,7 @@ impl WorkspaceDb {
                         workspace_location = ?2,
                         left_sidebar_open = ?3,
                         timestamp = CURRENT_TIMESTAMP
-                ))?((
-                    workspace.id,
-                    &workspace.location,
-                ))
+                ))?((workspace.id, &workspace.location))
                 .context("Updating workspace")?;
 
                 // Save center pane group
@@ -453,7 +450,6 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
-
 
     use db::open_test_db;
 

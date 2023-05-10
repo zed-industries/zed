@@ -202,6 +202,8 @@ impl Dock {
             if panel_ix == self.active_panel_index {
                 self.active_panel_index = 0;
                 self.set_open(false, cx);
+            } else if panel_ix < self.active_panel_index {
+                self.active_panel_index -= 1;
             }
             self.panel_entries.remove(panel_ix);
             cx.notify();
@@ -228,7 +230,9 @@ impl Dock {
 
     pub fn active_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
         if self.is_open {
-            self.panel_entries.get(self.active_panel_index).map(|entry| &entry.panel)
+            self.panel_entries
+                .get(self.active_panel_index)
+                .map(|entry| &entry.panel)
         } else {
             None
         }
@@ -414,5 +418,70 @@ impl StatusItemView for PanelButtons {
         _: Option<&dyn crate::ItemHandle>,
         _: &mut ViewContext<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test {
+    use super::*;
+    use gpui::Entity;
+
+    pub enum TestPanelEvent {
+        PositionChanged,
+        Activated,
+        Closed,
+    }
+
+    pub struct TestPanel {
+        pub position: DockPosition,
+    }
+
+    impl Entity for TestPanel {
+        type Event = TestPanelEvent;
+    }
+
+    impl View for TestPanel {
+        fn ui_name() -> &'static str {
+            "TestPanel"
+        }
+
+        fn render(&mut self, _: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self> {
+            Empty::new().into_any()
+        }
+    }
+
+    impl Panel for TestPanel {
+        fn position(&self, _: &gpui::WindowContext) -> super::DockPosition {
+            self.position
+        }
+
+        fn position_is_valid(&self, _: super::DockPosition) -> bool {
+            true
+        }
+
+        fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+            self.position = position;
+            cx.emit(TestPanelEvent::PositionChanged);
+        }
+
+        fn icon_path(&self) -> &'static str {
+            "icons/test_panel.svg"
+        }
+
+        fn icon_tooltip(&self) -> String {
+            "Test Panel".into()
+        }
+
+        fn should_change_position_on_event(event: &Self::Event) -> bool {
+            matches!(event, TestPanelEvent::PositionChanged)
+        }
+
+        fn should_activate_on_event(&self, event: &Self::Event, _: &gpui::AppContext) -> bool {
+            matches!(event, TestPanelEvent::Activated)
+        }
+
+        fn should_close_on_event(&self, event: &Self::Event, _: &gpui::AppContext) -> bool {
+            matches!(event, TestPanelEvent::Closed)
+        }
     }
 }

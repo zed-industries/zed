@@ -859,7 +859,7 @@ impl Workspace {
                         was_visible = dock.is_open()
                             && dock
                                 .active_panel()
-                                .map_or(false, |item| item.as_any().is::<T>());
+                                .map_or(false, |active_panel| active_panel.id() == panel.id());
                         dock.remove_panel(&panel, cx);
                     });
                     dock = match panel.read(cx).position(cx) {
@@ -2688,7 +2688,11 @@ impl View for Workspace {
                                                 .flex(1., true),
                                             )
                                             .with_children(
-                                                if self.bottom_dock.read(cx).active_panel().is_some()
+                                                if self
+                                                    .bottom_dock
+                                                    .read(cx)
+                                                    .active_panel()
+                                                    .is_some()
                                                 {
                                                     Some(ChildView::new(&self.bottom_dock, cx))
                                                 } else {
@@ -3074,7 +3078,10 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
 mod tests {
     use std::{cell::RefCell, rc::Rc};
 
-    use crate::item::test::{TestItem, TestItemEvent, TestProjectItem};
+    use crate::{
+        dock::test::TestPanel,
+        item::test::{TestItem, TestItemEvent, TestProjectItem},
+    };
 
     use super::*;
     use fs::FakeFs;
@@ -3642,6 +3649,91 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panels(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
+        deterministic.forbid_parking();
+        Settings::test_async(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (_window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
+            // Add panel_1 on the left, panel_2 on the right.
+            let panel_1 = cx.add_view(|_| TestPanel {
+                position: DockPosition::Left,
+            });
+            workspace.add_panel(panel_1.clone(), cx);
+            workspace
+                .left_dock()
+                .update(cx, |left_dock, cx| left_dock.set_open(true, cx));
+            let panel_2 = cx.add_view(|_| TestPanel {
+                position: DockPosition::Right,
+            });
+            workspace.add_panel(panel_2.clone(), cx);
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+
+            assert_eq!(
+                workspace.left_dock().read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            assert_eq!(
+                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                panel_2.id()
+            );
+
+            (panel_1, panel_2)
+        });
+
+        // Move panel_1 to the right
+        panel_1.update(cx, |panel_1, cx| {
+            panel_1.set_position(DockPosition::Right, cx)
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_1 was visible on the left, it should now be visible now that it's been moved to the right.
+            // Since it was the only panel on the left, the left dock should now be closed.
+            assert!(!workspace.left_dock().read(cx).is_open());
+            assert!(workspace.left_dock().read(cx).active_panel().is_none());
+            assert_eq!(
+                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+
+            // Now we move panel_2 to the left
+            panel_2.set_position(DockPosition::Left, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_2 was not visible on the right, we don't open the left dock.
+            assert!(!workspace.left_dock().read(cx).is_open());
+            // And the right dock is unaffected in it's displaying of panel_1
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(
+                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+        });
+
+        // Move panel_1 back to the left
+        panel_1.update(cx, |panel_1, cx| {
+            panel_1.set_position(DockPosition::Left, cx)
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_1 was visible on the right, we open the left dock and make panel_1 active.
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert_eq!(
+                workspace.left_dock().read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            // And right the dock should be closed as it no longer has any panels.
+            assert!(!workspace.right_dock().read(cx).is_open());
         });
     }
 }
