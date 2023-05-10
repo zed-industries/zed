@@ -5,7 +5,6 @@ use futures::stream::StreamExt;
 use gpui::{
     actions,
     anyhow::{anyhow, Result},
-    color::Color,
     elements::{
         AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
@@ -1079,16 +1078,23 @@ impl ProjectPanel {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
-        let git_color = details
+        // Prepare colors for git statuses
+        let editor_theme = &cx.global::<Settings>().theme.editor;
+        let color_for_added = Some(editor_theme.diff.inserted);
+        let color_for_modified = Some(editor_theme.diff.modified);
+        let color_for_conflict = Some(editor_theme.diff.deleted);
+        let color_for_untracked = None;
+        let mut filename_text_style = style.text.clone();
+        filename_text_style.color = details
             .git_status
             .as_ref()
             .and_then(|status| match status {
-                GitStatus::Added => Some(Color::green()),
-                GitStatus::Modified => Some(Color::blue()),
-                GitStatus::Conflict => Some(Color::red()),
-                GitStatus::Untracked => None,
+                GitStatus::Added => color_for_added,
+                GitStatus::Modified => color_for_modified,
+                GitStatus::Conflict => color_for_conflict,
+                GitStatus::Untracked => color_for_untracked,
             })
-            .unwrap_or(Color::transparent_black());
+            .unwrap_or(style.text.color);
 
         Flex::row()
             .with_child(
@@ -1117,7 +1123,7 @@ impl ProjectPanel {
                     .flex(1.0, true)
                     .into_any()
             } else {
-                Label::new(details.filename.clone(), style.text.clone())
+                Label::new(details.filename.clone(), filename_text_style)
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()
@@ -1128,7 +1134,6 @@ impl ProjectPanel {
             .with_height(style.height)
             .contained()
             .with_style(row_container_style)
-            .with_background_color(git_color)
             .with_padding_left(padding)
             .into_any_named("project panel entry visual element")
     }
