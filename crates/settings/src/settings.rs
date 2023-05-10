@@ -132,7 +132,7 @@ impl TelemetrySettings {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq)]
-#[serde(rename_all="lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum DockPosition {
     Left,
     Right,
@@ -166,17 +166,9 @@ pub enum GitGutter {
 
 pub struct GitGutterConfig {}
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectPanelSettings {
-    pub dock: DockPosition
-}
-
-impl Default for ProjectPanelSettings {
-    fn default() -> Self {
-        Self {
-            dock: DockPosition::Left
-        }
-    }
+    pub dock: Option<DockPosition>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -279,22 +271,21 @@ pub struct TerminalSettings {
 impl Default for TerminalSettings {
     fn default() -> Self {
         Self {
-            shell:Default::default(),
-            working_directory:Default::default(),
-            font_size:Default::default(),
-            font_family:Default::default(),
-            line_height:Default::default(),
-            font_features:Default::default(),
-            env:Default::default(),
-            blinking:Default::default(),
-            alternate_scroll:Default::default(),
-            option_as_meta:Default::default(),
-            copy_on_select:Default::default(),
+            shell: Default::default(),
+            working_directory: Default::default(),
+            font_size: Default::default(),
+            font_family: Default::default(),
+            line_height: Default::default(),
+            font_features: Default::default(),
+            env: Default::default(),
+            blinking: Default::default(),
+            alternate_scroll: Default::default(),
+            option_as_meta: Default::default(),
+            copy_on_select: Default::default(),
             dock: DockPosition::Bottom,
         }
     }
 }
-
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -407,7 +398,7 @@ pub struct SettingsFileContent {
     pub autosave: Option<Autosave>,
     #[serde(flatten)]
     pub editor: EditorSettings,
-    pub project_panel: ProjectPanelSettings,
+    pub project_panel: Option<ProjectPanelSettings>,
     #[serde(default)]
     pub journal: JournalSettings,
     #[serde(default)]
@@ -502,7 +493,7 @@ impl Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
-            project_panel_defaults: Default::default(),
+            project_panel_defaults: defaults.project_panel.unwrap(),
             project_panel_overrides: Default::default(),
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
@@ -610,7 +601,7 @@ impl Settings {
             }
         }
         self.editor_overrides = data.editor;
-        self.project_panel_overrides = data.project_panel;
+        self.project_panel_overrides = data.project_panel.unwrap_or_default();
         self.git_overrides = data.git.unwrap_or_default();
         self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;

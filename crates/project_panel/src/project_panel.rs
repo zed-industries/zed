@@ -150,7 +150,8 @@ impl ProjectPanel {
                     old_dock_position = new_dock_position;
                     cx.emit(Event::DockPositionChanged);
                 }
-            }).detach();
+            })
+            .detach();
 
             cx.observe(&project, |this, _, cx| {
                 this.update_visible_entries(None, cx);
@@ -253,8 +254,8 @@ impl ProjectPanel {
                             }
                         }
                     }
-                },
-                Event::DockPositionChanged => {},
+                }
+                Event::DockPositionChanged => {}
             }
         })
         .detach();
@@ -1341,7 +1342,11 @@ impl Entity for ProjectPanel {
 
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        cx.global::<Settings>().project_panel_overrides.dock.into()
+        cx.global::<Settings>()
+            .project_panel_overrides
+            .dock
+            .map(Into::into)
+            .unwrap_or(DockPosition::Left)
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
