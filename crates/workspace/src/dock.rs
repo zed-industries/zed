@@ -81,10 +81,6 @@ impl From<&dyn PanelHandle> for AnyViewHandle {
     }
 }
 
-pub enum Event {
-    Close,
-}
-
 pub struct Dock {
     position: DockPosition,
     panels: Vec<PanelEntry>,
@@ -182,7 +178,6 @@ impl Dock {
     }
 
     pub fn toggle_open(&mut self, cx: &mut ViewContext<Self>) {
-        if self.is_open {}
         self.is_open = !self.is_open;
         cx.notify();
     }
@@ -200,7 +195,7 @@ impl Dock {
                         this.activate_item(ix, cx);
                     }
                 } else if view.read(cx).should_close_on_event(event, cx) {
-                    cx.emit(Event::Close);
+                    this.set_open(false, cx);
                 }
             }),
         ];
@@ -226,7 +221,7 @@ impl Dock {
         {
             if panel_ix == self.active_item_ix {
                 self.active_item_ix = 0;
-                cx.emit(Event::Close);
+                self.set_open(false, cx);
             }
             self.panels.remove(panel_ix);
             cx.notify();
@@ -261,7 +256,7 @@ impl Dock {
 }
 
 impl Entity for Dock {
-    type Event = Event;
+    type Event = ();
 }
 
 impl View for Dock {

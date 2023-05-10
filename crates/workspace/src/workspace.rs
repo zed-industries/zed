@@ -612,9 +612,18 @@ impl Workspace {
                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
                     .detach_and_log_err(cx);
             }),
-            Self::register_dock(&left_dock, cx),
-            Self::register_dock(&bottom_dock, cx),
-            Self::register_dock(&right_dock, cx),
+            cx.observe(&left_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&bottom_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&right_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
         ];
 
         let mut this = Workspace {
@@ -1356,26 +1365,6 @@ impl Workspace {
             }
         } else {
             Task::ready(Ok(()))
-        }
-    }
-
-    fn register_dock(dock: &ViewHandle<Dock>, cx: &mut ViewContext<Self>) -> Subscription {
-        cx.subscribe(dock, Self::handle_dock_event)
-    }
-
-    fn handle_dock_event(
-        &mut self,
-        dock: ViewHandle<Dock>,
-        event: &dock::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            dock::Event::Close => {
-                dock.update(cx, |dock, cx| dock.set_open(false, cx));
-                self.serialize_workspace(cx);
-                cx.focus_self();
-                cx.notify();
-            }
         }
     }
 
