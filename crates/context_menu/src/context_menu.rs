@@ -126,7 +126,6 @@ pub struct ContextMenu {
     selected_index: Option<usize>,
     visible: bool,
     previously_focused_view_id: Option<usize>,
-    clicked: bool,
     parent_view_id: usize,
     _actions_observation: Subscription,
 }
@@ -189,7 +188,6 @@ impl ContextMenu {
             selected_index: Default::default(),
             visible: Default::default(),
             previously_focused_view_id: Default::default(),
-            clicked: false,
             parent_view_id,
             _actions_observation: cx.observe_actions(Self::action_dispatched),
         }
@@ -205,18 +203,14 @@ impl ContextMenu {
             .iter()
             .position(|item| item.action_id() == Some(action_id))
         {
-            if self.clicked {
-                self.cancel(&Default::default(), cx);
-            } else {
-                self.selected_index = Some(ix);
-                cx.notify();
-                cx.spawn(|this, mut cx| async move {
-                    cx.background().timer(Duration::from_millis(50)).await;
-                    this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx))?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
+            self.selected_index = Some(ix);
+            cx.notify();
+            cx.spawn(|this, mut cx| async move {
+                cx.background().timer(Duration::from_millis(50)).await;
+                this.update(&mut cx, |this, cx| this.cancel(&Default::default(), cx))?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         }
     }
 
@@ -256,7 +250,6 @@ impl ContextMenu {
         self.items.clear();
         self.visible = false;
         self.selected_index.take();
-        self.clicked = false;
         cx.notify();
     }
 
@@ -456,7 +449,7 @@ impl ContextMenu {
                             .on_up(MouseButton::Left, |_, _, _| {}) // Capture these events
                             .on_down(MouseButton::Left, |_, _, _| {}) // Capture these events
                             .on_click(MouseButton::Left, move |_, menu, cx| {
-                                menu.clicked = true;
+                                menu.cancel(&Default::default(), cx);
                                 let window_id = cx.window_id();
                                 match &action {
                                     ContextMenuItemAction::Action(action) => {
