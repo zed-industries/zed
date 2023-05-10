@@ -1012,9 +1012,10 @@ impl ProjectPanel {
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in &visible_worktree_entries[entry_range] {
+                    let path = &entry.path;
                     let status = snapshot
-                        .repo_for(&entry.path)
-                        .and_then(|repo_entry| repo_entry.status_for(entry.id));
+                        .repo_for(path)
+                        .and_then(|entry| entry.status_for(&snapshot, path));
 
                     let mut details = EntryDetails {
                         filename: entry

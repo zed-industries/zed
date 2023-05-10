@@ -2350,6 +2350,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "smol",
+ "sum_tree",
  "tempfile",
  "util",
 ]

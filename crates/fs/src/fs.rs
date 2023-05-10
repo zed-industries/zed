@@ -7,7 +7,7 @@ use git2::Repository as LibGitRepository;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use regex::Regex;
-use repository::GitRepository;
+use repository::{GitRepository, GitStatus};
 use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
@@ -27,7 +27,7 @@ use util::ResultExt;
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use repository::{FakeGitRepositoryState, GitStatus};
+use repository::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
 
