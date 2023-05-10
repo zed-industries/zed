@@ -1554,6 +1554,9 @@ impl Workspace {
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
+            if &pane == self.dock_pane() {
+                Dock::show(self, false, cx);
+            }
             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
             true
         } else {
