@@ -1451,27 +1451,13 @@ impl AppContext {
                 self.views_metadata.remove(&(window_id, view_id));
                 let mut view = self.views.remove(&(window_id, view_id)).unwrap();
                 view.release(self);
-                let change_focus_to = self.windows.get_mut(&window_id).and_then(|window| {
+                if let Some(window) = self.windows.get_mut(&window_id) {
                     window.parents.remove(&view_id);
                     window
                         .invalidation
                         .get_or_insert_with(Default::default)
                         .removed
                         .push(view_id);
-                    if window.focused_view_id == Some(view_id) {
-                        Some(window.root_view().id())
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(view_id) = change_focus_to {
-                    self.pending_effects
-                        .push_back(Effect::Focus(FocusEffect::View {
-                            window_id,
-                            view_id: Some(view_id),
-                            is_forced: false,
-                        }));
                 }
 
                 self.pending_effects
@@ -1710,6 +1696,25 @@ impl AppContext {
                                 cx.invalidate(invalidation, appearance);
                                 if cx.layout(refreshing).log_err().is_some() {
                                     updated_windows.insert(window_id);
+
+                                    // When the previously-focused view isn't rendered and
+                                    // there isn't any pending focus, focus the root view.
+                                    if let Some(focused_view_id) = cx.focused_view_id() {
+                                        let root_view_id = cx.window.root_view().id();
+                                        if focused_view_id != root_view_id
+                                            && !cx.window.parents.contains_key(&focused_view_id)
+                                            && !focus_effects.contains_key(&window_id)
+                                        {
+                                            focus_effects.insert(
+                                                window_id,
+                                                FocusEffect::View {
+                                                    window_id,
+                                                    view_id: Some(root_view_id),
+                                                    is_forced: false,
+                                                },
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -1886,9 +1891,27 @@ impl AppContext {
     fn handle_focus_effect(&mut self, effect: FocusEffect) {
         let window_id = effect.window_id();
         self.update_window(window_id, |cx| {
+            // Ensure the newly-focused view has been rendered, otherwise focus
+            // the root view instead.
             let focused_id = match effect {
-                FocusEffect::View { view_id, .. } => view_id,
-                FocusEffect::ViewParent { view_id, .. } => cx.ancestors(view_id).skip(1).next(),
+                FocusEffect::View { view_id, .. } => {
+                    if let Some(view_id) = view_id {
+                        if cx.window.parents.contains_key(&view_id) {
+                            Some(view_id)
+                        } else {
+                            Some(cx.root_view().id())
+                        }
+                    } else {
+                        None
+                    }
+                }
+                FocusEffect::ViewParent { view_id, .. } => Some(
+                    cx.window
+                        .parents
+                        .get(&view_id)
+                        .copied()
+                        .unwrap_or(cx.root_view().id()),
+                ),
             };
 
             let focus_changed = cx.window.focused_view_id != focused_id;
