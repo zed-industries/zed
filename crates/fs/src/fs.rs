@@ -7,7 +7,7 @@ use git2::Repository as LibGitRepository;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use regex::Regex;
-use repository::{GitRepository, GitStatus};
+use repository::{GitRepository, GitFileStatus};
 use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
@@ -654,10 +654,10 @@ impl FakeFs {
         });
     }
 
-    pub async fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitStatus)]) {
+    pub async fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitFileStatus)]) {
         self.with_git_state(dot_git, |state| {
-            state.git_statuses.clear();
-            state.git_statuses.extend(
+            state.worktree_statuses.clear();
+            state.worktree_statuses.extend(
                 statuses
                     .iter()
                     .map(|(path, content)| {

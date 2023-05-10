@@ -17,7 +17,7 @@ use gpui::{
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
-    repository::GitStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
+    repository::GitFileStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
 use settings::Settings;
@@ -89,7 +89,7 @@ pub struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
-    git_status: Option<GitStatus>,
+    git_status: Option<GitFileStatus>,
 }
 
 actions!(
@@ -1081,19 +1081,14 @@ impl ProjectPanel {
 
         // Prepare colors for git statuses
         let editor_theme = &cx.global::<Settings>().theme.editor;
-        let color_for_added = Some(editor_theme.diff.inserted);
-        let color_for_modified = Some(editor_theme.diff.modified);
-        let color_for_conflict = Some(editor_theme.diff.deleted);
-        let color_for_untracked = None;
         let mut filename_text_style = style.text.clone();
         filename_text_style.color = details
             .git_status
             .as_ref()
-            .and_then(|status| match status {
-                GitStatus::Added => color_for_added,
-                GitStatus::Modified => color_for_modified,
-                GitStatus::Conflict => color_for_conflict,
-                GitStatus::Untracked => color_for_untracked,
+            .map(|status| match status {
+                GitFileStatus::Added => editor_theme.diff.inserted,
+                GitFileStatus::Modified => editor_theme.diff.modified,
+                GitFileStatus::Conflict => editor_theme.diff.deleted,
             })
             .unwrap_or(style.text.color);
 

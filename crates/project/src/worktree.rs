@@ -7,7 +7,7 @@ use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
 use fs::{
-    repository::{GitRepository, GitStatus, RepoPath},
+    repository::{GitRepository, GitFileStatus, RepoPath},
     Fs, LineEnding,
 };
 use futures::{
@@ -143,7 +143,7 @@ impl Snapshot {
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
-    pub(crate) statuses: TreeMap<RepoPath, GitStatus>,
+    pub(crate) worktree_statuses: TreeMap<RepoPath, GitFileStatus>,
 }
 
 impl RepositoryEntry {
@@ -165,10 +165,10 @@ impl RepositoryEntry {
         self.work_directory.contains(snapshot, path)
     }
 
-    pub fn status_for(&self, snapshot: &Snapshot, path: &Path) -> Option<GitStatus> {
+    pub fn status_for(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
         self.work_directory
             .relativize(snapshot, path)
-            .and_then(|repo_path| self.statuses.get(&repo_path))
+            .and_then(|repo_path| self.worktree_statuses.get(&repo_path))
             .cloned()
     }
 }
@@ -1445,7 +1445,7 @@ impl Snapshot {
                 work_directory: ProjectEntryId::from_proto(repository.work_directory_id).into(),
                 branch: repository.branch.map(Into::into),
                 // TODO: status
-                statuses: Default::default(),
+                worktree_statuses: Default::default(),
             };
             if let Some(entry) = self.entry_for_id(repository.work_directory_id()) {
                 self.repository_entries
@@ -1864,7 +1864,7 @@ impl LocalSnapshot {
                 RepositoryEntry {
                     work_directory: work_dir_id.into(),
                     branch: repo_lock.branch_name().map(Into::into),
-                    statuses: repo_lock.statuses().unwrap_or_default(),
+                    worktree_statuses: repo_lock.worktree_statuses().unwrap_or_default(),
                 },
             );
             drop(repo_lock);
@@ -2896,9 +2896,12 @@ impl BackgroundScanner {
                 .git_repositories
                 .update(&work_dir_id, |entry| entry.scan_id = scan_id);
 
+            // TODO: Status Replace linear scan with smarter sum tree traversal
             snapshot
                 .repository_entries
-                .update(&work_dir, |entry| entry.statuses.remove(&repo_path));
+                .update(&work_dir, |entry| entry.worktree_statuses.retain(|stored_path, _| {
+                    !stored_path.starts_with(&repo_path)
+                }));
         }
 
         Some(())
@@ -2920,7 +2923,7 @@ impl BackgroundScanner {
             let repo = repo.lock();
             repo.reload_index();
             let branch = repo.branch_name();
-            let statuses = repo.statuses().unwrap_or_default();
+            let statuses = repo.worktree_statuses().unwrap_or_default();
 
             snapshot.git_repositories.update(&entry_id, |entry| {
                 entry.scan_id = scan_id;
@@ -2929,7 +2932,7 @@ impl BackgroundScanner {
 
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry.branch = branch.map(Into::into);
-                entry.statuses = statuses;
+                entry.worktree_statuses = statuses;
             });
         } else {
             let repo = snapshot.repo_for(&path)?;
@@ -2945,21 +2948,19 @@ impl BackgroundScanner {
                 }
 
                 let git_ptr = local_repo.repo_ptr.lock();
-                git_ptr.file_status(&repo_path)?
+                git_ptr.worktree_status(&repo_path)?
             };
 
-            if status != GitStatus::Untracked {
-                let work_dir = repo.work_directory(snapshot)?;
-                let work_dir_id = repo.work_directory;
+            let work_dir = repo.work_directory(snapshot)?;
+            let work_dir_id = repo.work_directory;
 
-                snapshot
-                    .git_repositories
-                    .update(&work_dir_id, |entry| entry.scan_id = scan_id);
+            snapshot
+                .git_repositories
+                .update(&work_dir_id, |entry| entry.scan_id = scan_id);
 
-                snapshot
-                    .repository_entries
-                    .update(&work_dir, |entry| entry.statuses.insert(repo_path, status));
-            }
+            snapshot
+                .repository_entries
+                .update(&work_dir, |entry| entry.worktree_statuses.insert(repo_path, status));
         }
 
         Some(())
@@ -3848,6 +3849,11 @@ mod tests {
             "project": {
                 "a.txt": "a",
                 "b.txt": "bb",
+                "c": {
+                    "d": {
+                        "e.txt": "eee"
+                    }
+                }
             },
 
         }));
@@ -3865,18 +3871,22 @@ mod tests {
         .await
         .unwrap();
 
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
         const A_TXT: &'static str = "a.txt";
         const B_TXT: &'static str = "b.txt";
+        const E_TXT: &'static str = "c/d/e.txt";
+
         let work_dir = root.path().join("project");
 
         let mut repo = git_init(work_dir.as_path());
         git_add(Path::new(A_TXT), &repo);
+        git_add(Path::new(E_TXT), &repo);
         git_commit("Initial commit", &repo);
 
         std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
 
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
         tree.flush_fs_events(cx).await;
 
         // Check that the right git state is observed on startup
@@ -3886,14 +3896,14 @@ mod tests {
             let (dir, repo) = snapshot.repository_entries.iter().next().unwrap();
             assert_eq!(dir.0.as_ref(), Path::new("project"));
 
-            assert_eq!(repo.statuses.iter().count(), 2);
+            assert_eq!(repo.worktree_statuses.iter().count(), 2);
             assert_eq!(
-                repo.statuses.get(&Path::new(A_TXT).into()),
-                Some(&GitStatus::Modified)
+                repo.worktree_statuses.get(&Path::new(A_TXT).into()),
+                Some(&GitFileStatus::Modified)
             );
             assert_eq!(
-                repo.statuses.get(&Path::new(B_TXT).into()),
-                Some(&GitStatus::Added)
+                repo.worktree_statuses.get(&Path::new(B_TXT).into()),
+                Some(&GitFileStatus::Added)
             );
         });
 
@@ -3907,14 +3917,15 @@ mod tests {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-            assert_eq!(repo.statuses.iter().count(), 0);
-            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
-            assert_eq!(repo.statuses.get(&Path::new(B_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.iter().count(), 0);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(B_TXT).into()), None);
         });
 
         git_reset(0, &repo);
         git_remove_index(Path::new(B_TXT), &repo);
         git_stash(&mut repo);
+        std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
         tree.flush_fs_events(cx).await;
 
         // Check that more complex repo changes are tracked
@@ -3922,17 +3933,21 @@ mod tests {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-            dbg!(&repo.statuses);
-
-            assert_eq!(repo.statuses.iter().count(), 1);
-            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.iter().count(), 2);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
             assert_eq!(
-                repo.statuses.get(&Path::new(B_TXT).into()),
-                Some(&GitStatus::Added)
+                repo.worktree_statuses.get(&Path::new(B_TXT).into()),
+                Some(&GitFileStatus::Added)
+            );
+            assert_eq!(
+                repo.worktree_statuses.get(&Path::new(E_TXT).into()),
+                Some(&GitFileStatus::Modified)
             );
         });
 
         std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
+        std::fs::remove_dir_all(work_dir.join("c")).unwrap();
+
         tree.flush_fs_events(cx).await;
 
         // Check that non-repo behavior is tracked
@@ -3940,9 +3955,10 @@ mod tests {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-            assert_eq!(repo.statuses.iter().count(), 0);
-            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
-            assert_eq!(repo.statuses.get(&Path::new(B_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.iter().count(), 0);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(B_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(E_TXT).into()), None);
         });
     }
 

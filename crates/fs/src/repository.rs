@@ -1,6 +1,5 @@
 use anyhow::Result;
 use collections::HashMap;
-use git2::Status;
 use parking_lot::Mutex;
 use std::{
     ffi::OsStr,
@@ -21,9 +20,9 @@ pub trait GitRepository: Send {
 
     fn branch_name(&self) -> Option<String>;
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>>;
+    fn worktree_statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
-    fn file_status(&self, path: &RepoPath) -> Option<GitStatus>;
+    fn worktree_status(&self, path: &RepoPath) -> Option<GitFileStatus>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -70,7 +69,7 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>> {
+    fn worktree_statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
         let statuses = self.statuses(None).log_err()?;
 
         let mut map = TreeMap::default();
@@ -80,17 +79,31 @@ impl GitRepository for LibGitRepository {
             .filter(|status| !status.status().contains(git2::Status::IGNORED))
         {
             let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
+            let Some(status) = read_status(status.status()) else {
+                continue
+            };
 
-            map.insert(path, status.status().into())
+            map.insert(path, status)
         }
 
         Some(map)
     }
 
-    fn file_status(&self, path: &RepoPath) -> Option<GitStatus> {
+    fn worktree_status(&self, path: &RepoPath) -> Option<GitFileStatus> {
         let status = self.status_file(path).log_err()?;
+        read_status(status)
+    }
+}
 
-        Some(status.into())
+fn read_status(status: git2::Status) -> Option<GitFileStatus> {
+    if status.contains(git2::Status::CONFLICTED) {
+        Some(GitFileStatus::Conflict)
+    } else if status.intersects(git2::Status::WT_MODIFIED | git2::Status::WT_RENAMED) {
+        Some(GitFileStatus::Modified)
+    } else if status.intersects(git2::Status::WT_NEW) {
+        Some(GitFileStatus::Added)
+    } else {
+        None
     }
 }
 
@@ -102,7 +115,7 @@ pub struct FakeGitRepository {
 #[derive(Debug, Clone, Default)]
 pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
-    pub git_statuses: HashMap<RepoPath, GitStatus>,
+    pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
     pub branch_name: Option<String>,
 }
 
@@ -126,18 +139,18 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>> {
+    fn worktree_statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
         let state = self.state.lock();
         let mut map = TreeMap::default();
-        for (repo_path, status) in state.git_statuses.iter() {
+        for (repo_path, status) in state.worktree_statuses.iter() {
             map.insert(repo_path.to_owned(), status.to_owned());
         }
         Some(map)
     }
 
-    fn file_status(&self, path: &RepoPath) -> Option<GitStatus> {
+    fn worktree_status(&self, path: &RepoPath) -> Option<GitFileStatus> {
         let state = self.state.lock();
-        state.git_statuses.get(path).cloned()
+        state.worktree_statuses.get(path).cloned()
     }
 }
 
@@ -170,32 +183,11 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum GitStatus {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitFileStatus {
     Added,
     Modified,
     Conflict,
-    #[default]
-    Untracked,
-}
-
-impl From<Status> for GitStatus {
-    fn from(value: Status) -> Self {
-        if value.contains(git2::Status::CONFLICTED) {
-            GitStatus::Conflict
-        } else if value.intersects(
-            git2::Status::INDEX_MODIFIED
-                | git2::Status::WT_MODIFIED
-                | git2::Status::INDEX_RENAMED
-                | git2::Status::WT_RENAMED,
-        ) {
-            GitStatus::Modified
-        } else if value.intersects(git2::Status::INDEX_NEW | git2::Status::WT_NEW) {
-            GitStatus::Added
-        } else {
-            GitStatus::Untracked
-        }
-    }
 }
 
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]

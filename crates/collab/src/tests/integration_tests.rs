@@ -10,7 +10,7 @@ use editor::{
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions,
     Undo,
 };
-use fs::{repository::GitStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
@@ -2728,8 +2728,8 @@ async fn test_git_status_sync(
         .set_status_for_repo(
             Path::new("/dir/.git"),
             &[
-                (&Path::new(A_TXT), GitStatus::Added),
-                (&Path::new(B_TXT), GitStatus::Added),
+                (&Path::new(A_TXT), GitFileStatus::Added),
+                (&Path::new(B_TXT), GitFileStatus::Added),
             ],
         )
         .await;
@@ -2748,7 +2748,7 @@ async fn test_git_status_sync(
     deterministic.run_until_parked();
 
     #[track_caller]
-    fn assert_status(file: &impl AsRef<Path>, status: Option<GitStatus>, project: &Project, cx: &AppContext) {
+    fn assert_status(file: &impl AsRef<Path>, status: Option<GitFileStatus>, project: &Project, cx: &AppContext) {
         let file = file.as_ref();
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
@@ -2760,12 +2760,12 @@ async fn test_git_status_sync(
 
     // Smoke test status reading
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
 
     client_a
@@ -2774,8 +2774,8 @@ async fn test_git_status_sync(
         .set_status_for_repo(
             Path::new("/dir/.git"),
             &[
-                (&Path::new(A_TXT), GitStatus::Modified),
-                (&Path::new(B_TXT), GitStatus::Modified),
+                (&Path::new(A_TXT), GitFileStatus::Modified),
+                (&Path::new(B_TXT), GitFileStatus::Modified),
             ],
         )
         .await;
@@ -2785,19 +2785,19 @@ async fn test_git_status_sync(
 
     // Smoke test status reading
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
 
     // And synchronization while joining
     let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
     project_remote_c.read_with(cx_c, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
 }
 
