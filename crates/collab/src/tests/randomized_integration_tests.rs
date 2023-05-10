@@ -20,7 +20,7 @@ use rand::{
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     env,
     ops::Range,
@@ -148,8 +148,11 @@ async fn test_random_collaboration(
 
     for (client, mut cx) in clients {
         cx.update(|cx| {
+            let store = cx.remove_global::<SettingsStore>();
+            let settings = cx.remove_global::<Settings>();
             cx.clear_globals();
-            cx.set_global(Settings::test(cx));
+            cx.set_global(store);
+            cx.set_global(settings);
             drop(client);
         });
     }

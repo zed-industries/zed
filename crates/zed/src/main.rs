@@ -158,7 +158,7 @@ fn main() {
 
         context_menu::init(cx);
         project::Project::init(&client);
-        client::init(client.clone(), cx);
+        client::init(&client, cx);
         command_palette::init(cx);
         editor::init(cx);
         go_to_line::init(cx);

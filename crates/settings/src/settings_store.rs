@@ -122,11 +122,11 @@ impl SettingsStore {
     /// Add a new type of setting to the store.
     pub fn register_setting<T: Setting>(&mut self, cx: &AppContext) {
         let setting_type_id = TypeId::of::<T>();
-
         let entry = self.setting_values.entry(setting_type_id);
         if matches!(entry, hash_map::Entry::Occupied(_)) {
-            panic!("duplicate setting type: {}", type_name::<T>());
+            return;
         }
+
         let setting_value = entry.or_insert(Box::new(SettingValue::<T> {
             global_value: None,
             local_values: Vec::new(),
@@ -142,6 +142,7 @@ impl SettingsStore {
                     user_values_stack = vec![user_value];
                 }
             }
+
             if let Some(default_deserialized_value) = default_settings.typed.get(&setting_type_id) {
                 setting_value.set_global_value(setting_value.load_setting(
                     default_deserialized_value,
@@ -159,7 +160,7 @@ impl SettingsStore {
     pub fn get<T: Setting>(&self, path: Option<&Path>) -> &T {
         self.setting_values
             .get(&TypeId::of::<T>())
-            .expect("unregistered setting type")
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
@@ -175,6 +176,14 @@ impl SettingsStore {
             .map_or(&serde_json::Value::Null, |s| &s.untyped)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(cx: &AppContext) -> Self {
+        let mut this = Self::default();
+        this.set_default_settings(&crate::test_settings(), cx)
+            .unwrap();
+        this
+    }
+
     /// Override the global value for a particular setting.
     ///
     /// This is only for tests. Normally, settings are only loaded from
@@ -183,7 +192,7 @@ impl SettingsStore {
     pub fn replace_value<T: Setting>(&mut self, value: T) {
         self.setting_values
             .get_mut(&TypeId::of::<T>())
-            .expect("unregistered setting type")
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
             .set_global_value(Box::new(value))
     }
 
@@ -268,7 +277,7 @@ impl SettingsStore {
     pub fn set_default_settings(
         &mut self,
         default_settings_content: &str,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Result<()> {
         let deserialized_setting_map = self.load_setting_map(default_settings_content)?;
         if deserialized_setting_map.typed.len() != self.setting_values.len() {
@@ -290,7 +299,7 @@ impl SettingsStore {
     pub fn set_user_settings(
         &mut self,
         user_settings_content: &str,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Result<()> {
         let user_settings = self.load_setting_map(user_settings_content)?;
         let old_user_settings =
@@ -304,7 +313,7 @@ impl SettingsStore {
         &mut self,
         path: Arc<Path>,
         settings_content: Option<&str>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Result<()> {
         let removed_map = if let Some(settings_content) = settings_content {
             self.local_deserialized_settings

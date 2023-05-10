@@ -19,7 +19,7 @@ use gpui::{
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     cell::{Ref, RefCell, RefMut},
     env,
@@ -102,6 +102,7 @@ impl TestServer {
 
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
             cx.set_global(Settings::test(cx));
         });
 
@@ -184,6 +185,8 @@ impl TestServer {
                     }
                 })
             });
+
+        cx.update(|cx| client::init(&client, cx));
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));

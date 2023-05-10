@@ -369,8 +369,8 @@ pub struct AppState {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
-        let settings = Settings::test(cx);
-        cx.set_global(settings);
+        cx.set_global(settings::SettingsStore::test(cx));
+        cx.set_global(Settings::test(cx));
 
         let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
@@ -378,6 +378,9 @@ impl AppState {
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let themes = ThemeRegistry::new((), cx.font_cache().clone());
+
+        client::init(&client, cx);
+
         Arc::new(Self {
             client,
             themes,

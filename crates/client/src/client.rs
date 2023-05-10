@@ -70,27 +70,30 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 actions!(client, [SignIn, SignOut]);
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+    let client = Arc::downgrade(client);
     settings::register_setting::<TelemetrySettings>(cx);
 
     cx.add_global_action({
         let client = client.clone();
         move |_: &SignIn, cx| {
-            let client = client.clone();
-            cx.spawn(
-                |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
-            )
-            .detach();
+            if let Some(client) = client.upgrade() {
+                cx.spawn(
+                    |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
+                )
+                .detach();
+            }
         }
     });
     cx.add_global_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
-            let client = client.clone();
-            cx.spawn(|cx| async move {
-                client.disconnect(&cx);
-            })
-            .detach();
+            if let Some(client) = client.upgrade() {
+                cx.spawn(|cx| async move {
+                    client.disconnect(&cx);
+                })
+                .detach();
+            }
         }
     });
 }

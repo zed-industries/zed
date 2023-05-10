@@ -1283,9 +1283,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
-        init(cx);
-
-        let app_state = cx.update(AppState::test);
+        let app_state = init(cx);
         app_state
             .fs
             .as_fake()

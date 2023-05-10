@@ -18,11 +18,12 @@ impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
         let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
         cx.update(|cx| {
+            search::init(cx);
+            crate::init(cx);
+
             cx.update_global(|store: &mut SettingsStore, _| {
                 store.replace_value(VimModeSetting(enabled));
             });
-            search::init(cx);
-            crate::init(cx);
 
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
         });
