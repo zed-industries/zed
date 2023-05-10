@@ -4208,14 +4208,19 @@ impl Project {
                                                     if matching_paths_tx.is_closed() {
                                                         break;
                                                     }
-
-                                                    abs_path.clear();
-                                                    abs_path.push(&snapshot.abs_path());
-                                                    abs_path.push(&entry.path);
-                                                    let matches = if let Some(file) =
-                                                        fs.open_sync(&abs_path).await.log_err()
+                                                    let matches = if query
+                                                        .file_matches(Some(&entry.path))
                                                     {
-                                                        query.detect(file).unwrap_or(false)
+                                                        abs_path.clear();
+                                                        abs_path.push(&snapshot.abs_path());
+                                                        abs_path.push(&entry.path);
+                                                        if let Some(file) =
+                                                            fs.open_sync(&abs_path).await.log_err()
+                                                        {
+                                                            query.detect(file).unwrap_or(false)
+                                                        } else {
+                                                            false
+                                                        }
                                                     } else {
                                                         false
                                                     };
@@ -4299,15 +4304,21 @@ impl Project {
                             let mut buffers_rx = buffers_rx.clone();
                             scope.spawn(async move {
                                 while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    let buffer_matches = query
-                                        .search(snapshot.as_rope())
-                                        .await
-                                        .iter()
-                                        .map(|range| {
-                                            snapshot.anchor_before(range.start)
-                                                ..snapshot.anchor_after(range.end)
-                                        })
-                                        .collect::<Vec<_>>();
+                                    let buffer_matches = if query.file_matches(
+                                        snapshot.file().map(|file| file.path().as_ref()),
+                                    ) {
+                                        query
+                                            .search(snapshot.as_rope())
+                                            .await
+                                            .iter()
+                                            .map(|range| {
+                                                snapshot.anchor_before(range.start)
+                                                    ..snapshot.anchor_after(range.end)
+                                            })
+                                            .collect()
+                                    } else {
+                                        Vec::new()
+                                    };
                                     if !buffer_matches.is_empty() {
                                         worker_matched_buffers
                                             .insert(buffer.clone(), buffer_matches);

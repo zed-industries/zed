@@ -1,22 +1,26 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
+use itertools::Itertools;
 use language::{char_kind, Rope};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
     io::{BufRead, BufReader, Read},
     ops::Range,
+    path::Path,
     sync::Arc,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
         search: Arc<AhoCorasick<usize>>,
         query: Arc<str>,
         whole_word: bool,
         case_sensitive: bool,
+        files_to_include: Vec<glob::Pattern>,
+        files_to_exclude: Vec<glob::Pattern>,
     },
     Regex {
         regex: Regex,
@@ -24,11 +28,19 @@ pub enum SearchQuery {
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
+        files_to_include: Vec<glob::Pattern>,
+        files_to_exclude: Vec<glob::Pattern>,
     },
 }
 
 impl SearchQuery {
-    pub fn text(query: impl ToString, whole_word: bool, case_sensitive: bool) -> Self {
+    pub fn text(
+        query: impl ToString,
+        whole_word: bool,
+        case_sensitive: bool,
+        files_to_include: Vec<glob::Pattern>,
+        files_to_exclude: Vec<glob::Pattern>,
+    ) -> Self {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
             .auto_configure(&[&query])
@@ -39,10 +51,18 @@ impl SearchQuery {
             query: Arc::from(query),
             whole_word,
             case_sensitive,
+            files_to_include,
+            files_to_exclude,
         }
     }
 
-    pub fn regex(query: impl ToString, whole_word: bool, case_sensitive: bool) -> Result<Self> {
+    pub fn regex(
+        query: impl ToString,
+        whole_word: bool,
+        case_sensitive: bool,
+        files_to_include: Vec<glob::Pattern>,
+        files_to_exclude: Vec<glob::Pattern>,
+    ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
         if whole_word {
@@ -64,17 +84,51 @@ impl SearchQuery {
             multiline,
             whole_word,
             case_sensitive,
+            files_to_include,
+            files_to_exclude,
         })
     }
 
     pub fn from_proto(message: proto::SearchProject) -> Result<Self> {
         if message.regex {
-            Self::regex(message.query, message.whole_word, message.case_sensitive)
+            Self::regex(
+                message.query,
+                message.whole_word,
+                message.case_sensitive,
+                message
+                    .files_to_include
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
+                    .map(|glob_str| glob::Pattern::new(glob_str))
+                    .collect::<Result<_, _>>()?,
+                message
+                    .files_to_exclude
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
+                    .map(|glob_str| glob::Pattern::new(glob_str))
+                    .collect::<Result<_, _>>()?,
+            )
         } else {
             Ok(Self::text(
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
+                message
+                    .files_to_include
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
+                    .map(|glob_str| glob::Pattern::new(glob_str))
+                    .collect::<Result<_, _>>()?,
+                message
+                    .files_to_exclude
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|glob_str| !glob_str.is_empty())
+                    .map(|glob_str| glob::Pattern::new(glob_str))
+                    .collect::<Result<_, _>>()?,
             ))
         }
     }
@@ -86,6 +140,16 @@ impl SearchQuery {
             regex: self.is_regex(),
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
+            files_to_include: self
+                .files_to_include()
+                .iter()
+                .map(ToString::to_string)
+                .join(","),
+            files_to_exclude: self
+                .files_to_exclude()
+                .iter()
+                .map(ToString::to_string)
+                .join(","),
         }
     }
 
@@ -223,5 +287,44 @@ impl SearchQuery {
 
     pub fn is_regex(&self) -> bool {
         matches!(self, Self::Regex { .. })
+    }
+
+    pub fn files_to_include(&self) -> &[glob::Pattern] {
+        match self {
+            Self::Text {
+                files_to_include, ..
+            } => files_to_include,
+            Self::Regex {
+                files_to_include, ..
+            } => files_to_include,
+        }
+    }
+
+    pub fn files_to_exclude(&self) -> &[glob::Pattern] {
+        match self {
+            Self::Text {
+                files_to_exclude, ..
+            } => files_to_exclude,
+            Self::Regex {
+                files_to_exclude, ..
+            } => files_to_exclude,
+        }
+    }
+
+    pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
+        match file_path {
+            Some(file_path) => {
+                !self
+                    .files_to_exclude()
+                    .iter()
+                    .any(|exclude_glob| exclude_glob.matches_path(file_path))
+                    && (self.files_to_include().is_empty()
+                        || self
+                            .files_to_include()
+                            .iter()
+                            .any(|include_glob| include_glob.matches_path(file_path)))
+            }
+            None => self.files_to_include().is_empty(),
+        }
     }
 }

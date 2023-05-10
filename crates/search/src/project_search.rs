@@ -22,6 +22,7 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
+    collections::HashSet,
     mem,
     ops::Range,
     path::PathBuf,
@@ -34,7 +35,7 @@ use workspace::{
     ItemNavHistory, Pane, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
-actions!(project_search, [SearchInNew, ToggleFocus]);
+actions!(project_search, [SearchInNew, ToggleFocus, NextField]);
 
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
@@ -48,6 +49,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::select_prev_match);
     cx.add_action(ProjectSearchBar::toggle_focus);
     cx.capture_action(ProjectSearchBar::tab);
+    cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOption::WholeWord, cx);
     add_toggle_option_action::<ToggleRegex>(SearchOption::Regex, cx);
@@ -75,6 +77,13 @@ struct ProjectSearch {
     search_id: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum InputPanel {
+    Query,
+    Exclude,
+    Include,
+}
+
 pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
@@ -82,10 +91,12 @@ pub struct ProjectSearchView {
     case_sensitive: bool,
     whole_word: bool,
     regex: bool,
-    query_contains_error: bool,
+    panels_with_errors: HashSet<InputPanel>,
     active_match_index: Option<usize>,
     search_id: usize,
     query_editor_was_focused: bool,
+    included_files_editor: ViewHandle<Editor>,
+    excluded_files_editor: ViewHandle<Editor>,
 }
 
 pub struct ProjectSearchBar {
@@ -425,7 +436,7 @@ impl ProjectSearchView {
             editor.set_text(query_text, cx);
             editor
         });
-        // Subcribe to query_editor in order to reraise editor events for workspace item activation purposes
+        // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         cx.subscribe(&query_editor, |_, _, event, cx| {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
@@ -448,6 +459,40 @@ impl ProjectSearchView {
         })
         .detach();
 
+        let included_files_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                Some(Arc::new(|theme| {
+                    theme.search.include_exclude_editor.input.clone()
+                })),
+                cx,
+            );
+            editor.set_placeholder_text("Include: crates/**/*.toml", cx);
+
+            editor
+        });
+        // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&included_files_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
+
+        let excluded_files_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                Some(Arc::new(|theme| {
+                    theme.search.include_exclude_editor.input.clone()
+                })),
+                cx,
+            );
+            editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
+
+            editor
+        });
+        // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
+        cx.subscribe(&excluded_files_editor, |_, _, event, cx| {
+            cx.emit(ViewEvent::EditorEvent(event.clone()))
+        })
+        .detach();
+
         let mut this = ProjectSearchView {
             search_id: model.read(cx).search_id,
             model,
@@ -456,9 +501,11 @@ impl ProjectSearchView {
             case_sensitive,
             whole_word,
             regex,
-            query_contains_error: false,
+            panels_with_errors: HashSet::new(),
             active_match_index: None,
             query_editor_was_focused: false,
+            included_files_editor,
+            excluded_files_editor,
         };
         this.model_changed(cx);
         this
@@ -525,11 +572,60 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
+        let included_files = match self
+            .included_files_editor
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(str::trim)
+            .filter(|glob_str| !glob_str.is_empty())
+            .map(|glob_str| glob::Pattern::new(glob_str))
+            .collect::<Result<_, _>>()
+        {
+            Ok(included_files) => {
+                self.panels_with_errors.remove(&InputPanel::Include);
+                included_files
+            }
+            Err(_e) => {
+                self.panels_with_errors.insert(InputPanel::Include);
+                cx.notify();
+                return None;
+            }
+        };
+        let excluded_files = match self
+            .excluded_files_editor
+            .read(cx)
+            .text(cx)
+            .split(',')
+            .map(str::trim)
+            .filter(|glob_str| !glob_str.is_empty())
+            .map(|glob_str| glob::Pattern::new(glob_str))
+            .collect::<Result<_, _>>()
+        {
+            Ok(excluded_files) => {
+                self.panels_with_errors.remove(&InputPanel::Exclude);
+                excluded_files
+            }
+            Err(_e) => {
+                self.panels_with_errors.insert(InputPanel::Exclude);
+                cx.notify();
+                return None;
+            }
+        };
         if self.regex {
-            match SearchQuery::regex(text, self.whole_word, self.case_sensitive) {
-                Ok(query) => Some(query),
-                Err(_) => {
-                    self.query_contains_error = true;
+            match SearchQuery::regex(
+                text,
+                self.whole_word,
+                self.case_sensitive,
+                included_files,
+                excluded_files,
+            ) {
+                Ok(query) => {
+                    self.panels_with_errors.remove(&InputPanel::Query);
+                    Some(query)
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Query);
                     cx.notify();
                     None
                 }
@@ -539,6 +635,8 @@ impl ProjectSearchView {
                 text,
                 self.whole_word,
                 self.case_sensitive,
+                included_files,
+                excluded_files,
             ))
         }
     }
@@ -723,19 +821,50 @@ impl ProjectSearchBar {
     }
 
     fn tab(&mut self, _: &editor::Tab, cx: &mut ViewContext<Self>) {
-        if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| {
-                if search_view.query_editor.is_focused(cx) {
-                    if !search_view.model.read(cx).match_ranges.is_empty() {
-                        search_view.focus_results_editor(cx);
-                    }
-                } else {
+        self.cycle_field(Direction::Next, cx);
+    }
+
+    fn tab_previous(&mut self, _: &editor::TabPrev, cx: &mut ViewContext<Self>) {
+        self.cycle_field(Direction::Prev, cx);
+    }
+
+    fn cycle_field(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
+        let active_project_search = match &self.active_project_search {
+            Some(active_project_search) => active_project_search,
+
+            None => {
+                cx.propagate_action();
+                return;
+            }
+        };
+
+        active_project_search.update(cx, |project_view, cx| {
+            let views = &[
+                &project_view.query_editor,
+                &project_view.included_files_editor,
+                &project_view.excluded_files_editor,
+            ];
+
+            let current_index = match views
+                .iter()
+                .enumerate()
+                .find(|(_, view)| view.is_focused(cx))
+            {
+                Some((index, _)) => index,
+
+                None => {
                     cx.propagate_action();
+                    return;
                 }
-            });
-        } else {
-            cx.propagate_action();
-        }
+            };
+
+            let new_index = match direction {
+                Direction::Next => (current_index + 1) % views.len(),
+                Direction::Prev if current_index == 0 => views.len() - 1,
+                Direction::Prev => (current_index - 1) % views.len(),
+            };
+            cx.focus(views[new_index]);
+        });
     }
 
     fn toggle_search_option(&mut self, option: SearchOption, cx: &mut ViewContext<Self>) -> bool {
@@ -864,59 +993,121 @@ impl View for ProjectSearchBar {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
             let theme = cx.global::<Settings>().theme.clone();
-            let editor_container = if search.query_contains_error {
+            let query_container_style = if search.panels_with_errors.contains(&InputPanel::Query) {
                 theme.search.invalid_editor
             } else {
                 theme.search.editor.input.container
             };
-            Flex::row()
+            let include_container_style =
+                if search.panels_with_errors.contains(&InputPanel::Include) {
+                    theme.search.invalid_include_exclude_editor
+                } else {
+                    theme.search.include_exclude_editor.input.container
+                };
+            let exclude_container_style =
+                if search.panels_with_errors.contains(&InputPanel::Exclude) {
+                    theme.search.invalid_include_exclude_editor
+                } else {
+                    theme.search.include_exclude_editor.input.container
+                };
+
+            let included_files_view = ChildView::new(&search.included_files_editor, cx)
+                .aligned()
+                .left()
+                .flex(1.0, true);
+            let excluded_files_view = ChildView::new(&search.excluded_files_editor, cx)
+                .aligned()
+                .right()
+                .flex(1.0, true);
+
+            let row_spacing = theme.workspace.toolbar.container.padding.bottom;
+
+            Flex::column()
                 .with_child(
                     Flex::row()
                         .with_child(
-                            ChildView::new(&search.query_editor, cx)
+                            Flex::row()
+                                .with_child(
+                                    ChildView::new(&search.query_editor, cx)
+                                        .aligned()
+                                        .left()
+                                        .flex(1., true),
+                                )
+                                .with_children(search.active_match_index.map(|match_ix| {
+                                    Label::new(
+                                        format!(
+                                            "{}/{}",
+                                            match_ix + 1,
+                                            search.model.read(cx).match_ranges.len()
+                                        ),
+                                        theme.search.match_index.text.clone(),
+                                    )
+                                    .contained()
+                                    .with_style(theme.search.match_index.container)
+                                    .aligned()
+                                }))
+                                .contained()
+                                .with_style(query_container_style)
                                 .aligned()
-                                .left()
-                                .flex(1., true),
+                                .constrained()
+                                .with_min_width(theme.search.editor.min_width)
+                                .with_max_width(theme.search.editor.max_width)
+                                .flex(1., false),
                         )
-                        .with_children(search.active_match_index.map(|match_ix| {
-                            Label::new(
-                                format!(
-                                    "{}/{}",
-                                    match_ix + 1,
-                                    search.model.read(cx).match_ranges.len()
-                                ),
-                                theme.search.match_index.text.clone(),
-                            )
-                            .contained()
-                            .with_style(theme.search.match_index.container)
-                            .aligned()
-                        }))
+                        .with_child(
+                            Flex::row()
+                                .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                                .with_child(self.render_nav_button(">", Direction::Next, cx))
+                                .aligned(),
+                        )
+                        .with_child(
+                            Flex::row()
+                                .with_child(self.render_option_button(
+                                    "Case",
+                                    SearchOption::CaseSensitive,
+                                    cx,
+                                ))
+                                .with_child(self.render_option_button(
+                                    "Word",
+                                    SearchOption::WholeWord,
+                                    cx,
+                                ))
+                                .with_child(self.render_option_button(
+                                    "Regex",
+                                    SearchOption::Regex,
+                                    cx,
+                                ))
+                                .contained()
+                                .with_style(theme.search.option_button_group)
+                                .aligned(),
+                        )
                         .contained()
-                        .with_style(editor_container)
-                        .aligned()
-                        .constrained()
-                        .with_min_width(theme.search.editor.min_width)
-                        .with_max_width(theme.search.editor.max_width)
-                        .flex(1., false),
+                        .with_margin_bottom(row_spacing),
                 )
                 .with_child(
                     Flex::row()
-                        .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                        .with_child(self.render_nav_button(">", Direction::Next, cx))
-                        .aligned(),
-                )
-                .with_child(
-                    Flex::row()
-                        .with_child(self.render_option_button(
-                            "Case",
-                            SearchOption::CaseSensitive,
-                            cx,
-                        ))
-                        .with_child(self.render_option_button("Word", SearchOption::WholeWord, cx))
-                        .with_child(self.render_option_button("Regex", SearchOption::Regex, cx))
-                        .contained()
-                        .with_style(theme.search.option_button_group)
-                        .aligned(),
+                        .with_child(
+                            Flex::row()
+                                .with_child(included_files_view)
+                                .contained()
+                                .with_style(include_container_style)
+                                .aligned()
+                                .constrained()
+                                .with_min_width(theme.search.include_exclude_editor.min_width)
+                                .with_max_width(theme.search.include_exclude_editor.max_width)
+                                .flex(1., false),
+                        )
+                        .with_child(
+                            Flex::row()
+                                .with_child(excluded_files_view)
+                                .contained()
+                                .with_style(exclude_container_style)
+                                .aligned()
+                                .constrained()
+                                .with_min_width(theme.search.include_exclude_editor.min_width)
+                                .with_max_width(theme.search.include_exclude_editor.max_width)
+                                .flex(1., false),
+                        ),
                 )
                 .contained()
                 .with_style(theme.search.container)
@@ -947,6 +1138,10 @@ impl ToolbarItemView for ProjectSearchBar {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+
+    fn row_count(&self) -> usize {
+        2
     }
 }
 

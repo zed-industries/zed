@@ -573,7 +573,13 @@ impl BufferSearchBar {
                 active_searchable_item.clear_matches(cx);
             } else {
                 let query = if self.regex {
-                    match SearchQuery::regex(query, self.whole_word, self.case_sensitive) {
+                    match SearchQuery::regex(
+                        query,
+                        self.whole_word,
+                        self.case_sensitive,
+                        Vec::new(),
+                        Vec::new(),
+                    ) {
                         Ok(query) => query,
                         Err(_) => {
                             self.query_contains_error = true;
@@ -582,7 +588,13 @@ impl BufferSearchBar {
                         }
                     }
                 } else {
-                    SearchQuery::text(query, self.whole_word, self.case_sensitive)
+                    SearchQuery::text(
+                        query,
+                        self.whole_word,
+                        self.case_sensitive,
+                        Vec::new(),
+                        Vec::new(),
+                    )
                 };
 
                 let matches = active_searchable_item.find_matches(query, cx);

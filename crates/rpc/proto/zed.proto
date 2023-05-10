@@ -680,6 +680,8 @@ message SearchProject {
     bool regex = 3;
     bool whole_word = 4;
     bool case_sensitive = 5;
+    string files_to_include = 6;
+    string files_to_exclude = 7;
 }
 
 message SearchProjectResponse {

@@ -3297,9 +3297,13 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
     assert_eq!(
-        search(&project, SearchQuery::text("TWO", false, true), cx)
-            .await
-            .unwrap(),
+        search(
+            &project,
+            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()),
+            cx
+        )
+        .await
+        .unwrap(),
         HashMap::from_iter([
             ("two.rs".to_string(), vec![6..9]),
             ("three.rs".to_string(), vec![37..40])
@@ -3318,37 +3322,361 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
     });
 
     assert_eq!(
-        search(&project, SearchQuery::text("TWO", false, true), cx)
-            .await
-            .unwrap(),
+        search(
+            &project,
+            SearchQuery::text("TWO", false, true, Vec::new(), Vec::new()),
+            cx
+        )
+        .await
+        .unwrap(),
         HashMap::from_iter([
             ("two.rs".to_string(), vec![6..9]),
             ("three.rs".to_string(), vec![37..40]),
             ("four.rs".to_string(), vec![25..28, 36..39])
         ])
     );
+}
 
-    async fn search(
-        project: &ModelHandle<Project>,
-        query: SearchQuery,
-        cx: &mut gpui::TestAppContext,
-    ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-        let results = project
-            .update(cx, |project, cx| project.search(query, cx))
-            .await?;
+#[gpui::test]
+async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
+    let search_query = "file";
 
-        Ok(results
-            .into_iter()
-            .map(|(buffer, ranges)| {
-                buffer.read_with(cx, |buffer, _| {
-                    let path = buffer.file().unwrap().path().to_string_lossy().to_string();
-                    let ranges = ranges
-                        .into_iter()
-                        .map(|range| range.to_offset(buffer))
-                        .collect::<Vec<_>>();
-                    (path, ranges)
-                })
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![glob::Pattern::new("*.odd").unwrap()],
+                Vec::new()
+            ),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "If no inclusions match, no files should be returned"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![glob::Pattern::new("*.rs").unwrap()],
+                Vec::new()
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("two.rs".to_string(), vec![8..12]),
+        ]),
+        "Rust only search should give only Rust files"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap(),
+                ],
+                Vec::new()
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "TypeScript only search should give only TypeScript files, even if other inclusions don't match anything"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    glob::Pattern::new("*.rs").unwrap(),
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap(),
+                ],
+                Vec::new()
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.rs".to_string(), vec![8..12]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
+    let search_query = "file";
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![glob::Pattern::new("*.odd").unwrap()],
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.rs".to_string(), vec![8..12]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "If no exclusions match, all files should be returned"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![glob::Pattern::new("*.rs").unwrap()],
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "Rust exclusion search should give only TypeScript files"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap(),
+                ],
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.rs".to_string(), vec![8..12]),
+            ("two.rs".to_string(), vec![8..12]),
+        ]),
+        "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                Vec::new(),
+                vec![
+                    glob::Pattern::new("*.rs").unwrap(),
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap(),
+                ],
+            ),
+            cx
+        )
+        .await
+        .unwrap().is_empty(),
+        "Rust and typescript exclusion should give no files, even if other exclusions don't match anything"
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContext) {
+    let search_query = "file";
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![glob::Pattern::new("*.odd").unwrap()],
+            ),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "If both no exclusions and inclusions match, exclusions should win and return nothing"
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![glob::Pattern::new("*.ts").unwrap()],
+                vec![glob::Pattern::new("*.ts").unwrap()],
+            ),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "If both TypeScript exclusions and inclusions match, exclusions should win and return nothing files."
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap()
+                ],
+                vec![
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap()
+                ],
+            ),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "Non-matching inclusions and exclusions should not change that."
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                vec![
+                    glob::Pattern::new("*.ts").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap()
+                ],
+                vec![
+                    glob::Pattern::new("*.rs").unwrap(),
+                    glob::Pattern::new("*.odd").unwrap()
+                ],
+            ),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            ("one.ts".to_string(), vec![14..18]),
+            ("two.ts".to_string(), vec![14..18]),
+        ]),
+        "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
+    );
+}
+
+async fn search(
+    project: &ModelHandle<Project>,
+    query: SearchQuery,
+    cx: &mut gpui::TestAppContext,
+) -> Result<HashMap<String, Vec<Range<usize>>>> {
+    let results = project
+        .update(cx, |project, cx| project.search(query, cx))
+        .await?;
+
+    Ok(results
+        .into_iter()
+        .map(|(buffer, ranges)| {
+            buffer.read_with(cx, |buffer, _| {
+                let path = buffer.file().unwrap().path().to_string_lossy().to_string();
+                let ranges = ranges
+                    .into_iter()
+                    .map(|range| range.to_offset(buffer))
+                    .collect::<Vec<_>>();
+                (path, ranges)
             })
-            .collect())
-    }
+        })
+        .collect())
 }
