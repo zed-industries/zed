@@ -24,8 +24,8 @@ use parking_lot::Mutex;
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::{
-    self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
-    WorkingDirectory,
+    default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
+    Settings, SettingsStore, WorkingDirectory,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -37,6 +37,7 @@ use std::{
     os::unix::prelude::OsStrExt,
     panic,
     path::PathBuf,
+    str,
     sync::{Arc, Weak},
     thread,
     time::Duration,
@@ -46,7 +47,6 @@ use util::http::{self, HttpClient};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
-use settings::watched_json::WatchedJsonFile;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use theme::ThemeRegistry;
@@ -75,10 +75,11 @@ fn main() {
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
-
     let themes = ThemeRegistry::new(Assets, app.font_cache());
-    let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
-    let config_files = load_config_files(&app, fs.clone());
+    let user_settings_file_rx =
+        watch_config_file(app.background(), fs.clone(), paths::SETTINGS.clone());
+    let user_keymap_file_rx =
+        watch_config_file(app.background(), fs.clone(), paths::KEYMAP.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -126,26 +127,18 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        cx.set_global(themes.clone());
 
         #[cfg(debug_assertions)]
         cx.set_global(StaffMode(true));
 
-        let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
-
-        //Setup settings global before binding actions
-        cx.set_global(SettingsFile::new(
-            &paths::SETTINGS,
-            settings_file_content.clone(),
-            fs.clone(),
-        ));
-
-        settings::watch_files(
-            default_settings,
-            settings_file_content,
-            themes.clone(),
-            keymap_file,
-            cx,
-        );
+        let mut store = SettingsStore::default();
+        store
+            .set_default_settings(default_settings().as_ref(), cx)
+            .unwrap();
+        cx.set_global(store);
+        handle_settings_file_changes(user_settings_file_rx, cx);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         if !stdout_is_a_pty() {
             upload_previous_panics(http.clone(), cx);
@@ -583,27 +576,6 @@ async fn watch_themes(
     _cx: AsyncAppContext,
 ) -> Option<()> {
     None
-}
-
-fn load_config_files(
-    app: &App,
-    fs: Arc<dyn Fs>,
-) -> oneshot::Receiver<(
-    WatchedJsonFile<SettingsFileContent>,
-    WatchedJsonFile<KeymapFileContent>,
-)> {
-    let executor = app.background();
-    let (tx, rx) = oneshot::channel();
-    executor
-        .clone()
-        .spawn(async move {
-            let settings_file =
-                WatchedJsonFile::new(fs.clone(), &executor, paths::SETTINGS.clone()).await;
-            let keymap_file = WatchedJsonFile::new(fs, &executor, paths::KEYMAP.clone()).await;
-            tx.send((settings_file, keymap_file)).ok()
-        })
-        .detach();
-    rx
 }
 
 fn connect_to_cli(

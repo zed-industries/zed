@@ -12,6 +12,7 @@ doctest = false
 assets = { path = "../assets" }
 copilot = { path = "../copilot" }
 editor = { path = "../editor" }
+fs = { path = "../fs" }
 context_menu = { path = "../context_menu" }
 gpui = { path = "../gpui" }
 settings = { path = "../settings" }

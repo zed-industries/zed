@@ -7,7 +7,7 @@ use gpui::{
     elements::{Flex, Label, ParentElement},
     AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext, WeakViewHandle,
 };
-use settings::{settings_file::SettingsFile, Settings};
+use settings::{update_settings_file, Settings};
 
 use workspace::{
     item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
@@ -169,10 +169,13 @@ impl View for WelcomePage {
                                 metrics,
                                 0,
                                 cx,
-                                |_, checked, cx| {
-                                    SettingsFile::update(cx, move |file| {
-                                        file.telemetry.set_metrics(checked)
-                                    })
+                                |this, checked, cx| {
+                                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                                        let fs = workspace.read(cx).app_state().fs.clone();
+                                        update_settings_file(fs, cx, move |file| {
+                                            file.telemetry.set_metrics(checked)
+                                        })
+                                    }
                                 },
                             )
                             .contained()
@@ -185,10 +188,13 @@ impl View for WelcomePage {
                                 diagnostics,
                                 0,
                                 cx,
-                                |_, checked, cx| {
-                                    SettingsFile::update(cx, move |file| {
-                                        file.telemetry.set_diagnostics(checked)
-                                    })
+                                |this, checked, cx| {
+                                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                                        let fs = workspace.read(cx).app_state().fs.clone();
+                                        update_settings_file(fs, cx, move |file| {
+                                            file.telemetry.set_diagnostics(checked)
+                                        })
+                                    }
                                 },
                             )
                             .contained()

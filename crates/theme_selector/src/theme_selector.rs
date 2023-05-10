@@ -1,7 +1,8 @@
+use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{actions, elements::*, AnyElement, AppContext, Element, MouseState, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::{settings_file::SettingsFile, Settings};
+use settings::{update_settings_file, Settings};
 use staff_mode::StaffMode;
 use std::sync::Arc;
 use theme::{Theme, ThemeMeta, ThemeRegistry};
@@ -18,7 +19,8 @@ pub fn init(cx: &mut AppContext) {
 pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
         let themes = workspace.app_state().themes.clone();
-        cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(themes, cx), cx))
+        let fs = workspace.app_state().fs.clone();
+        cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(fs, themes, cx), cx))
     });
 }
 
@@ -40,6 +42,7 @@ pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut AppContext) {
 pub type ThemeSelector = Picker<ThemeSelectorDelegate>;
 
 pub struct ThemeSelectorDelegate {
+    fs: Arc<dyn Fs>,
     registry: Arc<ThemeRegistry>,
     theme_data: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
@@ -49,7 +52,11 @@ pub struct ThemeSelectorDelegate {
 }
 
 impl ThemeSelectorDelegate {
-    fn new(registry: Arc<ThemeRegistry>, cx: &mut ViewContext<ThemeSelector>) -> Self {
+    fn new(
+        fs: Arc<dyn Fs>,
+        registry: Arc<ThemeRegistry>,
+        cx: &mut ViewContext<ThemeSelector>,
+    ) -> Self {
         let settings = cx.global::<Settings>();
 
         let original_theme = settings.theme.clone();
@@ -68,6 +75,7 @@ impl ThemeSelectorDelegate {
             })
             .collect();
         let mut this = Self {
+            fs,
             registry,
             theme_data: theme_names,
             matches,
@@ -121,7 +129,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.selection_completed = true;
 
         let theme_name = cx.global::<Settings>().theme.meta.name.clone();
-        SettingsFile::update(cx, |settings_content| {
+        update_settings_file(self.fs.clone(), cx, |settings_content| {
             settings_content.theme = Some(theme_name);
         });
 

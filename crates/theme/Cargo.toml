@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+test-support = ["gpui/test-support"]
+
 [lib]
 path = "src/theme.rs"
 doctest = false

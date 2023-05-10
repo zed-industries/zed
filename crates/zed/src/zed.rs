@@ -323,7 +323,7 @@ pub fn initialize_workspace(
     });
 
     let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
-    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
+    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
     let diagnostic_summary =
         cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
     let activity_indicator =

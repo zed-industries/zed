@@ -14,6 +14,7 @@ test-support = []
 anyhow.workspace = true
 log.workspace = true
 editor = { path = "../editor" }
+fs = { path = "../fs" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 db = { path = "../db" }

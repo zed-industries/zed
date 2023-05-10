@@ -9,7 +9,7 @@ path = "src/settings.rs"
 doctest = false
 
 [features]
-test-support = []
+test-support = ["theme/test-support", "gpui/test-support", "fs/test-support"]
 
 [dependencies]
 assets = { path = "../assets" }
@@ -39,6 +39,7 @@ tree-sitter-json = "*"
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 
 pretty_assertions = "1.3.0"
 unindent.workspace = true

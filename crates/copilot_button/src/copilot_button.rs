@@ -2,13 +2,14 @@ use anyhow::Result;
 use context_menu::{ContextMenu, ContextMenuItem};
 use copilot::{Copilot, SignOut, Status};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
+use fs::Fs;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, AsyncAppContext, Element, Entity, MouseState, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use settings::{settings_file::SettingsFile, Settings};
+use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
 use workspace::{
@@ -26,6 +27,7 @@ pub struct CopilotButton {
     editor_enabled: Option<bool>,
     language: Option<Arc<str>>,
     path: Option<Arc<Path>>,
+    fs: Arc<dyn Fs>,
 }
 
 impl Entity for CopilotButton {
@@ -143,7 +145,7 @@ impl View for CopilotButton {
 }
 
 impl CopilotButton {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
         let button_view_id = cx.view_id();
         let menu = cx.add_view(|cx| {
             let mut menu = ContextMenu::new(button_view_id, cx);
@@ -164,17 +166,19 @@ impl CopilotButton {
             editor_enabled: None,
             language: None,
             path: None,
+            fs,
         }
     }
 
     pub fn deploy_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) {
         let mut menu_options = Vec::with_capacity(2);
+        let fs = self.fs.clone();
 
         menu_options.push(ContextMenuItem::handler("Sign In", |cx| {
             initiate_sign_in(cx)
         }));
-        menu_options.push(ContextMenuItem::handler("Disable Copilot", |cx| {
-            hide_copilot(cx)
+        menu_options.push(ContextMenuItem::handler("Disable Copilot", move |cx| {
+            hide_copilot(fs.clone(), cx)
         }));
 
         self.popup_menu.update(cx, |menu, cx| {
@@ -189,10 +193,12 @@ impl CopilotButton {
 
     pub fn deploy_copilot_menu(&mut self, cx: &mut ViewContext<Self>) {
         let settings = cx.global::<Settings>();
+        let fs = self.fs.clone();
 
         let mut menu_options = Vec::with_capacity(8);
 
         if let Some(language) = self.language.clone() {
+            let fs = fs.clone();
             let language_enabled = settings.copilot_enabled_for_language(Some(language.as_ref()));
             menu_options.push(ContextMenuItem::handler(
                 format!(
@@ -200,7 +206,7 @@ impl CopilotButton {
                     if language_enabled { "Hide" } else { "Show" },
                     language
                 ),
-                move |cx| toggle_copilot_for_language(language.clone(), cx),
+                move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
             ));
         }
 
@@ -235,7 +241,7 @@ impl CopilotButton {
             } else {
                 "Show Suggestions for All Files"
             },
-            |cx| toggle_copilot_globally(cx),
+            move |cx| toggle_copilot_globally(fs.clone(), cx),
         ));
 
         menu_options.push(ContextMenuItem::Separator);
@@ -322,24 +328,26 @@ async fn configure_disabled_globs(
     settings_editor.downgrade().update(&mut cx, |item, cx| {
         let text = item.buffer().read(cx).snapshot(cx).text();
 
-        let edits = SettingsFile::update_unsaved(&text, cx, |file| {
-            let copilot = file.copilot.get_or_insert_with(Default::default);
-            let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                cx.global::<Settings>()
-                    .copilot
-                    .disabled_globs
-                    .clone()
-                    .iter()
-                    .map(|glob| glob.as_str().to_string())
-                    .collect::<Vec<_>>()
-            });
+        let edits = cx
+            .global::<SettingsStore>()
+            .update::<Settings>(&text, |file| {
+                let copilot = file.copilot.get_or_insert_with(Default::default);
+                let globs = copilot.disabled_globs.get_or_insert_with(|| {
+                    cx.global::<Settings>()
+                        .copilot
+                        .disabled_globs
+                        .clone()
+                        .iter()
+                        .map(|glob| glob.as_str().to_string())
+                        .collect::<Vec<_>>()
+                });
 
-            if let Some(path_to_disable) = &path_to_disable {
-                globs.push(path_to_disable.to_string_lossy().into_owned());
-            } else {
-                globs.clear();
-            }
-        });
+                if let Some(path_to_disable) = &path_to_disable {
+                    globs.push(path_to_disable.to_string_lossy().into_owned());
+                } else {
+                    globs.clear();
+                }
+            });
 
         if !edits.is_empty() {
             item.change_selections(Some(Autoscroll::newest()), cx, |selections| {
@@ -356,19 +364,19 @@ async fn configure_disabled_globs(
     anyhow::Ok(())
 }
 
-fn toggle_copilot_globally(cx: &mut AppContext) {
+fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None, None);
-    SettingsFile::update(cx, move |file_contents| {
+    update_settings_file(fs, cx, move |file_contents| {
         file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
     });
 }
 
-fn toggle_copilot_for_language(language: Arc<str>, cx: &mut AppContext) {
+fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_copilot_suggestions = cx
         .global::<Settings>()
         .show_copilot_suggestions(Some(&language), None);
 
-    SettingsFile::update(cx, move |file_contents| {
+    update_settings_file(fs, cx, move |file_contents| {
         file_contents.languages.insert(
             language,
             settings::EditorSettings {
@@ -379,8 +387,8 @@ fn toggle_copilot_for_language(language: Arc<str>, cx: &mut AppContext) {
     });
 }
 
-fn hide_copilot(cx: &mut AppContext) {
-    SettingsFile::update(cx, move |file_contents| {
+fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+    update_settings_file(fs, cx, move |file_contents| {
         file_contents.features.copilot = Some(false)
     });
 }

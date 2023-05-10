@@ -1404,6 +1404,7 @@ dependencies = [
  "context_menu",
  "copilot",
  "editor",
+ "fs",
  "futures 0.3.28",
  "gpui",
  "settings",
@@ -6847,6 +6848,7 @@ name = "theme_selector"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "fs",
  "fuzzy",
  "gpui",
  "log",
@@ -8315,6 +8317,7 @@ dependencies = [
  "anyhow",
  "db",
  "editor",
+ "fs",
  "fuzzy",
  "gpui",
  "install_cli",

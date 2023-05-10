@@ -1,4 +1,4 @@
-use crate::{parse_json_with_comments, Settings};
+use crate::{settings_store::parse_json_with_comments, Settings};
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;

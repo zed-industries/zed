@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -7,7 +5,9 @@ use gpui::{
     AppContext, Task, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::{settings_file::SettingsFile, BaseKeymap, Settings};
+use project::Fs;
+use settings::{update_settings_file, BaseKeymap, Settings};
+use std::sync::Arc;
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -23,8 +23,9 @@ pub fn toggle(
     _: &ToggleBaseKeymapSelector,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.toggle_modal(cx, |_, cx| {
-        cx.add_view(|cx| BaseKeymapSelector::new(BaseKeymapSelectorDelegate::new(cx), cx))
+    workspace.toggle_modal(cx, |workspace, cx| {
+        let fs = workspace.app_state().fs.clone();
+        cx.add_view(|cx| BaseKeymapSelector::new(BaseKeymapSelectorDelegate::new(fs, cx), cx))
     });
 }
 
@@ -33,10 +34,11 @@ pub type BaseKeymapSelector = Picker<BaseKeymapSelectorDelegate>;
 pub struct BaseKeymapSelectorDelegate {
     matches: Vec<StringMatch>,
     selected_index: usize,
+    fs: Arc<dyn Fs>,
 }
 
 impl BaseKeymapSelectorDelegate {
-    fn new(cx: &mut ViewContext<BaseKeymapSelector>) -> Self {
+    fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<BaseKeymapSelector>) -> Self {
         let base = cx.global::<Settings>().base_keymap;
         let selected_index = BaseKeymap::OPTIONS
             .iter()
@@ -45,6 +47,7 @@ impl BaseKeymapSelectorDelegate {
         Self {
             matches: Vec::new(),
             selected_index,
+            fs,
         }
     }
 }
@@ -119,7 +122,9 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<BaseKeymapSelector>) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
-            SettingsFile::update(cx, move |settings| settings.base_keymap = Some(base_keymap));
+            update_settings_file(self.fs.clone(), cx, move |settings| {
+                settings.base_keymap = Some(base_keymap)
+            });
         }
         cx.emit(PickerEvent::Dismiss);
     }
