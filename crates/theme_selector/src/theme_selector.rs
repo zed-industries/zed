@@ -129,7 +129,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         self.selection_completed = true;
 
         let theme_name = cx.global::<Settings>().theme.meta.name.clone();
-        update_settings_file(self.fs.clone(), cx, |settings_content| {
+        update_settings_file::<Settings>(self.fs.clone(), cx, |settings_content| {
             settings_content.theme = Some(theme_name);
         });
 

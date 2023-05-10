@@ -1,6 +1,6 @@
 use crate::{
     settings_store::parse_json_with_comments, settings_store::SettingsStore, KeymapFileContent,
-    Setting, Settings, SettingsFileContent, DEFAULT_SETTINGS_ASSET_PATH,
+    Setting, Settings, DEFAULT_SETTINGS_ASSET_PATH,
 };
 use anyhow::Result;
 use assets::Assets;
@@ -158,10 +158,10 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
     }
 }
 
-pub fn update_settings_file(
+pub fn update_settings_file<T: Setting>(
     fs: Arc<dyn Fs>,
     cx: &mut AppContext,
-    update: impl 'static + Send + FnOnce(&mut SettingsFileContent),
+    update: impl 'static + Send + FnOnce(&mut T::FileContent),
 ) {
     cx.spawn(|cx| async move {
         let old_text = cx
@@ -172,10 +172,7 @@ pub fn update_settings_file(
             })
             .await?;
 
-        let edits = cx.read(|cx| {
-            cx.global::<SettingsStore>()
-                .update::<Settings>(&old_text, update)
-        });
+        let edits = cx.read(|cx| cx.global::<SettingsStore>().update::<T>(&old_text, update));
 
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter().rev() {

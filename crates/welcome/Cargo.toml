@@ -13,6 +13,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 log.workspace = true
+client = { path = "../client" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
 fuzzy = { path = "../fuzzy" }

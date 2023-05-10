@@ -122,7 +122,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<BaseKeymapSelector>) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
-            update_settings_file(self.fs.clone(), cx, move |settings| {
+            update_settings_file::<Settings>(self.fs.clone(), cx, move |settings| {
                 settings.base_keymap = Some(base_keymap)
             });
         }

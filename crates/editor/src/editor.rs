@@ -22,7 +22,7 @@ pub mod test;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
-use client::ClickhouseEvent;
+use client::{ClickhouseEvent, TelemetrySettings};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
@@ -6873,7 +6873,7 @@ impl Editor {
                 .untyped_user_settings()
                 .get("vim_mode")
                 == Some(&serde_json::Value::Bool(true));
-
+            let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
             let settings = cx.global::<Settings>();
 
             let extension = Path::new(file.file_name(cx))
@@ -6887,7 +6887,7 @@ impl Editor {
                     _ => name,
                 },
                 json!({ "File Extension": extension, "Vim Mode": vim_mode, "In Clickhouse": true  }),
-                settings.telemetry(),
+                telemetry_settings,
             );
             let event = ClickhouseEvent::Editor {
                 file_extension: extension.map(ToString::to_string),
@@ -6903,7 +6903,7 @@ impl Editor {
                         .as_deref(),
                 ),
             };
-            telemetry.report_clickhouse_event(event, settings.telemetry())
+            telemetry.report_clickhouse_event(event, telemetry_settings)
         }
     }
 

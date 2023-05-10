@@ -8,7 +8,7 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake,
 };
-use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use futures::{
@@ -187,7 +187,7 @@ fn main() {
         client.telemetry().report_mixpanel_event(
             "start app",
             Default::default(),
-            cx.global::<Settings>().telemetry(),
+            *settings::get_setting::<TelemetrySettings>(None, cx),
         );
 
         let app_state = Arc::new(AppState {
@@ -407,7 +407,7 @@ fn init_panic_hook(app_version: String) {
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let diagnostics_telemetry = cx.global::<Settings>().telemetry_diagnostics();
+    let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
 
     cx.background()
         .spawn({
@@ -437,7 +437,7 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                         continue;
                     };
 
-                    if diagnostics_telemetry {
+                    if telemetry_settings.diagnostics {
                         let panic_data_text = smol::fs::read_to_string(&child_path)
                             .await
                             .context("error reading panic file")?;

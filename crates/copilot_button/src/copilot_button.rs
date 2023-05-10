@@ -366,7 +366,7 @@ async fn configure_disabled_globs(
 
 fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None, None);
-    update_settings_file(fs, cx, move |file_contents| {
+    update_settings_file::<Settings>(fs, cx, move |file_contents| {
         file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
     });
 }
@@ -376,7 +376,7 @@ fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut App
         .global::<Settings>()
         .show_copilot_suggestions(Some(&language), None);
 
-    update_settings_file(fs, cx, move |file_contents| {
+    update_settings_file::<Settings>(fs, cx, move |file_contents| {
         file_contents.languages.insert(
             language,
             settings::EditorSettings {
@@ -388,7 +388,7 @@ fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut App
 }
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    update_settings_file(fs, cx, move |file_contents| {
+    update_settings_file::<Settings>(fs, cx, move |file_contents| {
         file_contents.features.copilot = Some(false)
     });
 }

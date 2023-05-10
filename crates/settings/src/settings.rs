@@ -58,8 +58,6 @@ pub struct Settings {
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
-    pub telemetry_defaults: TelemetrySettings,
-    pub telemetry_overrides: TelemetrySettings,
     pub base_keymap: BaseKeymap,
 }
 
@@ -133,8 +131,6 @@ impl Setting for Settings {
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
-            telemetry_defaults: defaults.telemetry,
-            telemetry_overrides: Default::default(),
             base_keymap: Default::default(),
             features: Features {
                 copilot: defaults.features.copilot.unwrap(),
@@ -257,30 +253,6 @@ impl BaseKeymap {
             .copied()
             .find_map(|(name, value)| (name == option).then(|| value))
             .unwrap_or_default()
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TelemetrySettings {
-    diagnostics: Option<bool>,
-    metrics: Option<bool>,
-}
-
-impl TelemetrySettings {
-    pub fn metrics(&self) -> bool {
-        self.metrics.unwrap()
-    }
-
-    pub fn diagnostics(&self) -> bool {
-        self.diagnostics.unwrap()
-    }
-
-    pub fn set_metrics(&mut self, value: bool) {
-        self.metrics = Some(value);
-    }
-
-    pub fn set_diagnostics(&mut self, value: bool) {
-        self.diagnostics = Some(value);
     }
 }
 
@@ -569,8 +541,6 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
-    pub telemetry: TelemetrySettings,
-    #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
     #[serde(default)]
     pub features: FeaturesContent,
@@ -685,8 +655,6 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
-            telemetry_defaults: defaults.telemetry,
-            telemetry_overrides: Default::default(),
             base_keymap: Default::default(),
             features: Features {
                 copilot: defaults.features.copilot.unwrap(),
@@ -758,7 +726,6 @@ impl Settings {
         self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
         self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
-        self.telemetry_overrides = data.telemetry;
         self.lsp = data.lsp;
     }
 
@@ -869,27 +836,6 @@ impl Settings {
         })
     }
 
-    pub fn telemetry(&self) -> TelemetrySettings {
-        TelemetrySettings {
-            diagnostics: Some(self.telemetry_diagnostics()),
-            metrics: Some(self.telemetry_metrics()),
-        }
-    }
-
-    pub fn telemetry_diagnostics(&self) -> bool {
-        self.telemetry_overrides
-            .diagnostics
-            .or(self.telemetry_defaults.diagnostics)
-            .expect("missing default")
-    }
-
-    pub fn telemetry_metrics(&self) -> bool {
-        self.telemetry_overrides
-            .metrics
-            .or(self.telemetry_defaults.metrics)
-            .expect("missing default")
-    }
-
     fn terminal_setting<F, R>(&self, f: F) -> R
     where
         F: Fn(&TerminalSettings) -> Option<R>,
@@ -963,11 +909,6 @@ impl Settings {
             language_overrides: Default::default(),
             lsp: Default::default(),
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
-            telemetry_defaults: TelemetrySettings {
-                diagnostics: Some(true),
-                metrics: Some(true),
-            },
-            telemetry_overrides: Default::default(),
             base_keymap: Default::default(),
             features: Features { copilot: true },
         }

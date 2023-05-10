@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, TelemetrySettings, ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -10,7 +10,7 @@ use gpui::{
 use isahc::AsyncBody;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{Setting, Settings, SettingsStore};
+use settings::{Setting, SettingsStore};
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
@@ -279,7 +279,7 @@ impl AutoUpdater {
             let release_channel = cx
                 .has_global::<ReleaseChannel>()
                 .then(|| cx.global::<ReleaseChannel>().display_name());
-            let telemetry = cx.global::<Settings>().telemetry().metrics();
+            let telemetry = settings::get_setting::<TelemetrySettings>(None, cx).metrics;
 
             (installation_id, release_channel, telemetry)
         });

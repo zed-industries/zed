@@ -2,6 +2,7 @@ mod base_keymap_picker;
 
 use std::{borrow::Cow, sync::Arc};
 
+use client::TelemetrySettings;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
@@ -63,10 +64,7 @@ impl View for WelcomePage {
 
         let width = theme.welcome.page_width;
 
-        let (diagnostics, metrics) = {
-            let telemetry = settings.telemetry();
-            (telemetry.diagnostics(), telemetry.metrics())
-        };
+        let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
 
         enum Metrics {}
         enum Diagnostics {}
@@ -166,15 +164,17 @@ impl View for WelcomePage {
                                         .with_style(theme.welcome.usage_note.container),
                                     ),
                                 &theme.welcome.checkbox,
-                                metrics,
+                                telemetry_settings.metrics,
                                 0,
                                 cx,
                                 |this, checked, cx| {
                                     if let Some(workspace) = this.workspace.upgrade(cx) {
                                         let fs = workspace.read(cx).app_state().fs.clone();
-                                        update_settings_file(fs, cx, move |file| {
-                                            file.telemetry.set_metrics(checked)
-                                        })
+                                        update_settings_file::<TelemetrySettings>(
+                                            fs,
+                                            cx,
+                                            move |setting| setting.metrics = Some(checked),
+                                        )
                                     }
                                 },
                             )
@@ -185,15 +185,17 @@ impl View for WelcomePage {
                             theme::ui::checkbox::<Diagnostics, Self, _>(
                                 "Send crash reports",
                                 &theme.welcome.checkbox,
-                                diagnostics,
+                                telemetry_settings.diagnostics,
                                 0,
                                 cx,
                                 |this, checked, cx| {
                                     if let Some(workspace) = this.workspace.upgrade(cx) {
                                         let fs = workspace.read(cx).app_state().fs.clone();
-                                        update_settings_file(fs, cx, move |file| {
-                                            file.telemetry.set_diagnostics(checked)
-                                        })
+                                        update_settings_file::<TelemetrySettings>(
+                                            fs,
+                                            cx,
+                                            move |setting| setting.diagnostics = Some(checked),
+                                        )
                                     }
                                 },
                             )

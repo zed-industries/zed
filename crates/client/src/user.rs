@@ -5,7 +5,6 @@ use futures::{channel::mpsc, future, AsyncReadExt, Future, StreamExt};
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use settings::Settings;
 use staff_mode::StaffMode;
 use std::sync::{Arc, Weak};
 use util::http::HttpClient;
@@ -144,11 +143,13 @@ impl UserStore {
                                 let fetch_metrics_id =
                                     client.request(proto::GetPrivateUserInfo {}).log_err();
                                 let (user, info) = futures::join!(fetch_user, fetch_metrics_id);
-                                client.telemetry.set_authenticated_user_info(
-                                    info.as_ref().map(|info| info.metrics_id.clone()),
-                                    info.as_ref().map(|info| info.staff).unwrap_or(false),
-                                    cx.read(|cx| cx.global::<Settings>().telemetry()),
-                                );
+                                cx.read(|cx| {
+                                    client.telemetry.set_authenticated_user_info(
+                                        info.as_ref().map(|info| info.metrics_id.clone()),
+                                        info.as_ref().map(|info| info.staff).unwrap_or(false),
+                                        cx,
+                                    )
+                                });
 
                                 cx.update(|cx| {
                                     cx.update_default_global(|staff_mode: &mut StaffMode, _| {

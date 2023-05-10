@@ -1155,6 +1155,7 @@ dependencies = [
  "postage",
  "rand 0.8.5",
  "rpc",
+ "schemars",
  "serde",
  "serde_derive",
  "settings",
@@ -8315,6 +8316,7 @@ name = "welcome"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "db",
  "editor",
  "fs",

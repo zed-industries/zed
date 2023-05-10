@@ -1,4 +1,4 @@
-use crate::{ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
+use crate::{TelemetrySettings, ZED_SECRET_CLIENT_TOKEN, ZED_SERVER_URL};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     executor::Background,
@@ -9,7 +9,6 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
-use settings::TelemetrySettings;
 use std::{
     io::Write,
     mem,
@@ -241,9 +240,9 @@ impl Telemetry {
         self: &Arc<Self>,
         metrics_id: Option<String>,
         is_staff: bool,
-        telemetry_settings: TelemetrySettings,
+        cx: &AppContext,
     ) {
-        if !telemetry_settings.metrics() {
+        if !settings::get_setting::<TelemetrySettings>(None, cx).metrics {
             return;
         }
 
@@ -285,7 +284,7 @@ impl Telemetry {
         event: ClickhouseEvent,
         telemetry_settings: TelemetrySettings,
     ) {
-        if !telemetry_settings.metrics() {
+        if !telemetry_settings.metrics {
             return;
         }
 
@@ -321,7 +320,7 @@ impl Telemetry {
         properties: Value,
         telemetry_settings: TelemetrySettings,
     ) {
-        if !telemetry_settings.metrics() {
+        if !telemetry_settings.metrics {
             return;
         }
 
