@@ -7,7 +7,7 @@ use git2::Repository as LibGitRepository;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use regex::Regex;
-use repository::{GitRepository, GitFileStatus};
+use repository::{GitFileStatus, GitRepository};
 use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
@@ -660,9 +660,7 @@ impl FakeFs {
             state.worktree_statuses.extend(
                 statuses
                     .iter()
-                    .map(|(path, content)| {
-                        ((**path).into(), content.clone())
-                    }),
+                    .map(|(path, content)| ((**path).into(), content.clone())),
             );
         });
     }

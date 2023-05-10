@@ -484,9 +484,11 @@ pub fn split_worktree_update(
     mut message: UpdateWorktree,
     max_chunk_size: usize,
 ) -> impl Iterator<Item = UpdateWorktree> {
-    let mut done = false;
+    let mut done_files = false;
+    let mut done_statuses = false;
+    let mut repository_index = 0;
     iter::from_fn(move || {
-        if done {
+        if done_files && done_statuses {
             return None;
         }
 
@@ -502,21 +504,70 @@ pub fn split_worktree_update(
             .drain(..removed_entries_chunk_size)
             .collect();
 
-        done = message.updated_entries.is_empty() && message.removed_entries.is_empty();
+        done_files = message.updated_entries.is_empty() && message.removed_entries.is_empty();
 
         // Wait to send repositories until after we've guaranteed that their associated entries
         // will be read
-        let updated_repositories = if done {
-            mem::take(&mut message.updated_repositories)
+        let updated_repositories = if done_files {
+            let mut total_statuses = 0;
+            let mut updated_repositories = Vec::new();
+            while total_statuses < max_chunk_size
+                && repository_index < message.updated_repositories.len()
+            {
+                let updated_statuses_chunk_size = cmp::min(
+                    message.updated_repositories[repository_index]
+                        .updated_worktree_statuses
+                        .len(),
+                    max_chunk_size - total_statuses,
+                );
+
+                let updated_statuses: Vec<_> = message.updated_repositories[repository_index]
+                    .updated_worktree_statuses
+                    .drain(..updated_statuses_chunk_size)
+                    .collect();
+
+                total_statuses += updated_statuses.len();
+
+                let done_this_repo = message.updated_repositories[repository_index]
+                    .updated_worktree_statuses
+                    .is_empty();
+
+                let removed_repo_paths = if done_this_repo {
+                    mem::take(
+                        &mut message.updated_repositories[repository_index]
+                            .removed_worktree_repo_paths,
+                    )
+                } else {
+                    Default::default()
+                };
+
+                updated_repositories.push(RepositoryEntry {
+                    work_directory_id: message.updated_repositories[repository_index]
+                        .work_directory_id,
+                    branch: message.updated_repositories[repository_index]
+                        .branch
+                        .clone(),
+                    updated_worktree_statuses: updated_statuses,
+                    removed_worktree_repo_paths: removed_repo_paths,
+                });
+
+                if done_this_repo {
+                    repository_index += 1;
+                }
+            }
+
+            updated_repositories
         } else {
             Default::default()
         };
 
-        let removed_repositories = if done {
+        let removed_repositories = if done_files && done_statuses {
             mem::take(&mut message.removed_repositories)
         } else {
             Default::default()
         };
+
+        done_statuses = repository_index >= message.updated_repositories.len();
 
         Some(UpdateWorktree {
             project_id: message.project_id,
@@ -526,7 +577,7 @@ pub fn split_worktree_update(
             updated_entries,
             removed_entries,
             scan_id: message.scan_id,
-            is_last_update: done && message.is_last_update,
+            is_last_update: done_files && message.is_last_update,
             updated_repositories,
             removed_repositories,
         })

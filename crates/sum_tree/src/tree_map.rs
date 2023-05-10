@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, fmt::Debug};
 
-use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
+use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
@@ -82,8 +82,7 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
-    pub fn remove_between(&mut self, from: &K, until: &K)
-    {
+    pub fn remove_between(&mut self, from: &K, until: &K) {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let from_key = MapKeyRef(Some(from));
         let mut new_tree = cursor.slice(&from_key, Bias::Left, &());
@@ -95,7 +94,8 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
     }
 
     pub fn remove_from_while<F>(&mut self, from: &K, mut f: F)
-    where F: FnMut(&K, &V) -> bool
+    where
+        F: FnMut(&K, &V) -> bool,
     {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let from_key = MapKeyRef(Some(from));
@@ -110,7 +110,6 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         drop(cursor);
         self.0 = new_tree;
     }
-
 
     pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
     where
@@ -154,6 +153,20 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
 
     pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
         self.0.iter().map(|entry| &entry.value)
+    }
+
+    pub fn insert_tree(&mut self, other: TreeMap<K, V>) {
+        let edits = other
+            .iter()
+            .map(|(key, value)| {
+                Edit::Insert(MapEntry {
+                    key: key.to_owned(),
+                    value: value.to_owned(),
+                })
+            })
+            .collect();
+
+        self.0.edit(edits, &());
     }
 }
 
@@ -339,5 +352,26 @@ mod tests {
         assert_eq!(map.get(&"baaa"), None);
         assert_eq!(map.get(&"baaaab"), None);
         assert_eq!(map.get(&"c"), Some(&5));
+    }
+
+    #[test]
+    fn test_insert_tree() {
+        let mut map = TreeMap::default();
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("c", 3);
+
+        let mut other = TreeMap::default();
+        other.insert("a", 2);
+        other.insert("b", 2);
+        other.insert("d", 4);
+
+        map.insert_tree(other);
+
+        assert_eq!(map.iter().count(), 4);
+        assert_eq!(map.get(&"a"), Some(&2));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"c"), Some(&3));
+        assert_eq!(map.get(&"d"), Some(&4));
     }
 }

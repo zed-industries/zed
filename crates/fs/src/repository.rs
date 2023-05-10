@@ -194,7 +194,7 @@ pub enum GitFileStatus {
 pub struct RepoPath(PathBuf);
 
 impl RepoPath {
-    fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         debug_assert!(path.is_relative(), "Repo paths must be relative");
 
         RepoPath(path)

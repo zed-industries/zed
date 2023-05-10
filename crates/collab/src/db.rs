@@ -1570,7 +1570,6 @@ impl Database {
                                     branch: db_repository.branch,
                                     removed_worktree_repo_paths: Default::default(),
                                     updated_worktree_statuses: Default::default(),
-
                                 });
                             }
                         }
@@ -2653,7 +2652,6 @@ impl Database {
                             branch: db_repository_entry.branch,
                             removed_worktree_repo_paths: Default::default(),
                             updated_worktree_statuses: Default::default(),
-
                         });
                     }
                 }

@@ -46,7 +46,6 @@ use std::{
     future::Future,
     mem,
     ops::{Deref, DerefMut},
-
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -147,6 +146,14 @@ pub struct RepositoryEntry {
     pub(crate) worktree_statuses: TreeMap<RepoPath, GitFileStatus>,
 }
 
+fn read_git_status(git_status: i32) -> Option<GitFileStatus> {
+    proto::GitStatus::from_i32(git_status).map(|status| match status {
+        proto::GitStatus::Added => GitFileStatus::Added,
+        proto::GitStatus::Modified => GitFileStatus::Modified,
+        proto::GitStatus::Conflict => GitFileStatus::Conflict,
+    })
+}
+
 impl RepositoryEntry {
     pub fn branch(&self) -> Option<Arc<str>> {
         self.branch.clone()
@@ -172,6 +179,70 @@ impl RepositoryEntry {
             .and_then(|repo_path| self.worktree_statuses.get(&repo_path))
             .cloned()
     }
+
+    pub fn build_update(&self, other: &Self) -> proto::RepositoryEntry {
+        let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
+        let mut removed_statuses: Vec<String> = Vec::new();
+
+        let mut self_statuses = self.worktree_statuses.iter().peekable();
+        let mut other_statuses = other.worktree_statuses.iter().peekable();
+        loop {
+            match (self_statuses.peek(), other_statuses.peek()) {
+                (Some((self_repo_path, self_status)), Some((other_repo_path, other_status))) => {
+                    match Ord::cmp(self_repo_path, other_repo_path) {
+                        Ordering::Less => {
+                            updated_statuses.push(make_status_entry(self_repo_path, self_status));
+                            self_statuses.next();
+                        }
+                        Ordering::Equal => {
+                            if self_status != other_status {
+                                updated_statuses
+                                    .push(make_status_entry(self_repo_path, self_status));
+                            }
+
+                            self_statuses.next();
+                            other_statuses.next();
+                        }
+                        Ordering::Greater => {
+                            removed_statuses.push(make_repo_path(other_repo_path));
+                            other_statuses.next();
+                        }
+                    }
+                }
+                (Some((self_repo_path, self_status)), None) => {
+                    updated_statuses.push(make_status_entry(self_repo_path, self_status));
+                    self_statuses.next();
+                }
+                (None, Some((other_repo_path, _))) => {
+                    removed_statuses.push(make_repo_path(other_repo_path));
+                    other_statuses.next();
+                }
+                (None, None) => break,
+            }
+        }
+
+        proto::RepositoryEntry {
+            work_directory_id: self.work_directory_id().to_proto(),
+            branch: self.branch.as_ref().map(|str| str.to_string()),
+            removed_worktree_repo_paths: removed_statuses,
+            updated_worktree_statuses: updated_statuses,
+        }
+    }
+}
+
+fn make_repo_path(path: &RepoPath) -> String {
+    path.as_os_str().to_string_lossy().to_string()
+}
+
+fn make_status_entry(path: &RepoPath, status: &GitFileStatus) -> proto::StatusEntry {
+    proto::StatusEntry {
+        repo_path: make_repo_path(path),
+        status: match status {
+            GitFileStatus::Added => proto::GitStatus::Added.into(),
+            GitFileStatus::Modified => proto::GitStatus::Modified.into(),
+            GitFileStatus::Conflict => proto::GitStatus::Conflict.into(),
+        },
+    }
 }
 
 impl From<&RepositoryEntry> for proto::RepositoryEntry {
@@ -179,9 +250,12 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: value.work_directory.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
-            // TODO: Status
+            updated_worktree_statuses: value
+                .worktree_statuses
+                .iter()
+                .map(|(repo_path, status)| make_status_entry(repo_path, status))
+                .collect(),
             removed_worktree_repo_paths: Default::default(),
-            updated_worktree_statuses: Default::default(),
         }
     }
 }
@@ -1442,15 +1516,41 @@ impl Snapshot {
         });
 
         for repository in update.updated_repositories {
-            let repository = RepositoryEntry {
-                work_directory: ProjectEntryId::from_proto(repository.work_directory_id).into(),
-                branch: repository.branch.map(Into::into),
-                // TODO: status
-                worktree_statuses: Default::default(),
-            };
-            if let Some(entry) = self.entry_for_id(repository.work_directory_id()) {
-                self.repository_entries
-                    .insert(RepositoryWorkDirectory(entry.path.clone()), repository)
+            let work_directory_entry: WorkDirectoryEntry =
+                ProjectEntryId::from_proto(repository.work_directory_id).into();
+
+            if let Some(entry) = self.entry_for_id(*work_directory_entry) {
+                let mut statuses = TreeMap::default();
+                for status_entry in repository.updated_worktree_statuses {
+                    let Some(git_file_status) = read_git_status(status_entry.status) else {
+                        continue;
+                    };
+
+                    let repo_path = RepoPath::new(status_entry.repo_path.into());
+                    statuses.insert(repo_path, git_file_status);
+                }
+
+                let work_directory = RepositoryWorkDirectory(entry.path.clone());
+                if self.repository_entries.get(&work_directory).is_some() {
+                    self.repository_entries.update(&work_directory, |repo| {
+                        repo.branch = repository.branch.map(Into::into);
+                        repo.worktree_statuses.insert_tree(statuses);
+
+                        for repo_path in repository.removed_worktree_repo_paths {
+                            let repo_path = RepoPath::new(repo_path.into());
+                            repo.worktree_statuses.remove(&repo_path);
+                        }
+                    });
+                } else {
+                    self.repository_entries.insert(
+                        work_directory,
+                        RepositoryEntry {
+                            work_directory: work_directory_entry,
+                            branch: repository.branch.map(Into::into),
+                            worktree_statuses: statuses,
+                        },
+                    )
+                }
             } else {
                 log::error!("no work directory entry for repository {:?}", repository)
             }
@@ -1598,8 +1698,7 @@ impl LocalSnapshot {
         &self,
         path: &Path,
     ) -> Option<(&ProjectEntryId, &LocalRepositoryEntry)> {
-        self
-            .git_repositories
+        self.git_repositories
             .iter()
             .find(|(_, repo)| repo.in_dot_git(path))
     }
@@ -1691,7 +1790,7 @@ impl LocalSnapshot {
                         }
                         Ordering::Equal => {
                             if self_repo != other_repo {
-                                updated_repositories.push((*self_repo).into());
+                                updated_repositories.push(self_repo.build_update(other_repo));
                             }
 
                             self_repos.next();
