@@ -1,3 +1,4 @@
+use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
 use fuzzy::PathMatch;
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
@@ -60,12 +61,12 @@ pub enum Event {
     Dismissed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct FileSearchQuery {
     raw_query: String,
     file_path_end: Option<usize>,
-    file_row: Option<usize>,
-    file_column: Option<usize>,
+    file_row: Option<u32>,
+    file_column: Option<u32>,
 }
 
 impl FileSearchQuery {
@@ -77,30 +78,43 @@ impl FileSearchQuery {
             file_column: None,
         };
 
-        let mut possible_path_and_coordinates = raw_query.as_str().rsplitn(3, ':').fuse();
+        let mut possible_path_and_coordinates =
+            // TODO kb go_to_line.rs uses ',' as a separator??
+            raw_query.as_str().splitn(3, ':').map(str::trim).fuse();
         match (
             possible_path_and_coordinates.next(),
             possible_path_and_coordinates.next(),
             possible_path_and_coordinates.next(),
         ) {
-            (Some(column_number_str), Some(row_number_str), Some(file_path_part)) => Self {
+            (Some(file_path_part), Some(row_number_str), Some(column_number_str))
+                if !row_number_str.is_empty() && !column_number_str.is_empty() =>
+            {
+                Self {
+                    file_path_end: Some(file_path_part.len()),
+                    file_row: match row_number_str.parse().ok() {
+                        None => return fallback_query,
+                        row => row,
+                    },
+                    file_column: match column_number_str.parse().ok() {
+                        None => return fallback_query,
+                        column => column,
+                    },
+                    raw_query,
+                }
+            }
+            (Some(file_path_part), Some(row_number_str), _) if !row_number_str.is_empty() => Self {
                 file_path_end: Some(file_path_part.len()),
                 file_row: match row_number_str.parse().ok() {
                     None => return fallback_query,
                     row => row,
                 },
-                file_column: match column_number_str.parse().ok() {
-                    None => return fallback_query,
-                    column => column,
-                },
+                file_column: None,
                 raw_query,
             },
-            (Some(row_number_str), Some(file_path_part), None) => Self {
+            // Covers inputs like `foo.rs:` trimming all extra colons
+            (Some(file_path_part), _, _) => Self {
                 file_path_end: Some(file_path_part.len()),
-                file_row: match row_number_str.parse().ok() {
-                    None => return fallback_query,
-                    row => row,
-                },
+                file_row: None,
                 file_column: None,
                 raw_query,
             },
@@ -229,7 +243,13 @@ impl FileFinderDelegate {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            if self.latest_search_did_cancel && Some(&query) == self.latest_search_query.as_ref() {
+            if self.latest_search_did_cancel
+                && Some(query.path_query())
+                    == self
+                        .latest_search_query
+                        .as_ref()
+                        .map(|query| query.path_query())
+            {
                 util::extend_sorted(&mut self.matches, matches.into_iter(), 100, |a, b| b.cmp(a));
             } else {
                 self.matches = matches;
@@ -290,12 +310,39 @@ impl PickerDelegate for FileFinderDelegate {
 
                 workspace.update(cx, |workspace, cx| {
                     workspace
-                        // TODO kb need to pass row and column here
-                        // use self.latest_search_query
                         .open_path(project_path.clone(), None, true, cx)
                         .detach_and_log_err(cx);
+                });
+
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(query) = &self.latest_search_query {
+                        let row = query.file_row;
+                        let column = query.file_column;
+                        if let Some(row) = row {
+                            if let Some(active_editor) = workspace
+                                .active_item(cx)
+                                .and_then(|active_item| active_item.downcast::<Editor>())
+                            {
+                                // TODO kb does not open proper lines for the first time
+                                active_editor.update(cx, |active_editor, cx| {
+                                    let snapshot = active_editor.snapshot(cx).display_snapshot;
+                                    let point = DisplayPoint::new(
+                                        row.saturating_sub(1),
+                                        column.map(|column| column.saturating_sub(1)).unwrap_or(0),
+                                    )
+                                    .to_point(&snapshot);
+                                    active_editor.change_selections(
+                                        Some(Autoscroll::center()),
+                                        cx,
+                                        |s| s.select_ranges([point..point]),
+                                    );
+                                })
+                            }
+                        }
+                    }
+
                     workspace.dismiss_modal(cx);
-                })
+                });
             }
         }
     }
