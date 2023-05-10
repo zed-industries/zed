@@ -82,6 +82,36 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
+    pub fn remove_between(&mut self, from: &K, until: &K)
+    {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let from_key = MapKeyRef(Some(from));
+        let mut new_tree = cursor.slice(&from_key, Bias::Left, &());
+        let until_key = MapKeyRef(Some(until));
+        cursor.seek_forward(&until_key, Bias::Left, &());
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+    }
+
+    pub fn remove_from_while<F>(&mut self, from: &K, mut f: F)
+    where F: FnMut(&K, &V) -> bool
+    {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let from_key = MapKeyRef(Some(from));
+        let mut new_tree = cursor.slice(&from_key, Bias::Left, &());
+        while let Some(item) = cursor.item() {
+            if !f(&item.key, &item.value) {
+                break;
+            }
+            cursor.next(&());
+        }
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+    }
+
+
     pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
     where
         F: FnOnce(&mut V) -> T,
@@ -271,5 +301,43 @@ mod tests {
         map.insert(6, "f");
         map.retain(|key, _| *key % 2 == 0);
         assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&4, &"d"), (&6, &"f")]);
+    }
+
+    #[test]
+    fn test_remove_between() {
+        let mut map = TreeMap::default();
+
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("baa", 3);
+        map.insert("baaab", 4);
+        map.insert("c", 5);
+
+        map.remove_between(&"ba", &"bb");
+
+        assert_eq!(map.get(&"a"), Some(&1));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"baaa"), None);
+        assert_eq!(map.get(&"baaaab"), None);
+        assert_eq!(map.get(&"c"), Some(&5));
+    }
+
+    #[test]
+    fn test_remove_from_while() {
+        let mut map = TreeMap::default();
+
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("baa", 3);
+        map.insert("baaab", 4);
+        map.insert("c", 5);
+
+        map.remove_from_while(&"ba", |key, _| key.starts_with(&"ba"));
+
+        assert_eq!(map.get(&"a"), Some(&1));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"baaa"), None);
+        assert_eq!(map.get(&"baaaab"), None);
+        assert_eq!(map.get(&"c"), Some(&5));
     }
 }

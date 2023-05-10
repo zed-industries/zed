@@ -7,7 +7,7 @@ use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
 use fs::{
-    repository::{GitRepository, GitFileStatus, RepoPath},
+    repository::{GitFileStatus, GitRepository, RepoPath},
     Fs, LineEnding,
 };
 use futures::{
@@ -46,6 +46,7 @@ use std::{
     future::Future,
     mem,
     ops::{Deref, DerefMut},
+
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -2896,12 +2897,13 @@ impl BackgroundScanner {
                 .git_repositories
                 .update(&work_dir_id, |entry| entry.scan_id = scan_id);
 
-            // TODO: Status Replace linear scan with smarter sum tree traversal
-            snapshot
-                .repository_entries
-                .update(&work_dir, |entry| entry.worktree_statuses.retain(|stored_path, _| {
-                    !stored_path.starts_with(&repo_path)
-                }));
+            snapshot.repository_entries.update(&work_dir, |entry| {
+                entry
+                    .worktree_statuses
+                    .remove_from_while(&repo_path, |stored_path, _| {
+                        stored_path.starts_with(&repo_path)
+                    })
+            });
         }
 
         Some(())
@@ -2958,9 +2960,9 @@ impl BackgroundScanner {
                 .git_repositories
                 .update(&work_dir_id, |entry| entry.scan_id = scan_id);
 
-            snapshot
-                .repository_entries
-                .update(&work_dir, |entry| entry.worktree_statuses.insert(repo_path, status));
+            snapshot.repository_entries.update(&work_dir, |entry| {
+                entry.worktree_statuses.insert(repo_path, status)
+            });
         }
 
         Some(())
@@ -3948,12 +3950,16 @@ mod tests {
         std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
         std::fs::remove_dir_all(work_dir.join("c")).unwrap();
 
+        dbg!(git_status(&repo));
+
         tree.flush_fs_events(cx).await;
 
         // Check that non-repo behavior is tracked
         tree.read_with(cx, |tree, _cx| {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
+
+            dbg!(&repo.worktree_statuses);
 
             assert_eq!(repo.worktree_statuses.iter().count(), 0);
             assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
