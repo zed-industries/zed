@@ -1,4 +1,5 @@
 use crate::{StatusItemView, Workspace};
+use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
     AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
@@ -10,6 +11,7 @@ use std::rc::Rc;
 pub trait Panel: View {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn icon_path(&self) -> &'static str;
     fn icon_tooltip(&self) -> String;
     fn icon_label(&self, _: &AppContext) -> Option<String> {
@@ -24,6 +26,7 @@ pub trait PanelHandle {
     fn id(&self) -> usize;
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
+    fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
     fn icon_tooltip(&self, cx: &WindowContext) -> String;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -45,6 +48,10 @@ where
 
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool {
         self.read(cx).position_is_valid(position)
+    }
+
+    fn set_position(&self, position: DockPosition, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_position(position, cx))
     }
 
     fn icon_path(&self, cx: &WindowContext) -> &'static str {
@@ -102,7 +109,25 @@ impl From<settings::DockPosition> for DockPosition {
     }
 }
 
+impl From<DockPosition> for settings::DockPosition {
+    fn from(value: DockPosition) -> settings::DockPosition {
+        match value {
+            DockPosition::Left => settings::DockPosition::Left,
+            DockPosition::Bottom => settings::DockPosition::Bottom,
+            DockPosition::Right => settings::DockPosition::Right,
+        }
+    }
+}
+
 impl DockPosition {
+    fn to_label(&self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Bottom => "bottom",
+            Self::Right => "right",
+        }
+    }
+
     fn to_resizable_side(self) -> Side {
         match self {
             Self::Left => Side::Right,
@@ -114,6 +139,7 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Rc<dyn PanelHandle>,
+    context_menu: ViewHandle<ContextMenu>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -179,8 +205,14 @@ impl Dock {
             }),
         ];
 
+        let dock_view_id = cx.view_id();
         self.panels.push(PanelEntry {
             panel: Rc::new(panel),
+            context_menu: cx.add_view(|cx| {
+                let mut menu = ContextMenu::new(dock_view_id, cx);
+                menu.set_position_mode(OverlayPositionMode::Local);
+                menu
+            }),
             _subscriptions: subscriptions,
         });
         cx.notify()
@@ -292,66 +324,109 @@ impl View for PanelButtons {
             DockPosition::Bottom => theme.group_bottom,
             DockPosition::Right => theme.group_right,
         };
+        let menu_corner = match dock_position {
+            DockPosition::Left => AnchorCorner::BottomLeft,
+            DockPosition::Bottom | DockPosition::Right => AnchorCorner::BottomRight,
+        };
 
         let items = dock
             .panels
             .iter()
-            .map(|item| item.panel.clone())
+            .map(|item| (item.panel.clone(), item.context_menu.clone()))
             .collect::<Vec<_>>();
         Flex::row()
-            .with_children(items.into_iter().enumerate().map(|(ix, view)| {
-                let action = TogglePanel {
-                    dock_position,
-                    item_index: ix,
-                };
-                MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
-                    let is_active = is_open && ix == active_ix;
-                    let style = item_style.style_for(state, is_active);
-                    Flex::row()
-                        .with_child(
-                            Svg::new(view.icon_path(cx))
-                                .with_color(style.icon_color)
-                                .constrained()
-                                .with_width(style.icon_size)
-                                .aligned(),
-                        )
-                        .with_children(if let Some(label) = view.icon_label(cx) {
-                            Some(
-                                Label::new(label, style.label.text.clone())
-                                    .contained()
-                                    .with_style(style.label.container)
-                                    .aligned(),
+            .with_children(
+                items
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (view, context_menu))| {
+                        let action = TogglePanel {
+                            dock_position,
+                            item_index: ix,
+                        };
+
+                        Stack::new()
+                            .with_child(
+                                MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
+                                    let is_active = is_open && ix == active_ix;
+                                    let style = item_style.style_for(state, is_active);
+                                    Flex::row()
+                                        .with_child(
+                                            Svg::new(view.icon_path(cx))
+                                                .with_color(style.icon_color)
+                                                .constrained()
+                                                .with_width(style.icon_size)
+                                                .aligned(),
+                                        )
+                                        .with_children(if let Some(label) = view.icon_label(cx) {
+                                            Some(
+                                                Label::new(label, style.label.text.clone())
+                                                    .contained()
+                                                    .with_style(style.label.container)
+                                                    .aligned(),
+                                            )
+                                        } else {
+                                            None
+                                        })
+                                        .constrained()
+                                        .with_height(style.icon_size)
+                                        .contained()
+                                        .with_style(style.container)
+                                })
+                                .with_cursor_style(CursorStyle::PointingHand)
+                                .on_click(MouseButton::Left, {
+                                    let action = action.clone();
+                                    move |_, this, cx| {
+                                        if let Some(workspace) = this.workspace.upgrade(cx) {
+                                            let action = action.clone();
+                                            cx.window_context().defer(move |cx| {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    workspace.toggle_panel(&action, cx)
+                                                });
+                                            });
+                                        }
+                                    }
+                                })
+                                .on_click(MouseButton::Right, {
+                                    let view = view.clone();
+                                    let menu = context_menu.clone();
+                                    move |_, _, cx| {
+                                        const POSITIONS: [DockPosition; 3] = [
+                                            DockPosition::Left,
+                                            DockPosition::Right,
+                                            DockPosition::Bottom,
+                                        ];
+
+                                        menu.update(cx, |menu, cx| {
+                                            let items = POSITIONS
+                                                .into_iter()
+                                                .filter(|position| {
+                                                    *position != dock_position
+                                                        && view.position_is_valid(*position, cx)
+                                                })
+                                                .map(|position| {
+                                                    let view = view.clone();
+                                                    ContextMenuItem::handler(
+                                                        format!("Dock {}", position.to_label()),
+                                                        move |cx| view.set_position(position, cx),
+                                                    )
+                                                })
+                                                .collect();
+                                            menu.show(Default::default(), menu_corner, items, cx);
+                                        })
+                                    }
+                                })
+                                .with_tooltip::<Self>(
+                                    ix,
+                                    view.icon_tooltip(cx),
+                                    Some(Box::new(action)),
+                                    tooltip_style.clone(),
+                                    cx,
+                                ),
                             )
-                        } else {
-                            None
-                        })
-                        .constrained()
-                        .with_height(style.icon_size)
-                        .contained()
-                        .with_style(style.container)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, {
-                    let action = action.clone();
-                    move |_, this, cx| {
-                        if let Some(workspace) = this.workspace.upgrade(cx) {
-                            let action = action.clone();
-                            cx.window_context().defer(move |cx| {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.toggle_panel(&action, cx)
-                                });
-                            });
-                        }
-                    }
-                })
-                .with_tooltip::<Self>(
-                    ix,
-                    view.icon_tooltip(cx),
-                    Some(Box::new(action)),
-                    tooltip_style.clone(),
-                    cx,
-                )
-            }))
+                            .with_child(ChildView::new(&context_menu, cx))
+                    }),
+            )
             .contained()
             .with_style(group_style)
             .into_any()

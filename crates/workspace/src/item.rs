@@ -1069,6 +1069,14 @@ pub(crate) mod test {
             unimplemented!()
         }
 
+        fn set_position(
+            &mut self,
+            _position: crate::dock::DockPosition,
+            _cx: &mut ViewContext<Self>,
+        ) {
+            unimplemented!()
+        }
+
         fn icon_path(&self) -> &'static str {
             unimplemented!()
         }

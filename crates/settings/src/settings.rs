@@ -252,7 +252,7 @@ impl Default for HourFormat {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettings {
     pub shell: Option<Shell>,
     pub working_directory: Option<WorkingDirectory>,
@@ -265,26 +265,7 @@ pub struct TerminalSettings {
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
     pub copy_on_select: Option<bool>,
-    pub dock: DockPosition,
-}
-
-impl Default for TerminalSettings {
-    fn default() -> Self {
-        Self {
-            shell: Default::default(),
-            working_directory: Default::default(),
-            font_size: Default::default(),
-            font_family: Default::default(),
-            line_height: Default::default(),
-            font_features: Default::default(),
-            env: Default::default(),
-            blinking: Default::default(),
-            alternate_scroll: Default::default(),
-            option_as_meta: Default::default(),
-            copy_on_select: Default::default(),
-            dock: DockPosition::Bottom,
-        }
-    }
+    pub dock: Option<DockPosition>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
@@ -398,7 +379,8 @@ pub struct SettingsFileContent {
     pub autosave: Option<Autosave>,
     #[serde(flatten)]
     pub editor: EditorSettings,
-    pub project_panel: Option<ProjectPanelSettings>,
+    #[serde(default)]
+    pub project_panel: ProjectPanelSettings,
     #[serde(default)]
     pub journal: JournalSettings,
     #[serde(default)]
@@ -493,7 +475,7 @@ impl Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
-            project_panel_defaults: defaults.project_panel.unwrap(),
+            project_panel_defaults: defaults.project_panel,
             project_panel_overrides: Default::default(),
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
@@ -601,7 +583,7 @@ impl Settings {
             }
         }
         self.editor_overrides = data.editor;
-        self.project_panel_overrides = data.project_panel.unwrap_or_default();
+        self.project_panel_overrides = data.project_panel;
         self.git_overrides = data.git.unwrap_or_default();
         self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;

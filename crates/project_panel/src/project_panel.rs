@@ -17,7 +17,7 @@ use gpui::{
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use settings::Settings;
+use settings::{settings_file::SettingsFile, Settings};
 use std::{
     cmp::Ordering,
     collections::{hash_map, HashMap},
@@ -28,7 +28,10 @@ use std::{
 };
 use theme::ProjectPanelEntry;
 use unicase::UniCase;
-use workspace::{dock::DockPosition, Workspace};
+use workspace::{
+    dock::{DockPosition, Panel},
+    Workspace,
+};
 
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
@@ -142,17 +145,6 @@ impl ProjectPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
-            // Update the dock position when the setting changes.
-            let mut old_dock_position = cx.global::<Settings>().project_panel_overrides.dock;
-            cx.observe_global::<Settings, _>(move |_, cx| {
-                let new_dock_position = cx.global::<Settings>().project_panel_overrides.dock;
-                if new_dock_position != old_dock_position {
-                    old_dock_position = new_dock_position;
-                    cx.emit(Event::DockPositionChanged);
-                }
-            })
-            .detach();
-
             cx.observe(&project, |this, _, cx| {
                 this.update_visible_entries(None, cx);
                 cx.notify();
@@ -224,6 +216,18 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
             };
             this.update_visible_entries(None, cx);
+
+            // Update the dock position when the setting changes.
+            let mut old_dock_position = this.position(cx);
+            cx.observe_global::<Settings, _>(move |this, cx| {
+                let new_dock_position = this.position(cx);
+                if new_dock_position != old_dock_position {
+                    old_dock_position = new_dock_position;
+                    cx.emit(Event::DockPositionChanged);
+                }
+            })
+            .detach();
+
             this
         });
 
@@ -1342,15 +1346,23 @@ impl Entity for ProjectPanel {
 
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        cx.global::<Settings>()
+        let settings = cx.global::<Settings>();
+        settings
             .project_panel_overrides
             .dock
-            .map(Into::into)
-            .unwrap_or(DockPosition::Left)
+            .or(settings.project_panel_defaults.dock)
+            .unwrap()
+            .into()
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
         matches!(position, DockPosition::Left | DockPosition::Right)
+    }
+
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        SettingsFile::update(cx, move |settings| {
+            settings.project_panel.dock = Some(position.into())
+        })
     }
 
     fn icon_path(&self) -> &'static str {

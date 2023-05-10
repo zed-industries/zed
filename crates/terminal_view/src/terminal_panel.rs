@@ -4,9 +4,12 @@ use gpui::{
     WeakViewHandle,
 };
 use project::Project;
-use settings::{Settings, WorkingDirectory};
+use settings::{settings_file::SettingsFile, Settings, WorkingDirectory};
 use util::ResultExt;
-use workspace::{dock::{Panel, DockPosition}, pane, DraggedItem, Pane, Workspace};
+use workspace::{
+    dock::{DockPosition, Panel},
+    pane, DraggedItem, Pane, Workspace,
+};
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalPanel::add_terminal);
@@ -33,7 +36,8 @@ impl TerminalPanel {
                 old_dock_position = new_dock_position;
                 cx.emit(Event::DockPositionChanged);
             }
-        }).detach();
+        })
+        .detach();
 
         let this = cx.weak_handle();
         let pane = cx.add_view(|cx| {
@@ -146,11 +150,23 @@ impl View for TerminalPanel {
 
 impl Panel for TerminalPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        cx.global::<Settings>().terminal_overrides.dock.into()
+        let settings = cx.global::<Settings>();
+        settings
+            .terminal_overrides
+            .dock
+            .or(settings.terminal_defaults.dock)
+            .unwrap()
+            .into()
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
         true
+    }
+
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        SettingsFile::update(cx, move |settings| {
+            settings.terminal.dock = Some(position.into());
+        });
     }
 
     fn icon_path(&self) -> &'static str {
