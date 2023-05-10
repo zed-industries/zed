@@ -13,7 +13,6 @@ gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rope = { path = "../rope" }
 util = { path = "../util" }
-sum_tree = { path = "../sum_tree" }
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true

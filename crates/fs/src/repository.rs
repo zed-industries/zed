@@ -8,7 +8,6 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
-use sum_tree::TreeMap;
 use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
@@ -21,7 +20,7 @@ pub trait GitRepository: Send {
 
     fn branch_name(&self) -> Option<String>;
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>>;
+    fn statuses(&self) -> Option<HashMap<RepoPath, GitStatus>>;
 
     fn file_status(&self, path: &RepoPath) -> Option<GitStatus>;
 }
@@ -70,10 +69,10 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>> {
+    fn statuses(&self) -> Option<HashMap<RepoPath, GitStatus>> {
         let statuses = self.statuses(None).log_err()?;
 
-        let mut map = TreeMap::default();
+        let mut result = HashMap::default();
 
         for status in statuses
             .iter()
@@ -81,10 +80,10 @@ impl GitRepository for LibGitRepository {
         {
             let path = RepoPath(PathBuf::from(OsStr::from_bytes(status.path_bytes())));
 
-            map.insert(path, status.status().into())
+            result.insert(path, status.status().into());
         }
 
-        Some(map)
+        Some(result)
     }
 
     fn file_status(&self, path: &RepoPath) -> Option<GitStatus> {
@@ -126,9 +125,9 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn statuses(&self) -> Option<TreeMap<RepoPath, GitStatus>> {
+    fn statuses(&self) -> Option<HashMap<RepoPath, GitStatus>> {
         let state = self.state.lock();
-        let mut map = TreeMap::default();
+        let mut map = HashMap::default();
         for (repo_path, status) in state.git_statuses.iter() {
             map.insert(repo_path.to_owned(), status.to_owned());
         }
