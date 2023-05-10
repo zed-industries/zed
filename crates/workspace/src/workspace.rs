@@ -845,16 +845,31 @@ impl Workspace {
             let mut dock = dock.clone();
             move |this, panel, event, cx| {
                 if T::should_change_position_on_event(event) {
-                    dock.update(cx, |dock, cx| dock.remove_panel(&panel, cx));
+                    let mut was_visible = false;
+                    dock.update(cx, |dock, cx| {
+                        was_visible = dock.is_open()
+                            && dock
+                                .active_item()
+                                .map_or(false, |item| item.as_any().is::<T>());
+                        dock.remove_panel(&panel, cx);
+                    });
                     dock = match panel.read(cx).position(cx) {
                         DockPosition::Left => &this.left_dock,
                         DockPosition::Bottom => &this.bottom_dock,
                         DockPosition::Right => &this.right_dock,
-                    }.clone();
-                    dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+                    }
+                    .clone();
+                    dock.update(cx, |dock, cx| {
+                        dock.add_panel(panel, cx);
+                        if was_visible {
+                            dock.set_open(true, cx);
+                            dock.activate_item(dock.panels_len() - 1, cx);
+                        }
+                    });
                 }
             }
-        }).detach();
+        })
+        .detach();
 
         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     }

@@ -187,8 +187,22 @@ impl Dock {
     }
 
     pub fn remove_panel<T: Panel>(&mut self, panel: &ViewHandle<T>, cx: &mut ViewContext<Self>) {
-        self.panels.retain(|entry| entry.panel.id() != panel.id());
-        cx.notify();
+        if let Some(panel_ix) = self
+            .panels
+            .iter()
+            .position(|item| item.panel.id() == panel.id())
+        {
+            if panel_ix == self.active_item_ix {
+                self.active_item_ix = 0;
+                cx.emit(Event::Close);
+            }
+            self.panels.remove(panel_ix);
+            cx.notify();
+        }
+    }
+
+    pub fn panels_len(&self) -> usize {
+        self.panels.len()
     }
 
     pub fn activate_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
