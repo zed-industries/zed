@@ -858,7 +858,7 @@ impl Workspace {
                     dock.update(cx, |dock, cx| {
                         was_visible = dock.is_open()
                             && dock
-                                .active_item()
+                                .active_panel()
                                 .map_or(false, |item| item.as_any().is::<T>());
                         dock.remove_panel(&panel, cx);
                     });
@@ -872,7 +872,7 @@ impl Workspace {
                         dock.add_panel(panel, cx);
                         if was_visible {
                             dock.set_open(true, cx);
-                            dock.activate_item(dock.panels_len() - 1, cx);
+                            dock.activate_panel(dock.panels_len() - 1, cx);
                         }
                     });
                 }
@@ -1392,13 +1392,13 @@ impl Workspace {
             DockPosition::Right => &mut self.right_dock,
         };
         let active_item = dock.update(cx, move |dock, cx| {
-            if dock.is_open() && dock.active_item_ix() == action.item_index {
+            if dock.is_open() && dock.active_panel_index() == action.panel_index {
                 dock.set_open(false, cx);
                 None
             } else {
                 dock.set_open(true, cx);
-                dock.activate_item(action.item_index, cx);
-                dock.active_item().cloned()
+                dock.activate_panel(action.panel_index, cx);
+                dock.active_panel().cloned()
             }
         });
 
@@ -1430,8 +1430,8 @@ impl Workspace {
         };
         let active_item = dock.update(cx, |dock, cx| {
             dock.set_open(true, cx);
-            dock.activate_item(panel_index, cx);
-            dock.active_item().cloned()
+            dock.activate_panel(panel_index, cx);
+            dock.active_panel().cloned()
         });
         if let Some(active_item) = active_item {
             if active_item.is_focused(cx) {
@@ -2655,7 +2655,7 @@ impl View for Workspace {
                                 let project = self.project.clone();
                                 Flex::row()
                                     .with_children(
-                                        if self.left_dock.read(cx).active_item().is_some() {
+                                        if self.left_dock.read(cx).active_panel().is_some() {
                                             Some(
                                                 ChildView::new(&self.left_dock, cx)
                                                     .constrained()
@@ -2688,7 +2688,7 @@ impl View for Workspace {
                                                 .flex(1., true),
                                             )
                                             .with_children(
-                                                if self.bottom_dock.read(cx).active_item().is_some()
+                                                if self.bottom_dock.read(cx).active_panel().is_some()
                                                 {
                                                     Some(ChildView::new(&self.bottom_dock, cx))
                                                 } else {
@@ -2698,7 +2698,7 @@ impl View for Workspace {
                                             .flex(1., true),
                                     )
                                     .with_children(
-                                        if self.right_dock.read(cx).active_item().is_some() {
+                                        if self.right_dock.read(cx).active_panel().is_some() {
                                             Some(
                                                 ChildView::new(&self.right_dock, cx)
                                                     .constrained()

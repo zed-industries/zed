@@ -83,9 +83,9 @@ impl From<&dyn PanelHandle> for AnyViewHandle {
 
 pub struct Dock {
     position: DockPosition,
-    panels: Vec<PanelEntry>,
+    panel_entries: Vec<PanelEntry>,
     is_open: bool,
-    active_item_ix: usize,
+    active_panel_index: usize,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
@@ -127,7 +127,7 @@ pub struct PanelButtons {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct TogglePanel {
     pub dock_position: DockPosition,
-    pub item_index: usize,
+    pub panel_index: usize,
 }
 
 impl_actions!(workspace, [TogglePanel]);
@@ -136,8 +136,8 @@ impl Dock {
     pub fn new(position: DockPosition) -> Self {
         Self {
             position,
-            panels: Default::default(),
-            active_item_ix: 0,
+            panel_entries: Default::default(),
+            active_panel_index: 0,
             is_open: false,
         }
     }
@@ -146,8 +146,8 @@ impl Dock {
         self.is_open
     }
 
-    pub fn active_item_ix(&self) -> usize {
-        self.active_item_ix
+    pub fn active_panel_index(&self) -> usize {
+        self.active_panel_index
     }
 
     pub fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
@@ -168,11 +168,11 @@ impl Dock {
             cx.subscribe(&panel, |this, view, event, cx| {
                 if view.read(cx).should_activate_on_event(event, cx) {
                     if let Some(ix) = this
-                        .panels
+                        .panel_entries
                         .iter()
-                        .position(|item| item.panel.id() == view.id())
+                        .position(|entry| entry.panel.id() == view.id())
                     {
-                        this.activate_item(ix, cx);
+                        this.activate_panel(ix, cx);
                     }
                 } else if view.read(cx).should_close_on_event(event, cx) {
                     this.set_open(false, cx);
@@ -181,7 +181,7 @@ impl Dock {
         ];
 
         let dock_view_id = cx.view_id();
-        self.panels.push(PanelEntry {
+        self.panel_entries.push(PanelEntry {
             panel: Rc::new(panel),
             context_menu: cx.add_view(|cx| {
                 let mut menu = ContextMenu::new(dock_view_id, cx);
@@ -195,40 +195,40 @@ impl Dock {
 
     pub fn remove_panel<T: Panel>(&mut self, panel: &ViewHandle<T>, cx: &mut ViewContext<Self>) {
         if let Some(panel_ix) = self
-            .panels
+            .panel_entries
             .iter()
-            .position(|item| item.panel.id() == panel.id())
+            .position(|entry| entry.panel.id() == panel.id())
         {
-            if panel_ix == self.active_item_ix {
-                self.active_item_ix = 0;
+            if panel_ix == self.active_panel_index {
+                self.active_panel_index = 0;
                 self.set_open(false, cx);
             }
-            self.panels.remove(panel_ix);
+            self.panel_entries.remove(panel_ix);
             cx.notify();
         }
     }
 
     pub fn panels_len(&self) -> usize {
-        self.panels.len()
+        self.panel_entries.len()
     }
 
-    pub fn activate_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
-        self.active_item_ix = item_ix;
+    pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
+        self.active_panel_index = panel_ix;
         cx.notify();
     }
 
-    pub fn toggle_item(&mut self, item_ix: usize, cx: &mut ViewContext<Self>) {
-        if self.active_item_ix == item_ix {
+    pub fn toggle_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
+        if self.active_panel_index == panel_ix {
             self.is_open = false;
         } else {
-            self.active_item_ix = item_ix;
+            self.active_panel_index = panel_ix;
         }
         cx.notify();
     }
 
-    pub fn active_item(&self) -> Option<&Rc<dyn PanelHandle>> {
+    pub fn active_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
         if self.is_open {
-            self.panels.get(self.active_item_ix).map(|item| &item.panel)
+            self.panel_entries.get(self.active_panel_index).map(|entry| &entry.panel)
         } else {
             None
         }
@@ -245,10 +245,10 @@ impl View for Dock {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(active_item) = self.active_item() {
+        if let Some(active_panel) = self.active_panel() {
             enum ResizeHandleTag {}
             let style = &cx.global::<Settings>().theme.workspace.dock;
-            ChildView::new(active_item.as_any(), cx)
+            ChildView::new(active_panel.as_any(), cx)
                 .contained()
                 .with_style(style.container)
                 .with_resize_handle::<ResizeHandleTag>(
@@ -289,9 +289,9 @@ impl View for PanelButtons {
         let theme = &cx.global::<Settings>().theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.panel_buttons;
-        let item_style = theme.button.clone();
+        let button_style = theme.button.clone();
         let dock = self.dock.read(cx);
-        let active_ix = dock.active_item_ix;
+        let active_ix = dock.active_panel_index;
         let is_open = dock.is_open;
         let dock_position = dock.position;
         let group_style = match dock_position {
@@ -304,27 +304,27 @@ impl View for PanelButtons {
             DockPosition::Bottom | DockPosition::Right => AnchorCorner::BottomRight,
         };
 
-        let items = dock
-            .panels
+        let panels = dock
+            .panel_entries
             .iter()
             .map(|item| (item.panel.clone(), item.context_menu.clone()))
             .collect::<Vec<_>>();
         Flex::row()
             .with_children(
-                items
+                panels
                     .into_iter()
                     .enumerate()
                     .map(|(ix, (view, context_menu))| {
                         let action = TogglePanel {
                             dock_position,
-                            item_index: ix,
+                            panel_index: ix,
                         };
 
                         Stack::new()
                             .with_child(
                                 MouseEventHandler::<Self, _>::new(ix, cx, |state, cx| {
                                     let is_active = is_open && ix == active_ix;
-                                    let style = item_style.style_for(state, is_active);
+                                    let style = button_style.style_for(state, is_active);
                                     Flex::row()
                                         .with_child(
                                             Svg::new(view.icon_path(cx))
