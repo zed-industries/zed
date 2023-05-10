@@ -18,8 +18,8 @@ impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
         let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
         cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = enabled;
+            cx.update_global(|store: &mut SettingsStore, _| {
+                store.replace_value(VimModeSetting(enabled));
             });
             search::init(cx);
             crate::init(cx);
@@ -52,16 +52,16 @@ impl<'a> VimTestContext<'a> {
 
     pub fn enable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = true;
+            cx.update_global(|store: &mut SettingsStore, _| {
+                store.replace_value(VimModeSetting(true))
             });
         })
     }
 
     pub fn disable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = false;
+            cx.update_global(|store: &mut SettingsStore, _| {
+                store.replace_value(VimModeSetting(false))
             });
         })
     }

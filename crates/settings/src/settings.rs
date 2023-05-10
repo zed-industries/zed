@@ -43,7 +43,6 @@ pub struct Settings {
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_call_status_icon: bool,
-    pub vim_mode: bool,
     pub autosave: Autosave,
     pub default_dock_anchor: DockAnchor,
     pub editor_defaults: EditorSettings,
@@ -65,6 +64,8 @@ pub struct Settings {
 }
 
 impl Setting for Settings {
+    const KEY: Option<&'static str> = None;
+
     type FileContent = SettingsFileContent;
 
     fn load(
@@ -93,7 +94,6 @@ impl Setting for Settings {
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
-            vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
             editor_defaults: EditorSettings {
@@ -550,8 +550,6 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub show_call_status_icon: Option<bool>,
     #[serde(default)]
-    pub vim_mode: Option<bool>,
-    #[serde(default)]
     pub autosave: Option<Autosave>,
     #[serde(default)]
     pub default_dock_anchor: Option<DockAnchor>,
@@ -647,7 +645,6 @@ impl Settings {
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
-            vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
             editor_defaults: EditorSettings {
@@ -741,7 +738,6 @@ impl Settings {
             &mut self.show_completions_on_input,
             data.show_completions_on_input,
         );
-        merge(&mut self.vim_mode, data.vim_mode);
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
@@ -940,7 +936,6 @@ impl Settings {
             hover_popover_enabled: true,
             show_completions_on_input: true,
             show_call_status_icon: true,
-            vim_mode: false,
             autosave: Autosave::Off,
             default_dock_anchor: DockAnchor::Bottom,
             editor_defaults: EditorSettings {

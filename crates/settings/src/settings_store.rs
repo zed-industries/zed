@@ -23,7 +23,7 @@ pub trait Setting: 'static {
     /// The name of a key within the JSON file from which this setting should
     /// be deserialized. If this is `None`, then the setting will be deserialized
     /// from the root object.
-    const KEY: Option<&'static str> = None;
+    const KEY: Option<&'static str>;
 
     /// The type that is stored in an individual JSON file.
     type FileContent: Clone + Serialize + DeserializeOwned + JsonSchema;
@@ -163,6 +163,28 @@ impl SettingsStore {
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
+    }
+
+    /// Get the user's settings as a raw JSON value.
+    ///
+    /// This is only for debugging and reporting. For user-facing functionality,
+    /// use the typed setting interface.
+    pub fn untyped_user_settings(&self) -> &serde_json::Value {
+        self.user_deserialized_settings
+            .as_ref()
+            .map_or(&serde_json::Value::Null, |s| &s.untyped)
+    }
+
+    /// Override the global value for a particular setting.
+    ///
+    /// This is only for tests. Normally, settings are only loaded from
+    /// JSON files.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn replace_value<T: Setting>(&mut self, value: T) {
+        self.setting_values
+            .get_mut(&TypeId::of::<T>())
+            .expect("unregistered setting type")
+            .set_global_value(Box::new(value))
     }
 
     /// Update the value of a setting.
@@ -1164,6 +1186,8 @@ mod tests {
     }
 
     impl Setting for MultiKeySettings {
+        const KEY: Option<&'static str> = None;
+
         type FileContent = MultiKeySettingsJson;
 
         fn load(

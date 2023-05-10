@@ -70,7 +70,7 @@ use scroll::{
 };
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::{
@@ -6868,6 +6868,12 @@ impl Editor {
                 .as_singleton()
                 .and_then(|b| b.read(cx).file()),
         ) {
+            let vim_mode = cx
+                .global::<SettingsStore>()
+                .untyped_user_settings()
+                .get("vim_mode")
+                == Some(&serde_json::Value::Bool(true));
+
             let settings = cx.global::<Settings>();
 
             let extension = Path::new(file.file_name(cx))
@@ -6880,12 +6886,12 @@ impl Editor {
                     "save" => "save editor",
                     _ => name,
                 },
-                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode, "In Clickhouse": true  }),
+                json!({ "File Extension": extension, "Vim Mode": vim_mode, "In Clickhouse": true  }),
                 settings.telemetry(),
             );
             let event = ClickhouseEvent::Editor {
                 file_extension: extension.map(ToString::to_string),
-                vim_mode: settings.vim_mode,
+                vim_mode,
                 operation: name,
                 copilot_enabled: settings.features.copilot,
                 copilot_enabled_for_language: settings.show_copilot_suggestions(
