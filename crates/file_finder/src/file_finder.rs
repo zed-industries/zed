@@ -23,7 +23,7 @@ pub struct FileFinderDelegate {
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
-    latest_search_query: String,
+    latest_search_query: Option<FileSearchQuery>,
     relative_to: Option<Arc<Path>>,
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
@@ -58,6 +58,62 @@ fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContex
 pub enum Event {
     Selected(ProjectPath),
     Dismissed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileSearchQuery {
+    raw_query: String,
+    file_path_end: Option<usize>,
+    file_row: Option<usize>,
+    file_column: Option<usize>,
+}
+
+impl FileSearchQuery {
+    fn new(raw_query: String) -> Self {
+        let fallback_query = Self {
+            raw_query: raw_query.clone(),
+            file_path_end: None,
+            file_row: None,
+            file_column: None,
+        };
+
+        let mut possible_path_and_coordinates = raw_query.as_str().rsplitn(3, ':').fuse();
+        match (
+            possible_path_and_coordinates.next(),
+            possible_path_and_coordinates.next(),
+            possible_path_and_coordinates.next(),
+        ) {
+            (Some(column_number_str), Some(row_number_str), Some(file_path_part)) => Self {
+                file_path_end: Some(file_path_part.len()),
+                file_row: match row_number_str.parse().ok() {
+                    None => return fallback_query,
+                    row => row,
+                },
+                file_column: match column_number_str.parse().ok() {
+                    None => return fallback_query,
+                    column => column,
+                },
+                raw_query,
+            },
+            (Some(row_number_str), Some(file_path_part), None) => Self {
+                file_path_end: Some(file_path_part.len()),
+                file_row: match row_number_str.parse().ok() {
+                    None => return fallback_query,
+                    row => row,
+                },
+                file_column: None,
+                raw_query,
+            },
+            _no_colons_query => fallback_query,
+        }
+    }
+
+    fn path_query(&self) -> &str {
+        match self.file_path_end {
+            Some(file_path_end) => &self.raw_query[..file_path_end],
+            None => &self.raw_query,
+        }
+    }
 }
 
 impl FileFinderDelegate {
@@ -103,7 +159,7 @@ impl FileFinderDelegate {
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,
-            latest_search_query: String::new(),
+            latest_search_query: None,
             relative_to,
             matches: Vec::new(),
             selected: None,
@@ -111,7 +167,11 @@ impl FileFinderDelegate {
         }
     }
 
-    fn spawn_search(&mut self, query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
+    fn spawn_search(
+        &mut self,
+        query: FileSearchQuery,
+        cx: &mut ViewContext<FileFinder>,
+    ) -> Task<()> {
         let relative_to = self.relative_to.clone();
         let worktrees = self
             .project
@@ -140,7 +200,7 @@ impl FileFinderDelegate {
         cx.spawn(|picker, mut cx| async move {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
-                &query,
+                query.path_query(),
                 relative_to,
                 false,
                 100,
@@ -163,18 +223,18 @@ impl FileFinderDelegate {
         &mut self,
         search_id: usize,
         did_cancel: bool,
-        query: String,
+        query: FileSearchQuery,
         matches: Vec<PathMatch>,
         cx: &mut ViewContext<FileFinder>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            if self.latest_search_did_cancel && query == self.latest_search_query {
+            if self.latest_search_did_cancel && Some(&query) == self.latest_search_query.as_ref() {
                 util::extend_sorted(&mut self.matches, matches.into_iter(), 100, |a, b| b.cmp(a));
             } else {
                 self.matches = matches;
             }
-            self.latest_search_query = query;
+            self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
             cx.notify();
         }
@@ -209,14 +269,14 @@ impl PickerDelegate for FileFinderDelegate {
         cx.notify();
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
-        if query.is_empty() {
+    fn update_matches(&mut self, raw_query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
+        if raw_query.is_empty() {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.matches.clear();
             cx.notify();
             Task::ready(())
         } else {
-            self.spawn_search(query, cx)
+            self.spawn_search(FileSearchQuery::new(raw_query), cx)
         }
     }
 
@@ -230,6 +290,8 @@ impl PickerDelegate for FileFinderDelegate {
 
                 workspace.update(cx, |workspace, cx| {
                     workspace
+                        // TODO kb need to pass row and column here
+                        // use self.latest_search_query
                         .open_path(project_path.clone(), None, true, cx)
                         .detach_and_log_err(cx);
                     workspace.dismiss_modal(cx);
@@ -371,7 +433,7 @@ mod tests {
             )
         });
 
-        let query = "hi".to_string();
+        let query = FileSearchQuery::new("hi".to_string());
         finder
             .update(cx, |f, cx| f.delegate_mut().spawn_search(query.clone(), cx))
             .await;
@@ -455,7 +517,10 @@ mod tests {
             )
         });
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("hi".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut()
+                    .spawn_search(FileSearchQuery::new("hi".to_string()), cx)
+            })
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 7));
     }
@@ -491,7 +556,10 @@ mod tests {
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("thf".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut()
+                    .spawn_search(FileSearchQuery::new("thf".to_string()), cx)
+            })
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
@@ -509,7 +577,10 @@ mod tests {
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("thf/".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut()
+                    .spawn_search(FileSearchQuery::new("thf/".to_string()), cx)
+            })
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 0));
     }
@@ -553,7 +624,10 @@ mod tests {
 
         // Run a search that matches two files with the same relative path.
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("a.t".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut()
+                    .spawn_search(FileSearchQuery::new("a.t".to_string()), cx)
+            })
             .await;
 
         // Can switch between different matches with the same relative path.
@@ -609,7 +683,8 @@ mod tests {
 
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search("a.txt".into(), cx)
+                f.delegate_mut()
+                    .spawn_search(FileSearchQuery::new("a.txt".to_string()), cx)
             })
             .await;
 
@@ -651,7 +726,10 @@ mod tests {
             )
         });
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("dir".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut()
+                    .spawn_search(FileSearchQuery::new("dir".to_string()), cx)
+            })
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
