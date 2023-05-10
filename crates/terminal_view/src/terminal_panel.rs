@@ -4,7 +4,7 @@ use gpui::{
     WeakViewHandle,
 };
 use project::Project;
-use settings::{settings_file::SettingsFile, Settings, WorkingDirectory};
+use settings::{settings_file::SettingsFile, Settings, TerminalDockPosition, WorkingDirectory};
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel},
@@ -151,12 +151,17 @@ impl View for TerminalPanel {
 impl Panel for TerminalPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
         let settings = cx.global::<Settings>();
-        settings
+        let dock = settings
             .terminal_overrides
             .dock
             .or(settings.terminal_defaults.dock)
             .unwrap()
-            .into()
+            .into();
+        match dock {
+            settings::TerminalDockPosition::Left => DockPosition::Left,
+            settings::TerminalDockPosition::Bottom => DockPosition::Bottom,
+            settings::TerminalDockPosition::Right => DockPosition::Right,
+        }
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
@@ -165,7 +170,12 @@ impl Panel for TerminalPanel {
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
         SettingsFile::update(cx, move |settings| {
-            settings.terminal.dock = Some(position.into());
+            let dock = match position {
+                DockPosition::Left => TerminalDockPosition::Left,
+                DockPosition::Bottom => TerminalDockPosition::Bottom,
+                DockPosition::Right => TerminalDockPosition::Right,
+            };
+            settings.terminal.dock = Some(dock);
         });
     }
 

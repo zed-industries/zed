@@ -1347,12 +1347,15 @@ impl Entity for ProjectPanel {
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
         let settings = cx.global::<Settings>();
-        settings
+        let dock = settings
             .project_panel_overrides
             .dock
             .or(settings.project_panel_defaults.dock)
-            .unwrap()
-            .into()
+            .unwrap();
+        match dock {
+            settings::ProjectPanelDockPosition::Left => DockPosition::Left,
+            settings::ProjectPanelDockPosition::Right => DockPosition::Right,
+        }
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -1361,7 +1364,13 @@ impl workspace::dock::Panel for ProjectPanel {
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
         SettingsFile::update(cx, move |settings| {
-            settings.project_panel.dock = Some(position.into())
+            let dock = match position {
+                DockPosition::Left | DockPosition::Bottom => {
+                    settings::ProjectPanelDockPosition::Left
+                }
+                DockPosition::Right => settings::ProjectPanelDockPosition::Right,
+            };
+            settings.project_panel.dock = Some(dock);
         })
     }
 

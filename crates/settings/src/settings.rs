@@ -131,14 +131,6 @@ impl TelemetrySettings {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum DockPosition {
-    Left,
-    Right,
-    Bottom,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     pub disabled_globs: Vec<glob::Pattern>,
@@ -168,7 +160,14 @@ pub struct GitGutterConfig {}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectPanelSettings {
-    pub dock: Option<DockPosition>,
+    pub dock: Option<ProjectPanelDockPosition>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectPanelDockPosition {
+    Left,
+    Right,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -265,7 +264,15 @@ pub struct TerminalSettings {
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
     pub copy_on_select: Option<bool>,
-    pub dock: Option<DockPosition>,
+    pub dock: Option<TerminalDockPosition>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalDockPosition {
+    Left,
+    Bottom,
+    Right,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
