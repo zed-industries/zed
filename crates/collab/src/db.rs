@@ -1568,6 +1568,9 @@ impl Database {
                                 worktree.updated_repositories.push(proto::RepositoryEntry {
                                     work_directory_id: db_repository.work_directory_id as u64,
                                     branch: db_repository.branch,
+                                    removed_statuses: Default::default(),
+                                    updated_statuses: Default::default(),
+
                                 });
                             }
                         }
@@ -2648,6 +2651,9 @@ impl Database {
                         worktree.repository_entries.push(proto::RepositoryEntry {
                             work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
+                            removed_statuses: Default::default(),
+                            updated_statuses: Default::default(),
+
                         });
                     }
                 }
