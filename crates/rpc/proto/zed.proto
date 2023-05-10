@@ -986,12 +986,12 @@ message Entry {
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
-    repeated uint64 removed_statuses = 3;
-    repeated StatusEntry updated_statuses = 4;
+    repeated string removed_worktree_repo_paths = 3;
+    repeated StatusEntry updated_worktree_statuses = 4;
 }
 
 message StatusEntry {
-    uint64 entry_id = 1;
+    string repo_path = 1;
     GitStatus status = 2;
 }
 

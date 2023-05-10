@@ -180,8 +180,8 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
             work_directory_id: value.work_directory.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
             // TODO: Status
-            removed_statuses: Default::default(),
-            updated_statuses: Default::default(),
+            removed_worktree_repo_paths: Default::default(),
+            updated_worktree_statuses: Default::default(),
         }
     }
 }
@@ -1597,12 +1597,11 @@ impl LocalSnapshot {
     pub(crate) fn repo_for_metadata(
         &self,
         path: &Path,
-    ) -> Option<(ProjectEntryId, Arc<Mutex<dyn GitRepository>>)> {
-        let (entry_id, local_repo) = self
+    ) -> Option<(&ProjectEntryId, &LocalRepositoryEntry)> {
+        self
             .git_repositories
             .iter()
-            .find(|(_, repo)| repo.in_dot_git(path))?;
-        Some((*entry_id, local_repo.repo_ptr.to_owned()))
+            .find(|(_, repo)| repo.in_dot_git(path))
     }
 
     #[cfg(test)]
@@ -2916,13 +2915,19 @@ impl BackgroundScanner {
             .components()
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
-            let (entry_id, repo) = snapshot.repo_for_metadata(&path)?;
+            let (entry_id, repo_ptr) = {
+                let (entry_id, repo) = snapshot.repo_for_metadata(&path)?;
+                if repo.full_scan_id == scan_id {
+                    return None;
+                }
+                (*entry_id, repo.repo_ptr.to_owned())
+            };
 
             let work_dir = snapshot
                 .entry_for_id(entry_id)
                 .map(|entry| RepositoryWorkDirectory(entry.path.clone()))?;
 
-            let repo = repo.lock();
+            let repo = repo_ptr.lock();
             repo.reload_index();
             let branch = repo.branch_name();
             let statuses = repo.worktree_statuses().unwrap_or_default();
@@ -3950,16 +3955,12 @@ mod tests {
         std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
         std::fs::remove_dir_all(work_dir.join("c")).unwrap();
 
-        dbg!(git_status(&repo));
-
         tree.flush_fs_events(cx).await;
 
         // Check that non-repo behavior is tracked
         tree.read_with(cx, |tree, _cx| {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
-
-            dbg!(&repo.worktree_statuses);
 
             assert_eq!(repo.worktree_statuses.iter().count(), 0);
             assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
