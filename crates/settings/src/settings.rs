@@ -8,7 +8,7 @@ use gpui::{
     fonts, AppContext, AssetSource,
 };
 use schemars::{
-    gen::{SchemaGenerator, SchemaSettings},
+    gen::SchemaGenerator,
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
 };
@@ -25,7 +25,7 @@ use util::ResultExt as _;
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use settings_file::*;
-pub use settings_store::SettingsStore;
+pub use settings_store::{SettingsJsonSchemaParams, SettingsStore};
 
 pub const DEFAULT_SETTINGS_ASSET_PATH: &str = "settings/default.json";
 pub const INITIAL_USER_SETTINGS_ASSET_PATH: &str = "settings/initial_user_settings.json";
@@ -149,6 +149,75 @@ impl Setting for Settings {
         }
 
         this
+    }
+
+    fn json_schema(
+        generator: &mut SchemaGenerator,
+        params: &SettingsJsonSchemaParams,
+    ) -> schemars::schema::RootSchema {
+        let mut root_schema = generator.root_schema_for::<SettingsFileContent>();
+
+        // Create a schema for a theme name.
+        let theme_name_schema = SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+            enum_values: Some(
+                params
+                    .theme_names
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+
+        // Create a schema for a 'languages overrides' object, associating editor
+        // settings with specific langauges.
+        assert!(root_schema.definitions.contains_key("EditorSettings"));
+
+        let languages_object_schema = SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(ObjectValidation {
+                properties: params
+                    .language_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            Schema::new_ref("#/definitions/EditorSettings".into()),
+                        )
+                    })
+                    .collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        // Add these new schemas as definitions, and modify properties of the root
+        // schema to reference them.
+        root_schema.definitions.extend([
+            ("ThemeName".into(), theme_name_schema.into()),
+            ("Languages".into(), languages_object_schema.into()),
+        ]);
+        let root_schema_object = &mut root_schema.schema.object.as_mut().unwrap();
+
+        root_schema_object.properties.extend([
+            (
+                "theme".to_owned(),
+                Schema::new_ref("#/definitions/ThemeName".into()),
+            ),
+            (
+                "languages".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            ),
+            // For backward compatibility
+            (
+                "language_overrides".to_owned(),
+                Schema::new_ref("#/definitions/Languages".into()),
+            ),
+        ]);
+
+        root_schema
     }
 }
 
@@ -924,72 +993,6 @@ impl Settings {
             cx.set_global(settings);
         });
     }
-}
-
-pub fn settings_file_json_schema(
-    theme_names: Vec<String>,
-    language_names: &[String],
-) -> serde_json::Value {
-    let settings = SchemaSettings::draft07().with(|settings| {
-        settings.option_add_null_type = false;
-    });
-    let generator = SchemaGenerator::new(settings);
-
-    let mut root_schema = generator.into_root_schema_for::<SettingsFileContent>();
-
-    // Create a schema for a theme name.
-    let theme_name_schema = SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-        enum_values: Some(theme_names.into_iter().map(Value::String).collect()),
-        ..Default::default()
-    };
-
-    // Create a schema for a 'languages overrides' object, associating editor
-    // settings with specific langauges.
-    assert!(root_schema.definitions.contains_key("EditorSettings"));
-
-    let languages_object_schema = SchemaObject {
-        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-        object: Some(Box::new(ObjectValidation {
-            properties: language_names
-                .iter()
-                .map(|name| {
-                    (
-                        name.clone(),
-                        Schema::new_ref("#/definitions/EditorSettings".into()),
-                    )
-                })
-                .collect(),
-            ..Default::default()
-        })),
-        ..Default::default()
-    };
-
-    // Add these new schemas as definitions, and modify properties of the root
-    // schema to reference them.
-    root_schema.definitions.extend([
-        ("ThemeName".into(), theme_name_schema.into()),
-        ("Languages".into(), languages_object_schema.into()),
-    ]);
-    let root_schema_object = &mut root_schema.schema.object.as_mut().unwrap();
-
-    root_schema_object.properties.extend([
-        (
-            "theme".to_owned(),
-            Schema::new_ref("#/definitions/ThemeName".into()),
-        ),
-        (
-            "languages".to_owned(),
-            Schema::new_ref("#/definitions/Languages".into()),
-        ),
-        // For backward compatibility
-        (
-            "language_overrides".to_owned(),
-            Schema::new_ref("#/definitions/Languages".into()),
-        ),
-    ]);
-
-    serde_json::to_value(root_schema).unwrap()
 }
 
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {

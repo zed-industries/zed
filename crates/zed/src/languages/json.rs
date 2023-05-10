@@ -6,7 +6,7 @@ use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
 use node_runtime::NodeRuntime;
 use serde_json::json;
-use settings::{keymap_file_json_schema, settings_file_json_schema};
+use settings::{keymap_file_json_schema, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use staff_mode::StaffMode;
 use std::{
@@ -128,12 +128,18 @@ impl LspAdapter for JsonLspAdapter {
         cx: &mut AppContext,
     ) -> Option<BoxFuture<'static, serde_json::Value>> {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
-        let theme_names = self
+        let theme_names = &self
             .themes
             .list(**cx.default_global::<StaffMode>())
             .map(|meta| meta.name)
-            .collect();
-        let language_names = self.languages.language_names();
+            .collect::<Vec<_>>();
+        let language_names = &self.languages.language_names();
+        let settings_schema = cx
+            .global::<SettingsStore>()
+            .json_schema(&SettingsJsonSchemaParams {
+                theme_names,
+                language_names,
+            });
         Some(
             future::ready(serde_json::json!({
                 "json": {
@@ -143,7 +149,7 @@ impl LspAdapter for JsonLspAdapter {
                     "schemas": [
                         {
                             "fileMatch": [schema_file_match(&paths::SETTINGS)],
-                            "schema": settings_file_json_schema(theme_names, &language_names),
+                            "schema": settings_schema,
                         },
                         {
                             "fileMatch": [schema_file_match(&paths::KEYMAP)],

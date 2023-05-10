@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
-use collections::{hash_map, BTreeMap, HashMap, HashSet};
+use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet};
 use gpui::AppContext;
 use lazy_static::lazy_static;
-use schemars::JsonSchema;
+use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -39,6 +39,10 @@ pub trait Setting: 'static {
         cx: &AppContext,
     ) -> Self;
 
+    fn json_schema(generator: &mut SchemaGenerator, _: &SettingsJsonSchemaParams) -> RootSchema {
+        generator.root_schema_for::<Self::FileContent>()
+    }
+
     fn load_via_json_merge(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
@@ -52,6 +56,11 @@ pub trait Setting: 'static {
         }
         serde_json::from_value(merged).unwrap()
     }
+}
+
+pub struct SettingsJsonSchemaParams<'a> {
+    pub theme_names: &'a [String],
+    pub language_names: &'a [String],
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
@@ -84,6 +93,11 @@ trait AnySettingValue {
     fn value_for_path(&self, path: Option<&Path>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, path: Arc<Path>, value: Box<dyn Any>);
+    fn json_schema(
+        &self,
+        generator: &mut SchemaGenerator,
+        _: &SettingsJsonSchemaParams,
+    ) -> RootSchema;
 }
 
 struct DeserializedSetting(Box<dyn Any>);
@@ -268,6 +282,79 @@ impl SettingsStore {
         };
         self.recompute_values(true, Some(&path), removed_map, cx);
         Ok(())
+    }
+
+    pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams) -> serde_json::Value {
+        use schemars::{
+            gen::SchemaSettings,
+            schema::{Schema, SchemaObject},
+        };
+
+        let settings = SchemaSettings::draft07().with(|settings| {
+            settings.option_add_null_type = false;
+        });
+        let mut generator = SchemaGenerator::new(settings);
+        let mut combined_schema = RootSchema::default();
+
+        for setting_value in self.setting_values.values() {
+            let setting_schema = setting_value.json_schema(&mut generator, schema_params);
+            combined_schema
+                .definitions
+                .extend(setting_schema.definitions);
+
+            let target_schema = if let Some(key) = setting_value.key() {
+                let key_schema = combined_schema
+                    .schema
+                    .object()
+                    .properties
+                    .entry(key.to_string())
+                    .or_insert_with(|| Schema::Object(SchemaObject::default()));
+                if let Schema::Object(key_schema) = key_schema {
+                    key_schema
+                } else {
+                    continue;
+                }
+            } else {
+                &mut combined_schema.schema
+            };
+
+            merge_schema(target_schema, setting_schema.schema);
+        }
+
+        fn merge_schema(target: &mut SchemaObject, source: SchemaObject) {
+            if let Some(source) = source.object {
+                let target_properties = &mut target.object().properties;
+                for (key, value) in source.properties {
+                    match target_properties.entry(key) {
+                        btree_map::Entry::Vacant(e) => {
+                            e.insert(value);
+                        }
+                        btree_map::Entry::Occupied(e) => {
+                            if let (Schema::Object(target), Schema::Object(src)) =
+                                (e.into_mut(), value)
+                            {
+                                merge_schema(target, src);
+                            }
+                        }
+                    }
+                }
+            }
+
+            overwrite(&mut target.instance_type, source.instance_type);
+            overwrite(&mut target.string, source.string);
+            overwrite(&mut target.number, source.number);
+            overwrite(&mut target.reference, source.reference);
+            overwrite(&mut target.array, source.array);
+            overwrite(&mut target.enum_values, source.enum_values);
+
+            fn overwrite<T>(target: &mut Option<T>, source: Option<T>) {
+                if let Some(source) = source {
+                    *target = Some(source);
+                }
+            }
+        }
+
+        serde_json::to_value(&combined_schema).unwrap()
     }
 
     fn recompute_values(
@@ -456,6 +543,14 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
             Ok(ix) => self.local_values[ix].1 = value,
             Err(ix) => self.local_values.insert(ix, (path, value)),
         }
+    }
+
+    fn json_schema(
+        &self,
+        generator: &mut SchemaGenerator,
+        params: &SettingsJsonSchemaParams,
+    ) -> RootSchema {
+        T::json_schema(generator, params)
     }
 }
 
