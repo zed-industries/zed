@@ -1,14 +1,31 @@
 use crate::{
     settings_store::parse_json_with_comments, settings_store::SettingsStore, KeymapFileContent,
-    Settings, SettingsFileContent, DEFAULT_SETTINGS_ASSET_PATH,
+    Setting, Settings, SettingsFileContent, DEFAULT_SETTINGS_ASSET_PATH,
 };
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{executor::Background, AppContext, AssetSource};
-use std::{borrow::Cow, io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+    time::Duration,
+};
 use util::{paths, ResultExt};
+
+pub fn register_setting<T: Setting>(cx: &mut AppContext) {
+    cx.update_global::<SettingsStore, _, _>(|store, cx| {
+        store.register_setting::<T>(cx);
+    });
+}
+
+pub fn get_setting<'a, T: Setting>(path: Option<&Path>, cx: &'a AppContext) -> &'a T {
+    cx.global::<SettingsStore>().get(path)
+}
 
 pub fn default_settings() -> Cow<'static, str> {
     match Assets.load(DEFAULT_SETTINGS_ASSET_PATH).unwrap() {

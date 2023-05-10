@@ -10,7 +10,7 @@ use gpui::{
 use isahc::AsyncBody;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::Settings;
+use settings::{Setting, Settings, SettingsStore};
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
@@ -58,18 +58,35 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
+struct AutoUpdateSetting(bool);
+
+impl Setting for AutoUpdateSetting {
+    const KEY: Option<&'static str> = Some("auto_update");
+
+    type FileContent = Option<bool>;
+
+    fn load(default_value: &Option<bool>, user_values: &[&Option<bool>], _: &AppContext) -> Self {
+        Self(
+            Self::json_merge(default_value, user_values)
+                .unwrap()
+                .unwrap(),
+        )
+    }
+}
+
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
+    settings::register_setting::<AutoUpdateSetting>(cx);
+
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url);
 
-            let mut update_subscription = cx
-                .global::<Settings>()
-                .auto_update
+            let mut update_subscription = settings::get_setting::<AutoUpdateSetting>(None, cx)
+                .0
                 .then(|| updater.start_polling(cx));
 
-            cx.observe_global::<Settings, _>(move |updater, cx| {
-                if cx.global::<Settings>().auto_update {
+            cx.observe_global::<SettingsStore, _>(move |updater, cx| {
+                if settings::get_setting::<AutoUpdateSetting>(None, cx).0 {
                     if update_subscription.is_none() {
                         update_subscription = Some(updater.start_polling(cx))
                     }

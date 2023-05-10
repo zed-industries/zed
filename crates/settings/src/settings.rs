@@ -14,7 +14,6 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings_store::Setting;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -25,7 +24,7 @@ use util::ResultExt as _;
 
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use settings_file::*;
-pub use settings_store::{SettingsJsonSchemaParams, SettingsStore};
+pub use settings_store::{Setting, SettingsJsonSchemaParams, SettingsStore};
 
 pub const DEFAULT_SETTINGS_ASSET_PATH: &str = "settings/default.json";
 pub const INITIAL_USER_SETTINGS_ASSET_PATH: &str = "settings/initial_user_settings.json";
@@ -62,7 +61,6 @@ pub struct Settings {
     pub theme: Arc<Theme>,
     pub telemetry_defaults: TelemetrySettings,
     pub telemetry_overrides: TelemetrySettings,
-    pub auto_update: bool,
     pub base_keymap: BaseKeymap,
 }
 
@@ -137,7 +135,6 @@ impl Setting for Settings {
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
-            auto_update: defaults.auto_update.unwrap(),
             base_keymap: Default::default(),
             features: Features {
                 copilot: defaults.features.copilot.unwrap(),
@@ -576,8 +573,6 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub telemetry: TelemetrySettings,
     #[serde(default)]
-    pub auto_update: Option<bool>,
-    #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
     #[serde(default)]
     pub features: FeaturesContent,
@@ -695,7 +690,6 @@ impl Settings {
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             telemetry_defaults: defaults.telemetry,
             telemetry_overrides: Default::default(),
-            auto_update: defaults.auto_update.unwrap(),
             base_keymap: Default::default(),
             features: Features {
                 copilot: defaults.features.copilot.unwrap(),
@@ -770,7 +764,6 @@ impl Settings {
         self.language_overrides = data.languages;
         self.telemetry_overrides = data.telemetry;
         self.lsp = data.lsp;
-        merge(&mut self.auto_update, data.auto_update);
     }
 
     pub fn with_language_defaults(
@@ -980,7 +973,6 @@ impl Settings {
                 metrics: Some(true),
             },
             telemetry_overrides: Default::default(),
-            auto_update: true,
             base_keymap: Default::default(),
             features: Features { copilot: true },
         }

@@ -43,6 +43,17 @@ pub trait Setting: 'static {
         generator.root_schema_for::<Self::FileContent>()
     }
 
+    fn json_merge(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+    ) -> Result<Self::FileContent> {
+        let mut merged = serde_json::Value::Null;
+        for value in [default_value].iter().chain(user_values) {
+            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
+        }
+        Ok(serde_json::from_value(merged)?)
+    }
+
     fn load_via_json_merge(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
