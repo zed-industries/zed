@@ -3336,6 +3336,8 @@ dependencies = [
  "editor",
  "gpui",
  "log",
+ "schemars",
+ "serde",
  "settings",
  "shellexpand",
  "util",

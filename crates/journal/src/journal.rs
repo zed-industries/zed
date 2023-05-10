@@ -1,7 +1,8 @@
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{actions, AppContext};
-use settings::{HourFormat, Settings};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -11,13 +12,61 @@ use workspace::AppState;
 
 actions!(journal, [NewJournalEntry]);
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct JournalSettings {
+    pub path: Option<String>,
+    pub hour_format: Option<HourFormat>,
+}
+
+impl Default for JournalSettings {
+    fn default() -> Self {
+        Self {
+            path: Some("~".into()),
+            hour_format: Some(Default::default()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HourFormat {
+    #[default]
+    Hour12,
+    Hour24,
+}
+
+impl settings::Setting for JournalSettings {
+    const KEY: Option<&'static str> = Some("journal");
+
+    type FileContent = Self;
+
+    fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Self {
+        Self {
+            path: Some(
+                user_values
+                    .first()
+                    .and_then(|s| s.path.clone())
+                    .unwrap_or(default_value.path.clone().unwrap()),
+            ),
+            hour_format: Some(
+                user_values
+                    .first()
+                    .and_then(|s| s.hour_format.clone())
+                    .unwrap_or(default_value.hour_format.clone().unwrap()),
+            ),
+        }
+    }
+}
+
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+    settings::register_setting::<JournalSettings>(cx);
+
     cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
 }
 
 pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
-    let settings = cx.global::<Settings>();
-    let journal_dir = match journal_dir(&settings) {
+    let settings = settings::get_setting::<JournalSettings>(None, cx);
+    let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
         None => {
             log::error!("Can't determine journal directory");
@@ -31,8 +80,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
         .join(format!("{:02}", now.month()));
     let entry_path = month_dir.join(format!("{:02}.md", now.day()));
     let now = now.time();
-    let hour_format = &settings.journal_overrides.hour_format;
-    let entry_heading = heading_entry(now, &hour_format);
+    let entry_heading = heading_entry(now, &settings.hour_format);
 
     let create_entry = cx.background().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
@@ -76,14 +124,8 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn journal_dir(settings: &Settings) -> Option<PathBuf> {
-    let journal_dir = settings
-        .journal_overrides
-        .path
-        .as_ref()
-        .unwrap_or(settings.journal_defaults.path.as_ref()?);
-
-    let expanded_journal_dir = shellexpand::full(&journal_dir) //TODO handle this better
+fn journal_dir(path: &str) -> Option<PathBuf> {
+    let expanded_journal_dir = shellexpand::full(path) //TODO handle this better
         .ok()
         .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"));
 
