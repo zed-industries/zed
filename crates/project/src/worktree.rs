@@ -3556,6 +3556,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 mod tests {
     use super::*;
     use fs::{FakeFs, RealFs};
+    use git2::Signature;
     use gpui::{executor::Deterministic, TestAppContext};
     use pretty_assertions::assert_eq;
     use rand::prelude::*;
@@ -3894,7 +3895,7 @@ mod tests {
 
         #[track_caller]
         fn git_commit(msg: &'static str, repo: &git2::Repository) {
-            let signature = repo.signature().unwrap();
+            let signature = Signature::now("test", "test@zed.dev").unwrap();
             let oid = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(oid).unwrap();
             if let Some(head) = repo.head().ok() {
