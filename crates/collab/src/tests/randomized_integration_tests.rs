@@ -14,6 +14,7 @@ use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::{search::SearchQuery, Project, ProjectPath};
 use rand::{
     distributions::{Alphanumeric, DistString},
@@ -32,7 +33,6 @@ use std::{
     },
 };
 use util::ResultExt;
-use pretty_assertions::assert_eq;
 
 lazy_static::lazy_static! {
     static ref PLAN_LOAD_PATH: Option<PathBuf> = path_env_var("LOAD_PLAN");
@@ -828,7 +828,8 @@ async fn apply_client_operation(
 
                 let dot_git_dir = repo_path.join(".git");
 
-                let statuses = statuses.iter()
+                let statuses = statuses
+                    .iter()
                     .map(|(path, val)| (path.as_path(), val.clone()))
                     .collect::<Vec<_>>();
 
@@ -836,8 +837,11 @@ async fn apply_client_operation(
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
 
-                client.fs.set_status_for_repo(&dot_git_dir, statuses.as_slice()).await;
-            },
+                client
+                    .fs
+                    .set_status_for_repo(&dot_git_dir, statuses.as_slice())
+                    .await;
+            }
         },
     }
     Ok(())

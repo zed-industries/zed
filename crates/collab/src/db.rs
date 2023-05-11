@@ -1606,11 +1606,16 @@ impl Database {
                         while let Some(db_status_entry) = db_repository_statuses.next().await {
                             let db_status_entry = db_status_entry?;
                             if db_status_entry.is_deleted {
-                                repository.removed_worktree_repo_paths.push(db_status_entry.repo_path);
+                                repository
+                                    .removed_worktree_repo_paths
+                                    .push(db_status_entry.repo_path);
                             } else {
-                                repository.updated_worktree_statuses.push(proto::StatusEntry {
-                                    repo_path: db_status_entry.repo_path, status: db_status_entry.status as i32
-                                });
+                                repository
+                                    .updated_worktree_statuses
+                                    .push(proto::StatusEntry {
+                                        repo_path: db_status_entry.repo_path,
+                                        status: db_status_entry.status as i32,
+                                    });
                             }
                         }
                     }

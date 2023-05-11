@@ -1,7 +1,7 @@
 use anyhow::Result;
 use collections::HashMap;
 use parking_lot::Mutex;
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
     os::unix::prelude::OsStrExt,
