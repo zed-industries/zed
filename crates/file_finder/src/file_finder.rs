@@ -270,6 +270,7 @@ impl PickerDelegate for FileFinderDelegate {
 mod tests {
     use super::*;
     use editor::Editor;
+    use gpui::TestAppContext;
     use menu::{Confirm, SelectNext};
     use serde_json::json;
     use workspace::{AppState, Workspace};
@@ -283,12 +284,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(|cx| {
-            super::init(cx);
-            editor::init(cx);
-            AppState::test(cx)
-        });
-
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -339,7 +335,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_cancellation(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -408,7 +404,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_ignored_files(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -462,7 +458,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -516,9 +512,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_multiple_matches_with_same_relative_path(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -570,9 +564,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_path_distance_ordering(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -622,7 +614,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_worktree_without_files(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -657,5 +649,16 @@ mod tests {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
         });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            super::init(cx);
+            editor::init(cx);
+            state
+        })
     }
 }

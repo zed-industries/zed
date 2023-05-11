@@ -42,12 +42,12 @@ pub fn test_settings() -> String {
         serde_json::json!({
             "buffer_font_family": "Courier",
             "buffer_font_features": {},
-            "default_buffer_font_size": 14,
-            "preferred_line_length": 80,
+            "buffer_font_size": 14,
             "theme": theme::EMPTY_THEME_NAME,
         }),
         &mut value,
     );
+    value.as_object_mut().unwrap().remove("languages");
     serde_json::to_string(&value).unwrap()
 }
 

@@ -65,12 +65,14 @@ impl Setting for AutoUpdateSetting {
 
     type FileContent = Option<bool>;
 
-    fn load(default_value: &Option<bool>, user_values: &[&Option<bool>], _: &AppContext) -> Self {
-        Self(
-            Self::json_merge(default_value, user_values)
-                .unwrap()
-                .unwrap(),
-        )
+    fn load(
+        default_value: &Option<bool>,
+        user_values: &[&Option<bool>],
+        _: &AppContext,
+    ) -> Result<Self> {
+        Ok(Self(
+            Self::json_merge(default_value, user_values)?.ok_or_else(Self::missing_default)?,
+        ))
     }
 }
 

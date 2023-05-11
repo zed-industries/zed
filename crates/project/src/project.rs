@@ -23,6 +23,7 @@ use gpui::{
     ModelHandle, Task, WeakModelHandle,
 };
 use language::{
+    language_settings::{all_language_settings, language_settings, FormatOnSave, Formatter},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
@@ -44,7 +45,7 @@ use postage::watch;
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
-use settings::{FormatOnSave, Formatter, Settings};
+use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -64,9 +65,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-
 use terminals::Terminals;
-
 use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
@@ -454,7 +453,9 @@ impl Project {
                 client_state: None,
                 opened_buffer: watch::channel(),
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
+                _subscriptions: vec![
+                    cx.observe_global::<SettingsStore, _>(Self::on_settings_changed)
+                ],
                 _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 active_entry: None,
@@ -622,7 +623,7 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let settings = cx.global::<Settings>();
+        let settings = all_language_settings(None, cx);
 
         let mut language_servers_to_start = Vec::new();
         for buffer in self.opened_buffers.values() {
@@ -630,7 +631,10 @@ impl Project {
                 let buffer = buffer.read(cx);
                 if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
                 {
-                    if settings.enable_language_server(Some(&language.name())) {
+                    if settings
+                        .language(Some(&language.name()))
+                        .enable_language_server
+                    {
                         let worktree = file.worktree.read(cx);
                         language_servers_to_start.push((
                             worktree.id(),
@@ -645,7 +649,10 @@ impl Project {
         let mut language_servers_to_stop = Vec::new();
         for language in self.languages.to_vec() {
             for lsp_adapter in language.lsp_adapters() {
-                if !settings.enable_language_server(Some(&language.name())) {
+                if !settings
+                    .language(Some(&language.name()))
+                    .enable_language_server
+                {
                     let lsp_name = &lsp_adapter.name;
                     for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
                         if lsp_name == started_lsp_name {
@@ -2178,10 +2185,7 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        if !cx
-            .global::<Settings>()
-            .enable_language_server(Some(&language.name()))
-        {
+        if !language_settings(None, Some(&language.name()), cx).enable_language_server {
             return;
         }
 
@@ -3228,23 +3232,17 @@ impl Project {
 
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
-                    let (
-                        format_on_save,
-                        remove_trailing_whitespace,
-                        ensure_final_newline,
-                        formatter,
-                        tab_size,
-                    ) = buffer.read_with(&cx, |buffer, cx| {
-                        let settings = cx.global::<Settings>();
+                    let settings = buffer.read_with(&cx, |buffer, cx| {
                         let language_name = buffer.language().map(|language| language.name());
-                        (
-                            settings.format_on_save(language_name.as_deref()),
-                            settings.remove_trailing_whitespace_on_save(language_name.as_deref()),
-                            settings.ensure_final_newline_on_save(language_name.as_deref()),
-                            settings.formatter(language_name.as_deref()),
-                            settings.tab_size(language_name.as_deref()),
-                        )
+                        language_settings(buffer_abs_path.as_deref(), language_name.as_deref(), cx)
+                            .clone()
                     });
+
+                    let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
+                    let ensure_final_newline = settings.ensure_final_newline_on_save;
+                    let format_on_save = settings.format_on_save.clone();
+                    let formatter = settings.formatter.clone();
+                    let tab_size = settings.tab_size;
 
                     // First, format buffer's whitespace according to the settings.
                     let trailing_whitespace_diff = if remove_trailing_whitespace {

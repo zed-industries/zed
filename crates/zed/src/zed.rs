@@ -597,7 +597,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_paths_action(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -697,7 +697,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_window_edit_state(executor: Arc<Deterministic>, cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -777,7 +777,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_new_empty_workspace(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         cx.update(|cx| {
             open_new(&app_state, cx, |workspace, cx| {
                 Editor::new_file(workspace, &Default::default(), cx)
@@ -816,7 +816,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_entry(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -929,7 +929,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_paths(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
 
         app_state
             .fs
@@ -1099,7 +1099,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_conflicting_item(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -1143,7 +1143,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
@@ -1232,7 +1232,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_setting_language_when_saving_as_single_file_worktree(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
@@ -1271,7 +1271,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -1345,7 +1345,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_navigation(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -1622,7 +1622,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_reopening_closed_items(cx: &mut TestAppContext) {
-        let app_state = init(cx);
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -1843,7 +1843,7 @@ mod tests {
         cx.foreground().run_until_parked();
     }
 
-    fn init(cx: &mut TestAppContext) -> Arc<AppState> {
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             let mut app_state = AppState::test(cx);
@@ -1852,6 +1852,7 @@ mod tests {
             state.build_window_options = build_window_options;
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
+            language::init(cx);
             editor::init(cx);
             pane::init(cx);
             app_state

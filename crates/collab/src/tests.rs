@@ -186,7 +186,10 @@ impl TestServer {
                 })
             });
 
-        cx.update(|cx| client::init(&client, cx));
+        cx.update(|cx| {
+            client::init(&client, cx);
+            language::init(cx);
+        });
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));

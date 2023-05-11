@@ -694,7 +694,7 @@ impl DiagnosticPopover {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
+    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use gpui::fonts::Weight;
     use indoc::indoc;
     use language::{Diagnostic, DiagnosticSet};
@@ -706,6 +706,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -773,6 +775,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_keyboard_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -816,6 +820,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -882,7 +888,8 @@ mod tests {
 
     #[gpui::test]
     fn test_render_blocks(cx: &mut gpui::TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx, |_| {});
+
         cx.add_window(|cx| {
             let editor = Editor::single_line(None, cx);
             let style = editor.style(cx);

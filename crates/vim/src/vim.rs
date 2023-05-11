@@ -10,8 +10,7 @@ mod state;
 mod utils;
 mod visual;
 
-use std::sync::Arc;
-
+use anyhow::Result;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode, Event};
 use gpui::{
@@ -24,6 +23,7 @@ use normal::normal_replace;
 use serde::Deserialize;
 use settings::{Setting, SettingsStore};
 use state::{Mode, Operator, VimState};
+use std::sync::Arc;
 use visual::visual_replace;
 use workspace::{self, Workspace};
 
@@ -343,14 +343,10 @@ impl Setting for VimModeSetting {
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
         _: &AppContext,
-    ) -> Self {
-        Self(
-            user_values
-                .first()
-                .map(|e| **e)
-                .flatten()
-                .unwrap_or(default_value.unwrap()),
-        )
+    ) -> Result<Self> {
+        Ok(Self(user_values.iter().rev().find_map(|v| **v).unwrap_or(
+            default_value.ok_or_else(Self::missing_default)?,
+        )))
     }
 }
 

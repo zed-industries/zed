@@ -51,6 +51,7 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
+    language_settings::{self, all_language_settings},
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
     Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
@@ -436,7 +437,7 @@ pub enum EditorMode {
     Full,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SoftWrap {
     None,
     EditorWidth,
@@ -471,7 +472,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
-    soft_wrap_mode_override: Option<settings::SoftWrap>,
+    soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
@@ -1247,7 +1248,7 @@ impl Editor {
         let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let soft_wrap_mode_override =
-            (mode == EditorMode::SingleLine).then(|| settings::SoftWrap::None);
+            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -3116,17 +3117,12 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        let settings = cx.global::<Settings>();
-
-        let path = snapshot.file_at(location).map(|file| file.path());
+        let path = snapshot.file_at(location).map(|file| file.path().as_ref());
         let language_name = snapshot
             .language_at(location)
             .map(|language| language.name());
-        if !settings.show_copilot_suggestions(language_name.as_deref(), path.map(|p| p.as_ref())) {
-            return false;
-        }
-
-        true
+        let settings = all_language_settings(None, cx);
+        settings.copilot_enabled(language_name.as_deref(), path)
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
@@ -3427,12 +3423,9 @@ impl Editor {
                         {
                             let indent_size =
                                 buffer.indent_size_for_line(line_buffer_range.start.row);
-                            let language_name = buffer
-                                .language_at(line_buffer_range.start)
-                                .map(|language| language.name());
                             let indent_len = match indent_size.kind {
                                 IndentKind::Space => {
-                                    cx.global::<Settings>().tab_size(language_name.as_deref())
+                                    buffer.settings_at(line_buffer_range.start, cx).tab_size
                                 }
                                 IndentKind::Tab => NonZeroU32::new(1).unwrap(),
                             };
@@ -3544,12 +3537,11 @@ impl Editor {
             }
 
             // Otherwise, insert a hard or soft tab.
-            let settings = cx.global::<Settings>();
-            let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
-            let tab_size = if settings.hard_tabs(language_name.as_deref()) {
+            let settings = buffer.settings_at(cursor, cx);
+            let tab_size = if settings.hard_tabs {
                 IndentSize::tab()
             } else {
-                let tab_size = settings.tab_size(language_name.as_deref()).get();
+                let tab_size = settings.tab_size.get();
                 let char_column = snapshot
                     .text_for_range(Point::new(cursor.row, 0)..cursor)
                     .flat_map(str::chars)
@@ -3602,10 +3594,9 @@ impl Editor {
         delta_for_start_row: u32,
         cx: &AppContext,
     ) -> u32 {
-        let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-        let settings = cx.global::<Settings>();
-        let tab_size = settings.tab_size(language_name.as_deref()).get();
-        let indent_kind = if settings.hard_tabs(language_name.as_deref()) {
+        let settings = buffer.settings_at(selection.start, cx);
+        let tab_size = settings.tab_size.get();
+        let indent_kind = if settings.hard_tabs {
             IndentKind::Tab
         } else {
             IndentKind::Space
@@ -3674,11 +3665,8 @@ impl Editor {
             let buffer = self.buffer.read(cx);
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
-                let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-                let tab_size = cx
-                    .global::<Settings>()
-                    .tab_size(language_name.as_deref())
-                    .get();
+                let settings = buffer.settings_at(selection.start, cx);
+                let tab_size = settings.tab_size.get();
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -6439,27 +6427,24 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
-        let language_name = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|singleton_buffer| singleton_buffer.read(cx).language())
-            .map(|l| l.name());
-
-        let settings = cx.global::<Settings>();
+        let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self
             .soft_wrap_mode_override
-            .unwrap_or_else(|| settings.soft_wrap(language_name.as_deref()));
+            .unwrap_or_else(|| settings.soft_wrap);
         match mode {
-            settings::SoftWrap::None => SoftWrap::None,
-            settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
-            settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length(language_name.as_deref()))
+            language_settings::SoftWrap::None => SoftWrap::None,
+            language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            language_settings::SoftWrap::PreferredLineLength => {
+                SoftWrap::Column(settings.preferred_line_length)
             }
         }
     }
 
-    pub fn set_soft_wrap_mode(&mut self, mode: settings::SoftWrap, cx: &mut ViewContext<Self>) {
+    pub fn set_soft_wrap_mode(
+        &mut self,
+        mode: language_settings::SoftWrap,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.soft_wrap_mode_override = Some(mode);
         cx.notify();
     }
@@ -6474,8 +6459,8 @@ impl Editor {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
-                SoftWrap::None => settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) => settings::SoftWrap::None,
+                SoftWrap::None => language_settings::SoftWrap::EditorWidth,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) => language_settings::SoftWrap::None,
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
@@ -6874,7 +6859,12 @@ impl Editor {
                 .get("vim_mode")
                 == Some(&serde_json::Value::Bool(true));
             let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
-            let settings = cx.global::<Settings>();
+            let copilot_enabled = all_language_settings(None, cx).copilot_enabled(None, None);
+            let copilot_enabled_for_language = self
+                .buffer
+                .read(cx)
+                .settings_at(0, cx)
+                .show_copilot_suggestions;
 
             let extension = Path::new(file.file_name(cx))
                 .extension()
@@ -6893,15 +6883,8 @@ impl Editor {
                 file_extension: extension.map(ToString::to_string),
                 vim_mode,
                 operation: name,
-                copilot_enabled: settings.features.copilot,
-                copilot_enabled_for_language: settings.show_copilot_suggestions(
-                    self.language_at(0, cx)
-                        .map(|language| language.name())
-                        .as_deref(),
-                    self.file_at(0, cx)
-                        .map(|file| file.path().clone())
-                        .as_deref(),
-                ),
+                copilot_enabled,
+                copilot_enabled_for_language,
             };
             telemetry.report_clickhouse_event(event, telemetry_settings)
         }

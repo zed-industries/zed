@@ -9,7 +9,9 @@ use git::diff::DiffHunk;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
+    char_kind,
+    language_settings::{language_settings, LanguageSettings},
+    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
@@ -1370,6 +1372,15 @@ impl MultiBuffer {
     ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
+    }
+
+    pub fn settings_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        let language = self.language_at(point, cx);
+        language_settings(None, language.map(|l| l.name()).as_deref(), cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
@@ -2762,6 +2773,16 @@ impl MultiBufferSnapshot {
     pub fn language_at<'a, T: ToOffset>(&'a self, point: T) -> Option<&'a Arc<Language>> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
+    }
+
+    pub fn settings_at<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer, offset)| buffer.settings_at(offset, cx))
+            .unwrap_or_else(|| language_settings(None, None, cx))
     }
 
     pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {

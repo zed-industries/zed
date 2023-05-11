@@ -37,6 +37,7 @@ impl<'a> EditorLspTestContext<'a> {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
+            language::init(cx);
             crate::init(cx);
             pane::init(cx);
         });

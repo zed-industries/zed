@@ -13,8 +13,9 @@ use gpui::{
     fonts::{FontId, HighlightStyle},
     Entity, ModelContext, ModelHandle,
 };
-use language::{OffsetUtf16, Point, Subscription as BufferSubscription};
-use settings::Settings;
+use language::{
+    language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
+};
 use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 pub use suggestion_map::Suggestion;
 use suggestion_map::SuggestionMap;
@@ -276,8 +277,7 @@ impl DisplayMap {
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).language())
             .map(|language| language.name());
-
-        cx.global::<Settings>().tab_size(language_name.as_deref())
+        language_settings(None, language_name.as_deref(), cx).tab_size
     }
 
     #[cfg(test)]
@@ -844,8 +844,12 @@ pub mod tests {
     use super::*;
     use crate::{movement, test::marked_display_snapshot};
     use gpui::{color::Color, elements::*, test::observe, AppContext};
-    use language::{Buffer, Language, LanguageConfig, SelectionGoal};
+    use language::{
+        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
+        Buffer, Language, LanguageConfig, SelectionGoal,
+    };
     use rand::{prelude::*, Rng};
+    use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
@@ -882,9 +886,7 @@ pub mod tests {
         log::info!("wrap width: {:?}", wrap_width);
 
         cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.editor_overrides.tab_size = NonZeroU32::new(tab_size);
-            cx.set_global(settings)
+            init_test(cx, |s| s.defaults.tab_size = NonZeroU32::new(tab_size));
         });
 
         let buffer = cx.update(|cx| {
@@ -939,9 +941,11 @@ pub mod tests {
                     tab_size = *tab_sizes.choose(&mut rng).unwrap();
                     log::info!("setting tab size to {:?}", tab_size);
                     cx.update(|cx| {
-                        let mut settings = Settings::test(cx);
-                        settings.editor_overrides.tab_size = NonZeroU32::new(tab_size);
-                        cx.set_global(settings)
+                        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                            store.update_user_settings::<AllLanguageSettings>(cx, |s| {
+                                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                            });
+                        });
                     });
                 }
                 30..=44 => {
@@ -1119,7 +1123,7 @@ pub mod tests {
     #[gpui::test(retries = 5)]
     fn test_soft_wraps(cx: &mut AppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
-        cx.foreground().forbid_parking();
+        init_test(cx, |_| {});
 
         let font_cache = cx.font_cache();
 
@@ -1131,7 +1135,6 @@ pub mod tests {
             .unwrap();
         let font_size = 12.0;
         let wrap_width = Some(64.);
-        cx.set_global(Settings::test(cx));
 
         let text = "one two three four five\nsix seven eight";
         let buffer = MultiBuffer::build_simple(text, cx);
@@ -1211,7 +1214,8 @@ pub mod tests {
 
     #[gpui::test]
     fn test_text_chunks(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx, |_| {});
+
         let text = sample_text(6, 6, 'a');
         let buffer = MultiBuffer::build_simple(&text, cx);
         let family_id = cx
@@ -1225,6 +1229,7 @@ pub mod tests {
         let font_size = 14.0;
         let map =
             cx.add_model(|cx| DisplayMap::new(buffer.clone(), font_id, font_size, None, 1, 1, cx));
+
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
@@ -1289,11 +1294,8 @@ pub mod tests {
             .unwrap(),
         );
         language.set_theme(&theme);
-        cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.editor_defaults.tab_size = Some(2.try_into().unwrap());
-            cx.set_global(settings);
-        });
+
+        cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
@@ -1382,7 +1384,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        cx.update(|cx| init_test(cx, |_| {}));
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
@@ -1429,9 +1431,8 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_chunks_with_text_highlights(cx: &mut gpui::TestAppContext) {
-        cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.update(|cx| init_test(cx, |_| {}));
 
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
         let theme = SyntaxTheme::new(vec![
             ("operator".to_string(), Color::red().into()),
             ("string".to_string(), Color::green().into()),
@@ -1510,7 +1511,8 @@ pub mod tests {
 
     #[gpui::test]
     fn test_clip_point(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx, |_| {});
+
         fn assert(text: &str, shift_right: bool, bias: Bias, cx: &mut gpui::AppContext) {
             let (unmarked_snapshot, mut markers) = marked_display_snapshot(text, cx);
 
@@ -1559,7 +1561,7 @@ pub mod tests {
 
     #[gpui::test]
     fn test_clip_at_line_ends(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx, |_| {});
 
         fn assert(text: &str, cx: &mut gpui::AppContext) {
             let (mut unmarked_snapshot, markers) = marked_display_snapshot(text, cx);
@@ -1578,7 +1580,8 @@ pub mod tests {
 
     #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx, |_| {});
+
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_cache = cx.font_cache();
@@ -1639,7 +1642,8 @@ pub mod tests {
 
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx, |_| {});
+
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_cache = cx.font_cache();
         let family_id = font_cache
@@ -1717,5 +1721,14 @@ pub mod tests {
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
+    }
+
+    fn init_test(cx: &mut AppContext, f: impl Fn(&mut AllLanguageSettingsContent)) {
+        cx.foreground().forbid_parking();
+        cx.set_global(SettingsStore::test(cx));
+        language::init(cx);
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, f);
+        });
     }
 }

@@ -9,6 +9,7 @@ use gpui::{
     AnyElement, AppContext, AsyncAppContext, Element, Entity, MouseState, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
+use language::language_settings::{self, all_language_settings, AllLanguageSettings};
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
@@ -40,12 +41,12 @@ impl View for CopilotButton {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let settings = cx.global::<Settings>();
-
-        if !settings.features.copilot {
+        let all_language_settings = &all_language_settings(None, cx);
+        if !all_language_settings.copilot.feature_enabled {
             return Empty::new().into_any();
         }
 
+        let settings = cx.global::<Settings>();
         let theme = settings.theme.clone();
         let active = self.popup_menu.read(cx).visible();
         let Some(copilot) = Copilot::global(cx) else {
@@ -55,7 +56,7 @@ impl View for CopilotButton {
 
         let enabled = self
             .editor_enabled
-            .unwrap_or(settings.show_copilot_suggestions(None, None));
+            .unwrap_or_else(|| all_language_settings.copilot_enabled(None, None));
 
         Stack::new()
             .with_child(
@@ -192,14 +193,14 @@ impl CopilotButton {
     }
 
     pub fn deploy_copilot_menu(&mut self, cx: &mut ViewContext<Self>) {
-        let settings = cx.global::<Settings>();
         let fs = self.fs.clone();
-
         let mut menu_options = Vec::with_capacity(8);
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
-            let language_enabled = settings.copilot_enabled_for_language(Some(language.as_ref()));
+            let language_enabled =
+                language_settings::language_settings(None, Some(language.as_ref()), cx)
+                    .show_copilot_suggestions;
             menu_options.push(ContextMenuItem::handler(
                 format!(
                     "{} Suggestions for {}",
@@ -209,6 +210,8 @@ impl CopilotButton {
                 move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
             ));
         }
+
+        let settings = settings::get_setting::<AllLanguageSettings>(None, cx);
 
         if let Some(path) = self.path.as_ref() {
             let path_enabled = settings.copilot_enabled_for_path(path);
@@ -234,7 +237,7 @@ impl CopilotButton {
             ));
         }
 
-        let globally_enabled = cx.global::<Settings>().features.copilot;
+        let globally_enabled = settings.copilot_enabled(None, None);
         menu_options.push(ContextMenuItem::handler(
             if globally_enabled {
                 "Hide Suggestions for All Files"
@@ -246,7 +249,7 @@ impl CopilotButton {
 
         menu_options.push(ContextMenuItem::Separator);
 
-        let icon_style = settings.theme.copilot.out_link_icon.clone();
+        let icon_style = cx.global::<Settings>().theme.copilot.out_link_icon.clone();
         menu_options.push(ContextMenuItem::action(
             move |state: &mut MouseState, style: &theme::ContextMenuItem| {
                 Flex::row()
@@ -272,22 +275,19 @@ impl CopilotButton {
 
     pub fn update_enabled(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-
         let snapshot = editor.buffer().read(cx).snapshot(cx);
-        let settings = cx.global::<Settings>();
         let suggestion_anchor = editor.selections.newest_anchor().start;
-
         let language_name = snapshot
             .language_at(suggestion_anchor)
             .map(|language| language.name());
-        let path = snapshot
-            .file_at(suggestion_anchor)
-            .map(|file| file.path().clone());
+        let path = snapshot.file_at(suggestion_anchor).map(|file| file.path());
 
-        self.editor_enabled =
-            Some(settings.show_copilot_suggestions(language_name.as_deref(), path.as_deref()));
+        self.editor_enabled = Some(
+            all_language_settings(None, cx)
+                .copilot_enabled(language_name.as_deref(), path.map(|p| p.as_ref())),
+        );
         self.language = language_name;
-        self.path = path;
+        self.path = path.cloned();
 
         cx.notify()
     }
@@ -328,26 +328,26 @@ async fn configure_disabled_globs(
     settings_editor.downgrade().update(&mut cx, |item, cx| {
         let text = item.buffer().read(cx).snapshot(cx).text();
 
-        let edits = cx
-            .global::<SettingsStore>()
-            .update::<Settings>(&text, |file| {
-                let copilot = file.copilot.get_or_insert_with(Default::default);
-                let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                    cx.global::<Settings>()
-                        .copilot
-                        .disabled_globs
-                        .clone()
-                        .iter()
-                        .map(|glob| glob.as_str().to_string())
-                        .collect::<Vec<_>>()
-                });
-
-                if let Some(path_to_disable) = &path_to_disable {
-                    globs.push(path_to_disable.to_string_lossy().into_owned());
-                } else {
-                    globs.clear();
-                }
+        let settings = cx.global::<SettingsStore>();
+        let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
+            let copilot = file.copilot.get_or_insert_with(Default::default);
+            let globs = copilot.disabled_globs.get_or_insert_with(|| {
+                settings
+                    .get::<AllLanguageSettings>(None)
+                    .copilot
+                    .disabled_globs
+                    .clone()
+                    .iter()
+                    .map(|glob| glob.as_str().to_string())
+                    .collect::<Vec<_>>()
             });
+
+            if let Some(path_to_disable) = &path_to_disable {
+                globs.push(path_to_disable.to_string_lossy().into_owned());
+            } else {
+                globs.clear();
+            }
+        });
 
         if !edits.is_empty() {
             item.change_selections(Some(Autoscroll::newest()), cx, |selections| {
@@ -365,31 +365,26 @@ async fn configure_disabled_globs(
 }
 
 fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions = cx.global::<Settings>().show_copilot_suggestions(None, None);
-    update_settings_file::<Settings>(fs, cx, move |file_contents| {
-        file_contents.editor.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
+    let show_copilot_suggestions = all_language_settings(None, cx).copilot_enabled(None, None);
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+        file.defaults.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
     });
 }
 
 fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions = cx
-        .global::<Settings>()
-        .show_copilot_suggestions(Some(&language), None);
-
-    update_settings_file::<Settings>(fs, cx, move |file_contents| {
-        file_contents.languages.insert(
-            language,
-            settings::EditorSettings {
-                show_copilot_suggestions: Some((!show_copilot_suggestions).into()),
-                ..Default::default()
-            },
-        );
+    let show_copilot_suggestions =
+        all_language_settings(None, cx).copilot_enabled(Some(&language), None);
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+        file.languages
+            .entry(language)
+            .or_default()
+            .show_copilot_suggestions = Some(!show_copilot_suggestions);
     });
 }
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    update_settings_file::<Settings>(fs, cx, move |file_contents| {
-        file_contents.features.copilot = Some(false)
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
+        file.features.get_or_insert(Default::default()).copilot = Some(false);
     });
 }
 

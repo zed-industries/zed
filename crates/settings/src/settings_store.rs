@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use collections::{btree_map, hash_map, BTreeMap, HashMap, HashSet};
+use anyhow::Result;
+use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use gpui::AppContext;
 use lazy_static::lazy_static;
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
@@ -8,7 +8,6 @@ use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
     fmt::Debug,
-    mem,
     ops::Range,
     path::Path,
     str,
@@ -37,7 +36,9 @@ pub trait Setting: 'static {
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
         cx: &AppContext,
-    ) -> Self;
+    ) -> Result<Self>
+    where
+        Self: Sized;
 
     fn json_schema(generator: &mut SchemaGenerator, _: &SettingsJsonSchemaParams) -> RootSchema {
         generator.root_schema_for::<Self::FileContent>()
@@ -57,7 +58,7 @@ pub trait Setting: 'static {
     fn load_via_json_merge(
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
-    ) -> Self
+    ) -> Result<Self>
     where
         Self: DeserializeOwned,
     {
@@ -65,7 +66,11 @@ pub trait Setting: 'static {
         for value in [default_value].iter().chain(user_values) {
             merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
         }
-        serde_json::from_value(merged).unwrap()
+        Ok(serde_json::from_value(merged)?)
+    }
+
+    fn missing_default() -> anyhow::Error {
+        anyhow::anyhow!("missing default")
     }
 }
 
@@ -78,10 +83,9 @@ pub struct SettingsJsonSchemaParams<'a> {
 #[derive(Default)]
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    default_deserialized_settings: Option<DeserializedSettingMap>,
-    user_deserialized_settings: Option<DeserializedSettingMap>,
-    local_deserialized_settings: BTreeMap<Arc<Path>, DeserializedSettingMap>,
-    changed_setting_types: HashSet<TypeId>,
+    default_deserialized_settings: Option<serde_json::Value>,
+    user_deserialized_settings: Option<serde_json::Value>,
+    local_deserialized_settings: BTreeMap<Arc<Path>, serde_json::Value>,
     tab_size_callback: Option<(TypeId, Box<dyn Fn(&dyn Any) -> Option<usize>>)>,
 }
 
@@ -98,9 +102,9 @@ trait AnySettingValue {
     fn load_setting(
         &self,
         default_value: &DeserializedSetting,
-        custom: &[&DeserializedSetting],
+        custom: &[DeserializedSetting],
         cx: &AppContext,
-    ) -> Box<dyn Any>;
+    ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<&Path>) -> &dyn Any;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, path: Arc<Path>, value: Box<dyn Any>);
@@ -112,11 +116,6 @@ trait AnySettingValue {
 }
 
 struct DeserializedSetting(Box<dyn Any>);
-
-struct DeserializedSettingMap {
-    untyped: serde_json::Value,
-    typed: HashMap<TypeId, DeserializedSetting>,
-}
 
 impl SettingsStore {
     /// Add a new type of setting to the store.
@@ -132,23 +131,27 @@ impl SettingsStore {
             local_values: Vec::new(),
         }));
 
-        if let Some(default_settings) = self.default_deserialized_settings.as_mut() {
-            Self::load_setting_in_map(setting_type_id, setting_value, default_settings);
+        if let Some(default_settings) = &self.default_deserialized_settings {
+            if let Some(default_settings) = setting_value
+                .deserialize_setting(default_settings)
+                .log_err()
+            {
+                let mut user_values_stack = Vec::new();
 
-            let mut user_values_stack = Vec::new();
-            if let Some(user_settings) = self.user_deserialized_settings.as_mut() {
-                Self::load_setting_in_map(setting_type_id, setting_value, user_settings);
-                if let Some(user_value) = user_settings.typed.get(&setting_type_id) {
-                    user_values_stack = vec![user_value];
+                if let Some(user_settings) = &self.user_deserialized_settings {
+                    if let Some(user_settings) =
+                        setting_value.deserialize_setting(user_settings).log_err()
+                    {
+                        user_values_stack = vec![user_settings];
+                    }
                 }
-            }
 
-            if let Some(default_deserialized_value) = default_settings.typed.get(&setting_type_id) {
-                setting_value.set_global_value(setting_value.load_setting(
-                    default_deserialized_value,
-                    &user_values_stack,
-                    cx,
-                ));
+                if let Some(setting) = setting_value
+                    .load_setting(&default_settings, &user_values_stack, cx)
+                    .log_err()
+                {
+                    setting_value.set_global_value(setting);
+                }
             }
         }
     }
@@ -173,7 +176,7 @@ impl SettingsStore {
     pub fn untyped_user_settings(&self) -> &serde_json::Value {
         self.user_deserialized_settings
             .as_ref()
-            .map_or(&serde_json::Value::Null, |s| &s.untyped)
+            .unwrap_or(&serde_json::Value::Null)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -181,6 +184,7 @@ impl SettingsStore {
         let mut this = Self::default();
         this.set_default_settings(&crate::test_settings(), cx)
             .unwrap();
+        this.set_user_settings("{}", cx).unwrap();
         this
     }
 
@@ -194,11 +198,11 @@ impl SettingsStore {
         cx: &AppContext,
         update: impl FnOnce(&mut T::FileContent),
     ) {
-        let old_text = if let Some(user_settings) = &self.user_deserialized_settings {
-            serde_json::to_string(&user_settings.untyped).unwrap()
-        } else {
-            String::new()
-        };
+        if self.user_deserialized_settings.is_none() {
+            self.set_user_settings("{}", cx).unwrap();
+        }
+        let old_text =
+            serde_json::to_string(self.user_deserialized_settings.as_ref().unwrap()).unwrap();
         let new_text = self.new_text_for_update::<T>(old_text, update);
         self.set_user_settings(&new_text, cx).unwrap();
     }
@@ -212,7 +216,7 @@ impl SettingsStore {
     ) -> String {
         let edits = self.edits_for_update::<T>(&old_text, update);
         let mut new_text = old_text;
-        for (range, replacement) in edits.into_iter().rev() {
+        for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
         }
         new_text
@@ -226,26 +230,31 @@ impl SettingsStore {
         update: impl FnOnce(&mut T::FileContent),
     ) -> Vec<(Range<usize>, String)> {
         let setting_type_id = TypeId::of::<T>();
+
         let old_content = self
-            .user_deserialized_settings
-            .as_ref()
-            .unwrap()
-            .typed
+            .setting_values
             .get(&setting_type_id)
-            .unwrap()
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .deserialize_setting(
+                self.user_deserialized_settings
+                    .as_ref()
+                    .expect("no user settings loaded"),
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "could not deserialize setting type {} from user settings: {}",
+                    type_name::<T>(),
+                    e
+                )
+            })
             .0
-            .downcast_ref::<T::FileContent>()
-            .unwrap()
-            .clone();
+            .downcast::<T::FileContent>()
+            .unwrap();
         let mut new_content = old_content.clone();
         update(&mut new_content);
 
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(tree_sitter_json::language()).unwrap();
-        let tree = parser.parse(text, None).unwrap();
-
-        let old_value = &serde_json::to_value(old_content).unwrap();
-        let new_value = &serde_json::to_value(new_content).unwrap();
+        let old_value = &serde_json::to_value(&old_content).unwrap();
+        let new_value = serde_json::to_value(new_content).unwrap();
 
         let mut key_path = Vec::new();
         if let Some(key) = T::KEY {
@@ -254,16 +263,15 @@ impl SettingsStore {
 
         let mut edits = Vec::new();
         let tab_size = self.json_tab_size();
+        let mut text = text.to_string();
         update_value_in_json_text(
-            &text,
-            &tree,
+            &mut text,
             &mut key_path,
             tab_size,
             &old_value,
             &new_value,
             &mut edits,
         );
-        edits.sort_unstable_by_key(|e| e.0.start);
         return edits;
     }
 
@@ -300,19 +308,8 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &AppContext,
     ) -> Result<()> {
-        let deserialized_setting_map = self.load_setting_map(default_settings_content)?;
-        if deserialized_setting_map.typed.len() != self.setting_values.len() {
-            return Err(anyhow!(
-                "default settings file is missing fields: {:?}",
-                self.setting_values
-                    .iter()
-                    .filter(|(type_id, _)| !deserialized_setting_map.typed.contains_key(type_id))
-                    .map(|(name, _)| *name)
-                    .collect::<Vec<_>>()
-            ));
-        }
-        self.default_deserialized_settings = Some(deserialized_setting_map);
-        self.recompute_values(false, None, None, cx);
+        self.default_deserialized_settings = Some(serde_json::from_str(default_settings_content)?);
+        self.recompute_values(None, cx)?;
         Ok(())
     }
 
@@ -322,10 +319,8 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &AppContext,
     ) -> Result<()> {
-        let user_settings = self.load_setting_map(user_settings_content)?;
-        let old_user_settings =
-            mem::replace(&mut self.user_deserialized_settings, Some(user_settings));
-        self.recompute_values(true, None, old_user_settings, cx);
+        self.user_deserialized_settings = Some(serde_json::from_str(user_settings_content)?);
+        self.recompute_values(None, cx)?;
         Ok(())
     }
 
@@ -336,14 +331,13 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &AppContext,
     ) -> Result<()> {
-        let removed_map = if let Some(settings_content) = settings_content {
+        if let Some(content) = settings_content {
             self.local_deserialized_settings
-                .insert(path.clone(), self.load_setting_map(settings_content)?);
-            None
+                .insert(path.clone(), serde_json::from_str(content)?);
         } else {
-            self.local_deserialized_settings.remove(&path)
-        };
-        self.recompute_values(true, Some(&path), removed_map, cx);
+            self.local_deserialized_settings.remove(&path);
+        }
+        self.recompute_values(Some(&path), cx)?;
         Ok(())
     }
 
@@ -422,136 +416,78 @@ impl SettingsStore {
 
     fn recompute_values(
         &mut self,
-        user_settings_changed: bool,
         changed_local_path: Option<&Path>,
-        old_settings_map: Option<DeserializedSettingMap>,
         cx: &AppContext,
-    ) {
-        // Identify all of the setting types that have changed.
-        let new_settings_map = if let Some(changed_path) = changed_local_path {
-            self.local_deserialized_settings.get(changed_path)
-        } else if user_settings_changed {
-            self.user_deserialized_settings.as_ref()
-        } else {
-            self.default_deserialized_settings.as_ref()
-        };
-        self.changed_setting_types.clear();
-        for map in [old_settings_map.as_ref(), new_settings_map] {
-            if let Some(map) = map {
-                self.changed_setting_types.extend(map.typed.keys());
-            }
-        }
+    ) -> Result<()> {
+        // Reload the global and local values for every setting.
+        let mut user_settings_stack = Vec::<DeserializedSetting>::new();
+        let mut paths_stack = Vec::<Option<&Path>>::new();
+        for setting_value in self.setting_values.values_mut() {
+            if let Some(default_settings) = &self.default_deserialized_settings {
+                let default_settings = setting_value.deserialize_setting(default_settings)?;
 
-        // Reload the global and local values for every changed setting.
-        let mut user_values_stack = Vec::<&DeserializedSetting>::new();
-        for setting_type_id in self.changed_setting_types.iter() {
-            let setting_value = self.setting_values.get_mut(setting_type_id).unwrap();
+                user_settings_stack.clear();
+                paths_stack.clear();
 
-            // Build the prioritized list of deserialized values to pass to the setting's
-            // load function.
-            user_values_stack.clear();
-            if let Some(user_settings) = &self.user_deserialized_settings {
-                if let Some(user_value) = user_settings.typed.get(setting_type_id) {
-                    user_values_stack.push(&user_value);
-                }
-            }
-
-            let default_deserialized_value = if let Some(value) = self
-                .default_deserialized_settings
-                .as_ref()
-                .and_then(|map| map.typed.get(setting_type_id))
-            {
-                value
-            } else {
-                continue;
-            };
-
-            // If the global settings file changed, reload the global value for the field.
-            if changed_local_path.is_none() {
-                setting_value.set_global_value(setting_value.load_setting(
-                    default_deserialized_value,
-                    &user_values_stack,
-                    cx,
-                ));
-            }
-
-            // Reload the local values for the setting.
-            let user_value_stack_len = user_values_stack.len();
-            for (path, deserialized_values) in &self.local_deserialized_settings {
-                // If a local settings file changed, then avoid recomputing local
-                // settings for any path outside of that directory.
-                if changed_local_path.map_or(false, |changed_local_path| {
-                    !path.starts_with(changed_local_path)
-                }) {
-                    continue;
+                if let Some(user_settings) = &self.user_deserialized_settings {
+                    if let Some(user_settings) =
+                        setting_value.deserialize_setting(user_settings).log_err()
+                    {
+                        user_settings_stack.push(user_settings);
+                        paths_stack.push(None);
+                    }
                 }
 
-                // Ignore recomputing settings for any path that hasn't customized that setting.
-                let Some(deserialized_value) = deserialized_values.typed.get(setting_type_id) else {
-                    continue;
-                };
+                // If the global settings file changed, reload the global value for the field.
+                if changed_local_path.is_none() {
+                    setting_value.set_global_value(setting_value.load_setting(
+                        &default_settings,
+                        &user_settings_stack,
+                        cx,
+                    )?);
+                }
 
-                // Build a stack of all of the local values for that setting.
-                user_values_stack.truncate(user_value_stack_len);
-                for (preceding_path, preceding_deserialized_values) in
-                    &self.local_deserialized_settings
-                {
-                    if preceding_path >= path {
+                // Reload the local values for the setting.
+                for (path, local_settings) in &self.local_deserialized_settings {
+                    // Build a stack of all of the local values for that setting.
+                    while let Some(prev_path) = paths_stack.last() {
+                        if let Some(prev_path) = prev_path {
+                            if !path.starts_with(prev_path) {
+                                paths_stack.pop();
+                                user_settings_stack.pop();
+                                continue;
+                            }
+                        }
                         break;
                     }
-                    if !path.starts_with(preceding_path) {
-                        continue;
-                    }
 
-                    if let Some(preceding_deserialized_value) =
-                        preceding_deserialized_values.typed.get(setting_type_id)
+                    if let Some(local_settings) =
+                        setting_value.deserialize_setting(&local_settings).log_err()
                     {
-                        user_values_stack.push(&*preceding_deserialized_value);
+                        paths_stack.push(Some(path.as_ref()));
+                        user_settings_stack.push(local_settings);
+
+                        // If a local settings file changed, then avoid recomputing local
+                        // settings for any path outside of that directory.
+                        if changed_local_path.map_or(false, |changed_local_path| {
+                            !path.starts_with(changed_local_path)
+                        }) {
+                            continue;
+                        }
+
+                        setting_value.set_local_value(
+                            path.clone(),
+                            setting_value.load_setting(
+                                &default_settings,
+                                &user_settings_stack,
+                                cx,
+                            )?,
+                        );
                     }
                 }
-                user_values_stack.push(&*deserialized_value);
-
-                // Load the local value for the field.
-                setting_value.set_local_value(
-                    path.clone(),
-                    setting_value.load_setting(default_deserialized_value, &user_values_stack, cx),
-                );
             }
         }
-    }
-
-    /// Deserialize the given JSON string into a map keyed by setting type.
-    ///
-    /// Returns an error if the string doesn't contain a valid JSON object.
-    fn load_setting_map(&self, json: &str) -> Result<DeserializedSettingMap> {
-        let mut map = DeserializedSettingMap {
-            untyped: parse_json_with_comments(json)?,
-            typed: HashMap::default(),
-        };
-        for (setting_type_id, setting_value) in self.setting_values.iter() {
-            Self::load_setting_in_map(*setting_type_id, setting_value, &mut map);
-        }
-        Ok(map)
-    }
-
-    fn load_setting_in_map(
-        setting_type_id: TypeId,
-        setting_value: &Box<dyn AnySettingValue>,
-        map: &mut DeserializedSettingMap,
-    ) {
-        let value = if let Some(setting_key) = setting_value.key() {
-            if let Some(value) = map.untyped.get(setting_key) {
-                value
-            } else {
-                return;
-            }
-        } else {
-            &map.untyped
-        };
-
-        if let Some(deserialized_value) = setting_value.deserialize_setting(&value).log_err() {
-            map.typed.insert(setting_type_id, deserialized_value);
-        }
+        Ok(())
     }
 }
 
@@ -567,18 +503,21 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
     fn load_setting(
         &self,
         default_value: &DeserializedSetting,
-        user_values: &[&DeserializedSetting],
+        user_values: &[DeserializedSetting],
         cx: &AppContext,
-    ) -> Box<dyn Any> {
+    ) -> Result<Box<dyn Any>> {
         let default_value = default_value.0.downcast_ref::<T::FileContent>().unwrap();
         let values: SmallVec<[&T::FileContent; 6]> = user_values
             .iter()
             .map(|value| value.0.downcast_ref().unwrap())
             .collect();
-        Box::new(T::load(default_value, &values, cx))
+        Ok(Box::new(T::load(default_value, &values, cx)?))
     }
 
-    fn deserialize_setting(&self, json: &serde_json::Value) -> Result<DeserializedSetting> {
+    fn deserialize_setting(&self, mut json: &serde_json::Value) -> Result<DeserializedSetting> {
+        if let Some(key) = T::KEY {
+            json = json.get(key).unwrap_or(&serde_json::Value::Null);
+        }
         let value = T::FileContent::deserialize(json)?;
         Ok(DeserializedSetting(Box::new(value)))
     }
@@ -593,7 +532,7 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
         }
         self.global_value
             .as_ref()
-            .expect("no default value for setting")
+            .unwrap_or_else(|| panic!("no default value for setting {}", self.setting_type_name()))
     }
 
     fn set_global_value(&mut self, value: Box<dyn Any>) {
@@ -634,8 +573,7 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
 // }
 
 fn update_value_in_json_text<'a>(
-    text: &str,
-    syntax_tree: &tree_sitter::Tree,
+    text: &mut String,
     key_path: &mut Vec<&'a str>,
     tab_size: usize,
     old_value: &'a serde_json::Value,
@@ -653,7 +591,6 @@ fn update_value_in_json_text<'a>(
             let new_sub_value = new_object.get(key).unwrap_or(&serde_json::Value::Null);
             update_value_in_json_text(
                 text,
-                syntax_tree,
                 key_path,
                 tab_size,
                 old_sub_value,
@@ -667,7 +604,6 @@ fn update_value_in_json_text<'a>(
             if !old_object.contains_key(key) {
                 update_value_in_json_text(
                     text,
-                    syntax_tree,
                     key_path,
                     tab_size,
                     &serde_json::Value::Null,
@@ -679,14 +615,14 @@ fn update_value_in_json_text<'a>(
         }
     } else if old_value != new_value {
         let (range, replacement) =
-            replace_value_in_json_text(text, syntax_tree, &key_path, tab_size, &new_value);
+            replace_value_in_json_text(text, &key_path, tab_size, &new_value);
+        text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
 }
 
 fn replace_value_in_json_text(
     text: &str,
-    syntax_tree: &tree_sitter::Tree,
     key_path: &[&str],
     tab_size: usize,
     new_value: impl Serialize,
@@ -701,6 +637,10 @@ fn replace_value_in_json_text(
         )
         .unwrap();
     }
+
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(tree_sitter_json::language()).unwrap();
+    let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
 
@@ -1152,7 +1092,7 @@ mod tests {
         store.set_user_settings(&old_json, cx).ok();
         let edits = store.edits_for_update::<T>(&old_json, update);
         let mut new_json = old_json;
-        for (range, replacement) in edits.into_iter().rev() {
+        for (range, replacement) in edits.into_iter() {
             new_json.replace_range(range, &replacement);
         }
         pretty_assertions::assert_eq!(new_json, expected_new_json);
@@ -1180,7 +1120,7 @@ mod tests {
             default_value: &UserSettingsJson,
             user_values: &[&UserSettingsJson],
             _: &AppContext,
-        ) -> Self {
+        ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
     }
@@ -1196,7 +1136,7 @@ mod tests {
             default_value: &Option<bool>,
             user_values: &[&Option<bool>],
             _: &AppContext,
-        ) -> Self {
+        ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
     }
@@ -1224,7 +1164,7 @@ mod tests {
             default_value: &MultiKeySettingsJson,
             user_values: &[&MultiKeySettingsJson],
             _: &AppContext,
-        ) -> Self {
+        ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
     }
@@ -1257,7 +1197,7 @@ mod tests {
             default_value: &JournalSettingsJson,
             user_values: &[&JournalSettingsJson],
             _: &AppContext,
-        ) -> Self {
+        ) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
     }
@@ -1278,7 +1218,7 @@ mod tests {
 
         type FileContent = Self;
 
-        fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Self {
+        fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Result<Self> {
             Self::load_via_json_merge(default_value, user_values)
         }
     }

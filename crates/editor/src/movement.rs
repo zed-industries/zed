@@ -367,13 +367,15 @@ pub fn split_display_range_by_lines(
 
 #[cfg(test)]
 mod tests {
+    use settings::{Settings, SettingsStore};
+
     use super::*;
     use crate::{test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange, MultiBuffer};
-    use settings::Settings;
 
     #[gpui::test]
     fn test_previous_word_start(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -400,7 +402,8 @@ mod tests {
 
     #[gpui::test]
     fn test_previous_subword_start(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -434,7 +437,8 @@ mod tests {
 
     #[gpui::test]
     fn test_find_preceding_boundary(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(
             marked_text: &str,
             cx: &mut gpui::AppContext,
@@ -466,7 +470,8 @@ mod tests {
 
     #[gpui::test]
     fn test_next_word_end(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -490,7 +495,8 @@ mod tests {
 
     #[gpui::test]
     fn test_next_subword_end(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -523,7 +529,8 @@ mod tests {
 
     #[gpui::test]
     fn test_find_boundary(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(
             marked_text: &str,
             cx: &mut gpui::AppContext,
@@ -555,7 +562,8 @@ mod tests {
 
     #[gpui::test]
     fn test_surrounding_word(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -576,7 +584,8 @@ mod tests {
 
     #[gpui::test]
     fn test_move_up_and_down_with_excerpts(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         let family_id = cx
             .font_cache()
             .load_family(&["Helvetica"], &Default::default())
@@ -690,5 +699,12 @@ mod tests {
             ),
             (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
+    }
+
+    fn init_test(cx: &mut gpui::AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        cx.set_global(Settings::test(cx));
+        language::init(cx);
+        crate::init(cx);
     }
 }

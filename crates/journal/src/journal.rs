@@ -1,3 +1,4 @@
+use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use gpui::{actions, AppContext};
@@ -40,21 +41,8 @@ impl settings::Setting for JournalSettings {
 
     type FileContent = Self;
 
-    fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Self {
-        Self {
-            path: Some(
-                user_values
-                    .first()
-                    .and_then(|s| s.path.clone())
-                    .unwrap_or(default_value.path.clone().unwrap()),
-            ),
-            hour_format: Some(
-                user_values
-                    .first()
-                    .and_then(|s| s.hour_format.clone())
-                    .unwrap_or(default_value.hour_format.clone().unwrap()),
-            ),
-        }
+    fn load(default_value: &Self, user_values: &[&Self], _: &AppContext) -> Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
     }
 }
 

@@ -369,8 +369,12 @@ pub struct AppState {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
-        cx.set_global(settings::SettingsStore::test(cx));
-        cx.set_global(Settings::test(cx));
+        use settings::SettingsStore;
+
+        if !cx.has_global::<SettingsStore>() {
+            cx.set_global(SettingsStore::test(cx));
+            cx.set_global(Settings::test(cx));
+        }
 
         let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());

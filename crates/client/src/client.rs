@@ -350,17 +350,18 @@ impl settings::Setting for TelemetrySettings {
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
         _: &AppContext,
-    ) -> Self {
-        Self {
-            diagnostics: user_values
-                .first()
-                .and_then(|v| v.diagnostics)
-                .unwrap_or(default_value.diagnostics.unwrap()),
+    ) -> Result<Self> {
+        Ok(Self {
+            diagnostics: user_values.first().and_then(|v| v.diagnostics).unwrap_or(
+                default_value
+                    .diagnostics
+                    .ok_or_else(Self::missing_default)?,
+            ),
             metrics: user_values
                 .first()
                 .and_then(|v| v.metrics)
-                .unwrap_or(default_value.metrics.unwrap()),
-        }
+                .unwrap_or(default_value.metrics.ok_or_else(Self::missing_default)?),
+        })
     }
 }
 

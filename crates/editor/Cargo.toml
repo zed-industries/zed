@@ -49,6 +49,7 @@ workspace = { path = "../workspace" }
 aho-corasick = "0.7"
 anyhow.workspace = true
 futures.workspace = true
+glob.workspace = true
 indoc = "1.0.4"
 itertools = "0.10"
 lazy_static.workspace = true
@@ -58,6 +59,7 @@ parking_lot.workspace = true
 postage.workspace = true
 pulldown-cmark = { version = "0.9.2", default-features = false }
 rand = { workspace = true, optional = true }
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true

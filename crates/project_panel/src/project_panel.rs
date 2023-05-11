@@ -1360,15 +1360,12 @@ mod tests {
     use gpui::{TestAppContext, ViewHandle};
     use project::FakeFs;
     use serde_json::json;
+    use settings::SettingsStore;
     use std::{collections::HashSet, path::Path};
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1456,11 +1453,7 @@ mod tests {
 
     #[gpui::test(iterations = 30)]
     async fn test_editing_files(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1776,11 +1769,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1939,5 +1928,13 @@ mod tests {
         });
 
         result
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            language::init(cx);
+        });
     }
 }

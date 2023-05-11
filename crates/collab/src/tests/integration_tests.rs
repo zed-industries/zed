@@ -18,6 +18,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
+    language_settings::{AllLanguageSettings, Formatter},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, OffsetRangeExt, Point, Rope,
 };
@@ -26,7 +27,7 @@ use lsp::LanguageServerId;
 use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
-use settings::{Formatter, Settings};
+use settings::{SettingsStore};
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -4219,10 +4220,12 @@ async fn test_formatting_buffer(
     // Ensure buffer can be formatted using an external command. Notice how the
     // host's configuration is honored as opposed to using the guest's settings.
     cx_a.update(|cx| {
-        cx.update_global(|settings: &mut Settings, _| {
-            settings.editor_defaults.formatter = Some(Formatter::External {
-                command: "awk".to_string(),
-                arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()],
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
+                file.defaults.formatter = Some(Formatter::External {
+                    command: "awk".into(),
+                    arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                });
             });
         });
     });

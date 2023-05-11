@@ -170,8 +170,9 @@ impl LspAdapter for PythonLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{ModelContext, TestAppContext};
-    use language::{AutoindentMode, Buffer};
-    use settings::Settings;
+    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use settings::SettingsStore;
+    use std::num::NonZeroU32;
 
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
@@ -179,9 +180,13 @@ mod tests {
         let language =
             crate::languages::language("python", tree_sitter_python::language(), None).await;
         cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
-            cx.set_global(settings);
+            cx.set_global(SettingsStore::test(cx));
+            language::init(cx);
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
+                    s.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
         });
 
         cx.add_model(|cx| {

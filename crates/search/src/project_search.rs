@@ -1146,25 +1146,18 @@ impl ToolbarItemView for ProjectSearchBar {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use editor::DisplayPoint;
     use gpui::{color::Color, executor::Deterministic, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
+    use settings::SettingsStore;
     use std::sync::Arc;
 
     #[gpui::test]
     async fn test_project_search(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
-        theme.search.match_background = Color::red();
-        cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.theme = Arc::new(theme);
-            cx.set_global(settings);
-            cx.set_global(ActiveSearches::default());
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1277,6 +1270,22 @@ mod tests {
                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
             );
+        });
+    }
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        let fonts = cx.font_cache();
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
+        theme.search.match_background = Color::red();
+
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            cx.set_global(ActiveSearches::default());
+            let mut settings = Settings::test(cx);
+            settings.theme = Arc::new(theme);
+            cx.set_global(settings);
+
+            language::init(cx);
         });
     }
 }

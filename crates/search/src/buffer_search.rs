@@ -655,19 +655,11 @@ mod tests {
     use editor::{DisplayPoint, Editor};
     use gpui::{color::Color, test::EmptyView, TestAppContext};
     use language::Buffer;
-    use std::sync::Arc;
     use unindent::Unindent as _;
 
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
-        let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
-        theme.search.match_background = Color::red();
-        cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.theme = Arc::new(theme);
-            cx.set_global(settings)
-        });
+        crate::project_search::tests::init_test(cx);
 
         let buffer = cx.add_model(|cx| {
             Buffer::new(

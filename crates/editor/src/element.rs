@@ -35,9 +35,12 @@ use gpui::{
 };
 use itertools::Itertools;
 use json::json;
-use language::{Bias, CursorShape, DiagnosticSeverity, OffsetUtf16, Selection};
+use language::{
+    language_settings::ShowWhitespaceSetting, Bias, CursorShape, DiagnosticSeverity, OffsetUtf16,
+    Selection,
+};
 use project::ProjectPath;
-use settings::{GitGutter, Settings, ShowWhitespaces};
+use settings::{GitGutter, Settings};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -708,6 +711,7 @@ impl EditorElement {
         let scroll_left = scroll_position.x() * max_glyph_width;
         let content_origin = bounds.origin() + vec2f(layout.gutter_margin, 0.);
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
+        let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
 
         scene.push_layer(Some(bounds));
 
@@ -882,9 +886,10 @@ impl EditorElement {
                     content_origin,
                     scroll_left,
                     visible_text_bounds,
-                    cx,
+                    whitespace_setting,
                     &invisible_display_ranges,
                     visible_bounds,
+                    cx,
                 )
             }
         }
@@ -1738,9 +1743,10 @@ impl LineWithInvisibles {
         content_origin: Vector2F,
         scroll_left: f32,
         visible_text_bounds: RectF,
-        cx: &mut ViewContext<Editor>,
+        whitespace_setting: ShowWhitespaceSetting,
         selection_ranges: &[Range<DisplayPoint>],
         visible_bounds: RectF,
+        cx: &mut ViewContext<Editor>,
     ) {
         let line_height = layout.position_map.line_height;
         let line_y = row as f32 * line_height - scroll_top;
@@ -1754,7 +1760,6 @@ impl LineWithInvisibles {
         );
 
         self.draw_invisibles(
-            cx,
             &selection_ranges,
             layout,
             content_origin,
@@ -1764,12 +1769,13 @@ impl LineWithInvisibles {
             scene,
             visible_bounds,
             line_height,
+            whitespace_setting,
+            cx,
         );
     }
 
     fn draw_invisibles(
         &self,
-        cx: &mut ViewContext<Editor>,
         selection_ranges: &[Range<DisplayPoint>],
         layout: &LayoutState,
         content_origin: Vector2F,
@@ -1779,17 +1785,13 @@ impl LineWithInvisibles {
         scene: &mut SceneBuilder,
         visible_bounds: RectF,
         line_height: f32,
+        whitespace_setting: ShowWhitespaceSetting,
+        cx: &mut ViewContext<Editor>,
     ) {
-        let settings = cx.global::<Settings>();
-        let allowed_invisibles_regions = match settings
-            .editor_overrides
-            .show_whitespaces
-            .or(settings.editor_defaults.show_whitespaces)
-            .unwrap_or_default()
-        {
-            ShowWhitespaces::None => return,
-            ShowWhitespaces::Selection => Some(selection_ranges),
-            ShowWhitespaces::All => None,
+        let allowed_invisibles_regions = match whitespace_setting {
+            ShowWhitespaceSetting::None => return,
+            ShowWhitespaceSetting::Selection => Some(selection_ranges),
+            ShowWhitespaceSetting::All => None,
         };
 
         for invisible in &self.invisibles {
@@ -2773,17 +2775,19 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{BlockDisposition, BlockProperties},
+        editor_tests::{init_test, update_test_settings},
         Editor, MultiBuffer,
     };
     use gpui::TestAppContext;
+    use language::language_settings;
     use log::info;
-    use settings::Settings;
     use std::{num::NonZeroU32, sync::Arc};
     use util::test::sample_text;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut TestAppContext) {
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        init_test(cx, |_| {});
+
         let (_, editor) = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
             Editor::new(EditorMode::Full, buffer, None, None, cx)
@@ -2801,7 +2805,8 @@ mod tests {
 
     #[gpui::test]
     fn test_layout_with_placeholder_text_and_blocks(cx: &mut TestAppContext) {
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        init_test(cx, |_| {});
+
         let (_, editor) = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple("", cx);
             Editor::new(EditorMode::Full, buffer, None, None, cx)
@@ -2861,26 +2866,27 @@ mod tests {
 
     #[gpui::test]
     fn test_all_invisibles_drawing(cx: &mut TestAppContext) {
-        let tab_size = 4;
+        const TAB_SIZE: u32 = 4;
+
         let input_text = "\t \t|\t| a b";
         let expected_invisibles = vec![
             Invisible::Tab {
                 line_start_offset: 0,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize,
+                line_offset: TAB_SIZE as usize,
             },
             Invisible::Tab {
-                line_start_offset: tab_size as usize + 1,
+                line_start_offset: TAB_SIZE as usize + 1,
             },
             Invisible::Tab {
-                line_start_offset: tab_size as usize * 2 + 1,
+                line_start_offset: TAB_SIZE as usize * 2 + 1,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize * 3 + 1,
+                line_offset: TAB_SIZE as usize * 3 + 1,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize * 3 + 3,
+                line_offset: TAB_SIZE as usize * 3 + 3,
             },
         ];
         assert_eq!(
@@ -2892,12 +2898,11 @@ mod tests {
             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
         );
 
-        cx.update(|cx| {
-            let mut test_settings = Settings::test(cx);
-            test_settings.editor_defaults.show_whitespaces = Some(ShowWhitespaces::All);
-            test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(tab_size).unwrap());
-            cx.set_global(test_settings);
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
         });
+
         let actual_invisibles =
             collect_invisibles_from_new_editor(cx, EditorMode::Full, &input_text, 500.0);
 
@@ -2906,11 +2911,9 @@ mod tests {
 
     #[gpui::test]
     fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let mut test_settings = Settings::test(cx);
-            test_settings.editor_defaults.show_whitespaces = Some(ShowWhitespaces::All);
-            test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(4).unwrap());
-            cx.set_global(test_settings);
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(4);
         });
 
         for editor_mode_without_invisibles in [
@@ -2961,19 +2964,18 @@ mod tests {
         );
         info!("Expected invisibles: {expected_invisibles:?}");
 
+        init_test(cx, |_| {});
+
         // Put the same string with repeating whitespace pattern into editors of various size,
         // take deliberately small steps during resizing, to put all whitespace kinds near the wrap point.
         let resize_step = 10.0;
         let mut editor_width = 200.0;
         while editor_width <= 1000.0 {
-            cx.update(|cx| {
-                let mut test_settings = Settings::test(cx);
-                test_settings.editor_defaults.tab_size = Some(NonZeroU32::new(tab_size).unwrap());
-                test_settings.editor_defaults.show_whitespaces = Some(ShowWhitespaces::All);
-                test_settings.editor_defaults.preferred_line_length = Some(editor_width as u32);
-                test_settings.editor_defaults.soft_wrap =
-                    Some(settings::SoftWrap::PreferredLineLength);
-                cx.set_global(test_settings);
+            update_test_settings(cx, |s| {
+                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+                s.defaults.preferred_line_length = Some(editor_width as u32);
+                s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
             });
 
             let actual_invisibles =
@@ -3021,7 +3023,7 @@ mod tests {
 
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (_, layout_state) = editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(settings::SoftWrap::EditorWidth, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
             editor.set_wrap_width(Some(editor_width), cx);
 
             let mut new_parents = Default::default();

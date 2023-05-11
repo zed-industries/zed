@@ -244,12 +244,12 @@ mod tests {
     use gpui::{serde_json::json, TestAppContext};
     use language::{FakeLspAdapter, Language, LanguageConfig};
     use project::FakeFs;
+    use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
 
     #[gpui::test]
     async fn test_project_symbols(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        init_test(cx);
 
         let mut language = Language::new(
             LanguageConfig {
@@ -365,6 +365,15 @@ mod tests {
         cx.foreground().run_until_parked();
         symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate().matches.len(), 0);
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            cx.set_global(Settings::test(cx));
+            cx.set_global(SettingsStore::test(cx));
+            language::init(cx);
         });
     }
 

@@ -159,7 +159,7 @@ impl settings::Setting for TerminalSettings {
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
         _: &AppContext,
-    ) -> Self {
+    ) -> Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }
 }

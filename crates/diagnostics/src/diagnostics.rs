@@ -820,11 +820,13 @@ mod tests {
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
+    use settings::SettingsStore;
     use unindent::Unindent as _;
 
     #[gpui::test]
     async fn test_diagnostics(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/test",
@@ -1227,7 +1229,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/test",
@@ -1488,6 +1491,14 @@ mod tests {
                     "e();",   // context
                 )
             );
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(Settings::test(cx));
+            cx.set_global(SettingsStore::test(cx));
+            language::init(cx);
         });
     }
 

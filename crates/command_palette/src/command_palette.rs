@@ -294,14 +294,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_command_palette(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        deterministic.forbid_parking();
-        let app_state = cx.update(AppState::test);
-
-        cx.update(|cx| {
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-            init(cx);
-        });
+        let app_state = init_test(cx);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
@@ -368,5 +361,16 @@ mod tests {
         palette.update(cx, |palette, _| {
             assert!(palette.delegate().matches.is_empty())
         });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            init(cx);
+            app_state
+        })
     }
 }

@@ -24,6 +24,7 @@ futures.workspace = true
 unicase = "2.6"
 
 [dev-dependencies]
+language = { path = "../language", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

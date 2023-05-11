@@ -3,7 +3,7 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use anyhow::bail;
+use anyhow::{bail, Result};
 use gpui::{
     font_cache::{FamilyId, FontCache},
     fonts, AppContext, AssetSource,
@@ -19,7 +19,7 @@ use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use std::{borrow::Cow, collections::HashMap, num::NonZeroU32, path::Path, str, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
@@ -33,7 +33,6 @@ pub const INITIAL_USER_SETTINGS_ASSET_PATH: &str = "settings/initial_user_settin
 
 #[derive(Clone)]
 pub struct Settings {
-    pub features: Features,
     pub buffer_font_family_name: String,
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
@@ -46,13 +45,8 @@ pub struct Settings {
     pub show_call_status_icon: bool,
     pub autosave: Autosave,
     pub default_dock_anchor: DockAnchor,
-    pub editor_defaults: EditorSettings,
-    pub editor_overrides: EditorSettings,
     pub git: GitSettings,
     pub git_overrides: GitSettings,
-    pub copilot: CopilotSettings,
-    pub language_defaults: HashMap<Arc<str>, EditorSettings>,
-    pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
     pub base_keymap: BaseKeymap,
@@ -67,7 +61,7 @@ impl Setting for Settings {
         defaults: &Self::FileContent,
         user_values: &[&Self::FileContent],
         cx: &AppContext,
-    ) -> Self {
+    ) -> Result<Self> {
         let buffer_font_features = defaults.buffer_font_features.clone().unwrap();
         let themes = cx.global::<Arc<ThemeRegistry>>();
 
@@ -90,50 +84,18 @@ impl Setting for Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
-            editor_defaults: EditorSettings {
-                tab_size: defaults.editor.tab_size,
-                hard_tabs: defaults.editor.hard_tabs,
-                soft_wrap: defaults.editor.soft_wrap,
-                preferred_line_length: defaults.editor.preferred_line_length,
-                remove_trailing_whitespace_on_save: defaults
-                    .editor
-                    .remove_trailing_whitespace_on_save,
-                ensure_final_newline_on_save: defaults.editor.ensure_final_newline_on_save,
-                format_on_save: defaults.editor.format_on_save.clone(),
-                formatter: defaults.editor.formatter.clone(),
-                enable_language_server: defaults.editor.enable_language_server,
-                show_copilot_suggestions: defaults.editor.show_copilot_suggestions,
-                show_whitespaces: defaults.editor.show_whitespaces,
-            },
-            editor_overrides: Default::default(),
-            copilot: CopilotSettings {
-                disabled_globs: defaults
-                    .copilot
-                    .clone()
-                    .unwrap()
-                    .disabled_globs
-                    .unwrap()
-                    .into_iter()
-                    .map(|s| glob::Pattern::new(&s).unwrap())
-                    .collect(),
-            },
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            language_defaults: defaults.languages.clone(),
-            language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
             base_keymap: Default::default(),
-            features: Features {
-                copilot: defaults.features.copilot.unwrap(),
-            },
         };
 
         for value in user_values.into_iter().copied().cloned() {
             this.set_user_settings(value, themes.as_ref(), cx.font_cache());
         }
 
-        this
+        Ok(this)
     }
 
     fn json_schema(
@@ -247,18 +209,6 @@ impl BaseKeymap {
             .unwrap_or_default()
     }
 }
-
-#[derive(Clone, Debug, Default)]
-pub struct CopilotSettings {
-    pub disabled_globs: Vec<glob::Pattern>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct CopilotSettingsContent {
-    #[serde(default)]
-    pub disabled_globs: Option<Vec<String>>,
-}
-
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     pub git_gutter: Option<GitGutter>,
@@ -271,52 +221,6 @@ pub enum GitGutter {
     #[default]
     TrackedFiles,
     Hide,
-}
-
-pub struct GitGutterConfig {}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct EditorSettings {
-    pub tab_size: Option<NonZeroU32>,
-    pub hard_tabs: Option<bool>,
-    pub soft_wrap: Option<SoftWrap>,
-    pub preferred_line_length: Option<u32>,
-    pub format_on_save: Option<FormatOnSave>,
-    pub remove_trailing_whitespace_on_save: Option<bool>,
-    pub ensure_final_newline_on_save: Option<bool>,
-    pub formatter: Option<Formatter>,
-    pub enable_language_server: Option<bool>,
-    pub show_copilot_suggestions: Option<bool>,
-    pub show_whitespaces: Option<ShowWhitespaces>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SoftWrap {
-    None,
-    EditorWidth,
-    PreferredLineLength,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FormatOnSave {
-    On,
-    Off,
-    LanguageServer,
-    External {
-        command: String,
-        arguments: Vec<String>,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Formatter {
-    LanguageServer,
-    External {
-        command: String,
-        arguments: Vec<String>,
-    },
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -374,8 +278,6 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub buffer_font_features: Option<fonts::Features>,
     #[serde(default)]
-    pub copilot: Option<CopilotSettingsContent>,
-    #[serde(default)]
     pub active_pane_magnification: Option<f32>,
     #[serde(default)]
     pub cursor_blink: Option<bool>,
@@ -391,47 +293,20 @@ pub struct SettingsFileContent {
     pub autosave: Option<Autosave>,
     #[serde(default)]
     pub default_dock_anchor: Option<DockAnchor>,
-    #[serde(flatten)]
-    pub editor: EditorSettings,
     #[serde(default)]
     pub git: Option<GitSettings>,
-    #[serde(default)]
-    #[serde(alias = "language_overrides")]
-    pub languages: HashMap<Arc<str>, EditorSettings>,
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
-    #[serde(default)]
-    pub features: FeaturesContent,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub initialization_options: Option<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Features {
-    pub copilot: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct FeaturesContent {
-    pub copilot: Option<bool>,
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowWhitespaces {
-    #[default]
-    Selection,
-    None,
-    All,
 }
 
 impl Settings {
@@ -448,12 +323,6 @@ impl Settings {
         font_cache: &FontCache,
         themes: &ThemeRegistry,
     ) -> Self {
-        #[track_caller]
-        fn required<T>(value: Option<T>) -> Option<T> {
-            assert!(value.is_some(), "missing default setting value");
-            value
-        }
-
         let defaults: SettingsFileContent = settings_store::parse_json_with_comments(
             str::from_utf8(assets.load(DEFAULT_SETTINGS_ASSET_PATH).unwrap().as_ref()).unwrap(),
         )
@@ -478,44 +347,11 @@ impl Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
-            editor_defaults: EditorSettings {
-                tab_size: required(defaults.editor.tab_size),
-                hard_tabs: required(defaults.editor.hard_tabs),
-                soft_wrap: required(defaults.editor.soft_wrap),
-                preferred_line_length: required(defaults.editor.preferred_line_length),
-                remove_trailing_whitespace_on_save: required(
-                    defaults.editor.remove_trailing_whitespace_on_save,
-                ),
-                ensure_final_newline_on_save: required(
-                    defaults.editor.ensure_final_newline_on_save,
-                ),
-                format_on_save: required(defaults.editor.format_on_save),
-                formatter: required(defaults.editor.formatter),
-                enable_language_server: required(defaults.editor.enable_language_server),
-                show_copilot_suggestions: required(defaults.editor.show_copilot_suggestions),
-                show_whitespaces: required(defaults.editor.show_whitespaces),
-            },
-            editor_overrides: Default::default(),
-            copilot: CopilotSettings {
-                disabled_globs: defaults
-                    .copilot
-                    .unwrap()
-                    .disabled_globs
-                    .unwrap()
-                    .into_iter()
-                    .map(|s| glob::Pattern::new(&s).unwrap())
-                    .collect(),
-            },
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            language_defaults: defaults.languages,
-            language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             base_keymap: Default::default(),
-            features: Features {
-                copilot: defaults.features.copilot.unwrap(),
-            },
         }
     }
 
@@ -565,119 +401,9 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
-        merge(&mut self.features.copilot, data.features.copilot);
 
-        if let Some(copilot) = data.copilot {
-            if let Some(disabled_globs) = copilot.disabled_globs {
-                self.copilot.disabled_globs = disabled_globs
-                    .into_iter()
-                    .filter_map(|s| glob::Pattern::new(&s).ok())
-                    .collect()
-            }
-        }
-        self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
-        self.language_overrides = data.languages;
         self.lsp = data.lsp;
-    }
-
-    pub fn with_language_defaults(
-        mut self,
-        language_name: impl Into<Arc<str>>,
-        overrides: EditorSettings,
-    ) -> Self {
-        self.language_defaults
-            .insert(language_name.into(), overrides);
-        self
-    }
-
-    pub fn features(&self) -> &Features {
-        &self.features
-    }
-
-    pub fn show_copilot_suggestions(&self, language: Option<&str>, path: Option<&Path>) -> bool {
-        if !self.features.copilot {
-            return false;
-        }
-
-        if !self.copilot_enabled_for_language(language) {
-            return false;
-        }
-
-        if let Some(path) = path {
-            if !self.copilot_enabled_for_path(path) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    pub fn copilot_enabled_for_path(&self, path: &Path) -> bool {
-        !self
-            .copilot
-            .disabled_globs
-            .iter()
-            .any(|glob| glob.matches_path(path))
-    }
-
-    pub fn copilot_enabled_for_language(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| settings.show_copilot_suggestions)
-    }
-
-    pub fn tab_size(&self, language: Option<&str>) -> NonZeroU32 {
-        self.language_setting(language, |settings| settings.tab_size)
-    }
-
-    pub fn show_whitespaces(&self, language: Option<&str>) -> ShowWhitespaces {
-        self.language_setting(language, |settings| settings.show_whitespaces)
-    }
-
-    pub fn hard_tabs(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| settings.hard_tabs)
-    }
-
-    pub fn soft_wrap(&self, language: Option<&str>) -> SoftWrap {
-        self.language_setting(language, |settings| settings.soft_wrap)
-    }
-
-    pub fn preferred_line_length(&self, language: Option<&str>) -> u32 {
-        self.language_setting(language, |settings| settings.preferred_line_length)
-    }
-
-    pub fn remove_trailing_whitespace_on_save(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| {
-            settings.remove_trailing_whitespace_on_save.clone()
-        })
-    }
-
-    pub fn ensure_final_newline_on_save(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| {
-            settings.ensure_final_newline_on_save.clone()
-        })
-    }
-
-    pub fn format_on_save(&self, language: Option<&str>) -> FormatOnSave {
-        self.language_setting(language, |settings| settings.format_on_save.clone())
-    }
-
-    pub fn formatter(&self, language: Option<&str>) -> Formatter {
-        self.language_setting(language, |settings| settings.formatter.clone())
-    }
-
-    pub fn enable_language_server(&self, language: Option<&str>) -> bool {
-        self.language_setting(language, |settings| settings.enable_language_server)
-    }
-
-    fn language_setting<F, R>(&self, language: Option<&str>, f: F) -> R
-    where
-        F: Fn(&EditorSettings) -> Option<R>,
-    {
-        None.or_else(|| language.and_then(|l| self.language_overrides.get(l).and_then(&f)))
-            .or_else(|| f(&self.editor_overrides))
-            .or_else(|| language.and_then(|l| self.language_defaults.get(l).and_then(&f)))
-            .or_else(|| f(&self.editor_defaults))
-            .expect("missing default")
     }
 
     pub fn git_gutter(&self) -> GitGutter {
@@ -706,29 +432,11 @@ impl Settings {
             show_call_status_icon: true,
             autosave: Autosave::Off,
             default_dock_anchor: DockAnchor::Bottom,
-            editor_defaults: EditorSettings {
-                tab_size: Some(4.try_into().unwrap()),
-                hard_tabs: Some(false),
-                soft_wrap: Some(SoftWrap::None),
-                preferred_line_length: Some(80),
-                remove_trailing_whitespace_on_save: Some(true),
-                ensure_final_newline_on_save: Some(true),
-                format_on_save: Some(FormatOnSave::On),
-                formatter: Some(Formatter::LanguageServer),
-                enable_language_server: Some(true),
-                show_copilot_suggestions: Some(true),
-                show_whitespaces: Some(ShowWhitespaces::None),
-            },
-            editor_overrides: Default::default(),
-            copilot: Default::default(),
             git: Default::default(),
             git_overrides: Default::default(),
-            language_defaults: Default::default(),
-            language_overrides: Default::default(),
             lsp: Default::default(),
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
             base_keymap: Default::default(),
-            features: Features { copilot: true },
         }
     }
 

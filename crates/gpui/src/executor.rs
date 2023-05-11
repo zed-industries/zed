@@ -477,6 +477,14 @@ impl Deterministic {
         state.rng = StdRng::seed_from_u64(state.seed);
     }
 
+    pub fn allow_parking(&self) {
+        use rand::prelude::*;
+
+        let mut state = self.state.lock();
+        state.forbid_parking = false;
+        state.rng = StdRng::seed_from_u64(state.seed);
+    }
+
     pub async fn simulate_random_delay(&self) {
         use rand::prelude::*;
         use smol::future::yield_now;
@@ -694,6 +702,14 @@ impl Foreground {
     pub fn forbid_parking(&self) {
         match self {
             Self::Deterministic { executor, .. } => executor.forbid_parking(),
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn allow_parking(&self) {
+        match self {
+            Self::Deterministic { executor, .. } => executor.allow_parking(),
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }

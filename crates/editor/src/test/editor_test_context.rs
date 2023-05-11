@@ -1,19 +1,16 @@
+use crate::{
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+};
+use futures::Future;
+use gpui::{
+    keymap_matcher::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle,
+};
+use indoc::indoc;
+use language::{Buffer, BufferSnapshot};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
 };
-
-use futures::Future;
-use indoc::indoc;
-
-use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
-};
-use gpui::{
-    keymap_matcher::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle,
-};
-use language::{Buffer, BufferSnapshot};
-use settings::Settings;
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},
@@ -30,15 +27,10 @@ pub struct EditorTestContext<'a> {
 impl<'a> EditorTestContext<'a> {
     pub fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
         let (window_id, editor) = cx.update(|cx| {
-            cx.set_global(Settings::test(cx));
-            crate::init(cx);
-
-            let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+            cx.add_window(Default::default(), |cx| {
                 cx.focus_self();
                 build_editor(MultiBuffer::build_simple("", cx), cx)
-            });
-
-            (window_id, editor)
+            })
         });
 
         Self {
