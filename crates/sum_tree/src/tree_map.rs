@@ -386,7 +386,7 @@ mod tests {
         map.insert("c", 5);
 
         let result = map
-            .get_from_while(&"ba", |key, _| key.starts_with(&"ba"))
+            .get_from_while(&"ba", |_, key, _| key.starts_with(&"ba"))
             .collect::<Vec<_>>();
 
         assert_eq!(result.len(), 2);
@@ -394,7 +394,7 @@ mod tests {
         assert!(result.iter().find(|(k, _)| k == &&"baaab").is_some());
 
         let result = map
-            .get_from_while(&"c", |key, _| key.starts_with(&"c"))
+            .get_from_while(&"c", |_, key, _| key.starts_with(&"c"))
             .collect::<Vec<_>>();
 
         assert_eq!(result.len(), 1);
