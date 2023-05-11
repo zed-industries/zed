@@ -1576,6 +1576,45 @@ impl Database {
                         }
                     }
 
+                    // Repository Status Entries
+                    for repository in worktree.updated_repositories.iter_mut() {
+                        let repository_status_entry_filter =
+                            if let Some(rejoined_worktree) = rejoined_worktree {
+                                worktree_repository_statuses::Column::ScanId
+                                    .gt(rejoined_worktree.scan_id)
+                            } else {
+                                worktree_repository_statuses::Column::IsDeleted.eq(false)
+                            };
+
+                        let mut db_repository_statuses =
+                            worktree_repository_statuses::Entity::find()
+                                .filter(
+                                    Condition::all()
+                                        .add(
+                                            worktree_repository_statuses::Column::WorktreeId
+                                                .eq(worktree.id),
+                                        )
+                                        .add(
+                                            worktree_repository_statuses::Column::WorkDirectoryId
+                                                .eq(repository.work_directory_id),
+                                        )
+                                        .add(repository_status_entry_filter),
+                                )
+                                .stream(&*tx)
+                                .await?;
+
+                        while let Some(db_status_entry) = db_repository_statuses.next().await {
+                            let db_status_entry = db_status_entry?;
+                            if db_status_entry.is_deleted {
+                                repository.removed_worktree_repo_paths.push(db_status_entry.repo_path);
+                            } else {
+                                repository.updated_worktree_statuses.push(proto::StatusEntry {
+                                    repo_path: db_status_entry.repo_path, status: db_status_entry.status as i32
+                                });
+                            }
+                        }
+                    }
+
                     worktrees.push(worktree);
                 }
 

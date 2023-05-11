@@ -1,6 +1,7 @@
 use anyhow::Result;
 use collections::HashMap;
 use parking_lot::Mutex;
+use serde_derive::{Serialize, Deserialize};
 use std::{
     ffi::OsStr,
     os::unix::prelude::OsStrExt,
@@ -183,7 +184,7 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GitFileStatus {
     Added,
     Modified,
