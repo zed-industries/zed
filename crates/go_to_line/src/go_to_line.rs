@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
+use editor::{
+    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, DisplayPoint, Editor,
+    FILE_ROW_COLUMN_DELIMITER,
+};
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Axis, Entity,
     View, ViewContext, ViewHandle,
@@ -97,14 +100,14 @@ impl GoToLine {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::BufferEdited { .. } => {
                 let line_editor = self.line_editor.read(cx).text(cx);
-                let mut components = line_editor.trim().split(&[',', ':'][..]);
+                let mut components = line_editor
+                    .splitn(2, FILE_ROW_COLUMN_DELIMITER)
+                    .map(str::trim)
+                    .fuse();
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());
                 if let Some(point) = row.map(|row| {
-                    Point::new(
-                        row.saturating_sub(1),
-                        column.map(|column| column.saturating_sub(1)).unwrap_or(0),
-                    )
+                    Point::new(row.saturating_sub(1), column.unwrap_or(0).saturating_sub(1))
                 }) {
                     self.active_editor.update(cx, |active_editor, cx| {
                         let snapshot = active_editor.snapshot(cx).display_snapshot;
@@ -147,7 +150,7 @@ impl View for GoToLine {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
-            "{},{} of {} lines",
+            "{}{FILE_ROW_COLUMN_DELIMITER}{} of {} lines",
             self.cursor_point.row + 1,
             self.cursor_point.column + 1,
             self.max_point.row + 1

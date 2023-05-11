@@ -2,6 +2,7 @@ use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
+    FILE_ROW_COLUMN_DELIMITER,
 };
 use anyhow::{Context, Result};
 use collections::HashSet;
@@ -1112,7 +1113,11 @@ impl View for CursorPosition {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-            let mut text = format!("{},{}", position.row + 1, position.column + 1);
+            let mut text = format!(
+                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                position.row + 1,
+                position.column + 1
+            );
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }
