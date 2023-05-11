@@ -2820,6 +2820,8 @@ async fn test_git_status_sync(
 
     // And synchronization while joining
     let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
+    deterministic.run_until_parked();
+
     project_remote_c.read_with(cx_c, |project, cx| {
         assert_status(
             &Path::new(A_TXT),

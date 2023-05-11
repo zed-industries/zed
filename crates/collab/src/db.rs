@@ -15,6 +15,7 @@ mod worktree;
 mod worktree_diagnostic_summary;
 mod worktree_entry;
 mod worktree_repository;
+mod worktree_repository_statuses;
 
 use crate::executor::Executor;
 use crate::{Error, Result};
@@ -2397,6 +2398,74 @@ impl Database {
                 )
                 .exec(&*tx)
                 .await?;
+
+                for repository in update.updated_repositories.iter() {
+                    if !repository.updated_worktree_statuses.is_empty() {
+                        worktree_repository_statuses::Entity::insert_many(
+                            repository
+                                .updated_worktree_statuses
+                                .iter()
+                                .map(|status_entry| worktree_repository_statuses::ActiveModel {
+                                    project_id: ActiveValue::set(project_id),
+                                    worktree_id: ActiveValue::set(worktree_id),
+                                    work_directory_id: ActiveValue::set(
+                                        repository.work_directory_id as i64,
+                                    ),
+                                    repo_path: ActiveValue::set(status_entry.repo_path.clone()),
+                                    status: ActiveValue::set(status_entry.status as i64),
+                                    scan_id: ActiveValue::set(update.scan_id as i64),
+                                    is_deleted: ActiveValue::set(false),
+                                }),
+                        )
+                        .on_conflict(
+                            OnConflict::columns([
+                                worktree_repository_statuses::Column::ProjectId,
+                                worktree_repository_statuses::Column::WorktreeId,
+                                worktree_repository_statuses::Column::WorkDirectoryId,
+                                worktree_repository_statuses::Column::RepoPath,
+                            ])
+                            .update_columns([
+                                worktree_repository_statuses::Column::ScanId,
+                                worktree_repository_statuses::Column::Status,
+                            ])
+                            .to_owned(),
+                        )
+                        .exec(&*tx)
+                        .await?;
+                    }
+
+                    if !repository.removed_worktree_repo_paths.is_empty() {
+                        worktree_repository_statuses::Entity::update_many()
+                            .filter(
+                                worktree_repository_statuses::Column::ProjectId
+                                    .eq(project_id)
+                                    .and(
+                                        worktree_repository_statuses::Column::WorktreeId
+                                            .eq(worktree_id),
+                                    )
+                                    .and(
+                                        worktree_repository_statuses::Column::WorkDirectoryId
+                                            .eq(repository.work_directory_id),
+                                    )
+                                    .and(
+                                        worktree_repository_statuses::Column::RepoPath.is_in(
+                                            repository
+                                                .removed_worktree_repo_paths
+                                                .iter()
+                                                .cloned()
+                                                .collect::<Vec<_>>(),
+                                        ),
+                                    ),
+                            )
+                            .set(worktree_repository_statuses::ActiveModel {
+                                is_deleted: ActiveValue::Set(true),
+                                scan_id: ActiveValue::Set(update.scan_id as i64),
+                                ..Default::default()
+                            })
+                            .exec(&*tx)
+                            .await?;
+                    }
+                }
             }
 
             if !update.removed_repositories.is_empty() {
@@ -2411,6 +2480,25 @@ impl Database {
                             ),
                     )
                     .set(worktree_repository::ActiveModel {
+                        is_deleted: ActiveValue::Set(true),
+                        scan_id: ActiveValue::Set(update.scan_id as i64),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+
+                // Flip all status entries associated with a given repository_entry
+                worktree_repository_statuses::Entity::update_many()
+                    .filter(
+                        worktree_repository_statuses::Column::ProjectId
+                            .eq(project_id)
+                            .and(worktree_repository_statuses::Column::WorktreeId.eq(worktree_id))
+                            .and(
+                                worktree_repository_statuses::Column::WorkDirectoryId
+                                    .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
+                            ),
+                    )
+                    .set(worktree_repository_statuses::ActiveModel {
                         is_deleted: ActiveValue::Set(true),
                         scan_id: ActiveValue::Set(update.scan_id as i64),
                         ..Default::default()
@@ -2647,12 +2735,44 @@ impl Database {
                     if let Some(worktree) =
                         worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
                     {
-                        worktree.repository_entries.push(proto::RepositoryEntry {
-                            work_directory_id: db_repository_entry.work_directory_id as u64,
-                            branch: db_repository_entry.branch,
-                            removed_worktree_repo_paths: Default::default(),
-                            updated_worktree_statuses: Default::default(),
-                        });
+                        worktree.repository_entries.insert(
+                            db_repository_entry.work_directory_id as u64,
+                            proto::RepositoryEntry {
+                                work_directory_id: db_repository_entry.work_directory_id as u64,
+                                branch: db_repository_entry.branch,
+                                removed_worktree_repo_paths: Default::default(),
+                                updated_worktree_statuses: Default::default(),
+                            },
+                        );
+                    }
+                }
+            }
+
+            {
+                let mut db_status_entries = worktree_repository_statuses::Entity::find()
+                    .filter(
+                        Condition::all()
+                            .add(worktree_repository_statuses::Column::ProjectId.eq(project_id))
+                            .add(worktree_repository_statuses::Column::IsDeleted.eq(false)),
+                    )
+                    .stream(&*tx)
+                    .await?;
+
+                while let Some(db_status_entry) = db_status_entries.next().await {
+                    let db_status_entry = db_status_entry?;
+                    if let Some(worktree) = worktrees.get_mut(&(db_status_entry.worktree_id as u64))
+                    {
+                        if let Some(repository_entry) = worktree
+                            .repository_entries
+                            .get_mut(&(db_status_entry.work_directory_id as u64))
+                        {
+                            repository_entry
+                                .updated_worktree_statuses
+                                .push(proto::StatusEntry {
+                                    repo_path: db_status_entry.repo_path,
+                                    status: db_status_entry.status as i32,
+                                });
+                        }
                     }
                 }
             }
@@ -3394,7 +3514,7 @@ pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
     pub entries: Vec<proto::Entry>,
-    pub repository_entries: Vec<proto::RepositoryEntry>,
+    pub repository_entries: BTreeMap<u64, proto::RepositoryEntry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
