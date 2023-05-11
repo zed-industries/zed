@@ -2523,7 +2523,15 @@ impl BackgroundScanner {
     }
 
     async fn process_refresh_request(&self, paths: Vec<PathBuf>, barrier: barrier::Sender) -> bool {
-        self.reload_entries_for_paths(paths, None).await;
+        if let Some(mut paths) = self.reload_entries_for_paths(paths, None).await {
+            paths.sort_unstable();
+            util::extend_sorted(
+                &mut self.prev_state.lock().event_paths,
+                paths,
+                usize::MAX,
+                Ord::cmp,
+            );
+        }
         self.send_status_update(false, Some(barrier))
     }
 
