@@ -2471,12 +2471,14 @@ impl Database {
                             .update_columns([
                                 worktree_repository_statuses::Column::ScanId,
                                 worktree_repository_statuses::Column::Status,
+                                worktree_repository_statuses::Column::IsDeleted,
                             ])
                             .to_owned(),
                         )
                         .exec(&*tx)
                         .await?;
                     }
+
                     if !repository.removed_worktree_repo_paths.is_empty() {
                         worktree_repository_statuses::Entity::update_many()
                             .filter(
