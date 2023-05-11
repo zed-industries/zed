@@ -2484,11 +2484,21 @@ impl Database {
                             .filter(
                                 worktree_repository_statuses::Column::ProjectId
                                     .eq(project_id)
-                                    .and(worktree_repository_statuses::Column::WorktreeId.eq(worktree_id))
-                                    .and(worktree_repository_statuses::Column::WorkDirectoryId.eq(repository.work_directory_id as i64))
                                     .and(
-                                        worktree_repository_statuses::Column::RepoPath
-                                            .is_in(repository.removed_worktree_repo_paths.iter().map(String::as_str)),
+                                        worktree_repository_statuses::Column::WorktreeId
+                                            .eq(worktree_id),
+                                    )
+                                    .and(
+                                        worktree_repository_statuses::Column::WorkDirectoryId
+                                            .eq(repository.work_directory_id as i64),
+                                    )
+                                    .and(
+                                        worktree_repository_statuses::Column::RepoPath.is_in(
+                                            repository
+                                                .removed_worktree_repo_paths
+                                                .iter()
+                                                .map(String::as_str),
+                                        ),
                                     ),
                             )
                             .set(worktree_repository_statuses::ActiveModel {
