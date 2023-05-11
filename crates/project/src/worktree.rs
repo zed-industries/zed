@@ -3065,6 +3065,15 @@ impl BackgroundScanner {
                 entry.worktree_statuses = statuses;
             });
         } else {
+            if snapshot
+                .entry_for_path(&path)
+                .map(|entry| entry.is_ignored)
+                .unwrap_or(false)
+            {
+                self.remove_repo_path(&path, snapshot);
+                return None;
+            }
+
             let repo = snapshot.repo_for(&path)?;
 
             let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
@@ -3580,7 +3589,6 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 mod tests {
     use super::*;
     use fs::{FakeFs, RealFs};
-    use git2::Signature;
     use gpui::{executor::Deterministic, TestAppContext};
     use pretty_assertions::assert_eq;
     use rand::prelude::*;
@@ -3919,6 +3927,8 @@ mod tests {
 
         #[track_caller]
         fn git_commit(msg: &'static str, repo: &git2::Repository) {
+            use git2::Signature;
+
             let signature = Signature::now("test", "test@zed.dev").unwrap();
             let oid = repo.index().unwrap().write_tree().unwrap();
             let tree = repo.find_tree(oid).unwrap();
@@ -3944,7 +3954,9 @@ mod tests {
 
         #[track_caller]
         fn git_stash(repo: &mut git2::Repository) {
-            let signature = repo.signature().unwrap();
+            use git2::Signature;
+
+            let signature = Signature::now("test", "test@zed.dev").unwrap();
             repo.stash_save(&signature, "N/A", None)
                 .expect("Failed to stash");
         }
@@ -3976,6 +3988,8 @@ mod tests {
                 .collect()
         }
 
+        const IGNORE_RULE: &'static str = "**/target";
+
         let root = temp_tree(json!({
             "project": {
                 "a.txt": "a",
@@ -3984,7 +3998,12 @@ mod tests {
                     "d": {
                         "e.txt": "eee"
                     }
-                }
+                },
+                "f.txt": "ffff",
+                "target": {
+                    "build_file": "???"
+                },
+                ".gitignore": IGNORE_RULE
             },
 
         }));
@@ -4008,12 +4027,16 @@ mod tests {
         const A_TXT: &'static str = "a.txt";
         const B_TXT: &'static str = "b.txt";
         const E_TXT: &'static str = "c/d/e.txt";
+        const F_TXT: &'static str = "f.txt";
+        const DOTGITIGNORE: &'static str = ".gitignore";
+        const BUILD_FILE: &'static str = "target/build_file";
 
         let work_dir = root.path().join("project");
-
         let mut repo = git_init(work_dir.as_path());
+        repo.add_ignore_rule(IGNORE_RULE).unwrap();
         git_add(Path::new(A_TXT), &repo);
         git_add(Path::new(E_TXT), &repo);
+        git_add(Path::new(DOTGITIGNORE), &repo);
         git_commit("Initial commit", &repo);
 
         std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
@@ -4027,13 +4050,17 @@ mod tests {
             let (dir, repo) = snapshot.repository_entries.iter().next().unwrap();
             assert_eq!(dir.0.as_ref(), Path::new("project"));
 
-            assert_eq!(repo.worktree_statuses.iter().count(), 2);
+            assert_eq!(repo.worktree_statuses.iter().count(), 3);
             assert_eq!(
                 repo.worktree_statuses.get(&Path::new(A_TXT).into()),
                 Some(&GitFileStatus::Modified)
             );
             assert_eq!(
                 repo.worktree_statuses.get(&Path::new(B_TXT).into()),
+                Some(&GitFileStatus::Added)
+            );
+            assert_eq!(
+                repo.worktree_statuses.get(&Path::new(F_TXT).into()),
                 Some(&GitFileStatus::Added)
             );
         });
@@ -4048,15 +4075,20 @@ mod tests {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-            assert_eq!(repo.worktree_statuses.iter().count(), 0);
+            assert_eq!(repo.worktree_statuses.iter().count(), 1);
             assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
             assert_eq!(repo.worktree_statuses.get(&Path::new(B_TXT).into()), None);
+            assert_eq!(
+                repo.worktree_statuses.get(&Path::new(F_TXT).into()),
+                Some(&GitFileStatus::Added)
+            );
         });
 
         git_reset(0, &repo);
         git_remove_index(Path::new(B_TXT), &repo);
         git_stash(&mut repo);
         std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
+        std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
         tree.flush_fs_events(cx).await;
 
         // Check that more complex repo changes are tracked
@@ -4064,7 +4096,7 @@ mod tests {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-            assert_eq!(repo.worktree_statuses.iter().count(), 2);
+            assert_eq!(repo.worktree_statuses.iter().count(), 3);
             assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
             assert_eq!(
                 repo.worktree_statuses.get(&Path::new(B_TXT).into()),
@@ -4074,22 +4106,35 @@ mod tests {
                 repo.worktree_statuses.get(&Path::new(E_TXT).into()),
                 Some(&GitFileStatus::Modified)
             );
+            assert_eq!(
+                repo.worktree_statuses.get(&Path::new(F_TXT).into()),
+                Some(&GitFileStatus::Added)
+            );
         });
 
         std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
         std::fs::remove_dir_all(work_dir.join("c")).unwrap();
+        std::fs::write(work_dir.join(DOTGITIGNORE), [IGNORE_RULE, "f.txt"].join("\n")).unwrap();
+
+        git_add(Path::new(DOTGITIGNORE), &repo);
+        git_commit("Committing modified git ignore", &repo);
 
         tree.flush_fs_events(cx).await;
+
+        dbg!(git_status(&repo));
 
         // Check that non-repo behavior is tracked
         tree.read_with(cx, |tree, _cx| {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
+            dbg!(&repo.worktree_statuses);
+
             assert_eq!(repo.worktree_statuses.iter().count(), 0);
             assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
             assert_eq!(repo.worktree_statuses.get(&Path::new(B_TXT).into()), None);
             assert_eq!(repo.worktree_statuses.get(&Path::new(E_TXT).into()), None);
+            assert_eq!(repo.worktree_statuses.get(&Path::new(F_TXT).into()), None);
         });
     }
 
