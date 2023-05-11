@@ -394,7 +394,6 @@ mod tests {
         assert_eq!(map.get(&"c"), Some(&5));
         assert_eq!(map.get(&"ca"), Some(&6));
 
-
         map.remove_by(&"c", |key| key.starts_with("c"));
 
         assert_eq!(map.get(&"a"), Some(&1));
@@ -412,7 +411,6 @@ mod tests {
         map.remove_by(&"b", |key| key.starts_with("b"));
 
         assert_eq!(map.get(&"b"), None);
-
     }
 
     #[test]
