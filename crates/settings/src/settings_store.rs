@@ -184,22 +184,43 @@ impl SettingsStore {
         this
     }
 
-    /// Override the global value for a particular setting.
+    /// Update the value of a setting in the user's global configuration.
     ///
     /// This is only for tests. Normally, settings are only loaded from
     /// JSON files.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn replace_value<T: Setting>(&mut self, value: T) {
-        self.setting_values
-            .get_mut(&TypeId::of::<T>())
-            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
-            .set_global_value(Box::new(value))
+    pub fn update_user_settings<T: Setting>(
+        &mut self,
+        cx: &AppContext,
+        update: impl FnOnce(&mut T::FileContent),
+    ) {
+        let old_text = if let Some(user_settings) = &self.user_deserialized_settings {
+            serde_json::to_string(&user_settings.untyped).unwrap()
+        } else {
+            String::new()
+        };
+        let new_text = self.new_text_for_update::<T>(old_text, update);
+        self.set_user_settings(&new_text, cx).unwrap();
     }
 
-    /// Update the value of a setting.
-    ///
-    /// Returns a list of edits to apply to the JSON file.
-    pub fn update<T: Setting>(
+    /// Update the value of a setting in a JSON file, returning the new text
+    /// for that JSON file.
+    pub fn new_text_for_update<T: Setting>(
+        &self,
+        old_text: String,
+        update: impl FnOnce(&mut T::FileContent),
+    ) -> String {
+        let edits = self.edits_for_update::<T>(&old_text, update);
+        let mut new_text = old_text;
+        for (range, replacement) in edits.into_iter().rev() {
+            new_text.replace_range(range, &replacement);
+        }
+        new_text
+    }
+
+    /// Update the value of a setting in a JSON file, returning a list
+    /// of edits to apply to the JSON file.
+    pub fn edits_for_update<T: Setting>(
         &self,
         text: &str,
         update: impl FnOnce(&mut T::FileContent),
@@ -1129,7 +1150,7 @@ mod tests {
         cx: &mut AppContext,
     ) {
         store.set_user_settings(&old_json, cx).ok();
-        let edits = store.update::<T>(&old_json, update);
+        let edits = store.edits_for_update::<T>(&old_json, update);
         let mut new_json = old_json;
         for (range, replacement) in edits.into_iter().rev() {
             new_json.replace_range(range, &replacement);

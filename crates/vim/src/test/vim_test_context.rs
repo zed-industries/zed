@@ -21,8 +21,8 @@ impl<'a> VimTestContext<'a> {
             search::init(cx);
             crate::init(cx);
 
-            cx.update_global(|store: &mut SettingsStore, _| {
-                store.replace_value(VimModeSetting(enabled));
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
 
             settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
@@ -53,16 +53,16 @@ impl<'a> VimTestContext<'a> {
 
     pub fn enable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, _| {
-                store.replace_value(VimModeSetting(true))
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
         })
     }
 
     pub fn disable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|store: &mut SettingsStore, _| {
-                store.replace_value(VimModeSetting(false))
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
         })
     }

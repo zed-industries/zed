@@ -172,12 +172,10 @@ pub fn update_settings_file<T: Setting>(
             })
             .await?;
 
-        let edits = cx.read(|cx| cx.global::<SettingsStore>().update::<T>(&old_text, update));
-
-        let mut new_text = old_text;
-        for (range, replacement) in edits.into_iter().rev() {
-            new_text.replace_range(range, &replacement);
-        }
+        let new_text = cx.read(|cx| {
+            cx.global::<SettingsStore>()
+                .new_text_for_update::<T>(old_text, update)
+        });
 
         cx.background()
             .spawn(async move { fs.atomic_write(paths::SETTINGS.clone(), new_text).await })
