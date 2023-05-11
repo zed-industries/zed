@@ -3023,7 +3023,7 @@ impl BackgroundScanner {
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry
                     .worktree_statuses
-                    .remove_by(&repo_path, |stored_path, _| {
+                    .remove_by(&repo_path, |stored_path| {
                         stored_path.starts_with(&repo_path)
                     })
             });
