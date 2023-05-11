@@ -1,4 +1,4 @@
-use editor::{scroll::autoscroll::Autoscroll, Bias, DisplayPoint, Editor};
+use editor::{scroll::autoscroll::Autoscroll, Bias, DisplayPoint, Editor, FILE_ROW_COLUMN_DELIMITER};
 use fuzzy::PathMatch;
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
@@ -71,54 +71,20 @@ struct FileSearchQuery {
 
 impl FileSearchQuery {
     fn new(raw_query: String) -> Self {
-        let fallback_query = Self {
-            raw_query: raw_query.clone(),
-            file_path_end: None,
-            file_row: None,
-            file_column: None,
-        };
+        let mut components = raw_query
+            .as_str()
+            .splitn(3, FILE_ROW_COLUMN_DELIMITER)
+            .map(str::trim)
+            .fuse();
+        let file_query = components.next().filter(|str| !str.is_empty());
+        let file_row = components.next().and_then(|row| row.parse::<u32>().ok());
+        let file_column = components.next().and_then(|col| col.parse::<u32>().ok());
 
-        let mut possible_path_and_coordinates =
-            // TODO kb go_to_line.rs uses ',' as a separator??
-            raw_query.as_str().splitn(3, ':').map(str::trim).fuse();
-        match (
-            possible_path_and_coordinates.next(),
-            possible_path_and_coordinates.next(),
-            possible_path_and_coordinates.next(),
-        ) {
-            (Some(file_path_part), Some(row_number_str), Some(column_number_str))
-                if !row_number_str.is_empty() && !column_number_str.is_empty() =>
-            {
-                Self {
-                    file_path_end: Some(file_path_part.len()),
-                    file_row: match row_number_str.parse().ok() {
-                        None => return fallback_query,
-                        row => row,
-                    },
-                    file_column: match column_number_str.parse().ok() {
-                        None => return fallback_query,
-                        column => column,
-                    },
-                    raw_query,
-                }
-            }
-            (Some(file_path_part), Some(row_number_str), _) if !row_number_str.is_empty() => Self {
-                file_path_end: Some(file_path_part.len()),
-                file_row: match row_number_str.parse().ok() {
-                    None => return fallback_query,
-                    row => row,
-                },
-                file_column: None,
-                raw_query,
-            },
-            // Covers inputs like `foo.rs:` trimming all extra colons
-            (Some(file_path_part), _, _) => Self {
-                file_path_end: Some(file_path_part.len()),
-                file_row: None,
-                file_column: None,
-                raw_query,
-            },
-            _no_colons_query => fallback_query,
+        Self {
+            file_path_end: file_query.map(|query| query.len()),
+            file_row,
+            file_column,
+            raw_query,
         }
     }
 
@@ -314,19 +280,18 @@ impl PickerDelegate for FileFinderDelegate {
 
                 let workspace = workspace.downgrade();
 
-                cx.spawn(|file_finder, mut cx| async move {
-                    let item = open_task.await.log_err()?;
-
-                    let (row, col) = file_finder
-                        .read_with(&cx, |file_finder, _| {
-                            file_finder
-                                .delegate()
-                                .latest_search_query
-                                .as_ref()
-                                .map(|query| (query.file_row, query.file_column))
-                        })
-                        .log_err()
-                        .flatten()?;
+                if let Some(row) = self
+                    .latest_search_query
+                    .as_ref()
+                    .and_then(|query| query.file_row)
+                    .map(|row| row.saturating_sub(1))
+                {
+                    let col = self
+                        .latest_search_query
+                        .as_ref()
+                        .and_then(|query| query.file_column)
+                        .unwrap_or(0)
+                        .saturating_sub(1);
 
                     if let Some(row) = row {
                         if let Some(active_editor) = item.downcast::<Editor>() {
@@ -339,6 +304,8 @@ impl PickerDelegate for FileFinderDelegate {
                                         col.map(|column| column.saturating_sub(1)).unwrap_or(0),
                                     )
                                     .to_point(&snapshot);
+                                    let point =
+                                        snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                                     let point =
                                         snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                                     editor.change_selections(Some(Autoscroll::center()), cx, |s| {
