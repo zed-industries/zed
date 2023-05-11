@@ -1,4 +1,4 @@
-use editor::{scroll::autoscroll::Autoscroll, Bias, DisplayPoint, Editor, FILE_ROW_COLUMN_DELIMITER};
+use editor::{scroll::autoscroll::Autoscroll, Bias, Editor, FILE_ROW_COLUMN_DELIMITER};
 use fuzzy::PathMatch;
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
@@ -13,6 +13,7 @@ use std::{
         Arc,
     },
 };
+use text::Point;
 use util::{post_inc, ResultExt};
 use workspace::Workspace;
 
@@ -64,7 +65,7 @@ pub enum Event {
 #[derive(Debug, Clone)]
 struct FileSearchQuery {
     raw_query: String,
-    file_path_end: Option<usize>,
+    file_query_end: Option<usize>,
     file_row: Option<u32>,
     file_column: Option<u32>,
 }
@@ -81,7 +82,9 @@ impl FileSearchQuery {
         let file_column = components.next().and_then(|col| col.parse::<u32>().ok());
 
         Self {
-            file_path_end: file_query.map(|query| query.len()),
+            file_query_end: file_query
+                .filter(|_| file_row.is_some())
+                .map(|query| query.len()),
             file_row,
             file_column,
             raw_query,
@@ -89,7 +92,7 @@ impl FileSearchQuery {
     }
 
     fn path_query(&self) -> &str {
-        match self.file_path_end {
+        match self.file_query_end {
             Some(file_path_end) => &self.raw_query[..file_path_end],
             None => &self.raw_query,
         }
@@ -280,32 +283,28 @@ impl PickerDelegate for FileFinderDelegate {
 
                 let workspace = workspace.downgrade();
 
-                if let Some(row) = self
+                let row = self
                     .latest_search_query
                     .as_ref()
                     .and_then(|query| query.file_row)
-                    .map(|row| row.saturating_sub(1))
-                {
-                    let col = self
-                        .latest_search_query
-                        .as_ref()
-                        .and_then(|query| query.file_column)
-                        .unwrap_or(0)
-                        .saturating_sub(1);
-
+                    .map(|row| row.saturating_sub(1));
+                let col = self
+                    .latest_search_query
+                    .as_ref()
+                    .and_then(|query| query.file_column)
+                    .unwrap_or(0)
+                    .saturating_sub(1);
+                cx.spawn(|_, mut cx| async move {
+                    let item = open_task.await.log_err()?;
                     if let Some(row) = row {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
                                 .update(&mut cx, |editor, cx| {
                                     let snapshot = editor.snapshot(cx).display_snapshot;
-                                    let point = DisplayPoint::new(
-                                        row.saturating_sub(1),
-                                        col.map(|column| column.saturating_sub(1)).unwrap_or(0),
-                                    )
-                                    .to_point(&snapshot);
-                                    let point =
-                                        snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                                    let point = snapshot
+                                        .buffer_snapshot
+                                        .clip_point(Point::new(row, col), Bias::Left);
                                     let point =
                                         snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                                     editor.change_selections(Some(Autoscroll::center()), cx, |s| {
@@ -359,6 +358,7 @@ impl PickerDelegate for FileFinderDelegate {
 mod tests {
     use super::*;
     use editor::Editor;
+    use gpui::executor::Deterministic;
     use menu::{Confirm, SelectNext};
     use serde_json::json;
     use workspace::{AppState, Workspace};
@@ -423,6 +423,180 @@ mod tests {
                     .title(cx),
                 "bandana"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_row_column_numbers_query_inside_file(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            super::init(cx);
+            editor::init(cx);
+            AppState::test(cx)
+        });
+
+        let first_file_name = "first.rs";
+        let first_file_contents = "// First Rust file";
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        first_file_name: first_file_contents,
+                        "second.rs": "// Second Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let file_query = &first_file_name[..3];
+        let file_row = 1;
+        let file_column = 3;
+        assert!(file_column <= first_file_contents.len());
+        let query_inside_file = format!("{file_query}:{file_row}:{file_column}");
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(query_inside_file.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let finder = finder.delegate();
+            assert_eq!(finder.matches.len(), 1);
+            let latest_search_query = finder
+                .latest_search_query
+                .as_ref()
+                .expect("Finder should have a query after the update_matches call");
+            assert_eq!(latest_search_query.raw_query, query_inside_file);
+            assert_eq!(latest_search_query.file_row, Some(file_row));
+            assert_eq!(latest_search_query.file_column, Some(file_column as u32));
+            assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+        active_pane
+            .condition(cx, |pane, _| pane.active_item().is_some())
+            .await;
+        let editor = cx.update(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            active_item.downcast::<Editor>().unwrap()
+        });
+        deterministic.advance_clock(std::time::Duration::from_secs(2));
+        deterministic.start_waiting();
+        deterministic.finish_waiting();
+        editor.update(cx, |editor, cx| {
+            let all_selections = editor.selections.all_adjusted(cx);
+            assert_eq!(
+                all_selections.len(),
+                1,
+                "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+            );
+            let caret_selection = all_selections.into_iter().next().unwrap();
+            assert_eq!(caret_selection.start, caret_selection.end,
+                "Caret selection should have its start and end at the same position");
+            assert_eq!(file_row, caret_selection.start.row + 1,
+                "Query inside file should get caret with the same focus row");
+            assert_eq!(file_column, caret_selection.start.column as usize + 1,
+                "Query inside file should get caret with the same focus column");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_row_column_numbers_query_outside_file(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = cx.update(|cx| {
+            super::init(cx);
+            editor::init(cx);
+            AppState::test(cx)
+        });
+
+        let first_file_name = "first.rs";
+        let first_file_contents = "// First Rust file";
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        first_file_name: first_file_contents,
+                        "second.rs": "// Second Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let file_query = &first_file_name[..3];
+        let file_row = 200;
+        let file_column = 300;
+        assert!(file_column > first_file_contents.len());
+        let query_outside_file = format!("{file_query}:{file_row}:{file_column}");
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(query_outside_file.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let finder = finder.delegate();
+            assert_eq!(finder.matches.len(), 1);
+            let latest_search_query = finder
+                .latest_search_query
+                .as_ref()
+                .expect("Finder should have a query after the update_matches call");
+            assert_eq!(latest_search_query.raw_query, query_outside_file);
+            assert_eq!(latest_search_query.file_row, Some(file_row));
+            assert_eq!(latest_search_query.file_column, Some(file_column as u32));
+            assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+        });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+        active_pane
+            .condition(cx, |pane, _| pane.active_item().is_some())
+            .await;
+        let editor = cx.update(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            active_item.downcast::<Editor>().unwrap()
+        });
+        deterministic.advance_clock(std::time::Duration::from_secs(2));
+        deterministic.start_waiting();
+        deterministic.finish_waiting();
+        editor.update(cx, |editor, cx| {
+            let all_selections = editor.selections.all_adjusted(cx);
+            assert_eq!(
+                all_selections.len(),
+                1,
+                "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+            );
+            let caret_selection = all_selections.into_iter().next().unwrap();
+            assert_eq!(caret_selection.start, caret_selection.end,
+                "Caret selection should have its start and end at the same position");
+            assert_eq!(0, caret_selection.start.row,
+                "Excessive rows (as in query outside file borders) should get trimmed to last file row");
+            assert_eq!(first_file_contents.len(), caret_selection.start.column as usize,
+                "Excessive columns (as in query outside file borders) should get trimmed to selected row's last column");
         });
     }
 

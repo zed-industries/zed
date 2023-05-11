@@ -2185,6 +2185,7 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
+ "text",
  "theme",
  "util",
  "workspace",
