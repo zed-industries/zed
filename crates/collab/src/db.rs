@@ -2477,6 +2477,26 @@ impl Database {
                         .exec(&*tx)
                         .await?;
                     }
+                    if !repository.removed_worktree_repo_paths.is_empty() {
+                        worktree_repository_statuses::Entity::update_many()
+                            .filter(
+                                worktree_repository_statuses::Column::ProjectId
+                                    .eq(project_id)
+                                    .and(worktree_repository_statuses::Column::WorktreeId.eq(worktree_id))
+                                    .and(worktree_repository_statuses::Column::WorkDirectoryId.eq(repository.work_directory_id as i64))
+                                    .and(
+                                        worktree_repository_statuses::Column::RepoPath
+                                            .is_in(repository.removed_worktree_repo_paths.iter().map(String::as_str)),
+                                    ),
+                            )
+                            .set(worktree_repository_statuses::ActiveModel {
+                                is_deleted: ActiveValue::Set(true),
+                                scan_id: ActiveValue::Set(update.scan_id as i64),
+                                ..Default::default()
+                            })
+                            .exec(&*tx)
+                            .await?;
+                    }
                 }
             }
 
@@ -2492,25 +2512,6 @@ impl Database {
                             ),
                     )
                     .set(worktree_repository::ActiveModel {
-                        is_deleted: ActiveValue::Set(true),
-                        scan_id: ActiveValue::Set(update.scan_id as i64),
-                        ..Default::default()
-                    })
-                    .exec(&*tx)
-                    .await?;
-
-                // Flip all status entries associated with a given repository_entry
-                worktree_repository_statuses::Entity::update_many()
-                    .filter(
-                        worktree_repository_statuses::Column::ProjectId
-                            .eq(project_id)
-                            .and(worktree_repository_statuses::Column::WorktreeId.eq(worktree_id))
-                            .and(
-                                worktree_repository_statuses::Column::WorkDirectoryId
-                                    .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
-                            ),
-                    )
-                    .set(worktree_repository_statuses::ActiveModel {
                         is_deleted: ActiveValue::Set(true),
                         scan_id: ActiveValue::Set(update.scan_id as i64),
                         ..Default::default()
