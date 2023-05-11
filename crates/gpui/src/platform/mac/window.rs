@@ -699,6 +699,31 @@ impl platform::Window for Window {
         msg: &str,
         answers: &[&str],
     ) -> oneshot::Receiver<usize> {
+        // macOs applies overrides to modal window buttons after they are added.
+        // Two most important for this logic are:
+        // * Buttons with "Cancel" title will be displayed as the last buttons in the modal
+        // * Last button added to the modal via `addButtonWithTitle` stays focused
+        // * Focused buttons react on "space"/" " keypresses
+        // * Usage of `keyEquivalent`, `makeFirstResponder` or `setInitialFirstResponder` does not change the focus
+        //
+        // See also https://developer.apple.com/documentation/appkit/nsalert/1524532-addbuttonwithtitle#discussion
+        // ```
+        // By default, the first button has a key equivalent of Return,
+        // any button with a title of “Cancel” has a key equivalent of Escape,
+        // and any button with the title “Don’t Save” has a key equivalent of Command-D (but only if it’s not the first button).
+        // ```
+        //
+        // To avoid situations when the last element added is "Cancel" and it gets the focus
+        // (hence stealing both ESC and Space shortcuts), we find and add one non-Cancel button
+        // last, so it gets focus and a Space shortcut.
+        // This way, "Save this file? Yes/No/Cancel"-ish modals will get all three buttons mapped with a key.
+        let latest_non_cancel_label = answers
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &label)| label != "Cancel")
+            .filter(|&(label_index, _)| label_index > 0);
+
         unsafe {
             let alert: id = msg_send![class!(NSAlert), alloc];
             let alert: id = msg_send![alert, init];
@@ -709,10 +734,20 @@ impl platform::Window for Window {
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
-            for (ix, answer) in answers.iter().enumerate() {
+
+            for (ix, answer) in answers
+                .iter()
+                .enumerate()
+                .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
+            {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
             }
+            if let Some((ix, answer)) = latest_non_cancel_label {
+                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
+                let _: () = msg_send![button, setTag: ix as NSInteger];
+            }
+
             let (done_tx, done_rx) = oneshot::channel();
             let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |answer: NSInteger| {
