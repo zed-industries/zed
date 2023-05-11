@@ -4114,7 +4114,11 @@ mod tests {
 
         std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
         std::fs::remove_dir_all(work_dir.join("c")).unwrap();
-        std::fs::write(work_dir.join(DOTGITIGNORE), [IGNORE_RULE, "f.txt"].join("\n")).unwrap();
+        std::fs::write(
+            work_dir.join(DOTGITIGNORE),
+            [IGNORE_RULE, "f.txt"].join("\n"),
+        )
+        .unwrap();
 
         git_add(Path::new(DOTGITIGNORE), &repo);
         git_commit("Committing modified git ignore", &repo);
