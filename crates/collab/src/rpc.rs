@@ -1385,7 +1385,7 @@ async fn join_project(
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
             is_last_update: worktree.scan_id == worktree.completed_scan_id,
-            updated_repositories: worktree.repository_entries,
+            updated_repositories: worktree.repository_entries.into_values().collect(),
             removed_repositories: Default::default(),
         };
         for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {

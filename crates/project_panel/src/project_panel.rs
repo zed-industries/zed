@@ -16,7 +16,10 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    repository::GitFileStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
+    WorktreeId,
+};
 use settings::Settings;
 use std::{
     cmp::Ordering,
@@ -86,6 +89,7 @@ pub struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
+    git_status: Option<GitFileStatus>,
 }
 
 actions!(
@@ -1008,6 +1012,15 @@ impl ProjectPanel {
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in &visible_worktree_entries[entry_range] {
+                    let path = &entry.path;
+                    let status = (entry.path.parent().is_some() && !entry.is_ignored)
+                        .then(|| {
+                            snapshot
+                                .repo_for(path)
+                                .and_then(|entry| entry.status_for_path(&snapshot, path))
+                        })
+                        .flatten();
+
                     let mut details = EntryDetails {
                         filename: entry
                             .path
@@ -1028,6 +1041,7 @@ impl ProjectPanel {
                         is_cut: self
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
+                        git_status: status,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1069,6 +1083,19 @@ impl ProjectPanel {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
+        // Prepare colors for git statuses
+        let editor_theme = &cx.global::<Settings>().theme.editor;
+        let mut filename_text_style = style.text.clone();
+        filename_text_style.color = details
+            .git_status
+            .as_ref()
+            .map(|status| match status {
+                GitFileStatus::Added => editor_theme.diff.inserted,
+                GitFileStatus::Modified => editor_theme.diff.modified,
+                GitFileStatus::Conflict => editor_theme.diff.deleted,
+            })
+            .unwrap_or(style.text.color);
+
         Flex::row()
             .with_child(
                 if kind == EntryKind::Dir {
@@ -1096,7 +1123,7 @@ impl ProjectPanel {
                     .flex(1.0, true)
                     .into_any()
             } else {
-                Label::new(details.filename.clone(), style.text.clone())
+                Label::new(details.filename.clone(), filename_text_style)
                     .contained()
                     .with_margin_left(style.icon_spacing)
                     .aligned()

@@ -1,14 +1,14 @@
 use std::{cmp::Ordering, fmt::Debug};
 
-use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
+use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
     K: Clone + Debug + Default + Ord,
     V: Clone + Debug;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapEntry<K, V> {
     key: K,
     value: V,
@@ -82,6 +82,27 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
+    pub fn remove_between(&mut self, from: &K, until: &K) {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let from_key = MapKeyRef(Some(from));
+        let mut new_tree = cursor.slice(&from_key, Bias::Left, &());
+        let until_key = MapKeyRef(Some(until));
+        cursor.seek_forward(&until_key, Bias::Left, &());
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+    }
+
+    pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&K, &V)> + '_ {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let from_key = MapKeyRef(Some(from));
+        cursor.seek(&from_key, Bias::Left, &());
+
+        cursor
+            .into_iter()
+            .map(|map_entry| (&map_entry.key, &map_entry.value))
+    }
+
     pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
     where
         F: FnOnce(&mut V) -> T,
@@ -124,6 +145,65 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
 
     pub fn values(&self) -> impl Iterator<Item = &V> + '_ {
         self.0.iter().map(|entry| &entry.value)
+    }
+
+    pub fn insert_tree(&mut self, other: TreeMap<K, V>) {
+        let edits = other
+            .iter()
+            .map(|(key, value)| {
+                Edit::Insert(MapEntry {
+                    key: key.to_owned(),
+                    value: value.to_owned(),
+                })
+            })
+            .collect();
+
+        self.0.edit(edits, &());
+    }
+
+    pub fn remove_by<F>(&mut self, key: &K, f: F)
+    where
+        F: Fn(&K) -> bool,
+    {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let key = MapKeyRef(Some(key));
+        let mut new_tree = cursor.slice(&key, Bias::Left, &());
+        let until = RemoveByTarget(key, &f);
+        cursor.seek_forward(&until, Bias::Right, &());
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+    }
+}
+
+struct RemoveByTarget<'a, K>(MapKeyRef<'a, K>, &'a dyn Fn(&K) -> bool);
+
+impl<'a, K: Debug> Debug for RemoveByTarget<'a, K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoveByTarget")
+            .field("key", &self.0)
+            .field("F", &"<...>")
+            .finish()
+    }
+}
+
+impl<'a, K: Debug + Clone + Default + Ord> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>>
+    for RemoveByTarget<'_, K>
+{
+    fn cmp(
+        &self,
+        cursor_location: &MapKeyRef<'a, K>,
+        _cx: &<MapKey<K> as Summary>::Context,
+    ) -> Ordering {
+        if let Some(cursor_location) = cursor_location.0 {
+            if (self.1)(cursor_location) {
+                Ordering::Equal
+            } else {
+                self.0 .0.unwrap().cmp(cursor_location)
+            }
+        } else {
+            Ordering::Greater
+        }
     }
 }
 
@@ -271,5 +351,114 @@ mod tests {
         map.insert(6, "f");
         map.retain(|key, _| *key % 2 == 0);
         assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&4, &"d"), (&6, &"f")]);
+    }
+
+    #[test]
+    fn test_remove_between() {
+        let mut map = TreeMap::default();
+
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("baa", 3);
+        map.insert("baaab", 4);
+        map.insert("c", 5);
+
+        map.remove_between(&"ba", &"bb");
+
+        assert_eq!(map.get(&"a"), Some(&1));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"baaa"), None);
+        assert_eq!(map.get(&"baaaab"), None);
+        assert_eq!(map.get(&"c"), Some(&5));
+    }
+
+    #[test]
+    fn test_remove_by() {
+        let mut map = TreeMap::default();
+
+        map.insert("a", 1);
+        map.insert("aa", 1);
+        map.insert("b", 2);
+        map.insert("baa", 3);
+        map.insert("baaab", 4);
+        map.insert("c", 5);
+        map.insert("ca", 6);
+
+        map.remove_by(&"ba", |key| key.starts_with("ba"));
+
+        assert_eq!(map.get(&"a"), Some(&1));
+        assert_eq!(map.get(&"aa"), Some(&1));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"baaa"), None);
+        assert_eq!(map.get(&"baaaab"), None);
+        assert_eq!(map.get(&"c"), Some(&5));
+        assert_eq!(map.get(&"ca"), Some(&6));
+
+        map.remove_by(&"c", |key| key.starts_with("c"));
+
+        assert_eq!(map.get(&"a"), Some(&1));
+        assert_eq!(map.get(&"aa"), Some(&1));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"c"), None);
+        assert_eq!(map.get(&"ca"), None);
+
+        map.remove_by(&"a", |key| key.starts_with("a"));
+
+        assert_eq!(map.get(&"a"), None);
+        assert_eq!(map.get(&"aa"), None);
+        assert_eq!(map.get(&"b"), Some(&2));
+
+        map.remove_by(&"b", |key| key.starts_with("b"));
+
+        assert_eq!(map.get(&"b"), None);
+    }
+
+    #[test]
+    fn test_iter_from() {
+        let mut map = TreeMap::default();
+
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("baa", 3);
+        map.insert("baaab", 4);
+        map.insert("c", 5);
+
+        let result = map
+            .iter_from(&"ba")
+            .take_while(|(key, _)| key.starts_with(&"ba"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().find(|(k, _)| k == &&"baa").is_some());
+        assert!(result.iter().find(|(k, _)| k == &&"baaab").is_some());
+
+        let result = map
+            .iter_from(&"c")
+            .take_while(|(key, _)| key.starts_with(&"c"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(result.len(), 1);
+        assert!(result.iter().find(|(k, _)| k == &&"c").is_some());
+    }
+
+    #[test]
+    fn test_insert_tree() {
+        let mut map = TreeMap::default();
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("c", 3);
+
+        let mut other = TreeMap::default();
+        other.insert("a", 2);
+        other.insert("b", 2);
+        other.insert("d", 4);
+
+        map.insert_tree(other);
+
+        assert_eq!(map.iter().count(), 4);
+        assert_eq!(map.get(&"a"), Some(&2));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"c"), Some(&3));
+        assert_eq!(map.get(&"d"), Some(&4));
     }
 }

@@ -2350,6 +2350,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "smol",
+ "sum_tree",
  "tempfile",
  "util",
 ]
@@ -4716,6 +4717,7 @@ dependencies = [
  "futures 0.3.25",
  "fuzzy",
  "git",
+ "git2",
  "glob",
  "gpui",
  "ignore",
@@ -6536,6 +6538,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "take-until"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bdb6fa0dfa67b38c1e66b7041ba9dcf23b99d8121907cd31c807a332f7a0bbb"
+
+[[package]]
 name = "target-lexicon"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7594,6 +7602,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "take-until",
  "tempdir",
  "url",
 ]

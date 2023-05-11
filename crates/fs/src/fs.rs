@@ -27,7 +27,7 @@ use util::ResultExt;
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use repository::FakeGitRepositoryState;
+use repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
 
@@ -650,6 +650,17 @@ impl FakeFs {
                 head_state
                     .iter()
                     .map(|(path, content)| (path.to_path_buf(), content.clone())),
+            );
+        });
+    }
+
+    pub async fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitFileStatus)]) {
+        self.with_git_state(dot_git, |state| {
+            state.worktree_statuses.clear();
+            state.worktree_statuses.extend(
+                statuses
+                    .iter()
+                    .map(|(path, content)| ((**path).into(), content.clone())),
             );
         });
     }
