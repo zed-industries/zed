@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, fmt::Debug};
+use std::{cmp::Ordering, fmt::Debug, iter};
 
 use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
@@ -110,6 +110,26 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         drop(cursor);
         self.0 = new_tree;
     }
+
+
+    pub fn get_from_while<'tree, F>(&'tree self, from: &'tree K, mut f: F) -> impl Iterator<Item = (&K, &V)> + '_
+        where
+            F: FnMut(&K, &K, &V) -> bool + 'tree,
+        {
+            let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+            let from_key = MapKeyRef(Some(from));
+            cursor.seek(&from_key, Bias::Left, &());
+
+            iter::from_fn(move || {
+                let result = cursor.item().and_then(|item| {
+                    (f(from, &item.key, &item.value))
+                        .then(|| (&item.key, &item.value))
+                });
+                cursor.next(&());
+                result
+            })
+        }
+
 
     pub fn update<F, T>(&mut self, key: &K, f: F) -> Option<T>
     where
@@ -352,6 +372,28 @@ mod tests {
         assert_eq!(map.get(&"baaa"), None);
         assert_eq!(map.get(&"baaaab"), None);
         assert_eq!(map.get(&"c"), Some(&5));
+    }
+
+    #[test]
+    fn test_get_from_while() {
+        let mut map = TreeMap::default();
+
+        map.insert("a", 1);
+        map.insert("b", 2);
+        map.insert("baa", 3);
+        map.insert("baaab", 4);
+        map.insert("c", 5);
+
+        let result = map.get_from_while(&"ba", |key, _| key.starts_with(&"ba")).collect::<Vec<_>>();
+
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().find(|(k, _)| k == &&"baa").is_some());
+        assert!(result.iter().find(|(k, _)| k == &&"baaab").is_some());
+
+        let result = map.get_from_while(&"c", |key, _| key.starts_with(&"c")).collect::<Vec<_>>();
+
+        assert_eq!(result.len(), 1);
+        assert!(result.iter().find(|(k, _)| k == &&"c").is_some());
     }
 
     #[test]

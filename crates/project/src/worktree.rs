@@ -55,7 +55,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{paths::HOME, ResultExt, TryFutureExt};
+use util::{paths::HOME, ResultExt, TakeUntilExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -173,11 +173,35 @@ impl RepositoryEntry {
         self.work_directory.contains(snapshot, path)
     }
 
-    pub fn status_for(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
+    pub fn status_for_file(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
         self.work_directory
             .relativize(snapshot, path)
             .and_then(|repo_path| self.worktree_statuses.get(&repo_path))
             .cloned()
+    }
+
+    pub fn status_for_path(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
+        self.work_directory
+            .relativize(snapshot, path)
+            .and_then(|repo_path| {
+                self.worktree_statuses
+                    .get_from_while(&repo_path, |repo_path, key, _| key.starts_with(repo_path))
+                    .map(|(_, status)| status)
+                    // Short circut once we've found the highest level
+                    .take_until(|status| status == &&GitFileStatus::Conflict)
+                    .reduce(
+                        |status_first, status_second| match (status_first, status_second) {
+                            (GitFileStatus::Conflict, _) | (_, GitFileStatus::Conflict) => {
+                                &GitFileStatus::Conflict
+                            }
+                            (GitFileStatus::Added, _) | (_, GitFileStatus::Added) => {
+                                &GitFileStatus::Added
+                            }
+                            _ => &GitFileStatus::Modified,
+                        },
+                    )
+                    .copied()
+            })
     }
 
     pub fn build_update(&self, other: &Self) -> proto::RepositoryEntry {

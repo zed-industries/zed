@@ -26,6 +26,7 @@ serde.workspace = true
 serde_json.workspace = true
 git2 = { version = "0.15", default-features = false, optional = true }
 dirs = "3.0"
+take-until = "0.2.0"
 
 [dev-dependencies]
 tempdir.workspace = true
