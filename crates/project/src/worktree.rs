@@ -185,7 +185,8 @@ impl RepositoryEntry {
             .relativize(snapshot, path)
             .and_then(|repo_path| {
                 self.worktree_statuses
-                    .get_from_while(&repo_path, |repo_path, key, _| key.starts_with(repo_path))
+                    .iter_from(&repo_path)
+                    .take_while(|(key, _)| key.starts_with(&repo_path))
                     .map(|(_, status)| status)
                     // Short circut once we've found the highest level
                     .take_until(|status| status == &&GitFileStatus::Conflict)
@@ -3022,7 +3023,7 @@ impl BackgroundScanner {
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry
                     .worktree_statuses
-                    .remove_from_while(&repo_path, |stored_path, _| {
+                    .remove_by(&repo_path, |stored_path, _| {
                         stored_path.starts_with(&repo_path)
                     })
             });
