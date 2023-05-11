@@ -2,6 +2,7 @@ mod persistence;
 pub mod terminal_button;
 pub mod terminal_element;
 
+use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
 use gpui::{
@@ -16,7 +17,6 @@ use gpui::{
 };
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
-use settings::{Settings, TerminalBlink, WorkingDirectory};
 use smallvec::{smallvec, SmallVec};
 use smol::Timer;
 use std::{
@@ -30,7 +30,7 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, Terminal,
+    Event, Terminal, TerminalBlink, WorkingDirectory,
 };
 use util::ResultExt;
 use workspace::{
@@ -41,7 +41,7 @@ use workspace::{
     Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
-use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
+pub use terminal::TerminalSettings;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -63,6 +63,8 @@ actions!(
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
+    terminal::init(cx);
+
     cx.add_action(TerminalView::deploy);
 
     register_deserializable_item::<TerminalView>(cx);
@@ -101,9 +103,9 @@ impl TerminalView {
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let strategy = cx.global::<Settings>().terminal_strategy();
-
-        let working_directory = get_working_directory(workspace, cx, strategy);
+        let strategy = settings::get_setting::<TerminalSettings>(None, cx);
+        let working_directory =
+            get_working_directory(workspace, cx, strategy.working_directory.clone());
 
         let window_id = cx.window_id();
         let terminal = workspace
@@ -215,10 +217,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
-                    cx.global::<Settings>()
-                        .terminal_overrides
-                        .option_as_meta
-                        .unwrap_or(false),
+                    settings::get_setting::<TerminalSettings>(None, cx).option_as_meta,
                 )
             });
         }
@@ -244,16 +243,7 @@ impl TerminalView {
             return true;
         }
 
-        let setting = {
-            let settings = cx.global::<Settings>();
-            settings
-                .terminal_overrides
-                .blinking
-                .clone()
-                .unwrap_or(TerminalBlink::TerminalControlled)
-        };
-
-        match setting {
+        match settings::get_setting::<TerminalSettings>(None, cx).blinking {
             //If the user requested to never blink, don't blink it.
             TerminalBlink::Off => true,
             //If the terminal is controlling it, check terminal mode
@@ -346,10 +336,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &keystroke,
-                    cx.global::<Settings>()
-                        .terminal_overrides
-                        .option_as_meta
-                        .unwrap_or(false),
+                    settings::get_setting::<TerminalSettings>(None, cx).option_as_meta,
                 );
             });
         }
@@ -412,10 +399,7 @@ impl View for TerminalView {
         self.terminal.update(cx, |term, cx| {
             term.try_keystroke(
                 &event.keystroke,
-                cx.global::<Settings>()
-                    .terminal_overrides
-                    .option_as_meta
-                    .unwrap_or(false),
+                settings::get_setting::<TerminalSettings>(None, cx).option_as_meta,
             )
         })
     }
@@ -617,7 +601,9 @@ impl Item for TerminalView {
                 .flatten()
                 .or_else(|| {
                     cx.read(|cx| {
-                        let strategy = cx.global::<Settings>().terminal_strategy();
+                        let strategy = settings::get_setting::<TerminalSettings>(None, cx)
+                            .working_directory
+                            .clone();
                         workspace
                             .upgrade(cx)
                             .map(|workspace| {

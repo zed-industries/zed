@@ -16,7 +16,7 @@ use gpui::{
 use itertools::Itertools;
 use language::CursorShape;
 use ordered_float::OrderedFloat;
-use settings::Settings;
+use settings::{font_size_for_setting, Settings};
 use terminal::{
     alacritty_terminal::{
         ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
@@ -25,7 +25,7 @@ use terminal::{
         term::{cell::Flags, TermMode},
     },
     mappings::colors::convert_color,
-    IndexedCell, Terminal, TerminalContent, TerminalSize,
+    IndexedCell, Terminal, TerminalContent, TerminalSettings, TerminalSize,
 };
 use theme::TerminalStyle;
 use util::ResultExt;
@@ -510,47 +510,6 @@ impl TerminalElement {
 
         scene.push_mouse_region(region);
     }
-
-    ///Configures a text style from the current settings.
-    pub fn make_text_style(font_cache: &FontCache, settings: &Settings) -> TextStyle {
-        let font_family_name = settings
-            .terminal_overrides
-            .font_family
-            .as_ref()
-            .or(settings.terminal_defaults.font_family.as_ref())
-            .unwrap_or(&settings.buffer_font_family_name);
-        let font_features = settings
-            .terminal_overrides
-            .font_features
-            .as_ref()
-            .or(settings.terminal_defaults.font_features.as_ref())
-            .unwrap_or(&settings.buffer_font_features);
-
-        let family_id = font_cache
-            .load_family(&[font_family_name], &font_features)
-            .log_err()
-            .unwrap_or(settings.buffer_font_family);
-
-        let font_size = settings
-            .terminal_overrides
-            .font_size
-            .or(settings.terminal_defaults.font_size)
-            .unwrap_or(settings.buffer_font_size);
-
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-
-        TextStyle {
-            color: settings.theme.editor.text_color,
-            font_family_id: family_id,
-            font_family_name: font_cache.family_name(family_id).unwrap(),
-            font_id,
-            font_size,
-            font_properties: Default::default(),
-            underline: Default::default(),
-        }
-    }
 }
 
 impl Element<TerminalView> for TerminalElement {
@@ -564,19 +523,50 @@ impl Element<TerminalView> for TerminalElement {
         cx: &mut LayoutContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = cx.global::<Settings>();
-        let font_cache = cx.font_cache();
+        let terminal_settings = settings::get_setting::<TerminalSettings>(None, cx);
 
         //Setup layout information
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
         let link_style = settings.theme.editor.link_definition;
         let tooltip_style = settings.theme.tooltip.clone();
 
-        let text_style = TerminalElement::make_text_style(font_cache, settings);
+        let font_cache = cx.font_cache();
+        let font_size = font_size_for_setting(
+            terminal_settings
+                .font_size
+                .unwrap_or(settings.buffer_font_size),
+            cx,
+        );
+        let font_family_name = terminal_settings
+            .font_family
+            .as_ref()
+            .unwrap_or(&settings.buffer_font_family_name);
+        let font_features = terminal_settings
+            .font_features
+            .as_ref()
+            .unwrap_or(&settings.buffer_font_features);
+        let family_id = font_cache
+            .load_family(&[font_family_name], &font_features)
+            .log_err()
+            .unwrap_or(settings.buffer_font_family);
+        let font_id = font_cache
+            .select_font(family_id, &Default::default())
+            .unwrap();
+
+        let text_style = TextStyle {
+            color: settings.theme.editor.text_color,
+            font_family_id: family_id,
+            font_family_name: font_cache.family_name(family_id).unwrap(),
+            font_id,
+            font_size,
+            font_properties: Default::default(),
+            underline: Default::default(),
+        };
         let selection_color = settings.theme.editor.selection.selection;
         let match_color = settings.theme.search.match_background;
         let gutter;
         let dimensions = {
-            let line_height = text_style.font_size * settings.terminal_line_height();
+            let line_height = text_style.font_size * terminal_settings.line_height.value();
             let cell_width = font_cache.em_advance(text_style.font_id, text_style.font_size);
             gutter = cell_width;
 

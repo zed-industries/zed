@@ -1,3 +1,4 @@
+mod font_size;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
@@ -22,6 +23,7 @@ use std::{borrow::Cow, collections::HashMap, num::NonZeroU32, path::Path, str, s
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
+pub use font_size::{adjust_font_size_delta, font_size_for_setting};
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use settings_file::*;
 pub use settings_store::{Setting, SettingsJsonSchemaParams, SettingsStore};
@@ -35,7 +37,6 @@ pub struct Settings {
     pub buffer_font_family_name: String,
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
-    pub default_buffer_font_size: f32,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
     pub cursor_blink: bool,
@@ -50,8 +51,6 @@ pub struct Settings {
     pub git: GitSettings,
     pub git_overrides: GitSettings,
     pub copilot: CopilotSettings,
-    pub terminal_defaults: TerminalSettings,
-    pub terminal_overrides: TerminalSettings,
     pub language_defaults: HashMap<Arc<str>, EditorSettings>,
     pub language_overrides: HashMap<Arc<str>, EditorSettings>,
     pub lsp: HashMap<Arc<str>, LspSettings>,
@@ -84,7 +83,6 @@ impl Setting for Settings {
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
-            default_buffer_font_size: defaults.buffer_font_size.unwrap(),
             confirm_quit: defaults.confirm_quit.unwrap(),
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
@@ -121,8 +119,6 @@ impl Setting for Settings {
             },
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            terminal_defaults: defaults.terminal.clone(),
-            terminal_overrides: Default::default(),
             language_defaults: defaults.languages.clone(),
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
@@ -332,104 +328,6 @@ pub enum Autosave {
     OnWindowChange,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TerminalSettings {
-    pub shell: Option<Shell>,
-    pub working_directory: Option<WorkingDirectory>,
-    pub font_size: Option<f32>,
-    pub font_family: Option<String>,
-    pub line_height: Option<TerminalLineHeight>,
-    pub font_features: Option<fonts::Features>,
-    pub env: Option<HashMap<String, String>>,
-    pub blinking: Option<TerminalBlink>,
-    pub alternate_scroll: Option<AlternateScroll>,
-    pub option_as_meta: Option<bool>,
-    pub copy_on_select: Option<bool>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalLineHeight {
-    #[default]
-    Comfortable,
-    Standard,
-    Custom(f32),
-}
-
-impl TerminalLineHeight {
-    fn value(&self) -> f32 {
-        match self {
-            TerminalLineHeight::Comfortable => 1.618,
-            TerminalLineHeight::Standard => 1.3,
-            TerminalLineHeight::Custom(line_height) => *line_height,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalBlink {
-    Off,
-    TerminalControlled,
-    On,
-}
-
-impl Default for TerminalBlink {
-    fn default() -> Self {
-        TerminalBlink::TerminalControlled
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    System,
-    Program(String),
-    WithArguments { program: String, args: Vec<String> },
-}
-
-impl Default for Shell {
-    fn default() -> Self {
-        Shell::System
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AlternateScroll {
-    On,
-    Off,
-}
-
-impl Default for AlternateScroll {
-    fn default() -> Self {
-        AlternateScroll::On
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkingDirectory {
-    CurrentProjectDirectory,
-    FirstProjectDirectory,
-    AlwaysHome,
-    Always { directory: String },
-}
-
-impl Default for WorkingDirectory {
-    fn default() -> Self {
-        Self::CurrentProjectDirectory
-    }
-}
-
-impl TerminalSettings {
-    fn line_height(&self) -> Option<f32> {
-        self.line_height
-            .to_owned()
-            .map(|line_height| line_height.value())
-    }
-}
-
 #[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DockAnchor {
@@ -495,8 +393,6 @@ pub struct SettingsFileContent {
     pub default_dock_anchor: Option<DockAnchor>,
     #[serde(flatten)]
     pub editor: EditorSettings,
-    #[serde(default)]
-    pub terminal: TerminalSettings,
     #[serde(default)]
     pub git: Option<GitSettings>,
     #[serde(default)]
@@ -575,7 +471,6 @@ impl Settings {
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
-            default_buffer_font_size: defaults.buffer_font_size.unwrap(),
             confirm_quit: defaults.confirm_quit.unwrap(),
             cursor_blink: defaults.cursor_blink.unwrap(),
             hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
@@ -613,8 +508,6 @@ impl Settings {
             },
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            terminal_defaults: defaults.terminal,
-            terminal_overrides: Default::default(),
             language_defaults: defaults.languages,
             language_overrides: Default::default(),
             lsp: defaults.lsp.clone(),
@@ -627,7 +520,7 @@ impl Settings {
     }
 
     // Fill out the overrride and etc. settings from the user's settings.json
-    pub fn set_user_settings(
+    fn set_user_settings(
         &mut self,
         data: SettingsFileContent,
         theme_registry: &ThemeRegistry,
@@ -662,7 +555,6 @@ impl Settings {
             &mut self.active_pane_magnification,
             data.active_pane_magnification,
         );
-        merge(&mut self.default_buffer_font_size, data.buffer_font_size);
         merge(&mut self.cursor_blink, data.cursor_blink);
         merge(&mut self.confirm_quit, data.confirm_quit);
         merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
@@ -685,9 +577,6 @@ impl Settings {
         }
         self.editor_overrides = data.editor;
         self.git_overrides = data.git.unwrap_or_default();
-        self.terminal_defaults.font_size = data.terminal.font_size;
-        self.terminal_overrides.copy_on_select = data.terminal.copy_on_select;
-        self.terminal_overrides = data.terminal;
         self.language_overrides = data.languages;
         self.lsp = data.lsp;
     }
@@ -799,35 +688,6 @@ impl Settings {
         })
     }
 
-    fn terminal_setting<F, R>(&self, f: F) -> R
-    where
-        F: Fn(&TerminalSettings) -> Option<R>,
-    {
-        None.or_else(|| f(&self.terminal_overrides))
-            .or_else(|| f(&self.terminal_defaults))
-            .expect("missing default")
-    }
-
-    pub fn terminal_line_height(&self) -> f32 {
-        self.terminal_setting(|terminal_setting| terminal_setting.line_height())
-    }
-
-    pub fn terminal_scroll(&self) -> AlternateScroll {
-        self.terminal_setting(|terminal_setting| terminal_setting.alternate_scroll.to_owned())
-    }
-
-    pub fn terminal_shell(&self) -> Shell {
-        self.terminal_setting(|terminal_setting| terminal_setting.shell.to_owned())
-    }
-
-    pub fn terminal_env(&self) -> HashMap<String, String> {
-        self.terminal_setting(|terminal_setting| terminal_setting.env.to_owned())
-    }
-
-    pub fn terminal_strategy(&self) -> WorkingDirectory {
-        self.terminal_setting(|terminal_setting| terminal_setting.working_directory.to_owned())
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &gpui::AppContext) -> Settings {
         Settings {
@@ -839,7 +699,6 @@ impl Settings {
                 .unwrap(),
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
-            default_buffer_font_size: 14.,
             confirm_quit: false,
             cursor_blink: true,
             hover_popover_enabled: true,
@@ -862,8 +721,6 @@ impl Settings {
             },
             editor_overrides: Default::default(),
             copilot: Default::default(),
-            terminal_defaults: Default::default(),
-            terminal_overrides: Default::default(),
             git: Default::default(),
             git_overrides: Default::default(),
             language_defaults: Default::default(),

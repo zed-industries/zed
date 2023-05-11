@@ -1,10 +1,7 @@
-use std::path::PathBuf;
-
-use gpui::{ModelContext, ModelHandle, WeakModelHandle};
-use settings::Settings;
-use terminal::{Terminal, TerminalBuilder};
-
 use crate::Project;
+use gpui::{ModelContext, ModelHandle, WeakModelHandle};
+use std::path::PathBuf;
+use terminal::{Terminal, TerminalBuilder, TerminalSettings};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModelHandle<terminal::Terminal>>,
@@ -22,17 +19,14 @@ impl Project {
                 "creating terminals as a guest is not supported yet"
             ));
         } else {
-            let settings = cx.global::<Settings>();
-            let shell = settings.terminal_shell();
-            let envs = settings.terminal_env();
-            let scroll = settings.terminal_scroll();
+            let settings = settings::get_setting::<TerminalSettings>(None, cx);
 
             let terminal = TerminalBuilder::new(
                 working_directory.clone(),
-                shell,
-                envs,
-                settings.terminal_overrides.blinking.clone(),
-                scroll,
+                settings.shell.clone(),
+                settings.env.clone(),
+                Some(settings.blinking.clone()),
+                settings.alternate_scroll,
                 window_id,
             )
             .map(|builder| {

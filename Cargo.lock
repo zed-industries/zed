@@ -6748,6 +6748,7 @@ dependencies = [
  "ordered-float",
  "procinfo",
  "rand 0.8.5",
+ "schemars",
  "serde",
  "serde_derive",
  "settings",

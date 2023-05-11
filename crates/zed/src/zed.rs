@@ -29,7 +29,7 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{Settings, DEFAULT_SETTINGS_ASSET_PATH};
+use settings::{adjust_font_size_delta, Settings, DEFAULT_SETTINGS_ASSET_PATH};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
@@ -117,29 +117,17 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_global_action(quit);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
-        cx.update_global::<Settings, _, _>(|settings, cx| {
-            settings.buffer_font_size = (settings.buffer_font_size + 1.0).max(MIN_FONT_SIZE);
-            if let Some(terminal_font_size) = settings.terminal_overrides.font_size.as_mut() {
-                *terminal_font_size = (*terminal_font_size + 1.0).max(MIN_FONT_SIZE);
-            }
-            cx.refresh_windows();
-        });
+        adjust_font_size_delta(cx, |size, _| *size += 1.0)
     });
     cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
-        cx.update_global::<Settings, _, _>(|settings, cx| {
-            settings.buffer_font_size = (settings.buffer_font_size - 1.0).max(MIN_FONT_SIZE);
-            if let Some(terminal_font_size) = settings.terminal_overrides.font_size.as_mut() {
-                *terminal_font_size = (*terminal_font_size - 1.0).max(MIN_FONT_SIZE);
+        adjust_font_size_delta(cx, |size, cx| {
+            if cx.global::<Settings>().buffer_font_size + *size > MIN_FONT_SIZE {
+                *size -= 1.0;
             }
-            cx.refresh_windows();
-        });
+        })
     });
     cx.add_global_action(move |_: &ResetBufferFontSize, cx| {
-        cx.update_global::<Settings, _, _>(|settings, cx| {
-            settings.buffer_font_size = settings.default_buffer_font_size;
-            settings.terminal_overrides.font_size = settings.terminal_defaults.font_size;
-            cx.refresh_windows();
-        });
+        adjust_font_size_delta(cx, |size, _| *size = 0.0)
     });
     cx.add_global_action(move |_: &install_cli::Install, cx| {
         cx.spawn(|cx| async move {

@@ -25,7 +25,7 @@ use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::{
     default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
-    Settings, SettingsStore, WorkingDirectory,
+    Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -42,7 +42,7 @@ use std::{
     thread,
     time::Duration,
 };
-use terminal_view::{get_working_directory, TerminalView};
+use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
 use util::http::{self, HttpClient};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
@@ -722,13 +722,9 @@ pub fn dock_default_item_factory(
     workspace: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
 ) -> Option<Box<dyn ItemHandle>> {
-    let strategy = cx
-        .global::<Settings>()
-        .terminal_overrides
+    let strategy = settings::get_setting::<TerminalSettings>(None, cx)
         .working_directory
-        .clone()
-        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-
+        .clone();
     let working_directory = get_working_directory(workspace, cx, strategy);
 
     let window_id = cx.window_id();

@@ -7388,7 +7388,7 @@ fn build_style(
         let font_id = font_cache
             .select_font(font_family_id, &font_properties)
             .unwrap();
-        let font_size = settings.buffer_font_size;
+        let font_size = settings::font_size_for_setting(settings.buffer_font_size, cx);
         EditorStyle {
             text: TextStyle {
                 color: settings.theme.editor.text_color,
@@ -7561,7 +7561,9 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
         let settings = cx.global::<Settings>();
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
-        let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
+        let font_size = (style.text_scale_factor
+            * settings::font_size_for_setting(settings.buffer_font_size, cx))
+        .round();
         Flex::column()
             .with_children(highlighted_lines.iter().map(|(line, highlights)| {
                 Label::new(
