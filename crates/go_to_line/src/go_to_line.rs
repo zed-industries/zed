@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use editor::{
-    display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor, FILE_ROW_COLUMN_DELIMITER,
-};
+use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Axis, Entity,
     View, ViewContext, ViewHandle,
@@ -10,6 +8,7 @@ use gpui::{
 use menu::{Cancel, Confirm};
 use settings::Settings;
 use text::{Bias, Point};
+use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{Modal, Workspace};
 
 actions!(go_to_line, [Toggle]);

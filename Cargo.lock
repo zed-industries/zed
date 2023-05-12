@@ -1097,6 +1097,7 @@ dependencies = [
  "plist",
  "serde",
  "serde_derive",
+ "util",
 ]
 
 [[package]]
@@ -2675,6 +2676,7 @@ dependencies = [
  "postage",
  "settings",
  "text",
+ "util",
  "workspace",
 ]
 

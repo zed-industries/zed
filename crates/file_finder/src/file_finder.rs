@@ -1,4 +1,4 @@
-use editor::{scroll::autoscroll::Autoscroll, Bias, Editor, FILE_ROW_COLUMN_DELIMITER};
+use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::PathMatch;
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
@@ -14,7 +14,7 @@ use std::{
     },
 };
 use text::Point;
-use util::{post_inc, ResultExt};
+use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 
 pub type FileFinder = Picker<FileFinderDelegate>;
@@ -25,7 +25,7 @@ pub struct FileFinderDelegate {
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
-    latest_search_query: Option<FileSearchQuery>,
+    latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
     relative_to: Option<Arc<Path>>,
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
@@ -66,31 +66,9 @@ pub enum Event {
 struct FileSearchQuery {
     raw_query: String,
     file_query_end: Option<usize>,
-    file_row: Option<u32>,
-    file_column: Option<u32>,
 }
 
 impl FileSearchQuery {
-    fn new(raw_query: String) -> Self {
-        let mut components = raw_query
-            .as_str()
-            .splitn(3, FILE_ROW_COLUMN_DELIMITER)
-            .map(str::trim)
-            .fuse();
-        let file_query = components.next().filter(|str| !str.is_empty());
-        let file_row = components.next().and_then(|row| row.parse::<u32>().ok());
-        let file_column = components.next().and_then(|col| col.parse::<u32>().ok());
-
-        Self {
-            file_query_end: file_query
-                .filter(|_| file_row.is_some())
-                .map(|query| query.len()),
-            file_row,
-            file_column,
-            raw_query,
-        }
-    }
-
     fn path_query(&self) -> &str {
         match self.file_query_end {
             Some(file_path_end) => &self.raw_query[..file_path_end],
@@ -152,7 +130,7 @@ impl FileFinderDelegate {
 
     fn spawn_search(
         &mut self,
-        query: FileSearchQuery,
+        query: PathLikeWithPosition<FileSearchQuery>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Task<()> {
         let relative_to = self.relative_to.clone();
@@ -183,7 +161,7 @@ impl FileFinderDelegate {
         cx.spawn(|picker, mut cx| async move {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
-                query.path_query(),
+                query.path_like.path_query(),
                 relative_to,
                 false,
                 100,
@@ -206,18 +184,18 @@ impl FileFinderDelegate {
         &mut self,
         search_id: usize,
         did_cancel: bool,
-        query: FileSearchQuery,
+        query: PathLikeWithPosition<FileSearchQuery>,
         matches: Vec<PathMatch>,
         cx: &mut ViewContext<FileFinder>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
             if self.latest_search_did_cancel
-                && Some(query.path_query())
+                && Some(query.path_like.path_query())
                     == self
                         .latest_search_query
                         .as_ref()
-                        .map(|query| query.path_query())
+                        .map(|query| query.path_like.path_query())
             {
                 util::extend_sorted(&mut self.matches, matches.into_iter(), 100, |a, b| b.cmp(a));
             } else {
@@ -265,7 +243,19 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            self.spawn_search(FileSearchQuery::new(raw_query), cx)
+            let raw_query = &raw_query;
+            let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
+                Ok::<_, std::convert::Infallible>(FileSearchQuery {
+                    raw_query: raw_query.to_owned(),
+                    file_query_end: if path_like_str == raw_query {
+                        None
+                    } else {
+                        Some(path_like_str.len())
+                    },
+                })
+            })
+            .expect("infallible");
+            self.spawn_search(query, cx)
         }
     }
 
@@ -286,12 +276,12 @@ impl PickerDelegate for FileFinderDelegate {
                 let row = self
                     .latest_search_query
                     .as_ref()
-                    .and_then(|query| query.file_row)
+                    .and_then(|query| query.row)
                     .map(|row| row.saturating_sub(1));
                 let col = self
                     .latest_search_query
                     .as_ref()
-                    .and_then(|query| query.file_column)
+                    .and_then(|query| query.column)
                     .unwrap_or(0)
                     .saturating_sub(1);
                 cx.spawn(|_, mut cx| async move {
@@ -477,10 +467,13 @@ mod tests {
                 .latest_search_query
                 .as_ref()
                 .expect("Finder should have a query after the update_matches call");
-            assert_eq!(latest_search_query.raw_query, query_inside_file);
-            assert_eq!(latest_search_query.file_row, Some(file_row));
-            assert_eq!(latest_search_query.file_column, Some(file_column as u32));
-            assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+            assert_eq!(latest_search_query.path_like.raw_query, query_inside_file);
+            assert_eq!(
+                latest_search_query.path_like.file_query_end,
+                Some(file_query.len())
+            );
+            assert_eq!(latest_search_query.row, Some(file_row));
+            assert_eq!(latest_search_query.column, Some(file_column as u32));
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
@@ -564,10 +557,13 @@ mod tests {
                 .latest_search_query
                 .as_ref()
                 .expect("Finder should have a query after the update_matches call");
-            assert_eq!(latest_search_query.raw_query, query_outside_file);
-            assert_eq!(latest_search_query.file_row, Some(file_row));
-            assert_eq!(latest_search_query.file_column, Some(file_column as u32));
-            assert_eq!(latest_search_query.file_query_end, Some(file_query.len()));
+            assert_eq!(latest_search_query.path_like.raw_query, query_outside_file);
+            assert_eq!(
+                latest_search_query.path_like.file_query_end,
+                Some(file_query.len())
+            );
+            assert_eq!(latest_search_query.row, Some(file_row));
+            assert_eq!(latest_search_query.column, Some(file_column as u32));
         });
 
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
@@ -634,7 +630,7 @@ mod tests {
             )
         });
 
-        let query = FileSearchQuery::new("hi".to_string());
+        let query = test_path_like("hi");
         finder
             .update(cx, |f, cx| f.delegate_mut().spawn_search(query.clone(), cx))
             .await;
@@ -719,8 +715,7 @@ mod tests {
         });
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut()
-                    .spawn_search(FileSearchQuery::new("hi".to_string()), cx)
+                f.delegate_mut().spawn_search(test_path_like("hi"), cx)
             })
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 7));
@@ -758,8 +753,7 @@ mod tests {
         // is included in the matching, because the worktree is a single file.
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut()
-                    .spawn_search(FileSearchQuery::new("thf".to_string()), cx)
+                f.delegate_mut().spawn_search(test_path_like("thf"), cx)
             })
             .await;
         cx.read(|cx| {
@@ -779,8 +773,7 @@ mod tests {
         // not match anything.
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut()
-                    .spawn_search(FileSearchQuery::new("thf/".to_string()), cx)
+                f.delegate_mut().spawn_search(test_path_like("thf/"), cx)
             })
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 0));
@@ -826,8 +819,7 @@ mod tests {
         // Run a search that matches two files with the same relative path.
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut()
-                    .spawn_search(FileSearchQuery::new("a.t".to_string()), cx)
+                f.delegate_mut().spawn_search(test_path_like("a.t"), cx)
             })
             .await;
 
@@ -884,8 +876,7 @@ mod tests {
 
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut()
-                    .spawn_search(FileSearchQuery::new("a.txt".to_string()), cx)
+                f.delegate_mut().spawn_search(test_path_like("a.txt"), cx)
             })
             .await;
 
@@ -928,13 +919,26 @@ mod tests {
         });
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut()
-                    .spawn_search(FileSearchQuery::new("dir".to_string()), cx)
+                f.delegate_mut().spawn_search(test_path_like("dir"), cx)
             })
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
         });
+    }
+
+    fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {
+        PathLikeWithPosition::parse_str(test_str, |path_like_str| {
+            Ok::<_, std::convert::Infallible>(FileSearchQuery {
+                raw_query: test_str.to_owned(),
+                file_query_end: if path_like_str == test_str {
+                    None
+                } else {
+                    Some(path_like_str.len())
+                },
+            })
+        })
+        .unwrap()
     }
 }

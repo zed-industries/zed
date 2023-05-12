@@ -2,7 +2,6 @@ use crate::{
     display_map::ToDisplayPoint, link_go_to_definition::hide_link_definition,
     movement::surrounding_word, persistence::DB, scroll::ScrollAnchor, Anchor, Autoscroll, Editor,
     Event, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, NavigationData, ToPoint as _,
-    FILE_ROW_COLUMN_DELIMITER,
 };
 use anyhow::{Context, Result};
 use collections::HashSet;
@@ -28,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
-use util::{ResultExt, TryFutureExt};
+use util::{paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},

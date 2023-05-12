@@ -19,6 +19,7 @@ dirs = "3.0"
 ipc-channel = "0.16"
 serde.workspace = true
 serde_derive.workspace = true
+util = { path = "../util" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"

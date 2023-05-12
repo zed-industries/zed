@@ -98,7 +98,6 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
-pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {

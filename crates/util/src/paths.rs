@@ -70,3 +70,40 @@ pub fn compact(path: &Path) -> PathBuf {
         path.to_path_buf()
     }
 }
+
+pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
+
+#[derive(Debug, Clone)]
+pub struct PathLikeWithPosition<P> {
+    pub path_like: P,
+    pub row: Option<u32>,
+    pub column: Option<u32>,
+}
+
+impl<P> PathLikeWithPosition<P> {
+    pub fn parse_str<F, E>(s: &str, parse_path_like_str: F) -> Result<Self, E>
+    where
+        F: Fn(&str) -> Result<P, E>,
+    {
+        let mut components = s.splitn(3, FILE_ROW_COLUMN_DELIMITER).map(str::trim).fuse();
+        let path_like_str = components.next().filter(|str| !str.is_empty());
+        let row = components.next().and_then(|row| row.parse::<u32>().ok());
+        let column = components
+            .next()
+            .filter(|_| row.is_some())
+            .and_then(|col| col.parse::<u32>().ok());
+
+        Ok(match path_like_str {
+            Some(path_like_str) => Self {
+                path_like: parse_path_like_str(path_like_str)?,
+                row,
+                column,
+            },
+            None => Self {
+                path_like: parse_path_like_str(s)?,
+                row: None,
+                column: None,
+            },
+        })
+    }
+}
