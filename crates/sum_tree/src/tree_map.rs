@@ -1,8 +1,4 @@
-use std::{
-    cmp::Ordering,
-    fmt::Debug,
-    path::{Path, PathBuf},
-};
+use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
@@ -173,38 +169,21 @@ impl<'a, K: Debug + Clone + Default + Ord, T: MapSeekTarget<K>>
     SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapSeekTargetAdaptor<'_, T>
 {
     fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
-        MapSeekTarget::cmp(self.0, cursor_location)
+        if let Some(key) = &cursor_location.0 {
+            MapSeekTarget::cmp_cursor(self.0, key)
+        } else {
+            Ordering::Greater
+        }
     }
 }
 
 pub trait MapSeekTarget<K>: Debug {
-    fn cmp(&self, cursor_location: &MapKeyRef<K>) -> Ordering;
+    fn cmp_cursor(&self, cursor_location: &K) -> Ordering;
 }
 
 impl<K: Debug + Ord> MapSeekTarget<K> for K {
-    fn cmp(&self, cursor_location: &MapKeyRef<K>) -> Ordering {
-        if let Some(key) = &cursor_location.0 {
-            self.cmp(key)
-        } else {
-            Ordering::Greater
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct PathDescendants<'a>(&'a Path);
-
-impl MapSeekTarget<PathBuf> for PathDescendants<'_> {
-    fn cmp(&self, cursor_location: &MapKeyRef<PathBuf>) -> Ordering {
-        if let Some(key) = &cursor_location.0 {
-            if key.starts_with(&self.0) {
-                Ordering::Greater
-            } else {
-                self.0.cmp(key)
-            }
-        } else {
-            Ordering::Greater
-        }
+    fn cmp_cursor(&self, cursor_location: &K) -> Ordering {
+        self.cmp(cursor_location)
     }
 }
 
@@ -405,6 +384,21 @@ mod tests {
 
     #[test]
     fn test_remove_between_and_path_successor() {
+        use std::path::{Path, PathBuf};
+
+        #[derive(Debug)]
+        pub struct PathDescendants<'a>(&'a Path);
+
+        impl MapSeekTarget<PathBuf> for PathDescendants<'_> {
+            fn cmp_cursor(&self, key: &PathBuf) -> Ordering {
+                if key.starts_with(&self.0) {
+                    Ordering::Greater
+                } else {
+                    self.0.cmp(key)
+                }
+            }
+        }
+
         let mut map = TreeMap::default();
 
         map.insert(PathBuf::from("a"), 1);
@@ -415,7 +409,10 @@ mod tests {
         map.insert(PathBuf::from("c"), 5);
         map.insert(PathBuf::from("c/a"), 6);
 
-        map.remove_range(&PathBuf::from("b/a"), &PathDescendants(&PathBuf::from("b/a")));
+        map.remove_range(
+            &PathBuf::from("b/a"),
+            &PathDescendants(&PathBuf::from("b/a")),
+        );
 
         assert_eq!(map.get(&PathBuf::from("a")), Some(&1));
         assert_eq!(map.get(&PathBuf::from("a/a")), Some(&1));

@@ -7,7 +7,7 @@ use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
 use fs::{
-    repository::{GitFileStatus, GitRepository, RepoPath},
+    repository::{GitFileStatus, GitRepository, RepoPath, RepoPathDescendants},
     Fs, LineEnding,
 };
 use futures::{
@@ -54,7 +54,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet, PathDescendants};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{paths::HOME, ResultExt, TakeUntilExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -3023,7 +3023,7 @@ impl BackgroundScanner {
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry
                     .worktree_statuses
-                    .remove_range(&repo_path, &PathDescendants(&repo_path))
+                    .remove_range(&repo_path, &RepoPathDescendants(&repo_path))
             });
         }
 

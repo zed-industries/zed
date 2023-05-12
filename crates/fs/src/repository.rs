@@ -3,12 +3,13 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use serde_derive::{Deserialize, Serialize};
 use std::{
+    cmp::Ordering,
     ffi::OsStr,
     os::unix::prelude::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
-use sum_tree::TreeMap;
+use sum_tree::{MapSeekTarget, TreeMap};
 use util::ResultExt;
 
 pub use git2::Repository as LibGitRepository;
@@ -231,5 +232,18 @@ impl std::ops::Deref for RepoPath {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+#[derive(Debug)]
+pub struct RepoPathDescendants<'a>(pub &'a Path);
+
+impl<'a> MapSeekTarget<RepoPath> for RepoPathDescendants<'a> {
+    fn cmp_cursor(&self, key: &RepoPath) -> Ordering {
+        if key.starts_with(&self.0) {
+            Ordering::Greater
+        } else {
+            self.0.cmp(key)
+        }
     }
 }
