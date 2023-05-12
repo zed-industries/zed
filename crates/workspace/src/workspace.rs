@@ -3091,7 +3091,7 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use crate::{
-        dock::test::TestPanel,
+        dock::test::{TestPanel, TestPanelEvent},
         item::test::{TestItem, TestItemEvent, TestProjectItem},
     };
 
@@ -3767,14 +3767,50 @@ mod tests {
             assert!(!workspace.left_dock().read(cx).is_open());
             // The bottom dock is sized based on the panel's default size,
             // since the panel orientation changed from vertical to horizontal.
+            let bottom_dock = workspace.bottom_dock();
             assert_eq!(
-                workspace
-                    .bottom_dock()
-                    .read(cx)
-                    .active_panel_size()
-                    .unwrap(),
+                bottom_dock.read(cx).active_panel_size().unwrap(),
                 panel_1.default_size(cx),
             );
+            // Close bottom dock and move panel_1 back to the left.
+            bottom_dock.update(cx, |bottom_dock, cx| bottom_dock.set_open(false, cx));
+            panel_1.set_position(DockPosition::Left, cx);
+        });
+
+        // Emit activated event on panel 1
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::Activated));
+
+        // Now the left dock is open and panel_1 is active and focused.
+        workspace.read_with(cx, |workspace, cx| {
+            let left_dock = workspace.left_dock();
+            assert!(left_dock.read(cx).is_open());
+            assert_eq!(
+                left_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            assert!(panel_1.is_focused(cx));
+        });
+
+        // Emit closed event on panel 2, which is not active
+        panel_2.update(cx, |_, cx| cx.emit(TestPanelEvent::Closed));
+
+        // Wo don't close the left dock, because panel_2 wasn't the active panel
+        workspace.read_with(cx, |workspace, cx| {
+            let left_dock = workspace.left_dock();
+            assert!(left_dock.read(cx).is_open());
+            assert_eq!(
+                left_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+        });
+
+        // Emit closed event on panel 1, which is active
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::Closed));
+
+        // Now the left dock is closed, because panel_1 was the active panel
+        workspace.read_with(cx, |workspace, cx| {
+            let left_dock = workspace.left_dock();
+            assert!(!left_dock.read(cx).is_open());
         });
     }
 }

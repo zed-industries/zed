@@ -12,8 +12,8 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AnyElement, AppContext, Axis, ClipboardItem, Element, Entity, ModelHandle, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};

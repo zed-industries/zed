@@ -180,16 +180,20 @@ impl Dock {
     pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
-            cx.subscribe(&panel, |this, view, event, cx| {
-                if view.read(cx).should_activate_on_event(event, cx) {
+            cx.subscribe(&panel, |this, panel, event, cx| {
+                if panel.read(cx).should_activate_on_event(event, cx) {
                     if let Some(ix) = this
                         .panel_entries
                         .iter()
-                        .position(|entry| entry.panel.id() == view.id())
+                        .position(|entry| entry.panel.id() == panel.id())
                     {
+                        this.set_open(true, cx);
                         this.activate_panel(ix, cx);
+                        cx.focus(&panel);
                     }
-                } else if view.read(cx).should_close_on_event(event, cx) {
+                } else if panel.read(cx).should_close_on_event(event, cx)
+                    && this.active_panel().map_or(false, |p| p.id() == panel.id())
+                {
                     this.set_open(false, cx);
                 }
             }),
