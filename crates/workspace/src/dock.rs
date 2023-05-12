@@ -2,7 +2,8 @@ use crate::{StatusItemView, Workspace};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
-    AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    AppContext, Axis, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -115,6 +116,13 @@ impl DockPosition {
             Self::Left => HandleSide::Right,
             Self::Bottom => HandleSide::Top,
             Self::Right => HandleSide::Left,
+        }
+    }
+
+    pub fn axis(&self) -> Axis {
+        match self {
+            Self::Left | Self::Right => Axis::Horizontal,
+            Self::Bottom => Axis::Vertical,
         }
     }
 }
@@ -247,6 +255,23 @@ impl Dock {
         }
     }
 
+    pub fn panel_size(&self, panel: &dyn PanelHandle) -> Option<f32> {
+        self.panel_entries
+            .iter()
+            .find(|entry| entry.panel.id() == panel.id())
+            .map(|entry| entry.size)
+    }
+
+    pub fn resize_panel(&mut self, panel: &dyn PanelHandle, size: f32) {
+        let entry = self
+            .panel_entries
+            .iter_mut()
+            .find(|entry| entry.panel.id() == panel.id());
+        if let Some(entry) = entry {
+            entry.size = size;
+        }
+    }
+
     pub fn active_panel_size(&self) -> Option<f32> {
         if self.is_open {
             self.panel_entries
@@ -281,9 +306,13 @@ impl View for Dock {
             ChildView::new(active_panel.as_any(), cx)
                 .contained()
                 .with_style(style.container)
-                .resizable(self.position.to_resize_handle_side(), size, |dock: &mut Self, size, cx|  {
-                    dock.resize_active_panel(size, cx);
-                })
+                .resizable(
+                    self.position.to_resize_handle_side(),
+                    size,
+                    |dock: &mut Self, size, cx| {
+                        dock.resize_active_panel(size, cx);
+                    },
+                )
                 .into_any()
         } else {
             Empty::new().into_any()
@@ -487,7 +516,10 @@ pub(crate) mod test {
         }
 
         fn default_size(&self, _: &WindowContext) -> f32 {
-            300.
+            match self.position.axis() {
+                Axis::Horizontal => 300.,
+                Axis::Vertical => 200.,
+            }
         }
 
         fn icon_path(&self) -> &'static str {

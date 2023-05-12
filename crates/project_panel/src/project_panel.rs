@@ -12,8 +12,8 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyElement, AppContext, Axis, ClipboardItem, Element, Entity, ModelHandle, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -1347,9 +1347,7 @@ impl Entity for ProjectPanel {
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
         let settings = cx.global::<Settings>();
-        match settings
-            .project_panel
-            .dock {
+        match settings.project_panel.dock {
             settings::ProjectPanelDockPosition::Left => DockPosition::Left,
             settings::ProjectPanelDockPosition::Right => DockPosition::Right,
         }

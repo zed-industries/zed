@@ -599,7 +599,10 @@ impl Settings {
         }
         self.editor_overrides = data.editor;
         merge(&mut self.project_panel.dock, data.project_panel.dock);
-        merge(&mut self.project_panel.default_width, data.project_panel.default_width);
+        merge(
+            &mut self.project_panel.default_width,
+            data.project_panel.default_width,
+        );
         self.git_overrides = data.git.unwrap_or_default();
         self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;

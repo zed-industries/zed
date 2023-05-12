@@ -196,12 +196,7 @@ pub trait Element<V: View>: 'static {
     where
         Self: 'static + Sized,
     {
-        Resizable::new(
-            self.into_any(),
-            side,
-            size,
-            on_resize
-       )
+        Resizable::new(self.into_any(), side, size, on_resize)
     }
 }
 

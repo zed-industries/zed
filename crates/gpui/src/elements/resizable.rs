@@ -7,8 +7,8 @@ use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
-    AnyElement, Axis, Element, LayoutContext, MouseRegion, SceneBuilder, View,
-    ViewContext, SizeConstraint,
+    AnyElement, Axis, Element, LayoutContext, MouseRegion, SceneBuilder, SizeConstraint, View,
+    ViewContext,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -73,7 +73,7 @@ pub struct Resizable<V: View> {
     child: AnyElement<V>,
     handle_side: HandleSide,
     handle_size: f32,
-    on_resize: Rc<RefCell<dyn FnMut(&mut V, f32, &mut ViewContext<V>)>>
+    on_resize: Rc<RefCell<dyn FnMut(&mut V, f32, &mut ViewContext<V>)>>,
 }
 
 const DEFAULT_HANDLE_SIZE: f32 = 4.0;
@@ -83,7 +83,7 @@ impl<V: View> Resizable<V> {
         child: AnyElement<V>,
         handle_side: HandleSide,
         size: f32,
-        on_resize: impl 'static + FnMut(&mut V, f32, &mut ViewContext<V>)
+        on_resize: impl 'static + FnMut(&mut V, f32, &mut ViewContext<V>),
     ) -> Self {
         let child = match handle_side.axis() {
             Axis::Horizontal => child.constrained().with_max_width(size),
@@ -133,22 +133,29 @@ impl<V: View> Element<V> for Resizable<V> {
 
         enum ResizeHandle {}
         scene.push_mouse_region(
-            MouseRegion::new::<ResizeHandle>(cx.view_id(), self.handle_side as usize, handle_region)
-                .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
-                .on_drag(MouseButton::Left, {
-                    let bounds = bounds.clone();
-                    let side = self.handle_side;
-                    let prev_size = side.relevant_component(bounds.size());
-                    let min_size = side.relevant_component(constraint.min);
-                    let max_size = side.relevant_component(constraint.max);
-                    let on_resize = self.on_resize.clone();
-                    move |event, view: &mut V, cx| {
-                        let new_size = min_size.max(prev_size + side.compute_delta(event)).min(max_size).round();
-                        if new_size != prev_size {
-                            on_resize.borrow_mut()(view, new_size, cx);
-                        }
+            MouseRegion::new::<ResizeHandle>(
+                cx.view_id(),
+                self.handle_side as usize,
+                handle_region,
+            )
+            .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
+            .on_drag(MouseButton::Left, {
+                let bounds = bounds.clone();
+                let side = self.handle_side;
+                let prev_size = side.relevant_component(bounds.size());
+                let min_size = side.relevant_component(constraint.min);
+                let max_size = side.relevant_component(constraint.max);
+                let on_resize = self.on_resize.clone();
+                move |event, view: &mut V, cx| {
+                    let new_size = min_size
+                        .max(prev_size + side.compute_delta(event))
+                        .min(max_size)
+                        .round();
+                    if new_size != prev_size {
+                        on_resize.borrow_mut()(view, new_size, cx);
                     }
-                }),
+                }
+            }),
         );
 
         scene.push_cursor_region(crate::CursorRegion {

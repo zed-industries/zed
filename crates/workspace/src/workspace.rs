@@ -852,10 +852,18 @@ impl Workspace {
 
         cx.subscribe(&panel, {
             let mut dock = dock.clone();
+            let mut prev_position = panel.position(cx);
             move |this, panel, event, cx| {
                 if T::should_change_position_on_event(event) {
+                    let new_position = panel.read(cx).position(cx);
                     let mut was_visible = false;
+                    let mut size = None;
                     dock.update(cx, |dock, cx| {
+                        if new_position.axis() == prev_position.axis() {
+                            size = dock.panel_size(&panel);
+                        }
+                        prev_position = new_position;
+
                         was_visible = dock.is_open()
                             && dock
                                 .active_panel()
@@ -869,7 +877,11 @@ impl Workspace {
                     }
                     .clone();
                     dock.update(cx, |dock, cx| {
-                        dock.add_panel(panel, cx);
+                        dock.add_panel(panel.clone(), cx);
+                        if let Some(size) = size {
+                            dock.resize_panel(&panel, size);
+                        }
+
                         if was_visible {
                             dock.set_open(true, cx);
                             dock.activate_panel(dock.panels_len() - 1, cx);
@@ -3678,10 +3690,17 @@ mod tests {
                 .right_dock()
                 .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
 
+            let left_dock = workspace.left_dock();
             assert_eq!(
-                workspace.left_dock().read(cx).active_panel().unwrap().id(),
+                left_dock.read(cx).active_panel().unwrap().id(),
                 panel_1.id()
             );
+            assert_eq!(
+                left_dock.read(cx).active_panel_size().unwrap(),
+                panel_1.default_size(cx)
+            );
+
+            left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
             assert_eq!(
                 workspace.right_dock().read(cx).active_panel().unwrap().id(),
                 panel_2.id()
@@ -3700,10 +3719,12 @@ mod tests {
             // Since it was the only panel on the left, the left dock should now be closed.
             assert!(!workspace.left_dock().read(cx).is_open());
             assert!(workspace.left_dock().read(cx).active_panel().is_none());
+            let right_dock = workspace.right_dock();
             assert_eq!(
-                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                right_dock.read(cx).active_panel().unwrap().id(),
                 panel_1.id()
             );
+            assert_eq!(right_dock.read(cx).active_panel_size().unwrap(), 1337.);
 
             // Now we move panel_2 to the left
             panel_2.set_position(DockPosition::Left, cx);
@@ -3727,13 +3748,33 @@ mod tests {
 
         workspace.update(cx, |workspace, cx| {
             // Since panel_1 was visible on the right, we open the left dock and make panel_1 active.
-            assert!(workspace.left_dock().read(cx).is_open());
+            let left_dock = workspace.left_dock();
+            assert!(left_dock.read(cx).is_open());
             assert_eq!(
-                workspace.left_dock().read(cx).active_panel().unwrap().id(),
+                left_dock.read(cx).active_panel().unwrap().id(),
                 panel_1.id()
             );
+            assert_eq!(left_dock.read(cx).active_panel_size().unwrap(), 1337.);
             // And right the dock should be closed as it no longer has any panels.
             assert!(!workspace.right_dock().read(cx).is_open());
+
+            // Now we move panel_1 to the bottom
+            panel_1.set_position(DockPosition::Bottom, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_1 was visible on the left, we close the left dock.
+            assert!(!workspace.left_dock().read(cx).is_open());
+            // The bottom dock is sized based on the panel's default size,
+            // since the panel orientation changed from vertical to horizontal.
+            assert_eq!(
+                workspace
+                    .bottom_dock()
+                    .read(cx)
+                    .active_panel_size()
+                    .unwrap(),
+                panel_1.default_size(cx),
+            );
         });
     }
 }
