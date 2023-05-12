@@ -108,7 +108,8 @@
   "auto_update": true,
   // Git gutter behavior configuration.
   "project_panel": {
-      "dock": "left"
+      "dock": "left",
+      "default_width": 240
   },
   "git": {
     // Control whether the git gutter is shown. May take 2 values:

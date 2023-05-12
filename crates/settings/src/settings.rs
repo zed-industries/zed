@@ -44,8 +44,7 @@ pub struct Settings {
     pub show_call_status_icon: bool,
     pub vim_mode: bool,
     pub autosave: Autosave,
-    pub project_panel_defaults: ProjectPanelSettings,
-    pub project_panel_overrides: ProjectPanelSettings,
+    pub project_panel: ProjectPanelSettings,
     pub editor_defaults: EditorSettings,
     pub editor_overrides: EditorSettings,
     pub git: GitSettings,
@@ -158,9 +157,15 @@ pub enum GitGutter {
 
 pub struct GitGutterConfig {}
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectPanelSettings {
+    pub dock: ProjectPanelDockPosition,
+    pub default_width: f32,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectPanelSettingsContent {
     pub dock: Option<ProjectPanelDockPosition>,
+    pub default_width: Option<f32>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -253,6 +258,8 @@ impl Default for HourFormat {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettings {
+    pub default_width: Option<f32>,
+    pub default_height: Option<f32>,
     pub shell: Option<Shell>,
     pub working_directory: Option<WorkingDirectory>,
     pub font_size: Option<f32>,
@@ -387,7 +394,7 @@ pub struct SettingsFileContent {
     #[serde(flatten)]
     pub editor: EditorSettings,
     #[serde(default)]
-    pub project_panel: ProjectPanelSettings,
+    pub project_panel: ProjectPanelSettingsContent,
     #[serde(default)]
     pub journal: JournalSettings,
     #[serde(default)]
@@ -423,7 +430,6 @@ pub struct Features {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     pub copilot: Option<bool>,
 }
@@ -482,8 +488,10 @@ impl Settings {
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             vim_mode: defaults.vim_mode.unwrap(),
             autosave: defaults.autosave.unwrap(),
-            project_panel_defaults: defaults.project_panel,
-            project_panel_overrides: Default::default(),
+            project_panel: ProjectPanelSettings {
+                dock: defaults.project_panel.dock.unwrap(),
+                default_width: defaults.project_panel.default_width.unwrap(),
+            },
             editor_defaults: EditorSettings {
                 tab_size: required(defaults.editor.tab_size),
                 hard_tabs: required(defaults.editor.hard_tabs),
@@ -590,7 +598,8 @@ impl Settings {
             }
         }
         self.editor_overrides = data.editor;
-        self.project_panel_overrides = data.project_panel;
+        merge(&mut self.project_panel.dock, data.project_panel.dock);
+        merge(&mut self.project_panel.default_width, data.project_panel.default_width);
         self.git_overrides = data.git.unwrap_or_default();
         self.journal_overrides = data.journal;
         self.terminal_defaults.font_size = data.terminal.font_size;
@@ -778,8 +787,10 @@ impl Settings {
             show_call_status_icon: true,
             vim_mode: false,
             autosave: Autosave::Off,
-            project_panel_defaults: Default::default(),
-            project_panel_overrides: Default::default(),
+            project_panel: ProjectPanelSettings {
+                dock: ProjectPanelDockPosition::Left,
+                default_width: 240.,
+            },
             editor_defaults: EditorSettings {
                 tab_size: Some(4.try_into().unwrap()),
                 hard_tabs: Some(false),

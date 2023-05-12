@@ -766,7 +766,7 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
 #[cfg(test)]
 pub(crate) mod test {
     use super::{Item, ItemEvent};
-    use crate::{dock::Panel, ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         elements::Empty, AnyElement, AppContext, Element, Entity, ModelHandle, Task, View,
         ViewContext, ViewHandle, WeakViewHandle,
@@ -1057,44 +1057,6 @@ pub(crate) mod test {
         ) -> Task<anyhow::Result<ViewHandle<Self>>> {
             let view = cx.add_view(|_cx| Self::new_deserialized(workspace_id));
             Task::Ready(Some(anyhow::Ok(view)))
-        }
-    }
-
-    impl Panel for TestItem {
-        fn position(&self, _cx: &gpui::WindowContext) -> crate::dock::DockPosition {
-            unimplemented!()
-        }
-
-        fn position_is_valid(&self, _position: crate::dock::DockPosition) -> bool {
-            unimplemented!()
-        }
-
-        fn set_position(
-            &mut self,
-            _position: crate::dock::DockPosition,
-            _cx: &mut ViewContext<Self>,
-        ) {
-            unimplemented!()
-        }
-
-        fn icon_path(&self) -> &'static str {
-            unimplemented!()
-        }
-
-        fn icon_tooltip(&self) -> String {
-            unimplemented!()
-        }
-
-        fn should_change_position_on_event(_: &Self::Event) -> bool {
-            unimplemented!()
-        }
-
-        fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
-            unimplemented!()
-        }
-
-        fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
-            unimplemented!()
         }
     }
 }

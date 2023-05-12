@@ -1347,12 +1347,9 @@ impl Entity for ProjectPanel {
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
         let settings = cx.global::<Settings>();
-        let dock = settings
-            .project_panel_overrides
-            .dock
-            .or(settings.project_panel_defaults.dock)
-            .unwrap();
-        match dock {
+        match settings
+            .project_panel
+            .dock {
             settings::ProjectPanelDockPosition::Left => DockPosition::Left,
             settings::ProjectPanelDockPosition::Right => DockPosition::Right,
         }
@@ -1372,6 +1369,10 @@ impl workspace::dock::Panel for ProjectPanel {
             };
             settings.project_panel.dock = Some(dock);
         })
+    }
+
+    fn default_size(&self, cx: &gpui::WindowContext) -> f32 {
+        cx.global::<Settings>().project_panel.default_width
     }
 
     fn icon_path(&self) -> &'static str {

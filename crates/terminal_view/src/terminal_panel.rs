@@ -179,6 +179,14 @@ impl Panel for TerminalPanel {
         });
     }
 
+    fn default_size(&self, cx: &gpui::WindowContext) -> f32 {
+        let settings = &cx.global::<Settings>().terminal_overrides;
+        match self.position(cx) {
+            DockPosition::Left | DockPosition::Right => settings.default_width.unwrap_or(640.),
+            DockPosition::Bottom => settings.default_height.unwrap_or(320.),
+        }
+    }
+
     fn icon_path(&self) -> &'static str {
         "icons/terminal_12.svg"
     }
