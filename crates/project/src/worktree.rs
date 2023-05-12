@@ -54,7 +54,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet, PathDescendants};
 use util::{paths::HOME, ResultExt, TakeUntilExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -3023,9 +3023,7 @@ impl BackgroundScanner {
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry
                     .worktree_statuses
-                    .remove_by(&repo_path, |stored_path| {
-                        stored_path.starts_with(&repo_path)
-                    })
+                    .remove_range(&repo_path, &PathDescendants(&repo_path))
             });
         }
 

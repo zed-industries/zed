@@ -5,7 +5,7 @@ use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use std::marker::PhantomData;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
-pub use tree_map::{TreeMap, TreeSet};
+pub use tree_map::{TreeMap, TreeSet, PathDescendants};
 
 #[cfg(test)]
 const TREE_BASE: usize = 2;
@@ -47,7 +47,7 @@ impl<'a, T: Summary> Dimension<'a, T> for T {
 }
 
 pub trait SeekTarget<'a, S: Summary, D: Dimension<'a, S>>: fmt::Debug {
-    fn cmp(&self, cursor_location: &D, cx: &S::Context) -> Ordering;
+   fn cmp(&self, cursor_location: &D, cx: &S::Context) -> Ordering;
 }
 
 impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
