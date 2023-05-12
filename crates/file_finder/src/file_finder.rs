@@ -239,6 +239,13 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.matches.clear();
+            self.matches = self
+                .project
+                .read(cx)
+                .search_panel_state()
+                .recent_selections()
+                .cloned()
+                .collect();
             cx.notify();
             Task::ready(())
         } else {
@@ -261,11 +268,14 @@ impl PickerDelegate for FileFinderDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<FileFinder>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade(cx) {
+                self.project.update(cx, |project, _cx| {
+                    project.update_search_panel_state().add_selection(m.clone())
+                });
+
                 let project_path = ProjectPath {
                     worktree_id: WorktreeId::from_usize(m.worktree_id),
                     path: m.path.clone(),
                 };
-
                 let open_task = workspace.update(cx, |workspace, cx| {
                     workspace.open_path(project_path.clone(), None, true, cx)
                 });
@@ -301,7 +311,6 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-
                     workspace
                         .update(&mut cx, |workspace, cx| workspace.dismiss_modal(cx))
                         .log_err();
@@ -901,6 +910,97 @@ mod tests {
         cx.read(|cx| {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_query_history(cx: &mut gpui::TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches("fir".to_string(), cx)
+            })
+            .await;
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches("sec".to_string(), cx)
+            })
+            .await;
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+
+        finder.read_with(cx, |finder, cx| {
+            let recent_query_paths = finder
+                .delegate()
+                .project
+                .read(cx)
+                .search_panel_state()
+                .recent_selections()
+                .map(|query| query.path.to_path_buf())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                vec![
+                    Path::new("test/second.rs").to_path_buf(),
+                    Path::new("test/first.rs").to_path_buf(),
+                ],
+                recent_query_paths,
+                "Two finder queries should produce only two recent queries. Second query should be more recent (first)"
+            )
+        });
+
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches("fir".to_string(), cx)
+            })
+            .await;
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+
+        finder.read_with(cx, |finder, cx| {
+            let recent_query_paths = finder
+                .delegate()
+                .project
+                .read(cx)
+                .search_panel_state()
+                .recent_selections()
+                .map(|query| query.path.to_path_buf())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                vec![
+                    Path::new("test/first.rs").to_path_buf(),
+                    Path::new("test/second.rs").to_path_buf(),
+                ],
+                recent_query_paths,
+                "Three finder queries on two different files should produce only two recent queries. First query should be more recent (first), since got queried again"
+            )
         });
     }
 
