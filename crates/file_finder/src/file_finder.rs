@@ -295,8 +295,6 @@ impl PickerDelegate for FileFinderDelegate {
                                     let point = snapshot
                                         .buffer_snapshot
                                         .clip_point(Point::new(row, col), Bias::Left);
-                                    let point =
-                                        snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                                     editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                                         s.select_ranges([point..point])
                                     });

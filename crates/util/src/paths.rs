@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 lazy_static::lazy_static! {
     pub static ref HOME: PathBuf = dirs::home_dir().expect("failed to determine home directory");
     pub static ref CONFIG_DIR: PathBuf = HOME.join(".config").join("zed");
@@ -73,7 +75,7 @@ pub fn compact(path: &Path) -> PathBuf {
 
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathLikeWithPosition<P> {
     pub path_like: P,
     pub row: Option<u32>,
@@ -104,6 +106,17 @@ impl<P> PathLikeWithPosition<P> {
                 row: None,
                 column: None,
             },
+        })
+    }
+
+    pub fn convert_path<P2, E>(
+        self,
+        mapping: impl FnOnce(P) -> Result<P2, E>,
+    ) -> Result<PathLikeWithPosition<P2>, E> {
+        Ok(PathLikeWithPosition {
+            path_like: mapping(self.path_like)?,
+            row: self.row,
+            column: self.column,
         })
     }
 }

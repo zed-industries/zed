@@ -21,7 +21,7 @@ use util::paths::PathLikeWithPosition;
 #[derive(Parser)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
 struct Args {
-    /// Wait for all of the given paths to be closed before exiting.
+    /// Wait for all of the given paths to be opened/closed before exiting.
     #[clap(short, long)]
     wait: bool,
     /// A sequence of space-separated paths that you want to open.
@@ -78,12 +78,13 @@ fn main() -> Result<()> {
         paths: args
             .paths_with_position
             .into_iter()
-            // TODO kb continue sendint path with the position further
-            .map(|path_with_position| path_with_position.path_like)
-            .map(|path| {
-                fs::canonicalize(&path).with_context(|| format!("path {path:?} canonicalization"))
+            .map(|path_with_position| {
+                path_with_position.convert_path(|path| {
+                    fs::canonicalize(&path)
+                        .with_context(|| format!("path {path:?} canonicalization"))
+                })
             })
-            .collect::<Result<Vec<PathBuf>>>()?,
+            .collect::<Result<_>>()?,
         wait: args.wait,
     })?;
 
