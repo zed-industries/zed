@@ -73,6 +73,17 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         removed
     }
 
+    pub fn remove_range(&mut self, start: &impl MapSeekTarget<K>, end: &impl MapSeekTarget<K>) {
+        let start = MapSeekTargetAdaptor(start);
+        let end = MapSeekTargetAdaptor(end);
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut new_tree = cursor.slice(&start, Bias::Left, &());
+        cursor.seek(&end, Bias::Left, &());
+        new_tree.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        self.0 = new_tree;
+    }
+
     /// Returns the key-value pair with the greatest key less than or equal to the given key.
     pub fn closest(&self, key: &K) -> Option<(&K, &V)> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
@@ -80,17 +91,6 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
         cursor.seek(&key, Bias::Right, &());
         cursor.prev(&());
         cursor.item().map(|item| (&item.key, &item.value))
-    }
-
-    pub fn remove_between(&mut self, from: &K, until: &K) {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
-        let from_key = MapKeyRef(Some(from));
-        let mut new_tree = cursor.slice(&from_key, Bias::Left, &());
-        let until_key = MapKeyRef(Some(until));
-        cursor.seek_forward(&until_key, Bias::Left, &());
-        new_tree.push_tree(cursor.suffix(&()), &());
-        drop(cursor);
-        self.0 = new_tree;
     }
 
     pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&K, &V)> + '_ {
@@ -160,50 +160,30 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
 
         self.0.edit(edits, &());
     }
-
-    pub fn remove_by<F>(&mut self, key: &K, f: F)
-    where
-        F: Fn(&K) -> bool,
-    {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
-        let key = MapKeyRef(Some(key));
-        let mut new_tree = cursor.slice(&key, Bias::Left, &());
-        let until = RemoveByTarget(key, &f);
-        cursor.seek_forward(&until, Bias::Right, &());
-        new_tree.push_tree(cursor.suffix(&()), &());
-        drop(cursor);
-        self.0 = new_tree;
-    }
 }
 
-struct RemoveByTarget<'a, K>(MapKeyRef<'a, K>, &'a dyn Fn(&K) -> bool);
+#[derive(Debug)]
+struct MapSeekTargetAdaptor<'a, T>(&'a T);
 
-impl<'a, K: Debug> Debug for RemoveByTarget<'a, K> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RemoveByTarget")
-            .field("key", &self.0)
-            .field("F", &"<...>")
-            .finish()
-    }
-}
-
-impl<'a, K: Debug + Clone + Default + Ord> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>>
-    for RemoveByTarget<'_, K>
+impl<'a, K: Debug + Clone + Default + Ord, T: MapSeekTarget<K>>
+    SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapSeekTargetAdaptor<'_, T>
 {
-    fn cmp(
-        &self,
-        cursor_location: &MapKeyRef<'a, K>,
-        _cx: &<MapKey<K> as Summary>::Context,
-    ) -> Ordering {
-        if let Some(cursor_location) = cursor_location.0 {
-            if (self.1)(cursor_location) {
-                Ordering::Equal
-            } else {
-                self.0 .0.unwrap().cmp(cursor_location)
-            }
+    fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
+        if let Some(key) = &cursor_location.0 {
+            MapSeekTarget::cmp_cursor(self.0, key)
         } else {
             Ordering::Greater
         }
+    }
+}
+
+pub trait MapSeekTarget<K>: Debug {
+    fn cmp_cursor(&self, cursor_location: &K) -> Ordering;
+}
+
+impl<K: Debug + Ord> MapSeekTarget<K> for K {
+    fn cmp_cursor(&self, cursor_location: &K) -> Ordering {
+        self.cmp(cursor_location)
     }
 }
 
@@ -266,7 +246,7 @@ where
     K: Clone + Debug + Default + Ord,
 {
     fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
-        self.0.cmp(&cursor_location.0)
+        Ord::cmp(&self.0, &cursor_location.0)
     }
 }
 
@@ -354,66 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_between() {
-        let mut map = TreeMap::default();
-
-        map.insert("a", 1);
-        map.insert("b", 2);
-        map.insert("baa", 3);
-        map.insert("baaab", 4);
-        map.insert("c", 5);
-
-        map.remove_between(&"ba", &"bb");
-
-        assert_eq!(map.get(&"a"), Some(&1));
-        assert_eq!(map.get(&"b"), Some(&2));
-        assert_eq!(map.get(&"baaa"), None);
-        assert_eq!(map.get(&"baaaab"), None);
-        assert_eq!(map.get(&"c"), Some(&5));
-    }
-
-    #[test]
-    fn test_remove_by() {
-        let mut map = TreeMap::default();
-
-        map.insert("a", 1);
-        map.insert("aa", 1);
-        map.insert("b", 2);
-        map.insert("baa", 3);
-        map.insert("baaab", 4);
-        map.insert("c", 5);
-        map.insert("ca", 6);
-
-        map.remove_by(&"ba", |key| key.starts_with("ba"));
-
-        assert_eq!(map.get(&"a"), Some(&1));
-        assert_eq!(map.get(&"aa"), Some(&1));
-        assert_eq!(map.get(&"b"), Some(&2));
-        assert_eq!(map.get(&"baaa"), None);
-        assert_eq!(map.get(&"baaaab"), None);
-        assert_eq!(map.get(&"c"), Some(&5));
-        assert_eq!(map.get(&"ca"), Some(&6));
-
-        map.remove_by(&"c", |key| key.starts_with("c"));
-
-        assert_eq!(map.get(&"a"), Some(&1));
-        assert_eq!(map.get(&"aa"), Some(&1));
-        assert_eq!(map.get(&"b"), Some(&2));
-        assert_eq!(map.get(&"c"), None);
-        assert_eq!(map.get(&"ca"), None);
-
-        map.remove_by(&"a", |key| key.starts_with("a"));
-
-        assert_eq!(map.get(&"a"), None);
-        assert_eq!(map.get(&"aa"), None);
-        assert_eq!(map.get(&"b"), Some(&2));
-
-        map.remove_by(&"b", |key| key.starts_with("b"));
-
-        assert_eq!(map.get(&"b"), None);
-    }
-
-    #[test]
     fn test_iter_from() {
         let mut map = TreeMap::default();
 
@@ -460,5 +380,64 @@ mod tests {
         assert_eq!(map.get(&"b"), Some(&2));
         assert_eq!(map.get(&"c"), Some(&3));
         assert_eq!(map.get(&"d"), Some(&4));
+    }
+
+    #[test]
+    fn test_remove_between_and_path_successor() {
+        use std::path::{Path, PathBuf};
+
+        #[derive(Debug)]
+        pub struct PathDescendants<'a>(&'a Path);
+
+        impl MapSeekTarget<PathBuf> for PathDescendants<'_> {
+            fn cmp_cursor(&self, key: &PathBuf) -> Ordering {
+                if key.starts_with(&self.0) {
+                    Ordering::Greater
+                } else {
+                    self.0.cmp(key)
+                }
+            }
+        }
+
+        let mut map = TreeMap::default();
+
+        map.insert(PathBuf::from("a"), 1);
+        map.insert(PathBuf::from("a/a"), 1);
+        map.insert(PathBuf::from("b"), 2);
+        map.insert(PathBuf::from("b/a/a"), 3);
+        map.insert(PathBuf::from("b/a/a/a/b"), 4);
+        map.insert(PathBuf::from("c"), 5);
+        map.insert(PathBuf::from("c/a"), 6);
+
+        map.remove_range(
+            &PathBuf::from("b/a"),
+            &PathDescendants(&PathBuf::from("b/a")),
+        );
+
+        assert_eq!(map.get(&PathBuf::from("a")), Some(&1));
+        assert_eq!(map.get(&PathBuf::from("a/a")), Some(&1));
+        assert_eq!(map.get(&PathBuf::from("b")), Some(&2));
+        assert_eq!(map.get(&PathBuf::from("b/a/a")), None);
+        assert_eq!(map.get(&PathBuf::from("b/a/a/a/b")), None);
+        assert_eq!(map.get(&PathBuf::from("c")), Some(&5));
+        assert_eq!(map.get(&PathBuf::from("c/a")), Some(&6));
+
+        map.remove_range(&PathBuf::from("c"), &PathDescendants(&PathBuf::from("c")));
+
+        assert_eq!(map.get(&PathBuf::from("a")), Some(&1));
+        assert_eq!(map.get(&PathBuf::from("a/a")), Some(&1));
+        assert_eq!(map.get(&PathBuf::from("b")), Some(&2));
+        assert_eq!(map.get(&PathBuf::from("c")), None);
+        assert_eq!(map.get(&PathBuf::from("c/a")), None);
+
+        map.remove_range(&PathBuf::from("a"), &PathDescendants(&PathBuf::from("a")));
+
+        assert_eq!(map.get(&PathBuf::from("a")), None);
+        assert_eq!(map.get(&PathBuf::from("a/a")), None);
+        assert_eq!(map.get(&PathBuf::from("b")), Some(&2));
+
+        map.remove_range(&PathBuf::from("b"), &PathDescendants(&PathBuf::from("b")));
+
+        assert_eq!(map.get(&PathBuf::from("b")), None);
     }
 }

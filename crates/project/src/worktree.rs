@@ -7,7 +7,7 @@ use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
 use fs::{
-    repository::{GitFileStatus, GitRepository, RepoPath},
+    repository::{GitFileStatus, GitRepository, RepoPath, RepoPathDescendants},
     Fs, LineEnding,
 };
 use futures::{
@@ -3023,9 +3023,7 @@ impl BackgroundScanner {
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry
                     .worktree_statuses
-                    .remove_by(&repo_path, |stored_path| {
-                        stored_path.starts_with(&repo_path)
-                    })
+                    .remove_range(&repo_path, &RepoPathDescendants(&repo_path))
             });
         }
 
