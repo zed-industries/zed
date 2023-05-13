@@ -2973,7 +2973,7 @@ impl BackgroundScanner {
                     fs_entry.is_ignored = ignore_stack.is_all();
                     snapshot.insert_entry(fs_entry, self.fs.as_ref());
 
-                    self.reload_repo_for_path(&path, &mut snapshot);
+                    self.reload_repo_for_path(&path, &mut snapshot, self.fs.as_ref());
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
                         let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
@@ -3030,7 +3030,7 @@ impl BackgroundScanner {
         Some(())
     }
 
-    fn reload_repo_for_path(&self, path: &Path, snapshot: &mut LocalSnapshot) -> Option<()> {
+    fn reload_repo_for_path(&self, path: &Path, snapshot: &mut LocalSnapshot, fs: &dyn Fs) -> Option<()> {
         let scan_id = snapshot.scan_id;
 
         if path
@@ -3038,7 +3038,14 @@ impl BackgroundScanner {
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
             let (entry_id, repo_ptr) = {
-                let (entry_id, repo) = snapshot.repo_for_metadata(&path)?;
+                let Some((entry_id, repo)) = snapshot.repo_for_metadata(&path) else {
+                    let dot_git_dir = path.ancestors()
+                    .skip_while(|ancestor| ancestor.file_name() != Some(&*DOT_GIT))
+                    .next()?;
+
+                    snapshot.build_repo(dot_git_dir.into(), fs);
+                    return None;
+                };
                 if repo.full_scan_id == scan_id {
                     return None;
                 }

@@ -1248,6 +1248,16 @@ impl Editor {
 
         let soft_wrap_mode_override =
             (mode == EditorMode::SingleLine).then(|| settings::SoftWrap::None);
+
+        let mut project_subscription = None;
+        if mode == EditorMode::Full && buffer.read(cx).is_singleton() {
+            if let Some(project) = project.as_ref() {
+                project_subscription = Some(cx.observe(project, |_, _, cx| {
+                    cx.emit(Event::TitleChanged);
+                }))
+            }
+        }
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1304,6 +1314,11 @@ impl Editor {
                 cx.observe_global::<Settings, _>(Self::settings_changed),
             ],
         };
+
+        if let Some(project_subscription) = project_subscription {
+            this._subscriptions.push(project_subscription);
+        }
+
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
 
