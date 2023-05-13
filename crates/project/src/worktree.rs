@@ -3030,7 +3030,12 @@ impl BackgroundScanner {
         Some(())
     }
 
-    fn reload_repo_for_path(&self, path: &Path, snapshot: &mut LocalSnapshot, fs: &dyn Fs) -> Option<()> {
+    fn reload_repo_for_path(
+        &self,
+        path: &Path,
+        snapshot: &mut LocalSnapshot,
+        fs: &dyn Fs,
+    ) -> Option<()> {
         let scan_id = snapshot.scan_id;
 
         if path
