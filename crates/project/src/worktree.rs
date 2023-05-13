@@ -195,10 +195,10 @@ impl RepositoryEntry {
                             (GitFileStatus::Conflict, _) | (_, GitFileStatus::Conflict) => {
                                 &GitFileStatus::Conflict
                             }
-                            (GitFileStatus::Added, _) | (_, GitFileStatus::Added) => {
-                                &GitFileStatus::Added
+                            (GitFileStatus::Modified, _) | (_, GitFileStatus::Modified) => {
+                                &GitFileStatus::Modified
                             }
-                            _ => &GitFileStatus::Modified,
+                            _ => &GitFileStatus::Added,
                         },
                     )
                     .copied()
