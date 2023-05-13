@@ -6,7 +6,7 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        AnchorCorner, ChildView, ComponentHost, ContainerStyle, Empty, Flex, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
@@ -29,7 +29,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use theme::ProjectPanelEntry;
+use theme::{ui::FileName, ProjectPanelEntry};
 use unicase::UniCase;
 use workspace::Workspace;
 
@@ -1083,19 +1083,6 @@ impl ProjectPanel {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
-        // Prepare colors for git statuses
-        let editor_theme = &cx.global::<Settings>().theme.editor;
-        let mut filename_text_style = style.text.clone();
-        filename_text_style.color = details
-            .git_status
-            .as_ref()
-            .map(|status| match status {
-                GitFileStatus::Added => editor_theme.diff.inserted,
-                GitFileStatus::Modified => editor_theme.diff.modified,
-                GitFileStatus::Conflict => editor_theme.diff.deleted,
-            })
-            .unwrap_or(style.text.color);
-
         Flex::row()
             .with_child(
                 if kind == EntryKind::Dir {
@@ -1123,12 +1110,16 @@ impl ProjectPanel {
                     .flex(1.0, true)
                     .into_any()
             } else {
-                Label::new(details.filename.clone(), filename_text_style)
-                    .contained()
-                    .with_margin_left(style.icon_spacing)
-                    .aligned()
-                    .left()
-                    .into_any()
+                ComponentHost::new(FileName::new(
+                    details.filename.clone(),
+                    details.git_status,
+                    FileName::style(style.text.clone(), &cx.global::<Settings>().theme),
+                ))
+                .contained()
+                .with_margin_left(style.icon_spacing)
+                .aligned()
+                .left()
+                .into_any()
             })
             .constrained()
             .with_height(style.height)
