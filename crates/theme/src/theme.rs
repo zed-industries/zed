@@ -68,6 +68,8 @@ pub struct Workspace {
     pub breadcrumbs: Interactive<ContainedText>,
     pub disconnected_overlay: ContainedText,
     pub modal: ContainerStyle,
+    pub zoomed_foreground: ContainerStyle,
+    pub zoomed_background: ContainerStyle,
     pub notification: ContainerStyle,
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,

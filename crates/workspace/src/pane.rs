@@ -69,6 +69,7 @@ actions!(
         SplitUp,
         SplitRight,
         SplitDown,
+        ToggleZoom,
     ]
 );
 
@@ -91,6 +92,7 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
 
 pub fn init(cx: &mut AppContext) {
+    cx.add_action(Pane::toggle_zoom);
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
         pane.activate_item(action.0, true, true, cx);
     });
@@ -132,12 +134,15 @@ pub enum Event {
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
+    ZoomIn,
+    ZoomOut,
 }
 
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<usize>,
     is_active: bool,
+    zoomed: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
     autoscroll: bool,
@@ -236,6 +241,7 @@ impl Pane {
             items: Vec::new(),
             activation_history: Vec::new(),
             is_active: true,
+            zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
             autoscroll: false,
@@ -653,6 +659,14 @@ impl Pane {
 
     pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
         self.items.iter().position(|i| i.id() == item.id())
+    }
+
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        if self.zoomed {
+            cx.emit(Event::ZoomOut);
+        } else {
+            cx.emit(Event::ZoomIn);
+        }
     }
 
     pub fn activate_item(
@@ -1545,6 +1559,15 @@ impl Pane {
             .contained()
             .with_background_color(background)
             .into_any()
+    }
+
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
+    }
+
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
     }
 }
 

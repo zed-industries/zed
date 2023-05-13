@@ -33,8 +33,11 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext, WeakViewHandle,
-    WindowContext,
+    json,
+    platform::MouseButton,
+    scene::MouseDown,
+    Action, EventContext, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
+    WeakViewHandle, WindowContext,
 };
 use anyhow::{anyhow, Result};
 use collections::HashMap;
@@ -197,6 +200,13 @@ pub trait Element<V: View>: 'static {
         Self: 'static + Sized,
     {
         Resizable::new(self.into_any(), side, size, on_resize)
+    }
+
+    fn mouse<Tag>(self, region_id: usize) -> MouseEventHandler<Tag, V>
+    where
+        Self: Sized,
+    {
+        MouseEventHandler::for_child(self.into_any(), region_id)
     }
 }
 

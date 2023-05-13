@@ -142,6 +142,12 @@ impl Member {
 
         match self {
             Member::Pane(pane) => {
+                let pane_element = if pane.read(cx).is_zoomed() {
+                    Empty::new().into_any()
+                } else {
+                    ChildView::new(pane, cx).into_any()
+                };
+
                 let leader = follower_states
                     .iter()
                     .find_map(|(leader_id, follower_states)| {
@@ -258,7 +264,7 @@ impl Member {
                 };
 
                 Stack::new()
-                    .with_child(ChildView::new(pane, cx).contained().with_border(border))
+                    .with_child(pane_element.contained().with_border(border))
                     .with_children(leader_status_box)
                     .into_any()
             }

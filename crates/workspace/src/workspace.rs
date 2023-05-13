@@ -441,6 +441,7 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     remote_entity_subscription: Option<client::Subscription>,
     modal: Option<AnyViewHandle>,
+    zoomed: Option<AnyViewHandle>,
     center: PaneGroup,
     left_dock: ViewHandle<Dock>,
     bottom_dock: ViewHandle<Dock>,
@@ -627,8 +628,9 @@ impl Workspace {
         ];
 
         let mut this = Workspace {
-            modal: None,
             weak_self: weak_handle.clone(),
+            modal: None,
+            zoomed: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
@@ -1303,6 +1305,16 @@ impl Workspace {
         }
     }
 
+    pub fn zoom_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.zoomed = Some(view);
+        cx.notify();
+    }
+
+    pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+        self.zoomed.take();
+        cx.notify();
+    }
+
     pub fn items<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -1684,6 +1696,16 @@ impl Workspace {
             }
             pane::Event::Focus => {
                 self.handle_pane_focused(pane.clone(), cx);
+            }
+            pane::Event::ZoomIn => {
+                pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+                self.zoom_in(pane.into_any(), cx);
+            }
+            pane::Event::ZoomOut => {
+                if self.zoomed.as_ref().map_or(false, |zoomed| *zoomed == pane) {
+                    pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+                    self.zoom_out(cx);
+                }
             }
         }
 
@@ -2735,6 +2757,21 @@ impl View for Workspace {
                             })
                             .with_child(Overlay::new(
                                 Stack::new()
+                                    .with_children(self.zoomed.as_ref().map(|zoomed| {
+                                        enum ZoomBackground {}
+
+                                        ChildView::new(zoomed, cx)
+                                            .contained()
+                                            .with_style(theme.workspace.zoomed_foreground)
+                                            .aligned()
+                                            .contained()
+                                            .with_style(theme.workspace.zoomed_background)
+                                            .mouse::<ZoomBackground>(0)
+                                            .capture_all()
+                                            .on_down(MouseButton::Left, |_, this: &mut Self, cx| {
+                                                this.zoom_out(cx);
+                                            })
+                                    }))
                                     .with_children(self.modal.as_ref().map(|modal| {
                                         ChildView::new(modal, cx)
                                             .contained()
