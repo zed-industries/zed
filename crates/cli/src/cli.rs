@@ -1,7 +1,5 @@
 pub use ipc_channel::ipc;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use util::paths::PathLikeWithPosition;
 
 #[derive(Serialize, Deserialize)]
 pub struct IpcHandshake {
@@ -11,11 +9,12 @@ pub struct IpcHandshake {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CliRequest {
-    Open {
-        // TODO kb old cli won't be able to communicate to new Zed with this change
-        paths: Vec<PathLikeWithPosition<PathBuf>>,
-        wait: bool,
-    },
+    // The filed is named `path` for compatibility, but now CLI can request
+    // opening a path at a certain row and/or column: `some/path:123` and `some/path:123:456`.
+    //
+    // Since Zed CLI has to be installed separately, there can be situations when old CLI is
+    // querying new Zed editors, support both formats by using `String` here and parsing it on Zed side later.
+    Open { paths: Vec<String>, wait: bool },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

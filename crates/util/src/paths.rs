@@ -119,4 +119,20 @@ impl<P> PathLikeWithPosition<P> {
             column: self.column,
         })
     }
+
+    pub fn to_string<F>(&self, path_like_to_string: F) -> String
+    where
+        F: Fn(&P) -> String,
+    {
+        let path_like_string = path_like_to_string(&self.path_like);
+        if let Some(row) = self.row {
+            if let Some(column) = self.column {
+                format!("{path_like_string}:{row}:{column}")
+            } else {
+                format!("{path_like_string}:{row}")
+            }
+        } else {
+            path_like_string
+        }
+    }
 }

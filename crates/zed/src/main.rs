@@ -37,7 +37,7 @@ use std::{
     io::Write as _,
     os::unix::prelude::OsStrExt,
     panic,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Weak,
@@ -48,7 +48,10 @@ use std::{
 use sum_tree::Bias;
 use terminal_view::{get_working_directory, TerminalView};
 use text::Point;
-use util::http::{self, HttpClient};
+use util::{
+    http::{self, HttpClient},
+    paths::PathLikeWithPosition,
+};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
@@ -691,7 +694,16 @@ async fn handle_cli_connection(
                 } else {
                     paths
                         .into_iter()
-                        .map(|path_with_position| {
+                        .filter_map(|path_with_position_string| {
+                            let path_with_position = PathLikeWithPosition::parse_str(
+                                &path_with_position_string,
+                                |path_str| {
+                                    Ok::<_, std::convert::Infallible>(
+                                        Path::new(path_str).to_path_buf(),
+                                    )
+                                },
+                            )
+                            .expect("Infallible");
                             let path = path_with_position.path_like;
                             if let Some(row) = path_with_position.row {
                                 if path.is_file() {
@@ -701,7 +713,7 @@ async fn handle_cli_connection(
                                     caret_positions.insert(path.clone(), Point::new(row, col));
                                 }
                             }
-                            path
+                            Some(path)
                         })
                         .collect()
                 };

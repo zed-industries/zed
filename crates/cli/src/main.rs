@@ -79,10 +79,11 @@ fn main() -> Result<()> {
             .paths_with_position
             .into_iter()
             .map(|path_with_position| {
-                path_with_position.convert_path(|path| {
+                let path_with_position = path_with_position.convert_path(|path| {
                     fs::canonicalize(&path)
                         .with_context(|| format!("path {path:?} canonicalization"))
-                })
+                })?;
+                Ok(path_with_position.to_string(|path| path.display().to_string()))
             })
             .collect::<Result<_>>()?,
         wait: args.wait,
