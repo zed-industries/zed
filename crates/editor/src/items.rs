@@ -14,7 +14,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{FormatTrigger, Item as _, Project, ProjectPath};
+use project::{repository::GitFileStatus, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use smallvec::SmallVec;
@@ -27,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
+use theme::ui::FileName;
 use util::{ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
@@ -565,8 +566,25 @@ impl Item for Editor {
         style: &theme::Tab,
         cx: &AppContext,
     ) -> AnyElement<T> {
+        fn git_file_status(this: &Editor, cx: &AppContext) -> Option<GitFileStatus> {
+            let project_entry_id = this
+                .buffer()
+                .read(cx)
+                .as_singleton()?
+                .read(cx)
+                .entry_id(cx)?;
+            let project = this.project.as_ref()?.read(cx);
+            let path = project.path_for_entry(project_entry_id, cx)?.path;
+            let worktree = project.worktree_for_entry(project_entry_id, cx)?.read(cx);
+            worktree.repo_for(&path)?.status_for_path(&worktree, &path)
+        }
+
         Flex::row()
-            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).aligned())
+            .with_child(ComponentHost::new(FileName::new(
+                self.title(cx).to_string(),
+                git_file_status(self, cx),
+                FileName::style(style.label.clone(), &cx.global::<Settings>().theme),
+            )))
             .with_children(detail.and_then(|detail| {
                 let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                 let description = path.to_string_lossy();
@@ -580,6 +598,7 @@ impl Item for Editor {
                     .aligned(),
                 )
             }))
+            .align_children_center()
             .into_any()
     }
 

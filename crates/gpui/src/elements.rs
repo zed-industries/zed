@@ -578,6 +578,15 @@ pub struct ComponentHost<V: View, C: Component<V>> {
     view_type: PhantomData<V>,
 }
 
+impl<V: View, C: Component<V>> ComponentHost<V, C> {
+    pub fn new(c: C) -> Self {
+        Self {
+            component: c,
+            view_type: PhantomData,
+        }
+    }
+}
+
 impl<V: View, C: Component<V>> Deref for ComponentHost<V, C> {
     type Target = C;
 

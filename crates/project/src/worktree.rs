@@ -195,10 +195,10 @@ impl RepositoryEntry {
                             (GitFileStatus::Conflict, _) | (_, GitFileStatus::Conflict) => {
                                 &GitFileStatus::Conflict
                             }
-                            (GitFileStatus::Added, _) | (_, GitFileStatus::Added) => {
-                                &GitFileStatus::Added
+                            (GitFileStatus::Modified, _) | (_, GitFileStatus::Modified) => {
+                                &GitFileStatus::Modified
                             }
-                            _ => &GitFileStatus::Modified,
+                            _ => &GitFileStatus::Added,
                         },
                     )
                     .copied()
@@ -3086,7 +3086,7 @@ impl BackgroundScanner {
                 }
 
                 let git_ptr = local_repo.repo_ptr.lock();
-                git_ptr.worktree_status(&repo_path)?
+                git_ptr.worktree_status(&repo_path)
             };
 
             let work_dir = repo.work_directory(snapshot)?;
@@ -3097,7 +3097,11 @@ impl BackgroundScanner {
                 .update(&work_dir_id, |entry| entry.scan_id = scan_id);
 
             snapshot.repository_entries.update(&work_dir, |entry| {
-                entry.worktree_statuses.insert(repo_path, status)
+                if let Some(status) = status {
+                    entry.worktree_statuses.insert(repo_path, status);
+                } else {
+                    entry.worktree_statuses.remove(&repo_path);
+                }
             });
         }
 
