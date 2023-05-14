@@ -1,7 +1,10 @@
+name: Build Zed.dmg
+
 on:
   push:
     branches:
     - main
+    - "v[0-9]+.[0-9]+.x"
   pull_request:
 
 defaults:
@@ -20,8 +23,6 @@ env:
 jobs:
   build-dmg:
     if: github.ref_name == 'main' || contains(github.event.pull_request.labels.*.name, 'run-build-dmg')
-    env:
-      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     runs-on:
       - self-hosted
       - test
@@ -38,12 +39,16 @@ jobs:
           rustup set profile minimal
           rustup update stable
 
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
 
       - name: Build dmg bundle
         run: ./script/bundle
 
-      - name: Upload the build stats
+      - name: Upload the build artifact
         uses: actions/upload-artifact@v3
         with:
-          name: zed-main-$SHA.dmg
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: ./target/release/Zed.dmg
