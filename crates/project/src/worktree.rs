@@ -265,7 +265,7 @@ enum ScanState {
     Started,
     Updated {
         snapshot: LocalSnapshot,
-        changes: HashMap<Arc<Path>, PathChange>,
+        changes: HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
         barrier: Option<barrier::Sender>,
         scanning: bool,
     },
@@ -279,7 +279,7 @@ struct ShareState {
 }
 
 pub enum Event {
-    UpdatedEntries(HashMap<Arc<Path>, PathChange>),
+    UpdatedEntries(HashMap<(Arc<Path>, ProjectEntryId), PathChange>),
     UpdatedGitRepositories(HashMap<Arc<Path>, LocalRepositoryEntry>),
 }
 
@@ -3039,7 +3039,7 @@ impl BackgroundScanner {
         old_snapshot: &Snapshot,
         new_snapshot: &Snapshot,
         event_paths: &[Arc<Path>],
-    ) -> HashMap<Arc<Path>, PathChange> {
+    ) -> HashMap<(Arc<Path>, ProjectEntryId), PathChange> {
         use PathChange::{Added, AddedOrUpdated, Removed, Updated};
 
         let mut changes = HashMap::default();
@@ -3065,7 +3065,7 @@ impl BackgroundScanner {
 
                         match Ord::cmp(&old_entry.path, &new_entry.path) {
                             Ordering::Less => {
-                                changes.insert(old_entry.path.clone(), Removed);
+                                changes.insert((old_entry.path.clone(), old_entry.id), Removed);
                                 old_paths.next(&());
                             }
                             Ordering::Equal => {
@@ -3073,31 +3073,35 @@ impl BackgroundScanner {
                                     // If the worktree was not fully initialized when this event was generated,
                                     // we can't know whether this entry was added during the scan or whether
                                     // it was merely updated.
-                                    changes.insert(new_entry.path.clone(), AddedOrUpdated);
+                                    changes.insert(
+                                        (new_entry.path.clone(), new_entry.id),
+                                        AddedOrUpdated,
+                                    );
                                 } else if old_entry.mtime != new_entry.mtime {
-                                    changes.insert(new_entry.path.clone(), Updated);
+                                    changes.insert((new_entry.path.clone(), new_entry.id), Updated);
                                 }
                                 old_paths.next(&());
                                 new_paths.next(&());
                             }
                             Ordering::Greater => {
-                                changes.insert(new_entry.path.clone(), Added);
+                                changes.insert((new_entry.path.clone(), new_entry.id), Added);
                                 new_paths.next(&());
                             }
                         }
                     }
                     (Some(old_entry), None) => {
-                        changes.insert(old_entry.path.clone(), Removed);
+                        changes.insert((old_entry.path.clone(), old_entry.id), Removed);
                         old_paths.next(&());
                     }
                     (None, Some(new_entry)) => {
-                        changes.insert(new_entry.path.clone(), Added);
+                        changes.insert((new_entry.path.clone(), new_entry.id), Added);
                         new_paths.next(&());
                     }
                     (None, None) => break,
                 }
             }
         }
+
         changes
     }
 
@@ -3937,7 +3941,7 @@ mod tests {
 
             cx.subscribe(&worktree, move |tree, _, event, _| {
                 if let Event::UpdatedEntries(changes) = event {
-                    for (path, change_type) in changes.iter() {
+                    for ((path, _), change_type) in changes.iter() {
                         let path = path.clone();
                         let ix = match paths.binary_search(&path) {
                             Ok(ix) | Err(ix) => ix,
@@ -3947,13 +3951,16 @@ mod tests {
                                 assert_ne!(paths.get(ix), Some(&path));
                                 paths.insert(ix, path);
                             }
+
                             PathChange::Removed => {
                                 assert_eq!(paths.get(ix), Some(&path));
                                 paths.remove(ix);
                             }
+
                             PathChange::Updated => {
                                 assert_eq!(paths.get(ix), Some(&path));
                             }
+
                             PathChange::AddedOrUpdated => {
                                 if paths[ix] != path {
                                     paths.insert(ix, path);
@@ -3961,6 +3968,7 @@ mod tests {
                             }
                         }
                     }
+
                     let new_paths = tree.paths().cloned().collect::<Vec<_>>();
                     assert_eq!(paths, new_paths, "incorrect changes: {:?}", changes);
                 }
@@ -3970,7 +3978,6 @@ mod tests {
 
         let mut snapshots = Vec::new();
         let mut mutations_len = operations;
-        fs.as_fake().pause_events().await;
         while mutations_len > 1 {
             if rng.gen_bool(0.2) {
                 worktree
