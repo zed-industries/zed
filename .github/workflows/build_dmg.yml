@@ -1,0 +1,49 @@
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}
+
+concurrency:
+  # Allow only one workflow per any non-`main` branch.
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  COPT: '-Werror'
+
+jobs:
+  build-dmg:
+    if: github.ref_name == 'main' || contains(github.event.pull_request.labels.*.name, 'run-build-dmg')
+    env:
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    runs-on:
+      - self-hosted
+      - test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          clean: false
+          submodules: 'recursive'
+
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup update stable
+
+
+      - name: Build dmg bundle
+        run: ./script/bundle
+
+      - name: Upload the build stats
+        uses: actions/upload-artifact@v3
+        with:
+          name: zed-main-$SHA.dmg
+          path: ./target/release/Zed.dmg
