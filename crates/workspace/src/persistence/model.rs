@@ -1,5 +1,6 @@
 use crate::{
-    dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
+    dock::DockPosition, item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace,
+    WorkspaceId,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
@@ -97,17 +98,23 @@ impl SerializedPaneGroup {
         workspace_id: WorkspaceId,
         workspace: &WeakViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
-    ) -> Option<(Member, Option<ViewHandle<Pane>>)> {
+    ) -> Option<(
+        Member,
+        Option<ViewHandle<Pane>>,
+        Vec<Option<Box<dyn ItemHandle>>>,
+    )> {
         match self {
             SerializedPaneGroup::Group { axis, children } => {
                 let mut current_active_pane = None;
                 let mut members = Vec::new();
+                let mut items = Vec::new();
                 for child in children {
-                    if let Some((new_member, active_pane)) = child
+                    if let Some((new_member, active_pane, new_items)) = child
                         .deserialize(project, workspace_id, workspace, cx)
                         .await
                     {
                         members.push(new_member);
+                        items.extend(new_items);
                         current_active_pane = current_active_pane.or(active_pane);
                     }
                 }
@@ -117,7 +124,7 @@ impl SerializedPaneGroup {
                 }
 
                 if members.len() == 1 {
-                    return Some((members.remove(0), current_active_pane));
+                    return Some((members.remove(0), current_active_pane, items));
                 }
 
                 Some((
@@ -126,6 +133,7 @@ impl SerializedPaneGroup {
                         members,
                     }),
                     current_active_pane,
+                    items,
                 ))
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
@@ -133,7 +141,7 @@ impl SerializedPaneGroup {
                     .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
                     .log_err()?;
                 let active = serialized_pane.active;
-                serialized_pane
+                let new_items = serialized_pane
                     .deserialize_to(project, &pane, workspace_id, workspace, cx)
                     .await
                     .log_err()?;
@@ -143,7 +151,7 @@ impl SerializedPaneGroup {
                     .log_err()?
                 {
                     let pane = pane.upgrade(cx)?;
-                    Some((Member::Pane(pane.clone()), active.then(|| pane)))
+                    Some((Member::Pane(pane.clone()), active.then(|| pane), new_items))
                 } else {
                     let pane = pane.upgrade(cx)?;
                     workspace
@@ -174,7 +182,8 @@ impl SerializedPane {
         workspace_id: WorkspaceId,
         workspace: &WeakViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
-    ) -> Result<()> {
+    ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
+        let mut items = Vec::new();
         let mut active_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
@@ -191,6 +200,10 @@ impl SerializedPane {
                 })?
                 .await
                 .log_err();
+
+            items.push(item_handle.clone());
+
+            log::info!("ACTUALLY SHOWN ITEMS: {:?}", &item_handle);
 
             if let Some(item_handle) = item_handle {
                 workspace.update(cx, |workspace, cx| {
@@ -213,7 +226,7 @@ impl SerializedPane {
             })?;
         }
 
-        anyhow::Ok(())
+        anyhow::Ok(items)
     }
 }
 

@@ -729,6 +729,10 @@ async fn handle_cli_connection(
                         for (item, path) in items.into_iter().zip(&paths) {
                             match item {
                                 Some(Ok(item)) => {
+                                    log::info!("UPDATED ITEMS: {:?}", item);
+                                    log::info!(
+                                        "caret_positions: {caret_positions:?}, path: {path:?}",
+                                    );
                                     if let Some(point) = caret_positions.remove(path) {
                                         // TODO kb does not work
                                         log::info!("@@@@@@@@ {path:?}@{point:?}");

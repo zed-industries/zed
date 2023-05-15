@@ -82,7 +82,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeRegistry};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{paths, ResultExt};
+use util::{async_iife, paths, ResultExt};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -493,7 +493,6 @@ struct FollowerState {
 
 impl Workspace {
     pub fn new(
-        serialized_workspace: Option<SerializedWorkspace>,
         workspace_id: WorkspaceId,
         project: ModelHandle<Project>,
         app_state: Arc<AppState>,
@@ -659,16 +658,6 @@ impl Workspace {
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
 
-        if let Some(serialized_workspace) = serialized_workspace {
-            cx.defer(move |_, cx| {
-                Self::load_from_serialized_workspace(weak_handle, serialized_workspace, cx)
-            });
-        } else if project.read(cx).is_local() {
-            if cx.global::<Settings>().default_dock_anchor != DockAnchor::Expanded {
-                Dock::show(&mut this, false, cx);
-            }
-        }
-
         this
     }
 
@@ -690,8 +679,7 @@ impl Workspace {
         );
 
         cx.spawn(|mut cx| async move {
-            let mut serialized_workspace =
-                persistence::DB.workspace_for_roots(&abs_paths.as_slice());
+            let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
             let paths_to_open = serialized_workspace
                 .as_ref()
@@ -700,8 +688,9 @@ impl Workspace {
 
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
-            let mut project_paths = Vec::new();
-            for path in paths_to_open.iter() {
+            let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
+                Vec::with_capacity(paths_to_open.len());
+            for path in paths_to_open.iter().cloned() {
                 if let Some((worktree, project_entry)) = cx
                     .update(|cx| {
                         Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
@@ -710,9 +699,9 @@ impl Workspace {
                     .log_err()
                 {
                     worktree_roots.insert(worktree.read_with(&mut cx, |tree, _| tree.abs_path()));
-                    project_paths.push(Some(project_entry));
+                    project_paths.push((path, Some(project_entry)));
                 } else {
-                    project_paths.push(None);
+                    project_paths.push((path, None));
                 }
             }
 
@@ -732,27 +721,17 @@ impl Workspace {
                         ))
                     });
 
-            let build_workspace =
-                |cx: &mut ViewContext<Workspace>,
-                 serialized_workspace: Option<SerializedWorkspace>| {
-                    let mut workspace = Workspace::new(
-                        serialized_workspace,
-                        workspace_id,
-                        project_handle.clone(),
-                        app_state.clone(),
-                        cx,
-                    );
-                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                    workspace
-                };
+            let build_workspace = |cx: &mut ViewContext<Workspace>| {
+                let mut workspace =
+                    Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx);
+                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+
+                workspace
+            };
 
             let workspace = requesting_window_id
                 .and_then(|window_id| {
-                    cx.update(|cx| {
-                        cx.replace_root_view(window_id, |cx| {
-                            build_workspace(cx, serialized_workspace.take())
-                        })
-                    })
+                    cx.update(|cx| cx.replace_root_view(window_id, |cx| build_workspace(cx)))
                 })
                 .unwrap_or_else(|| {
                     let (bounds, display) = if let Some(bounds) = window_bounds_override {
@@ -790,44 +769,21 @@ impl Workspace {
                     // Use the serialized workspace to construct the new window
                     cx.add_window(
                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                        |cx| build_workspace(cx, serialized_workspace),
+                        |cx| build_workspace(cx),
                     )
                     .1
                 });
 
             let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
-
-            // Call open path for each of the project paths
-            // (this will bring them to the front if they were in the serialized workspace)
-            debug_assert!(paths_to_open.len() == project_paths.len());
-            let tasks = paths_to_open
-                .iter()
-                .cloned()
-                .zip(project_paths.into_iter())
-                .map(|(abs_path, project_path)| {
-                    let workspace = workspace.clone();
-                    cx.spawn(|mut cx| {
-                        let fs = app_state.fs.clone();
-                        async move {
-                            let project_path = project_path?;
-                            if fs.is_file(&abs_path).await {
-                                Some(
-                                    workspace
-                                        .update(&mut cx, |workspace, cx| {
-                                            workspace.open_path(project_path, None, true, cx)
-                                        })
-                                        .log_err()?
-                                        .await,
-                                )
-                            } else {
-                                None
-                            }
-                        }
-                    })
-                });
-
-            let opened_items = futures::future::join_all(tasks.into_iter()).await;
+            let opened_items = open_items(
+                serialized_workspace,
+                &workspace,
+                project_paths,
+                app_state,
+                cx,
+            )
+            .await;
 
             (workspace, opened_items)
         })
@@ -2536,13 +2492,15 @@ impl Workspace {
         }
     }
 
-    fn load_from_serialized_workspace(
+    pub(crate) fn load_workspace(
         workspace: WeakViewHandle<Workspace>,
         serialized_workspace: SerializedWorkspace,
+        paths_to_open: Vec<Option<ProjectPath>>,
         cx: &mut AppContext,
-    ) {
+    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
         cx.spawn(|mut cx| async move {
-            let (project, dock_pane_handle, old_center_pane) =
+            let result = async_iife! {{
+                let (project, dock_pane_handle, old_center_pane) =
                 workspace.read_with(&cx, |workspace, _| {
                     (
                         workspace.project().clone(),
@@ -2551,74 +2509,109 @@ impl Workspace {
                     )
                 })?;
 
-            serialized_workspace
-                .dock_pane
-                .deserialize_to(
+                let dock_items = serialized_workspace
+                    .dock_pane
+                    .deserialize_to(
                     &project,
                     &dock_pane_handle,
                     serialized_workspace.id,
                     &workspace,
                     &mut cx,
-                )
-                .await?;
+                    )
+                    .await?;
 
-            // Traverse the splits tree and add to things
-            let center_group = serialized_workspace
+                // Traverse the splits tree and add to things
+                let something = serialized_workspace
                 .center_group
                 .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
                 .await;
 
-            // Remove old panes from workspace panes list
-            workspace.update(&mut cx, |workspace, cx| {
-                if let Some((center_group, active_pane)) = center_group {
-                    workspace.remove_panes(workspace.center.root.clone(), cx);
-
-                    // Swap workspace center group
-                    workspace.center = PaneGroup::with_root(center_group);
-
-                    // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                    cx.focus_self();
-
-                    if let Some(active_pane) = active_pane {
-                        cx.focus(&active_pane);
-                    } else {
-                        cx.focus(workspace.panes.last().unwrap());
-                    }
-                } else {
-                    let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
-                    if let Some(old_center_handle) = old_center_handle {
-                        cx.focus(&old_center_handle)
-                    } else {
-                        cx.focus_self()
-                    }
+                let mut center_items = None;
+                let mut center_group = None;
+                if let Some((group, active_pane, items)) = something {
+                center_items = Some(items);
+                center_group = Some((group, active_pane))
                 }
 
-                if workspace.left_sidebar().read(cx).is_open()
-                    != serialized_workspace.left_sidebar_open
-                {
-                    workspace.toggle_sidebar(SidebarSide::Left, cx);
-                }
+                let resulting_list = cx.read(|cx| {
+                    let mut opened_items = center_items
+                        .unwrap_or_default()
+                        .into_iter()
+                        .chain(dock_items.into_iter())
+                        .filter_map(|item| {
+                            let item = item?;
+                            let project_path = item.project_path(cx)?;
+                            Some((project_path, item))
+                        })
+                        .collect::<HashMap<_, _>>();
 
-                // Note that without after_window, the focus_self() and
-                // the focus the dock generates start generating alternating
-                // focus due to the deferred execution each triggering each other
-                cx.after_window_update(move |workspace, cx| {
-                    Dock::set_dock_position(
-                        workspace,
-                        serialized_workspace.dock_position,
-                        false,
-                        cx,
-                    );
+                    paths_to_open
+                        .into_iter()
+                        .map(|path_to_open| {
+                            path_to_open.map(|path_to_open| {
+                                Ok(opened_items.remove(&path_to_open))
+                            })
+                            .transpose()
+                            .map(|item| item.flatten())
+                            .transpose()
+                        })
+                        .collect::<Vec<_>>()
                 });
 
-                cx.notify();
-            })?;
+                // Remove old panes from workspace panes list
+                workspace.update(&mut cx, |workspace, cx| {
+                    if let Some((center_group, active_pane)) = center_group {
+                        workspace.remove_panes(workspace.center.root.clone(), cx);
 
-            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-            workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
-            anyhow::Ok(())
+                        // Swap workspace center group
+                        workspace.center = PaneGroup::with_root(center_group);
+
+                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                        cx.focus_self();
+
+                        if let Some(active_pane) = active_pane {
+                            cx.focus(&active_pane);
+                        } else {
+                            cx.focus(workspace.panes.last().unwrap());
+                        }
+                    } else {
+                        let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
+                        if let Some(old_center_handle) = old_center_handle {
+                            cx.focus(&old_center_handle)
+                        } else {
+                            cx.focus_self()
+                        }
+                    }
+
+                    if workspace.left_sidebar().read(cx).is_open()
+                    != serialized_workspace.left_sidebar_open
+                    {
+                        workspace.toggle_sidebar(SidebarSide::Left, cx);
+                    }
+
+                    // Note that without after_window, the focus_self() and
+                    // the focus the dock generates start generating alternating
+                    // focus due to the deferred execution each triggering each other
+                    cx.after_window_update(move |workspace, cx| {
+                        Dock::set_dock_position(
+                            workspace,
+                            serialized_workspace.dock_position,
+                            false,
+                            cx,
+                        );
+                    });
+
+                    cx.notify();
+                })?;
+
+                // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
+
+                Ok::<_, anyhow::Error>(resulting_list)
+            }};
+
+            result.await.unwrap_or_default()
         })
-        .detach_and_log_err(cx);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2634,8 +2627,104 @@ impl Workspace {
             dock_default_item_factory: |_, _| None,
             background_actions: || &[],
         });
-        Self::new(None, 0, project, app_state, cx)
+        Self::new(0, project, app_state, cx)
     }
+}
+
+async fn open_items(
+    serialized_workspace: Option<SerializedWorkspace>,
+    workspace: &WeakViewHandle<Workspace>,
+    mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
+    app_state: Arc<AppState>,
+    mut cx: AsyncAppContext,
+) -> Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>> {
+    let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
+
+    if let Some(serialized_workspace) = serialized_workspace {
+        // TODO kb
+        // If the user is opening a serialized workspace, force open the requested paths
+        // Requested items: (CLI args or whatever)
+        // Restored items: What came from the database
+        // Remaining items = Requested - restored
+        // For each remaining item, call workspace.open_path() (as below)
+
+        let workspace = workspace.clone();
+        let restored_items = cx
+            .update(|cx| {
+                Workspace::load_workspace(
+                    workspace,
+                    serialized_workspace,
+                    project_paths_to_open
+                        .iter()
+                        .map(|(_, project_path)| project_path)
+                        .cloned()
+                        .collect(),
+                    cx,
+                )
+            })
+            .await;
+
+        let restored_project_paths = cx.read(|cx| {
+            restored_items
+                .iter()
+                .filter_map(|item| item.as_ref()?.as_ref().ok()?.project_path(cx))
+                .collect::<HashSet<_>>()
+        });
+
+        opened_items = restored_items;
+        project_paths_to_open
+            .iter_mut()
+            .for_each(|(_, project_path)| {
+                if let Some(project_path_to_open) = project_path {
+                    if restored_project_paths.contains(project_path_to_open) {
+                        *project_path = None;
+                    }
+                }
+            });
+    } else {
+        for _ in 0..project_paths_to_open.len() {
+            opened_items.push(None);
+        }
+    }
+    assert!(opened_items.len() == project_paths_to_open.len());
+
+    let tasks =
+        project_paths_to_open
+            .into_iter()
+            .enumerate()
+            .map(|(i, (abs_path, project_path))| {
+                let workspace = workspace.clone();
+                cx.spawn(|mut cx| {
+                    let fs = app_state.fs.clone();
+                    async move {
+                        let file_project_path = project_path?;
+                        if fs.is_file(&abs_path).await {
+                            Some((
+                                i,
+                                workspace
+                                    .update(&mut cx, |workspace, cx| {
+                                        workspace.open_path(file_project_path, None, true, cx)
+                                    })
+                                    .log_err()?
+                                    .await,
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                })
+            });
+
+    for maybe_opened_path in futures::future::join_all(tasks.into_iter())
+        .await
+        .into_iter()
+    {
+        if let Some((i, path_open_result)) = maybe_opened_path {
+            opened_items[i] = Some(path_open_result);
+        }
+    }
+
+    opened_items
 }
 
 fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
@@ -3008,8 +3097,7 @@ pub fn join_remote_project(
             let (_, workspace) = cx.add_window(
                 (app_state.build_window_options)(None, None, cx.platform().as_ref()),
                 |cx| {
-                    let mut workspace =
-                        Workspace::new(Default::default(), 0, project, app_state.clone(), cx);
+                    let mut workspace = Workspace::new(0, project, app_state.clone(), cx);
                     (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
                     workspace
                 },

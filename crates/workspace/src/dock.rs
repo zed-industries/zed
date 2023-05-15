@@ -462,7 +462,6 @@ mod tests {
 
         let (_, _workspace) = cx.add_window(|cx| {
             Workspace::new(
-                Some(serialized_workspace),
                 0,
                 project.clone(),
                 Arc::new(AppState {
@@ -479,6 +478,11 @@ mod tests {
                 cx,
             )
         });
+
+        cx.update(|cx| {
+            Workspace::load_workspace(_workspace.downgrade(), serialized_workspace, Vec::new(), cx)
+        })
+        .await;
 
         cx.foreground().run_until_parked();
         //Should terminate
@@ -605,7 +609,6 @@ mod tests {
             let project = Project::test(fs, [], cx).await;
             let (window_id, workspace) = cx.add_window(|cx| {
                 Workspace::new(
-                    None,
                     0,
                     project.clone(),
                     Arc::new(AppState {
