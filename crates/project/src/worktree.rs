@@ -55,7 +55,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{paths::HOME, ResultExt, TryFutureExt};
+use util::{paths::HOME, ResultExt, TryFutureExt, TakeUntilExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -187,14 +187,20 @@ impl RepositoryEntry {
                 self.statuses
                     .iter_from(&repo_path)
                     .take_while(|(key, _)| key.starts_with(&repo_path))
-                    .map(|(path, status)| {
-                        if path == &repo_path {
-                            status
-                        } else {
-                            &GitFileStatus::Modified
-                        }
-                    })
-                    .next()
+                    // Short circut once we've found the highest level
+                    .take_until(|(_, status)| status == &&GitFileStatus::Conflict)
+                    .map(|(_, status)| status)
+                    .reduce(
+                        |status_first, status_second| match (status_first, status_second) {
+                            (GitFileStatus::Conflict, _) | (_, GitFileStatus::Conflict) => {
+                                &GitFileStatus::Conflict
+                            }
+                            (GitFileStatus::Modified, _) | (_, GitFileStatus::Modified) => {
+                                &GitFileStatus::Modified
+                            }
+                            _ => &GitFileStatus::Added,
+                        },
+                    )
                     .copied()
             })
     }
