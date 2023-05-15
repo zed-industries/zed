@@ -187,10 +187,12 @@ impl RepositoryEntry {
                 self.worktree_statuses
                     .iter_from(&repo_path)
                     .take_while(|(key, _)| key.starts_with(&repo_path))
-                    .map(|(path, status)| if path == &repo_path {
-                        status
-                    } else {
-                        &GitFileStatus::Modified
+                    .map(|(path, status)| {
+                        if path == &repo_path {
+                            status
+                        } else {
+                            &GitFileStatus::Modified
+                        }
                     })
                     .next()
                     .copied()
@@ -4161,8 +4163,6 @@ mod tests {
         git_commit("Committing modified git ignore", &repo);
 
         tree.flush_fs_events(cx).await;
-
-        git_status(&repo);
 
         // Check that non-repo behavior is tracked
         tree.read_with(cx, |tree, _cx| {
