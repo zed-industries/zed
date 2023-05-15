@@ -382,7 +382,7 @@ enum ScanState {
     Started,
     Updated {
         snapshot: LocalSnapshot,
-        changes: HashMap<Arc<Path>, PathChange>,
+        changes: HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
         barrier: Option<barrier::Sender>,
         scanning: bool,
     },
@@ -396,7 +396,7 @@ struct ShareState {
 }
 
 pub enum Event {
-    UpdatedEntries(HashMap<Arc<Path>, PathChange>),
+    UpdatedEntries(HashMap<(Arc<Path>, ProjectEntryId), PathChange>),
     UpdatedGitRepositories(HashMap<Arc<Path>, LocalRepositoryEntry>),
 }
 
@@ -2532,8 +2532,13 @@ struct BackgroundScanner {
     status_updates_tx: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
     refresh_requests_rx: channel::Receiver<(Vec<PathBuf>, barrier::Sender)>,
-    prev_state: Mutex<(Snapshot, Vec<Arc<Path>>)>,
+    prev_state: Mutex<BackgroundScannerState>,
     finished_initial_scan: bool,
+}
+
+struct BackgroundScannerState {
+    snapshot: Snapshot,
+    event_paths: Vec<Arc<Path>>,
 }
 
 impl BackgroundScanner {
@@ -2549,7 +2554,10 @@ impl BackgroundScanner {
             status_updates_tx,
             executor,
             refresh_requests_rx,
-            prev_state: Mutex::new((snapshot.snapshot.clone(), Vec::new())),
+            prev_state: Mutex::new(BackgroundScannerState {
+                snapshot: snapshot.snapshot.clone(),
+                event_paths: Default::default(),
+            }),
             snapshot: Mutex::new(snapshot),
             finished_initial_scan: false,
         }
@@ -2648,7 +2656,15 @@ impl BackgroundScanner {
     }
 
     async fn process_refresh_request(&self, paths: Vec<PathBuf>, barrier: barrier::Sender) -> bool {
-        self.reload_entries_for_paths(paths, None).await;
+        if let Some(mut paths) = self.reload_entries_for_paths(paths, None).await {
+            paths.sort_unstable();
+            util::extend_sorted(
+                &mut self.prev_state.lock().event_paths,
+                paths,
+                usize::MAX,
+                Ord::cmp,
+            );
+        }
         self.send_status_update(false, Some(barrier))
     }
 
@@ -2659,7 +2675,12 @@ impl BackgroundScanner {
             .await
         {
             paths.sort_unstable();
-            util::extend_sorted(&mut self.prev_state.lock().1, paths, usize::MAX, Ord::cmp);
+            util::extend_sorted(
+                &mut self.prev_state.lock().event_paths,
+                paths,
+                usize::MAX,
+                Ord::cmp,
+            );
         }
         drop(scan_job_tx);
         self.scan_dirs(false, scan_job_rx).await;
@@ -2693,6 +2714,7 @@ impl BackgroundScanner {
         drop(snapshot);
 
         self.send_status_update(false, None);
+        self.prev_state.lock().event_paths.clear();
     }
 
     async fn scan_dirs(
@@ -2770,14 +2792,18 @@ impl BackgroundScanner {
 
     fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
         let mut prev_state = self.prev_state.lock();
-        let snapshot = self.snapshot.lock().clone();
-        let mut old_snapshot = snapshot.snapshot.clone();
-        mem::swap(&mut old_snapshot, &mut prev_state.0);
-        let changed_paths = mem::take(&mut prev_state.1);
-        let changes = self.build_change_set(&old_snapshot, &snapshot.snapshot, changed_paths);
+        let new_snapshot = self.snapshot.lock().clone();
+        let old_snapshot = mem::replace(&mut prev_state.snapshot, new_snapshot.snapshot.clone());
+
+        let changes = self.build_change_set(
+            &old_snapshot,
+            &new_snapshot.snapshot,
+            &prev_state.event_paths,
+        );
+
         self.status_updates_tx
             .unbounded_send(ScanState::Updated {
-                snapshot,
+                snapshot: new_snapshot,
                 changes,
                 scanning,
                 barrier,
@@ -3245,8 +3271,8 @@ impl BackgroundScanner {
         &self,
         old_snapshot: &Snapshot,
         new_snapshot: &Snapshot,
-        event_paths: Vec<Arc<Path>>,
-    ) -> HashMap<Arc<Path>, PathChange> {
+        event_paths: &[Arc<Path>],
+    ) -> HashMap<(Arc<Path>, ProjectEntryId), PathChange> {
         use PathChange::{Added, AddedOrUpdated, Removed, Updated};
 
         let mut changes = HashMap::default();
@@ -3255,7 +3281,7 @@ impl BackgroundScanner {
         let received_before_initialized = !self.finished_initial_scan;
 
         for path in event_paths {
-            let path = PathKey(path);
+            let path = PathKey(path.clone());
             old_paths.seek(&path, Bias::Left, &());
             new_paths.seek(&path, Bias::Left, &());
 
@@ -3272,7 +3298,7 @@ impl BackgroundScanner {
 
                         match Ord::cmp(&old_entry.path, &new_entry.path) {
                             Ordering::Less => {
-                                changes.insert(old_entry.path.clone(), Removed);
+                                changes.insert((old_entry.path.clone(), old_entry.id), Removed);
                                 old_paths.next(&());
                             }
                             Ordering::Equal => {
@@ -3280,31 +3306,35 @@ impl BackgroundScanner {
                                     // If the worktree was not fully initialized when this event was generated,
                                     // we can't know whether this entry was added during the scan or whether
                                     // it was merely updated.
-                                    changes.insert(new_entry.path.clone(), AddedOrUpdated);
+                                    changes.insert(
+                                        (new_entry.path.clone(), new_entry.id),
+                                        AddedOrUpdated,
+                                    );
                                 } else if old_entry.mtime != new_entry.mtime {
-                                    changes.insert(new_entry.path.clone(), Updated);
+                                    changes.insert((new_entry.path.clone(), new_entry.id), Updated);
                                 }
                                 old_paths.next(&());
                                 new_paths.next(&());
                             }
                             Ordering::Greater => {
-                                changes.insert(new_entry.path.clone(), Added);
+                                changes.insert((new_entry.path.clone(), new_entry.id), Added);
                                 new_paths.next(&());
                             }
                         }
                     }
                     (Some(old_entry), None) => {
-                        changes.insert(old_entry.path.clone(), Removed);
+                        changes.insert((old_entry.path.clone(), old_entry.id), Removed);
                         old_paths.next(&());
                     }
                     (None, Some(new_entry)) => {
-                        changes.insert(new_entry.path.clone(), Added);
+                        changes.insert((new_entry.path.clone(), new_entry.id), Added);
                         new_paths.next(&());
                     }
                     (None, None) => break,
                 }
             }
         }
+
         changes
     }
 
@@ -4382,7 +4412,7 @@ mod tests {
 
             cx.subscribe(&worktree, move |tree, _, event, _| {
                 if let Event::UpdatedEntries(changes) = event {
-                    for (path, change_type) in changes.iter() {
+                    for ((path, _), change_type) in changes.iter() {
                         let path = path.clone();
                         let ix = match paths.binary_search(&path) {
                             Ok(ix) | Err(ix) => ix,
@@ -4392,13 +4422,16 @@ mod tests {
                                 assert_ne!(paths.get(ix), Some(&path));
                                 paths.insert(ix, path);
                             }
+
                             PathChange::Removed => {
                                 assert_eq!(paths.get(ix), Some(&path));
                                 paths.remove(ix);
                             }
+
                             PathChange::Updated => {
                                 assert_eq!(paths.get(ix), Some(&path));
                             }
+
                             PathChange::AddedOrUpdated => {
                                 if paths[ix] != path {
                                     paths.insert(ix, path);
@@ -4406,6 +4439,7 @@ mod tests {
                             }
                         }
                     }
+
                     let new_paths = tree.paths().cloned().collect::<Vec<_>>();
                     assert_eq!(paths, new_paths, "incorrect changes: {:?}", changes);
                 }
@@ -4416,7 +4450,17 @@ mod tests {
         let mut snapshots = Vec::new();
         let mut mutations_len = operations;
         while mutations_len > 1 {
-            randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
+            if rng.gen_bool(0.2) {
+                worktree
+                    .update(cx, |worktree, cx| {
+                        randomly_mutate_worktree(worktree, &mut rng, cx)
+                    })
+                    .await
+                    .unwrap();
+            } else {
+                randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
+            }
+
             let buffered_event_count = fs.as_fake().buffered_event_count().await;
             if buffered_event_count > 0 && rng.gen_bool(0.3) {
                 let len = rng.gen_range(0..=buffered_event_count);
