@@ -3115,7 +3115,8 @@ impl Editor {
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.has_active_copilot_suggestion(cx) {
             if let Some(copilot) = Copilot::global(cx) {
-                let file_type = self.copilot_state
+                let file_type = self
+                    .copilot_state
                     .completions
                     .get(0)
                     .and_then(|completion| self.language_at(completion.range.start.offset, cx))

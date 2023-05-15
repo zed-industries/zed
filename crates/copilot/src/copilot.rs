@@ -279,7 +279,7 @@ pub enum Event {
         uuid: String,
         file_type: Option<Arc<str>>,
     },
-    CompletionDiscarded {
+    CompletionsDiscarded {
         uuids: Vec<String>,
         file_type: Option<Arc<str>>,
     },
@@ -789,7 +789,7 @@ impl Copilot {
             Err(error) => return Task::ready(Err(error)),
         };
 
-        cx.emit(Event::CompletionDiscarded {
+        cx.emit(Event::CompletionsDiscarded {
             uuids: completions
                 .iter()
                 .map(|completion| completion.uuid.clone())
