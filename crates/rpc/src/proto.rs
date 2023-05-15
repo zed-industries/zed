@@ -509,8 +509,8 @@ pub fn split_worktree_update(
                         updated_repositories.push(RepositoryEntry {
                             work_directory_id: repo.work_directory_id,
                             branch: repo.branch.clone(),
-                            removed_worktree_repo_paths: Default::default(),
-                            updated_worktree_statuses: Default::default(),
+                            removed_repo_paths: Default::default(),
+                            updated_statuses: Default::default(),
                         });
                         break;
                     }
@@ -535,26 +535,25 @@ pub fn split_worktree_update(
             {
                 let updated_statuses_chunk_size = cmp::min(
                     message.updated_repositories[repository_index]
-                        .updated_worktree_statuses
+                        .updated_statuses
                         .len(),
                     max_chunk_size - total_statuses,
                 );
 
                 let updated_statuses: Vec<_> = message.updated_repositories[repository_index]
-                    .updated_worktree_statuses
+                    .updated_statuses
                     .drain(..updated_statuses_chunk_size)
                     .collect();
 
                 total_statuses += updated_statuses.len();
 
                 let done_this_repo = message.updated_repositories[repository_index]
-                    .updated_worktree_statuses
+                    .updated_statuses
                     .is_empty();
 
                 let removed_repo_paths = if done_this_repo {
                     mem::take(
-                        &mut message.updated_repositories[repository_index]
-                            .removed_worktree_repo_paths,
+                        &mut message.updated_repositories[repository_index].removed_repo_paths,
                     )
                 } else {
                     Default::default()
@@ -566,8 +565,8 @@ pub fn split_worktree_update(
                     branch: message.updated_repositories[repository_index]
                         .branch
                         .clone(),
-                    updated_worktree_statuses: updated_statuses,
-                    removed_worktree_repo_paths: removed_repo_paths,
+                    updated_statuses,
+                    removed_repo_paths,
                 });
 
                 if done_this_repo {

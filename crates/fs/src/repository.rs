@@ -22,9 +22,9 @@ pub trait GitRepository: Send {
 
     fn branch_name(&self) -> Option<String>;
 
-    fn worktree_statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
+    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
-    fn worktree_status(&self, path: &RepoPath) -> Option<GitFileStatus>;
+    fn status(&self, path: &RepoPath) -> Option<GitFileStatus>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -71,7 +71,7 @@ impl GitRepository for LibGitRepository {
         Some(branch.to_string())
     }
 
-    fn worktree_statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
+    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
         let statuses = self.statuses(None).log_err()?;
 
         let mut map = TreeMap::default();
@@ -91,7 +91,7 @@ impl GitRepository for LibGitRepository {
         Some(map)
     }
 
-    fn worktree_status(&self, path: &RepoPath) -> Option<GitFileStatus> {
+    fn status(&self, path: &RepoPath) -> Option<GitFileStatus> {
         let status = self.status_file(path).log_err()?;
         read_status(status)
     }
@@ -100,7 +100,12 @@ impl GitRepository for LibGitRepository {
 fn read_status(status: git2::Status) -> Option<GitFileStatus> {
     if status.contains(git2::Status::CONFLICTED) {
         Some(GitFileStatus::Conflict)
-    } else if status.intersects(git2::Status::WT_MODIFIED | git2::Status::WT_RENAMED | git2::Status::INDEX_MODIFIED | git2::Status::INDEX_RENAMED) {
+    } else if status.intersects(
+        git2::Status::WT_MODIFIED
+            | git2::Status::WT_RENAMED
+            | git2::Status::INDEX_MODIFIED
+            | git2::Status::INDEX_RENAMED,
+    ) {
         Some(GitFileStatus::Modified)
     } else if status.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
         Some(GitFileStatus::Added)
@@ -141,7 +146,7 @@ impl GitRepository for FakeGitRepository {
         state.branch_name.clone()
     }
 
-    fn worktree_statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
+    fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>> {
         let state = self.state.lock();
         let mut map = TreeMap::default();
         for (repo_path, status) in state.worktree_statuses.iter() {
@@ -150,7 +155,7 @@ impl GitRepository for FakeGitRepository {
         Some(map)
     }
 
-    fn worktree_status(&self, path: &RepoPath) -> Option<GitFileStatus> {
+    fn status(&self, path: &RepoPath) -> Option<GitFileStatus> {
         let state = self.state.lock();
         state.worktree_statuses.get(path).cloned()
     }
