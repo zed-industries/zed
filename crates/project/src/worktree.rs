@@ -1663,6 +1663,30 @@ impl Snapshot {
         }
     }
 
+    fn descendent_entries<'a>(
+        &'a self,
+        include_dirs: bool,
+        include_ignored: bool,
+        parent_path: &'a Path,
+    ) -> DescendentEntriesIter<'a> {
+        let mut cursor = self.entries_by_path.cursor();
+        cursor.seek(&TraversalTarget::Path(parent_path), Bias::Left, &());
+        let mut traversal = Traversal {
+            cursor,
+            include_dirs,
+            include_ignored,
+        };
+
+        if traversal.end_offset() == traversal.start_offset() {
+            traversal.advance();
+        }
+
+        DescendentEntriesIter {
+            traversal,
+            parent_path,
+        }
+    }
+
     pub fn root_entry(&self) -> Option<&Entry> {
         self.entry_for_path("")
     }
@@ -2664,14 +2688,13 @@ impl BackgroundScanner {
 
     async fn process_events(&mut self, paths: Vec<PathBuf>) {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        if let Some(mut paths) = self
+        let paths = self
             .reload_entries_for_paths(paths, Some(scan_job_tx.clone()))
-            .await
-        {
-            paths.sort_unstable();
+            .await;
+        if let Some(paths) = &paths {
             util::extend_sorted(
                 &mut self.prev_state.lock().event_paths,
-                paths,
+                paths.iter().cloned(),
                 usize::MAX,
                 Ord::cmp,
             );
@@ -2681,9 +2704,13 @@ impl BackgroundScanner {
 
         self.update_ignore_statuses().await;
 
-        //
-
         let mut snapshot = self.snapshot.lock();
+
+        if let Some(paths) = paths {
+            for path in paths {
+                self.reload_repo_for_file_path(&path, &mut *snapshot, self.fs.as_ref());
+            }
+        }
 
         let mut git_repositories = mem::take(&mut snapshot.git_repositories);
         git_repositories.retain(|work_directory_id, _| {
@@ -2995,8 +3022,6 @@ impl BackgroundScanner {
                     fs_entry.is_ignored = ignore_stack.is_all();
                     snapshot.insert_entry(fs_entry, self.fs.as_ref());
 
-                    self.reload_repo_for_file_path(&path, &mut snapshot, self.fs.as_ref());
-
                     if let Some(scan_queue_tx) = &scan_queue_tx {
                         let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
                         if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
@@ -3109,34 +3134,36 @@ impl BackgroundScanner {
 
             let repo = snapshot.repo_for(&path)?;
 
-            let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
-
-            let status = {
-                let local_repo = snapshot.get_local_repo(&repo)?;
-
-                // Short circuit if we've already scanned everything
-                if local_repo.full_scan_id == scan_id {
-                    return None;
-                }
-
-                let git_ptr = local_repo.repo_ptr.lock();
-                git_ptr.status(&repo_path)
-            };
-
             let work_dir = repo.work_directory(snapshot)?;
-            let work_dir_id = repo.work_directory;
+            let work_dir_id = repo.work_directory.clone();
 
             snapshot
                 .git_repositories
                 .update(&work_dir_id, |entry| entry.scan_id = scan_id);
 
-            snapshot.repository_entries.update(&work_dir, |entry| {
+            let local_repo = snapshot.get_local_repo(&repo)?.to_owned();
+
+            // Short circuit if we've already scanned everything
+            if local_repo.full_scan_id == scan_id {
+                return None;
+            }
+
+            let mut repository = snapshot.repository_entries.remove(&work_dir)?;
+
+            for entry in snapshot.descendent_entries(false, false, path) {
+                let Some(repo_path) = repo.work_directory.relativize(snapshot, &entry.path) else {
+                    continue;
+                };
+
+                let status = local_repo.repo_ptr.lock().status(&repo_path);
                 if let Some(status) = status {
-                    entry.statuses.insert(repo_path, status);
+                    repository.statuses.insert(repo_path.clone(), status);
                 } else {
-                    entry.statuses.remove(&repo_path);
+                    repository.statuses.remove(&repo_path);
                 }
-            });
+            }
+
+            snapshot.repository_entries.insert(work_dir, repository)
         }
 
         Some(())
@@ -3471,17 +3498,13 @@ pub struct Traversal<'a> {
 
 impl<'a> Traversal<'a> {
     pub fn advance(&mut self) -> bool {
-        self.advance_to_offset(self.offset() + 1)
-    }
-
-    pub fn advance_to_offset(&mut self, offset: usize) -> bool {
         self.cursor.seek_forward(
             &TraversalTarget::Count {
-                count: offset,
+                count: self.end_offset() + 1,
                 include_dirs: self.include_dirs,
                 include_ignored: self.include_ignored,
             },
-            Bias::Right,
+            Bias::Left,
             &(),
         )
     }
@@ -3508,9 +3531,15 @@ impl<'a> Traversal<'a> {
         self.cursor.item()
     }
 
-    pub fn offset(&self) -> usize {
+    pub fn start_offset(&self) -> usize {
         self.cursor
             .start()
+            .count(self.include_dirs, self.include_ignored)
+    }
+
+    pub fn end_offset(&self) -> usize {
+        self.cursor
+            .end(&())
             .count(self.include_dirs, self.include_ignored)
     }
 }
@@ -3574,6 +3603,25 @@ impl<'a> Iterator for ChildEntriesIter<'a> {
         if let Some(item) = self.traversal.entry() {
             if item.path.starts_with(&self.parent_path) {
                 self.traversal.advance_to_sibling();
+                return Some(item);
+            }
+        }
+        None
+    }
+}
+
+struct DescendentEntriesIter<'a> {
+    parent_path: &'a Path,
+    traversal: Traversal<'a>,
+}
+
+impl<'a> Iterator for DescendentEntriesIter<'a> {
+    type Item = &'a Entry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(item) = self.traversal.entry() {
+            if item.path.starts_with(&self.parent_path) {
+                self.traversal.advance();
                 return Some(item);
             }
         }
@@ -3691,6 +3739,105 @@ mod tests {
                     Path::new("a/b"),
                     Path::new("a/c"),
                 ]
+            );
+        })
+    }
+
+    #[gpui::test]
+    async fn test_descendent_entries(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "a": "",
+                "b": {
+                   "c": {
+                       "d": ""
+                   },
+                   "e": {}
+                },
+                "f": "",
+                "g": {
+                    "h": {}
+                },
+                "i": {
+                    "j": {
+                        "k": ""
+                    },
+                    "l": {
+
+                    }
+                },
+                ".gitignore": "i/j\n",
+            }),
+        )
+        .await;
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = cx.read(|cx| Client::new(http_client, cx));
+
+        let tree = Worktree::local(
+            client,
+            Path::new("/root"),
+            true,
+            fs,
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        tree.read_with(cx, |tree, _| {
+            assert_eq!(
+                tree.descendent_entries(false, false, Path::new("b"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![Path::new("b/c/d"),]
+            );
+            assert_eq!(
+                tree.descendent_entries(true, false, Path::new("b"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Path::new("b"),
+                    Path::new("b/c"),
+                    Path::new("b/c/d"),
+                    Path::new("b/e"),
+                ]
+            );
+
+            assert_eq!(
+                tree.descendent_entries(false, false, Path::new("g"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                Vec::<PathBuf>::new()
+            );
+            assert_eq!(
+                tree.descendent_entries(true, false, Path::new("g"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![Path::new("g"), Path::new("g/h"),]
+            );
+
+            assert_eq!(
+                tree.descendent_entries(false, false, Path::new("i"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                Vec::<PathBuf>::new()
+            );
+            assert_eq!(
+                tree.descendent_entries(false, true, Path::new("i"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![Path::new("i/j/k")]
+            );
+            assert_eq!(
+                tree.descendent_entries(true, false, Path::new("i"))
+                    .map(|entry| entry.path.as_ref())
+                    .collect::<Vec<_>>(),
+                vec![Path::new("i"), Path::new("i/l"),]
             );
         })
     }
@@ -4117,8 +4264,6 @@ mod tests {
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
             assert_eq!(repo.statuses.iter().count(), 1);
-            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
-            assert_eq!(repo.statuses.get(&Path::new(B_TXT).into()), None);
             assert_eq!(
                 repo.statuses.get(&Path::new(F_TXT).into()),
                 Some(&GitFileStatus::Added)
@@ -4172,10 +4317,52 @@ mod tests {
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
             assert_eq!(repo.statuses.iter().count(), 0);
-            assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
-            assert_eq!(repo.statuses.get(&Path::new(B_TXT).into()), None);
-            assert_eq!(repo.statuses.get(&Path::new(E_TXT).into()), None);
-            assert_eq!(repo.statuses.get(&Path::new(F_TXT).into()), None);
+        });
+
+        let mut renamed_dir_name = "first_directory/second_directory";
+        const RENAMED_FILE: &'static str = "rf.txt";
+
+        std::fs::create_dir_all(work_dir.join(renamed_dir_name)).unwrap();
+        std::fs::write(
+            work_dir.join(renamed_dir_name).join(RENAMED_FILE),
+            "new-contents",
+        )
+        .unwrap();
+
+        tree.flush_fs_events(cx).await;
+
+        tree.read_with(cx, |tree, _cx| {
+            let snapshot = tree.snapshot();
+            let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
+
+            assert_eq!(repo.statuses.iter().count(), 1);
+            assert_eq!(
+                repo.statuses
+                    .get(&Path::new(renamed_dir_name).join(RENAMED_FILE).into()),
+                Some(&GitFileStatus::Added)
+            );
+        });
+
+        renamed_dir_name = "new_first_directory/second_directory";
+
+        std::fs::rename(
+            work_dir.join("first_directory"),
+            work_dir.join("new_first_directory"),
+        )
+        .unwrap();
+
+        tree.flush_fs_events(cx).await;
+
+        tree.read_with(cx, |tree, _cx| {
+            let snapshot = tree.snapshot();
+            let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
+
+            assert_eq!(repo.statuses.iter().count(), 1);
+            assert_eq!(
+                repo.statuses
+                    .get(&Path::new(renamed_dir_name).join(RENAMED_FILE).into()),
+                Some(&GitFileStatus::Added)
+            );
         });
     }
 
