@@ -55,7 +55,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{paths::HOME, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{paths::HOME, ResultExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -187,20 +187,12 @@ impl RepositoryEntry {
                 self.worktree_statuses
                     .iter_from(&repo_path)
                     .take_while(|(key, _)| key.starts_with(&repo_path))
-                    .map(|(_, status)| status)
-                    // Short circut once we've found the highest level
-                    .take_until(|status| status == &&GitFileStatus::Conflict)
-                    .reduce(
-                        |status_first, status_second| match (status_first, status_second) {
-                            (GitFileStatus::Conflict, _) | (_, GitFileStatus::Conflict) => {
-                                &GitFileStatus::Conflict
-                            }
-                            (GitFileStatus::Modified, _) | (_, GitFileStatus::Modified) => {
-                                &GitFileStatus::Modified
-                            }
-                            _ => &GitFileStatus::Added,
-                        },
-                    )
+                    .map(|(path, status)| if path == &repo_path {
+                        status
+                    } else {
+                        &GitFileStatus::Modified
+                    })
+                    .next()
                     .copied()
             })
     }
@@ -4170,14 +4162,12 @@ mod tests {
 
         tree.flush_fs_events(cx).await;
 
-        dbg!(git_status(&repo));
+        git_status(&repo);
 
         // Check that non-repo behavior is tracked
         tree.read_with(cx, |tree, _cx| {
             let snapshot = tree.snapshot();
             let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
-
-            dbg!(&repo.worktree_statuses);
 
             assert_eq!(repo.worktree_statuses.iter().count(), 0);
             assert_eq!(repo.worktree_statuses.get(&Path::new(A_TXT).into()), None);
