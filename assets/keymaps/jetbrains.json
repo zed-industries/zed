@@ -11,6 +11,7 @@
       "ctrl->": "zed::IncreaseBufferFontSize",
       "ctrl-<": "zed::DecreaseBufferFontSize",
       "cmd-d": "editor::DuplicateLine",
+      "cmd-backspace": "editor::DeleteLine",
       "cmd-pagedown": "editor::MovePageDown",
       "cmd-pageup": "editor::MovePageUp",
       "ctrl-alt-shift-b": "editor::SelectToPreviousWordStart",
@@ -33,6 +34,7 @@
       ],
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
+      "cmd-alt-l": "editor::Format",
       "cmd-[": "pane::GoBack",
       "cmd-]": "pane::GoForward",
       "alt-f7": "editor::FindAllReferences",
@@ -63,6 +65,7 @@
   {
     "context": "Workspace",
     "bindings": {
+      "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "cmd-alt-o": "project_symbols::Toggle",
       "cmd-1": "workspace::ToggleLeftSidebar",
