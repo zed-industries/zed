@@ -1373,6 +1373,10 @@ impl workspace::dock::Panel for ProjectPanel {
         cx.global::<Settings>().project_panel.default_width
     }
 
+    fn can_zoom(&self, _cx: &gpui::WindowContext) -> bool {
+        false
+    }
+
     fn icon_path(&self) -> &'static str {
         "icons/folder_tree_16.svg"
     }

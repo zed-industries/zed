@@ -1,7 +1,7 @@
 use crate::TerminalView;
 use gpui::{
     elements::*, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
-    WeakViewHandle,
+    WeakViewHandle, WindowContext,
 };
 use project::Project;
 use settings::{settings_file::SettingsFile, Settings, TerminalDockPosition, WorkingDirectory};
@@ -149,7 +149,7 @@ impl View for TerminalPanel {
 }
 
 impl Panel for TerminalPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         let settings = cx.global::<Settings>();
         let dock = settings
             .terminal_overrides
@@ -179,12 +179,16 @@ impl Panel for TerminalPanel {
         });
     }
 
-    fn default_size(&self, cx: &gpui::WindowContext) -> f32 {
+    fn default_size(&self, cx: &WindowContext) -> f32 {
         let settings = &cx.global::<Settings>().terminal_overrides;
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => settings.default_width.unwrap_or(640.),
             DockPosition::Bottom => settings.default_height.unwrap_or(320.),
         }
+    }
+
+    fn can_zoom(&self, _: &WindowContext) -> bool {
+        true
     }
 
     fn icon_path(&self) -> &'static str {

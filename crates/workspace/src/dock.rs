@@ -9,11 +9,16 @@ use serde::Deserialize;
 use settings::Settings;
 use std::rc::Rc;
 
+pub fn init(cx: &mut AppContext) {
+    cx.capture_action(Dock::toggle_zoom);
+}
+
 pub trait Panel: View {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn default_size(&self, cx: &WindowContext) -> f32;
+    fn can_zoom(&self, cx: &WindowContext) -> bool;
     fn icon_path(&self) -> &'static str;
     fn icon_tooltip(&self) -> String;
     fn icon_label(&self, _: &AppContext) -> Option<String> {
@@ -30,6 +35,7 @@ pub trait PanelHandle {
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
     fn default_size(&self, cx: &WindowContext) -> f32;
+    fn can_zoom(&self, cx: &WindowContext) -> bool;
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
     fn icon_tooltip(&self, cx: &WindowContext) -> String;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -59,6 +65,10 @@ where
 
     fn default_size(&self, cx: &WindowContext) -> f32 {
         self.read(cx).default_size(cx)
+    }
+
+    fn can_zoom(&self, cx: &WindowContext) -> bool {
+        self.read(cx).can_zoom(cx)
     }
 
     fn icon_path(&self, cx: &WindowContext) -> &'static str {
@@ -313,9 +323,7 @@ impl View for Dock {
                 .resizable(
                     self.position.to_resize_handle_side(),
                     size,
-                    |dock: &mut Self, size, cx| {
-                        dock.resize_active_panel(size, cx);
-                    },
+                    |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
                 )
                 .into_any()
         } else {
@@ -524,6 +532,10 @@ pub(crate) mod test {
                 Axis::Horizontal => 300.,
                 Axis::Vertical => 200.,
             }
+        }
+
+        fn can_zoom(&self, _cx: &WindowContext) -> bool {
+            unimplemented!()
         }
 
         fn icon_path(&self) -> &'static str {
