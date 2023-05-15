@@ -3094,8 +3094,14 @@ impl Editor {
             if let Some((copilot, completion)) =
                 Copilot::global(cx).zip(self.copilot_state.active_completion())
             {
+                let language = self
+                    .language_at(completion.range.start.offset, cx)
+                    .map(|language| language.name());
+
                 copilot
-                    .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
+                    .update(cx, |copilot, cx| {
+                        copilot.accept_completion(completion, language, cx)
+                    })
                     .detach_and_log_err(cx);
             }
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
@@ -3109,9 +3115,15 @@ impl Editor {
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.has_active_copilot_suggestion(cx) {
             if let Some(copilot) = Copilot::global(cx) {
+                let file_type = self.copilot_state
+                    .completions
+                    .get(0)
+                    .and_then(|completion| self.language_at(completion.range.start.offset, cx))
+                    .map(|language| language.name());
+
                 copilot
                     .update(cx, |copilot, cx| {
-                        copilot.discard_completions(&self.copilot_state.completions, cx)
+                        copilot.discard_completions(&self.copilot_state.completions, file_type, cx)
                     })
                     .detach_and_log_err(cx);
             }

@@ -47,6 +47,10 @@ pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut 
     });
     cx.set_global(copilot.clone());
 
+    //////////////////////////////////////
+    // SUBSCRIBE TO COPILOT EVENTS HERE //
+    //////////////////////////////////////
+
     cx.observe(&copilot, |handle, cx| {
         let status = handle.read(cx).status();
         cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
@@ -270,8 +274,19 @@ pub struct Copilot {
     buffers: HashMap<u64, WeakModelHandle<Buffer>>,
 }
 
+pub enum Event {
+    CompletionAccepted {
+        uuid: String,
+        file_type: Option<Arc<str>>,
+    },
+    CompletionDiscarded {
+        uuids: Vec<String>,
+        file_type: Option<Arc<str>>,
+    },
+}
+
 impl Entity for Copilot {
-    type Event = ();
+    type Event = Event;
 
     fn app_will_quit(
         &mut self,
@@ -737,18 +752,26 @@ impl Copilot {
     pub fn accept_completion(
         &mut self,
         completion: &Completion,
+        file_type: Option<Arc<str>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
+
+        cx.emit(Event::CompletionAccepted {
+            uuid: completion.uuid.clone(),
+            file_type,
+        });
+
         let request =
             server
                 .lsp
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
+
         cx.background().spawn(async move {
             request.await?;
             Ok(())
@@ -758,12 +781,22 @@ impl Copilot {
     pub fn discard_completions(
         &mut self,
         completions: &[Completion],
+        file_type: Option<Arc<str>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
+
+        cx.emit(Event::CompletionDiscarded {
+            uuids: completions
+                .iter()
+                .map(|completion| completion.uuid.clone())
+                .collect(),
+            file_type: file_type.clone(),
+        });
+
         let request =
             server
                 .lsp
@@ -773,6 +806,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
+
         cx.background().spawn(async move {
             request.await?;
             Ok(())
