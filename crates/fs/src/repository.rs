@@ -100,9 +100,9 @@ impl GitRepository for LibGitRepository {
 fn read_status(status: git2::Status) -> Option<GitFileStatus> {
     if status.contains(git2::Status::CONFLICTED) {
         Some(GitFileStatus::Conflict)
-    } else if status.intersects(git2::Status::WT_MODIFIED | git2::Status::WT_RENAMED) {
+    } else if status.intersects(git2::Status::WT_MODIFIED | git2::Status::WT_RENAMED | git2::Status::INDEX_MODIFIED | git2::Status::INDEX_RENAMED) {
         Some(GitFileStatus::Modified)
-    } else if status.intersects(git2::Status::WT_NEW) {
+    } else if status.intersects(git2::Status::WT_NEW | git2::Status::INDEX_NEW) {
         Some(GitFileStatus::Added)
     } else {
         None
