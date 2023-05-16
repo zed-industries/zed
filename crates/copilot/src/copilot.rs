@@ -47,9 +47,21 @@ pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut 
     });
     cx.set_global(copilot.clone());
 
-    //////////////////////////////////////
-    // SUBSCRIBE TO COPILOT EVENTS HERE //
-    //////////////////////////////////////
+    cx.subscribe(&copilot, |_, event, _| {
+        match event {
+            Event::CompletionAccepted { uuid, file_type } => {
+                // Build event object and pass it in
+                // telemetry.report_clickhouse_event(event, settings.telemetry())
+            }
+            Event::CompletionsDiscarded { uuids, file_type } => {
+                for uuid in uuids {
+                    // Build event object and pass it in
+                    // telemetry.report_clickhouse_event(event, settings.telemetry())
+                }
+            }
+        };
+    })
+    .detach();
 
     cx.observe(&copilot, |handle, cx| {
         let status = handle.read(cx).status();
