@@ -1,4 +1,4 @@
-use crate::{StatusItemView, ToggleZoom, Workspace};
+use crate::{StatusItemView, Workspace};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
@@ -9,22 +9,20 @@ use serde::Deserialize;
 use settings::Settings;
 use std::rc::Rc;
 
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(Dock::toggle_zoom);
-}
-
 pub trait Panel: View {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
     fn default_size(&self, cx: &WindowContext) -> f32;
-    fn can_zoom(&self, cx: &WindowContext) -> bool;
     fn icon_path(&self) -> &'static str;
     fn icon_tooltip(&self) -> String;
     fn icon_label(&self, _: &AppContext) -> Option<String> {
         None
     }
     fn should_change_position_on_event(_: &Self::Event) -> bool;
+    fn should_zoom_in_on_event(_: &Self::Event) -> bool;
+    fn should_zoom_out_on_event(_: &Self::Event) -> bool;
+    fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>);
     fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
     fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
 }
@@ -34,8 +32,8 @@ pub trait PanelHandle {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
+    fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn default_size(&self, cx: &WindowContext) -> f32;
-    fn can_zoom(&self, cx: &WindowContext) -> bool;
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
     fn icon_tooltip(&self, cx: &WindowContext) -> String;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -67,8 +65,8 @@ where
         self.read(cx).default_size(cx)
     }
 
-    fn can_zoom(&self, cx: &WindowContext) -> bool {
-        self.read(cx).can_zoom(cx)
+    fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_zoomed(zoomed, cx))
     }
 
     fn icon_path(&self, cx: &WindowContext) -> &'static str {
@@ -96,10 +94,6 @@ impl From<&dyn PanelHandle> for AnyViewHandle {
     fn from(val: &dyn PanelHandle) -> Self {
         val.as_any().clone()
     }
-}
-
-pub enum Event {
-    ZoomIn,
 }
 
 pub struct Dock {
@@ -192,22 +186,33 @@ impl Dock {
         cx.notify();
     }
 
-    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
-        for (ix, entry) in self.panel_entries.iter_mut().enumerate() {
-            if ix == self.active_panel_index && entry.panel.can_zoom(cx) {
-                entry.zoomed = zoomed;
-            } else {
+    pub fn set_panel_zoomed(
+        &mut self,
+        panel: &AnyViewHandle,
+        zoomed: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        for entry in &mut self.panel_entries {
+            if entry.panel.as_any() == panel {
+                if zoomed != entry.zoomed {
+                    entry.zoomed = zoomed;
+                    entry.panel.set_zoomed(zoomed, cx);
+                }
+            } else if entry.zoomed {
                 entry.zoomed = false;
+                entry.panel.set_zoomed(false, cx);
             }
         }
 
         cx.notify();
     }
 
-    pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
-        cx.propagate_action();
-        if !self.active_entry().map_or(false, |entry| entry.zoomed) {
-            cx.emit(Event::ZoomIn);
+    pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+        for entry in &mut self.panel_entries {
+            if entry.zoomed {
+                entry.zoomed = false;
+                entry.panel.set_zoomed(false, cx);
+            }
         }
     }
 
@@ -342,7 +347,7 @@ impl Dock {
 }
 
 impl Entity for Dock {
-    type Event = Event;
+    type Event = ();
 }
 
 impl View for Dock {
@@ -568,15 +573,15 @@ pub(crate) mod test {
             cx.emit(TestPanelEvent::PositionChanged);
         }
 
+        fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {
+            unimplemented!()
+        }
+
         fn default_size(&self, _: &WindowContext) -> f32 {
             match self.position.axis() {
                 Axis::Horizontal => 300.,
                 Axis::Vertical => 200.,
             }
-        }
-
-        fn can_zoom(&self, _cx: &WindowContext) -> bool {
-            unimplemented!()
         }
 
         fn icon_path(&self) -> &'static str {
@@ -589,6 +594,14 @@ pub(crate) mod test {
 
         fn should_change_position_on_event(event: &Self::Event) -> bool {
             matches!(event, TestPanelEvent::PositionChanged)
+        }
+
+        fn should_zoom_in_on_event(_: &Self::Event) -> bool {
+            false
+        }
+
+        fn should_zoom_out_on_event(_: &Self::Event) -> bool {
+            false
         }
 
         fn should_activate_on_event(&self, event: &Self::Event, _: &gpui::AppContext) -> bool {

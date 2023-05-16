@@ -135,6 +135,7 @@ pub enum Event {
     ChangeItemTitle,
     Focus,
     ZoomIn,
+    ZoomOut,
 }
 
 pub struct Pane {
@@ -661,8 +662,9 @@ impl Pane {
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
-        cx.propagate_action();
-        if !self.zoomed {
+        if self.zoomed {
+            cx.emit(Event::ZoomOut);
+        } else {
             cx.emit(Event::ZoomIn);
         }
     }

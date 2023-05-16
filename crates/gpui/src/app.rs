@@ -3972,6 +3972,12 @@ impl Clone for AnyViewHandle {
     }
 }
 
+impl PartialEq for AnyViewHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
 impl<T> PartialEq<ViewHandle<T>> for AnyViewHandle {
     fn eq(&self, other: &ViewHandle<T>) -> bool {
         self.window_id == other.window_id && self.view_id == other.view_id

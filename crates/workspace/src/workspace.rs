@@ -182,7 +182,6 @@ pub type WorkspaceId = i64;
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    dock::init(cx);
     pane::init(cx);
     notifications::init(cx);
 
@@ -232,7 +231,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         },
     );
     cx.add_action(Workspace::toggle_panel);
-    cx.add_action(Workspace::toggle_zoom);
     cx.add_action(Workspace::focus_center);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
@@ -595,7 +593,7 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let mut subscriptions = vec![
+        let subscriptions = vec![
             cx.observe_fullscreen(|_, _, cx| cx.notify()),
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
@@ -615,10 +613,19 @@ impl Workspace {
                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
                     .detach_and_log_err(cx);
             }),
+            cx.observe(&left_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&bottom_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&right_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
         ];
-        subscriptions.extend(Self::register_dock(&left_dock, cx));
-        subscriptions.extend(Self::register_dock(&bottom_dock, cx));
-        subscriptions.extend(Self::register_dock(&right_dock, cx));
 
         let mut this = Workspace {
             weak_self: weak_handle.clone(),
@@ -881,6 +888,11 @@ impl Workspace {
                             dock.activate_panel(dock.panels_len() - 1, cx);
                         }
                     });
+                } else if T::should_zoom_in_on_event(event) {
+                    this.zoom_out(cx);
+                    dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
+                } else if T::should_zoom_out_on_event(event) {
+                    this.zoom_out(cx);
                 }
             }
         })
@@ -1464,23 +1476,14 @@ impl Workspace {
         cx.notify();
     }
 
-    fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
-        // Any time the zoom is toggled we will zoom out all panes and docks. Then,
-        // the dock or pane that was zoomed will emit an event to zoom itself back in.
-        self.zoom_out(cx);
-    }
-
     fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
         }
 
-        self.left_dock
-            .update(cx, |dock, cx| dock.set_zoomed(false, cx));
-        self.bottom_dock
-            .update(cx, |dock, cx| dock.set_zoomed(false, cx));
-        self.right_dock
-            .update(cx, |dock, cx| dock.set_zoomed(false, cx));
+        self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
 
         cx.notify();
     }
@@ -1488,20 +1491,6 @@ impl Workspace {
     pub fn focus_center(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.focus_self();
         cx.notify();
-    }
-
-    fn register_dock(dock: &ViewHandle<Dock>, cx: &mut ViewContext<Self>) -> [Subscription; 2] {
-        [
-            cx.observe(dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
-            }),
-            cx.subscribe(dock, |_, dock, event, cx| {
-                dock.update(cx, |dock, cx| match event {
-                    dock::Event::ZoomIn => dock.set_zoomed(true, cx),
-                })
-            }),
-        ]
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
@@ -1727,9 +1716,11 @@ impl Workspace {
                 self.handle_pane_focused(pane.clone(), cx);
             }
             pane::Event::ZoomIn => {
+                self.zoom_out(cx);
                 pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                 cx.notify();
             }
+            pane::Event::ZoomOut => self.zoom_out(cx),
         }
 
         self.serialize_workspace(cx);

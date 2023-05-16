@@ -18,6 +18,8 @@ pub fn init(cx: &mut AppContext) {
 pub enum Event {
     Close,
     DockPositionChanged,
+    ZoomIn,
+    ZoomOut,
 }
 
 pub struct TerminalPanel {
@@ -96,6 +98,8 @@ impl TerminalPanel {
     ) {
         match event {
             pane::Event::Remove => cx.emit(Event::Close),
+            pane::Event::ZoomIn => cx.emit(Event::ZoomIn),
+            pane::Event::ZoomOut => cx.emit(Event::ZoomOut),
             _ => {}
         }
     }
@@ -187,8 +191,16 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn can_zoom(&self, _: &WindowContext) -> bool {
-        true
+    fn should_zoom_in_on_event(event: &Event) -> bool {
+        matches!(event, Event::ZoomIn)
+    }
+
+    fn should_zoom_out_on_event(event: &Event) -> bool {
+        matches!(event, Event::ZoomOut)
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
     }
 
     fn icon_path(&self) -> &'static str {
