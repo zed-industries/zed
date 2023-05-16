@@ -6,7 +6,7 @@ use assets::Assets;
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
-    CliRequest, CliResponse, IpcHandshake,
+    CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
 use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
@@ -37,7 +37,10 @@ use std::{
     os::unix::prelude::OsStrExt,
     panic,
     path::PathBuf,
-    sync::{Arc, Weak},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Weak,
+    },
     thread,
     time::Duration,
 };
@@ -89,29 +92,17 @@ fn main() {
     };
 
     let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
+    let cli_connections_tx = Arc::new(cli_connections_tx);
     let (open_paths_tx, mut open_paths_rx) = mpsc::unbounded();
+    let open_paths_tx = Arc::new(open_paths_tx);
+    let urls_callback_triggered = Arc::new(AtomicBool::new(false));
+
+    let callback_cli_connections_tx = Arc::clone(&cli_connections_tx);
+    let callback_open_paths_tx = Arc::clone(&open_paths_tx);
+    let callback_urls_callback_triggered = Arc::clone(&urls_callback_triggered);
     app.on_open_urls(move |urls, _| {
-        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
-            if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
-                cli_connections_tx
-                    .unbounded_send(cli_connection)
-                    .map_err(|_| anyhow!("no listener for cli connections"))
-                    .log_err();
-            };
-        } else {
-            let paths: Vec<_> = urls
-                .iter()
-                .flat_map(|url| url.strip_prefix("file://"))
-                .map(|url| {
-                    let decoded = urlencoding::decode_binary(url.as_bytes());
-                    PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
-                })
-                .collect();
-            open_paths_tx
-                .unbounded_send(paths)
-                .map_err(|_| anyhow!("no listener for open urls requests"))
-                .log_err();
-        }
+        callback_urls_callback_triggered.store(true, Ordering::Release);
+        open_urls(urls, &callback_cli_connections_tx, &callback_open_paths_tx);
     })
     .on_reopen(move |cx| {
         if cx.has_global::<Weak<AppState>>() {
@@ -234,6 +225,14 @@ fn main() {
                 workspace::open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx);
             }
         } else {
+            // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
+            // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
+            if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
+                && !urls_callback_triggered.load(Ordering::Acquire)
+            {
+                open_urls(collect_url_args(), &cli_connections_tx, &open_paths_tx)
+            }
+
             if let Ok(Some(connection)) = cli_connections_rx.try_next() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
@@ -282,6 +281,37 @@ fn main() {
         })
         .detach_and_log_err(cx);
     });
+}
+
+fn open_urls(
+    urls: Vec<String>,
+    cli_connections_tx: &mpsc::UnboundedSender<(
+        mpsc::Receiver<CliRequest>,
+        IpcSender<CliResponse>,
+    )>,
+    open_paths_tx: &mpsc::UnboundedSender<Vec<PathBuf>>,
+) {
+    if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
+        if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
+            cli_connections_tx
+                .unbounded_send(cli_connection)
+                .map_err(|_| anyhow!("no listener for cli connections"))
+                .log_err();
+        };
+    } else {
+        let paths: Vec<_> = urls
+            .iter()
+            .flat_map(|url| url.strip_prefix("file://"))
+            .map(|url| {
+                let decoded = urlencoding::decode_binary(url.as_bytes());
+                PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
+            })
+            .collect();
+        open_paths_tx
+            .unbounded_send(paths)
+            .map_err(|_| anyhow!("no listener for open urls requests"))
+            .log_err();
+    }
 }
 
 async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
@@ -514,7 +544,8 @@ async fn load_login_shell_environment() -> Result<()> {
 }
 
 fn stdout_is_a_pty() -> bool {
-    unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none()
+        && unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
 }
 
 fn collect_path_args() -> Vec<PathBuf> {
@@ -527,7 +558,11 @@ fn collect_path_args() -> Vec<PathBuf> {
                 None
             }
         })
-        .collect::<Vec<_>>()
+        .collect()
+}
+
+fn collect_url_args() -> Vec<String> {
+    env::args().skip(1).collect()
 }
 
 fn load_embedded_fonts(app: &App) {
