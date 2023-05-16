@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
-use util::{ResultExt, TryFutureExt};
+use util::{paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
@@ -1112,7 +1112,11 @@ impl View for CursorPosition {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-            let mut text = format!("{},{}", position.row + 1, position.column + 1);
+            let mut text = format!(
+                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                position.row + 1,
+                position.column + 1
+            );
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }

@@ -16,22 +16,34 @@ use std::{
     path::{Path, PathBuf},
     ptr,
 };
+use util::paths::PathLikeWithPosition;
 
 #[derive(Parser)]
 #[clap(name = "zed", global_setting(clap::AppSettings::NoAutoVersion))]
 struct Args {
-    /// Wait for all of the given paths to be closed before exiting.
+    /// Wait for all of the given paths to be opened/closed before exiting.
     #[clap(short, long)]
     wait: bool,
     /// A sequence of space-separated paths that you want to open.
-    #[clap()]
-    paths: Vec<PathBuf>,
+    ///
+    /// Use `path:line:row` syntax to open a file at a specific location.
+    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    #[clap(value_parser = parse_path_with_position)]
+    paths_with_position: Vec<PathLikeWithPosition<PathBuf>>,
     /// Print Zed's version and the app path.
     #[clap(short, long)]
     version: bool,
     /// Custom Zed.app path
     #[clap(short, long)]
     bundle_path: Option<PathBuf>,
+}
+
+fn parse_path_with_position(
+    argument_str: &str,
+) -> Result<PathLikeWithPosition<PathBuf>, std::convert::Infallible> {
+    PathLikeWithPosition::parse_str(argument_str, |path_str| {
+        Ok(Path::new(path_str).to_path_buf())
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,7 +62,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    for path in args.paths.iter() {
+    for path in args
+        .paths_with_position
+        .iter()
+        .map(|path_with_position| &path_with_position.path_like)
+    {
         if !path.exists() {
             touch(path.as_path())?;
         }
@@ -60,10 +76,16 @@ fn main() -> Result<()> {
 
     tx.send(CliRequest::Open {
         paths: args
-            .paths
+            .paths_with_position
             .into_iter()
-            .map(|path| fs::canonicalize(path).map_err(|error| anyhow!(error)))
-            .collect::<Result<Vec<PathBuf>>>()?,
+            .map(|path_with_position| {
+                let path_with_position = path_with_position.map_path_like(|path| {
+                    fs::canonicalize(&path)
+                        .with_context(|| format!("path {path:?} canonicalization"))
+                })?;
+                Ok(path_with_position.to_string(|path| path.display().to_string()))
+            })
+            .collect::<Result<_>>()?,
         wait: args.wait,
     })?;
 

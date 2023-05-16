@@ -10,7 +10,7 @@ use cli::{
 };
 use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
@@ -30,13 +30,14 @@ use settings::{
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
+    collections::HashMap,
     env,
     ffi::OsStr,
     fs::OpenOptions,
     io::Write as _,
     os::unix::prelude::OsStrExt,
     panic,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Weak,
@@ -44,8 +45,13 @@ use std::{
     thread,
     time::Duration,
 };
+use sum_tree::Bias;
 use terminal_view::{get_working_directory, TerminalView};
-use util::http::{self, HttpClient};
+use text::Point;
+use util::{
+    http::{self, HttpClient},
+    paths::PathLikeWithPosition,
+};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
@@ -678,13 +684,38 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
+                let mut caret_positions = HashMap::new();
+
                 let paths = if paths.is_empty() {
                     workspace::last_opened_workspace_paths()
                         .await
                         .map(|location| location.paths().to_vec())
-                        .unwrap_or(paths)
+                        .unwrap_or_default()
                 } else {
                     paths
+                        .into_iter()
+                        .filter_map(|path_with_position_string| {
+                            let path_with_position = PathLikeWithPosition::parse_str(
+                                &path_with_position_string,
+                                |path_str| {
+                                    Ok::<_, std::convert::Infallible>(
+                                        Path::new(path_str).to_path_buf(),
+                                    )
+                                },
+                            )
+                            .expect("Infallible");
+                            let path = path_with_position.path_like;
+                            if let Some(row) = path_with_position.row {
+                                if path.is_file() {
+                                    let row = row.saturating_sub(1);
+                                    let col =
+                                        path_with_position.column.unwrap_or(0).saturating_sub(1);
+                                    caret_positions.insert(path.clone(), Point::new(row, col));
+                                }
+                            }
+                            Some(path)
+                        })
+                        .collect()
                 };
 
                 let mut errored = false;
@@ -694,11 +725,32 @@ async fn handle_cli_connection(
                 {
                     Ok((workspace, items)) => {
                         let mut item_release_futures = Vec::new();
-                        cx.update(|cx| {
-                            for (item, path) in items.into_iter().zip(&paths) {
-                                match item {
-                                    Some(Ok(item)) => {
-                                        let released = oneshot::channel();
+
+                        for (item, path) in items.into_iter().zip(&paths) {
+                            match item {
+                                Some(Ok(item)) => {
+                                    if let Some(point) = caret_positions.remove(path) {
+                                        if let Some(active_editor) = item.downcast::<Editor>() {
+                                            active_editor
+                                                .downgrade()
+                                                .update(&mut cx, |editor, cx| {
+                                                    let snapshot =
+                                                        editor.snapshot(cx).display_snapshot;
+                                                    let point = snapshot
+                                                        .buffer_snapshot
+                                                        .clip_point(point, Bias::Left);
+                                                    editor.change_selections(
+                                                        Some(Autoscroll::center()),
+                                                        cx,
+                                                        |s| s.select_ranges([point..point]),
+                                                    );
+                                                })
+                                                .log_err();
+                                        }
+                                    }
+
+                                    let released = oneshot::channel();
+                                    cx.update(|cx| {
                                         item.on_release(
                                             cx,
                                             Box::new(move |_| {
@@ -706,23 +758,20 @@ async fn handle_cli_connection(
                                             }),
                                         )
                                         .detach();
-                                        item_release_futures.push(released.1);
-                                    }
-                                    Some(Err(err)) => {
-                                        responses
-                                            .send(CliResponse::Stderr {
-                                                message: format!(
-                                                    "error opening {:?}: {}",
-                                                    path, err
-                                                ),
-                                            })
-                                            .log_err();
-                                        errored = true;
-                                    }
-                                    None => {}
+                                    });
+                                    item_release_futures.push(released.1);
                                 }
+                                Some(Err(err)) => {
+                                    responses
+                                        .send(CliResponse::Stderr {
+                                            message: format!("error opening {:?}: {}", path, err),
+                                        })
+                                        .log_err();
+                                    errored = true;
+                                }
+                                None => {}
                             }
-                        });
+                        }
 
                         if wait {
                             let background = cx.background();
