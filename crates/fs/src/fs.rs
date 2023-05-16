@@ -572,15 +572,15 @@ impl FakeFs {
         Ok(())
     }
 
-    pub async fn pause_events(&self) {
+    pub fn pause_events(&self) {
         self.state.lock().events_paused = true;
     }
 
-    pub async fn buffered_event_count(&self) -> usize {
+    pub fn buffered_event_count(&self) -> usize {
         self.state.lock().buffered_events.len()
     }
 
-    pub async fn flush_events(&self, count: usize) {
+    pub fn flush_events(&self, count: usize) {
         self.state.lock().flush_events(count);
     }
 
@@ -832,14 +832,16 @@ impl Fs for FakeFs {
 
         let old_path = normalize_path(old_path);
         let new_path = normalize_path(new_path);
+
         let mut state = self.state.lock();
         let moved_entry = state.write_path(&old_path, |e| {
             if let btree_map::Entry::Occupied(e) = e {
-                Ok(e.remove())
+                Ok(e.get().clone())
             } else {
                 Err(anyhow!("path does not exist: {}", &old_path.display()))
             }
         })?;
+
         state.write_path(&new_path, |e| {
             match e {
                 btree_map::Entry::Occupied(mut e) => {
@@ -855,6 +857,17 @@ impl Fs for FakeFs {
             }
             Ok(())
         })?;
+
+        state
+            .write_path(&old_path, |e| {
+                if let btree_map::Entry::Occupied(e) = e {
+                    Ok(e.remove())
+                } else {
+                    unreachable!()
+                }
+            })
+            .unwrap();
+
         state.emit_event(&[old_path, new_path]);
         Ok(())
     }

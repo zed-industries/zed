@@ -4632,6 +4632,7 @@ mod tests {
             .detach();
         });
 
+        fs.as_fake().pause_events();
         let mut snapshots = Vec::new();
         let mut mutations_len = operations;
         while mutations_len > 1 {
@@ -4641,16 +4642,16 @@ mod tests {
                         randomly_mutate_worktree(worktree, &mut rng, cx)
                     })
                     .await
-                    .unwrap();
+                    .log_err();
             } else {
                 randomly_mutate_fs(&fs, root_dir, 1.0, &mut rng).await;
             }
 
-            let buffered_event_count = fs.as_fake().buffered_event_count().await;
+            let buffered_event_count = fs.as_fake().buffered_event_count();
             if buffered_event_count > 0 && rng.gen_bool(0.3) {
                 let len = rng.gen_range(0..=buffered_event_count);
                 log::info!("flushing {} events", len);
-                fs.as_fake().flush_events(len).await;
+                fs.as_fake().flush_events(len);
             } else {
                 randomly_mutate_fs(&fs, root_dir, 0.6, &mut rng).await;
                 mutations_len -= 1;
@@ -4666,7 +4667,7 @@ mod tests {
         }
 
         log::info!("quiescing");
-        fs.as_fake().flush_events(usize::MAX).await;
+        fs.as_fake().flush_events(usize::MAX);
         cx.foreground().run_until_parked();
         let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
         snapshot.check_invariants();
@@ -4726,6 +4727,7 @@ mod tests {
         rng: &mut impl Rng,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
+        log::info!("mutating worktree");
         let worktree = worktree.as_local_mut().unwrap();
         let snapshot = worktree.snapshot();
         let entry = snapshot.entries(false).choose(rng).unwrap();
@@ -4787,6 +4789,7 @@ mod tests {
         insertion_probability: f64,
         rng: &mut impl Rng,
     ) {
+        log::info!("mutating fs");
         let mut files = Vec::new();
         let mut dirs = Vec::new();
         for path in fs.as_fake().paths() {
