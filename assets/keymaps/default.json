@@ -191,7 +191,7 @@
     }
   },
   {
-    "context": "BufferSearchBar > Editor",
+    "context": "BufferSearchBar",
     "bindings": {
       "escape": "buffer_search::Dismiss",
       "tab": "buffer_search::FocusEditor",
@@ -200,13 +200,13 @@
     }
   },
   {
-    "context": "ProjectSearchBar > Editor",
+    "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus"
     }
   },
   {
-    "context": "ProjectSearchView > Editor",
+    "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus"
     }
