@@ -338,7 +338,7 @@ impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
 
 #[derive(Debug, Clone)]
 pub struct LocalSnapshot {
-    ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
+    ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>, // (gitignore, needs_update)
     // The ProjectEntryId corresponds to the entry for the .git dir
     // work_directory_id
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
@@ -1882,10 +1882,8 @@ impl LocalSnapshot {
             let abs_path = self.abs_path.join(&entry.path);
             match smol::block_on(build_gitignore(&abs_path, fs)) {
                 Ok(ignore) => {
-                    self.ignores_by_parent_abs_path.insert(
-                        abs_path.parent().unwrap().into(),
-                        (Arc::new(ignore), self.scan_id),
-                    );
+                    self.ignores_by_parent_abs_path
+                        .insert(abs_path.parent().unwrap().into(), (Arc::new(ignore), true));
                 }
                 Err(error) => {
                     log::error!(
@@ -1955,10 +1953,8 @@ impl LocalSnapshot {
         }
 
         if let Some(ignore) = ignore {
-            self.ignores_by_parent_abs_path.insert(
-                self.abs_path.join(&parent_path).into(),
-                (ignore, self.scan_id),
-            );
+            self.ignores_by_parent_abs_path
+                .insert(self.abs_path.join(&parent_path).into(), (ignore, false));
         }
 
         if parent_path.file_name() == Some(&DOT_GIT) {
@@ -2062,11 +2058,11 @@ impl LocalSnapshot {
 
         if path.file_name() == Some(&GITIGNORE) {
             let abs_parent_path = self.abs_path.join(path.parent().unwrap());
-            if let Some((_, scan_id)) = self
+            if let Some((_, needs_update)) = self
                 .ignores_by_parent_abs_path
                 .get_mut(abs_parent_path.as_path())
             {
-                *scan_id = self.snapshot.scan_id;
+                *needs_update = true;
             }
         }
     }
@@ -2609,7 +2605,7 @@ impl BackgroundScanner {
                 self.snapshot
                     .lock()
                     .ignores_by_parent_abs_path
-                    .insert(ancestor.into(), (ignore.into(), 0));
+                    .insert(ancestor.into(), (ignore.into(), false));
             }
         }
         {
@@ -2662,7 +2658,7 @@ impl BackgroundScanner {
                 // these before handling changes reported by the filesystem.
                 request = self.refresh_requests_rx.recv().fuse() => {
                     let Ok((paths, barrier)) = request else { break };
-                    if !self.process_refresh_request(paths, barrier).await {
+                    if !self.process_refresh_request(paths.clone(), barrier).await {
                         return;
                     }
                 }
@@ -2673,7 +2669,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_events)) = futures::poll!(events_rx.next()) {
                         paths.extend(more_events.into_iter().map(|e| e.path));
                     }
-                    self.process_events(paths).await;
+                    self.process_events(paths.clone()).await;
                 }
             }
         }
@@ -3181,16 +3177,18 @@ impl BackgroundScanner {
         let mut snapshot = self.snapshot.lock().clone();
         let mut ignores_to_update = Vec::new();
         let mut ignores_to_delete = Vec::new();
-        for (parent_abs_path, (_, scan_id)) in &snapshot.ignores_by_parent_abs_path {
-            if let Ok(parent_path) = parent_abs_path.strip_prefix(&snapshot.abs_path) {
-                if *scan_id > snapshot.completed_scan_id
-                    && snapshot.entry_for_path(parent_path).is_some()
-                {
-                    ignores_to_update.push(parent_abs_path.clone());
+        let abs_path = snapshot.abs_path.clone();
+        for (parent_abs_path, (_, needs_update)) in &mut snapshot.ignores_by_parent_abs_path {
+            if let Ok(parent_path) = parent_abs_path.strip_prefix(&abs_path) {
+                if *needs_update {
+                    *needs_update = false;
+                    if snapshot.snapshot.entry_for_path(parent_path).is_some() {
+                        ignores_to_update.push(parent_abs_path.clone());
+                    }
                 }
 
                 let ignore_path = parent_path.join(&*GITIGNORE);
-                if snapshot.entry_for_path(ignore_path).is_none() {
+                if snapshot.snapshot.entry_for_path(ignore_path).is_none() {
                     ignores_to_delete.push(parent_abs_path.clone());
                 }
             }
