@@ -3098,7 +3098,7 @@ impl Editor {
                     .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                     .detach_and_log_err(cx);
 
-                self.report_copilot_event(completion.uuid.clone(), true, cx)
+                self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
@@ -3117,9 +3117,7 @@ impl Editor {
                     })
                     .detach_and_log_err(cx);
 
-                for completion in &self.copilot_state.completions {
-                    self.report_copilot_event(completion.uuid.clone(), false, cx)
-                }
+                self.report_copilot_event(None, false, cx)
             }
 
             self.display_map
@@ -6884,7 +6882,7 @@ impl Editor {
 
     fn report_copilot_event(
         &self,
-        suggestion_id: String,
+        suggestion_id: Option<String>,
         suggestion_accepted: bool,
         cx: &AppContext,
     ) {
