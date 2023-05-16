@@ -11,6 +11,19 @@ pub struct Binding {
     context_predicate: Option<KeymapContextPredicate>,
 }
 
+impl std::fmt::Debug for Binding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Binding {{ keystrokes: {:?}, action: {}::{}, context_predicate: {:?} }}",
+            self.keystrokes,
+            self.action.namespace(),
+            self.action.name(),
+            self.context_predicate
+        )
+    }
+}
+
 impl Clone for Binding {
     fn clone(&self) -> Self {
         Self {
