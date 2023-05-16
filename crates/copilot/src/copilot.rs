@@ -4,7 +4,6 @@ mod sign_in;
 use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use client::{ClickhouseEvent, Client};
 use collections::HashMap;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
@@ -41,37 +40,12 @@ actions!(
     [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
 );
 
-pub fn init(client: &Client, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
+pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
     let copilot = cx.add_model({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(client.http_client(), node_runtime, cx)
+        move |cx| Copilot::start(http, node_runtime, cx)
     });
     cx.set_global(copilot.clone());
-
-    let telemetry_settings = cx.global::<Settings>().telemetry();
-    let telemetry = client.telemetry().clone();
-
-    cx.subscribe(&copilot, move |_, event, _| match event {
-        Event::CompletionAccepted { uuid, file_type } => {
-            let event = ClickhouseEvent::Copilot {
-                suggestion_id: uuid.clone(),
-                suggestion_accepted: true,
-                file_extension: file_type.clone().map(|a| a.to_string()),
-            };
-            telemetry.report_clickhouse_event(event, telemetry_settings);
-        }
-        Event::CompletionsDiscarded { uuids, file_type } => {
-            for uuid in uuids {
-                let event = ClickhouseEvent::Copilot {
-                    suggestion_id: uuid.clone(),
-                    suggestion_accepted: false,
-                    file_extension: file_type.clone().map(|a| a.to_string()),
-                };
-                telemetry.report_clickhouse_event(event, telemetry_settings);
-            }
-        }
-    })
-    .detach();
 
     cx.observe(&copilot, |handle, cx| {
         let status = handle.read(cx).status();
@@ -284,7 +258,7 @@ impl RegisteredBuffer {
 
 #[derive(Debug)]
 pub struct Completion {
-    uuid: String,
+    pub uuid: String,
     pub range: Range<Anchor>,
     pub text: String,
 }
@@ -296,19 +270,8 @@ pub struct Copilot {
     buffers: HashMap<u64, WeakModelHandle<Buffer>>,
 }
 
-pub enum Event {
-    CompletionAccepted {
-        uuid: String,
-        file_type: Option<Arc<str>>,
-    },
-    CompletionsDiscarded {
-        uuids: Vec<String>,
-        file_type: Option<Arc<str>>,
-    },
-}
-
 impl Entity for Copilot {
-    type Event = Event;
+    type Event = ();
 
     fn app_will_quit(
         &mut self,
@@ -774,26 +737,18 @@ impl Copilot {
     pub fn accept_completion(
         &mut self,
         completion: &Completion,
-        file_type: Option<Arc<str>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-
-        cx.emit(Event::CompletionAccepted {
-            uuid: completion.uuid.clone(),
-            file_type,
-        });
-
         let request =
             server
                 .lsp
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-
         cx.background().spawn(async move {
             request.await?;
             Ok(())
@@ -803,22 +758,12 @@ impl Copilot {
     pub fn discard_completions(
         &mut self,
         completions: &[Completion],
-        file_type: Option<Arc<str>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-
-        cx.emit(Event::CompletionsDiscarded {
-            uuids: completions
-                .iter()
-                .map(|completion| completion.uuid.clone())
-                .collect(),
-            file_type: file_type.clone(),
-        });
-
         let request =
             server
                 .lsp
@@ -828,7 +773,6 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-
         cx.background().spawn(async move {
             request.await?;
             Ok(())

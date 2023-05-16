@@ -3094,15 +3094,11 @@ impl Editor {
             if let Some((copilot, completion)) =
                 Copilot::global(cx).zip(self.copilot_state.active_completion())
             {
-                let language = self
-                    .language_at(completion.range.start.offset, cx)
-                    .map(|language| language.name());
-
                 copilot
-                    .update(cx, |copilot, cx| {
-                        copilot.accept_completion(completion, language, cx)
-                    })
+                    .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(completion.uuid.clone(), true, cx)
             }
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
@@ -3115,18 +3111,15 @@ impl Editor {
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if self.has_active_copilot_suggestion(cx) {
             if let Some(copilot) = Copilot::global(cx) {
-                let file_type = self
-                    .copilot_state
-                    .completions
-                    .get(0)
-                    .and_then(|completion| self.language_at(completion.range.start.offset, cx))
-                    .map(|language| language.name());
-
                 copilot
                     .update(cx, |copilot, cx| {
-                        copilot.discard_completions(&self.copilot_state.completions, file_type, cx)
+                        copilot.discard_completions(&self.copilot_state.completions, cx)
                     })
                     .detach_and_log_err(cx);
+
+                for completion in &self.copilot_state.completions {
+                    self.report_copilot_event(completion.uuid.clone(), false, cx)
+                }
             }
 
             self.display_map
@@ -6887,6 +6880,33 @@ impl Editor {
                     ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
             })
             .collect()
+    }
+
+    fn report_copilot_event(
+        &self,
+        suggestion_id: String,
+        suggestion_accepted: bool,
+        cx: &AppContext,
+    ) {
+        if let Some((project, file)) = self.project.as_ref().zip(
+            self.buffer
+                .read(cx)
+                .as_singleton()
+                .and_then(|b| b.read(cx).file()),
+        ) {
+            let telemetry_settings = cx.global::<Settings>().telemetry();
+            let extension = Path::new(file.file_name(cx))
+                .extension()
+                .and_then(|e| e.to_str());
+            let telemetry = project.read(cx).client().telemetry().clone();
+
+            let event = ClickhouseEvent::Copilot {
+                suggestion_id,
+                suggestion_accepted,
+                file_extension: extension.map(ToString::to_string),
+            };
+            telemetry.report_clickhouse_event(event, telemetry_settings);
+        }
     }
 
     fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
