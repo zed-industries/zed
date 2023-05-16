@@ -86,6 +86,11 @@ pub enum ClickhouseEvent {
         copilot_enabled: bool,
         copilot_enabled_for_language: bool,
     },
+    Copilot {
+        suggestion_id: String,
+        suggestion_accepted: bool,
+        file_extension: Option<String>,
+    },
 }
 
 #[derive(Serialize, Debug)]
