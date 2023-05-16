@@ -6888,25 +6888,28 @@ impl Editor {
         suggestion_accepted: bool,
         cx: &AppContext,
     ) {
-        if let Some((project, file)) = self.project.as_ref().zip(
-            self.buffer
-                .read(cx)
-                .as_singleton()
-                .and_then(|b| b.read(cx).file()),
-        ) {
-            let telemetry_settings = cx.global::<Settings>().telemetry();
-            let extension = Path::new(file.file_name(cx))
-                .extension()
-                .and_then(|e| e.to_str());
-            let telemetry = project.read(cx).client().telemetry().clone();
+        let Some(project) = &self.project else {
+            return
+        };
 
-            let event = ClickhouseEvent::Copilot {
-                suggestion_id,
-                suggestion_accepted,
-                file_extension: extension.map(ToString::to_string),
-            };
-            telemetry.report_clickhouse_event(event, telemetry_settings);
-        }
+        // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
+        let file_extension = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str());
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        let telemetry_settings = cx.global::<Settings>().telemetry();
+
+        let event = ClickhouseEvent::Copilot {
+            suggestion_id,
+            suggestion_accepted,
+            file_extension: file_extension.map(ToString::to_string),
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 
     fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
