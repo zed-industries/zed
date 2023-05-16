@@ -79,7 +79,7 @@ fn main() -> Result<()> {
             .paths_with_position
             .into_iter()
             .map(|path_with_position| {
-                let path_with_position = path_with_position.convert_path(|path| {
+                let path_with_position = path_with_position.map_path_like(|path| {
                     fs::canonicalize(&path)
                         .with_context(|| format!("path {path:?} canonicalization"))
                 })?;

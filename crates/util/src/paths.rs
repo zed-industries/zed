@@ -73,43 +73,80 @@ pub fn compact(path: &Path) -> PathBuf {
     }
 }
 
+/// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A representation of a path-like string with optional row and column numbers.
+/// Matching values example: `te`, `test.rs:22`, `te:22:5`, etc.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathLikeWithPosition<P> {
     pub path_like: P,
     pub row: Option<u32>,
+    // Absent if row is absent.
     pub column: Option<u32>,
 }
 
 impl<P> PathLikeWithPosition<P> {
-    pub fn parse_str<F, E>(s: &str, parse_path_like_str: F) -> Result<Self, E>
-    where
-        F: Fn(&str) -> Result<P, E>,
-    {
-        let mut components = s.splitn(3, FILE_ROW_COLUMN_DELIMITER).map(str::trim).fuse();
-        let path_like_str = components.next().filter(|str| !str.is_empty());
-        let row = components.next().and_then(|row| row.parse::<u32>().ok());
-        let column = components
-            .next()
-            .filter(|_| row.is_some())
-            .and_then(|col| col.parse::<u32>().ok());
-
-        Ok(match path_like_str {
-            Some(path_like_str) => Self {
-                path_like: parse_path_like_str(path_like_str)?,
-                row,
-                column,
-            },
-            None => Self {
-                path_like: parse_path_like_str(s)?,
+    /// Parses a string that possibly has `:row:column` suffix.
+    /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
+    /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
+    pub fn parse_str<E>(
+        s: &str,
+        parse_path_like_str: impl Fn(&str) -> Result<P, E>,
+    ) -> Result<Self, E> {
+        let fallback = |fallback_str| {
+            Ok(Self {
+                path_like: parse_path_like_str(fallback_str)?,
                 row: None,
                 column: None,
-            },
-        })
+            })
+        };
+
+        match s.trim().split_once(FILE_ROW_COLUMN_DELIMITER) {
+            Some((path_like_str, maybe_row_and_col_str)) => {
+                let path_like_str = path_like_str.trim();
+                let maybe_row_and_col_str = maybe_row_and_col_str.trim();
+                if path_like_str.is_empty() {
+                    fallback(s)
+                } else if maybe_row_and_col_str.is_empty() {
+                    fallback(path_like_str)
+                } else {
+                    let (row_parse_result, maybe_col_str) =
+                        match maybe_row_and_col_str.split_once(FILE_ROW_COLUMN_DELIMITER) {
+                            Some((maybe_row_str, maybe_col_str)) => {
+                                (maybe_row_str.parse::<u32>(), maybe_col_str.trim())
+                            }
+                            None => (maybe_row_and_col_str.parse::<u32>(), ""),
+                        };
+
+                    match row_parse_result {
+                        Ok(row) => {
+                            if maybe_col_str.is_empty() {
+                                Ok(Self {
+                                    path_like: parse_path_like_str(path_like_str)?,
+                                    row: Some(row),
+                                    column: None,
+                                })
+                            } else {
+                                match maybe_col_str.parse::<u32>() {
+                                    Ok(col) => Ok(Self {
+                                        path_like: parse_path_like_str(path_like_str)?,
+                                        row: Some(row),
+                                        column: Some(col),
+                                    }),
+                                    Err(_) => fallback(s),
+                                }
+                            }
+                        }
+                        Err(_) => fallback(s),
+                    }
+                }
+            }
+            None => fallback(s),
+        }
     }
 
-    pub fn convert_path<P2, E>(
+    pub fn map_path_like<P2, E>(
         self,
         mapping: impl FnOnce(P) -> Result<P2, E>,
     ) -> Result<PathLikeWithPosition<P2>, E> {
@@ -120,10 +157,7 @@ impl<P> PathLikeWithPosition<P> {
         })
     }
 
-    pub fn to_string<F>(&self, path_like_to_string: F) -> String
-    where
-        F: Fn(&P) -> String,
-    {
+    pub fn to_string(&self, path_like_to_string: impl Fn(&P) -> String) -> String {
         let path_like_string = path_like_to_string(&self.path_like);
         if let Some(row) = self.row {
             if let Some(column) = self.column {
@@ -133,6 +167,113 @@ impl<P> PathLikeWithPosition<P> {
             }
         } else {
             path_like_string
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestPath = PathLikeWithPosition<String>;
+
+    fn parse_str(s: &str) -> TestPath {
+        TestPath::parse_str(s, |s| Ok::<_, std::convert::Infallible>(s.to_string()))
+            .expect("infallible")
+    }
+
+    #[test]
+    fn path_with_position_parsing_positive() {
+        let input_and_expected = [
+            (
+                "test_file.rs",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: None,
+                    column: None,
+                },
+            ),
+            (
+                "test_file.rs:1",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: Some(1),
+                    column: None,
+                },
+            ),
+            (
+                "test_file.rs:1:2",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: Some(1),
+                    column: Some(2),
+                },
+            ),
+        ];
+
+        for (input, expected) in input_and_expected {
+            let actual = parse_str(input);
+            assert_eq!(
+                actual, expected,
+                "For positive case input str '{input}', got a parse mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn path_with_position_parsing_negative() {
+        for input in [
+            "test_file.rs:a",
+            "test_file.rs:a:b",
+            "test_file.rs::",
+            "test_file.rs::1",
+            "test_file.rs:1::",
+            "test_file.rs::1:2",
+            "test_file.rs:1::2",
+            "test_file.rs:1:2:",
+            "test_file.rs:1:2:3",
+        ] {
+            let actual = parse_str(input);
+            assert_eq!(
+                actual,
+                PathLikeWithPosition {
+                    path_like: input.to_string(),
+                    row: None,
+                    column: None,
+                },
+                "For negative case input str '{input}', got a parse mismatch"
+            );
+        }
+    }
+
+    // Trim off trailing `:`s for otherwise valid input.
+    #[test]
+    fn path_with_position_parsing_special() {
+        let input_and_expected = [
+            (
+                "test_file.rs:",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: None,
+                    column: None,
+                },
+            ),
+            (
+                "test_file.rs:1:",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: Some(1),
+                    column: None,
+                },
+            ),
+        ];
+
+        for (input, expected) in input_and_expected {
+            let actual = parse_str(input);
+            assert_eq!(
+                actual, expected,
+                "For special case input str '{input}', got a parse mismatch"
+            );
         }
     }
 }
