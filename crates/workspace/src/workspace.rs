@@ -681,10 +681,7 @@ impl Workspace {
         cx.spawn(|mut cx| async move {
             let serialized_workspace = persistence::DB.workspace_for_roots(&abs_paths.as_slice());
 
-            let paths_to_open = serialized_workspace
-                .as_ref()
-                .map(|workspace| workspace.location.paths())
-                .unwrap_or(Arc::new(abs_paths));
+            let paths_to_open = Arc::new(abs_paths);
 
             // Get project paths for all of the abs_paths
             let mut worktree_roots: HashSet<Arc<Path>> = Default::default();
@@ -1074,6 +1071,8 @@ impl Workspace {
         visible: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+        log::info!("open paths {:?}", abs_paths);
+
         let fs = self.app_state.fs.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
@@ -2512,25 +2511,23 @@ impl Workspace {
                 let dock_items = serialized_workspace
                     .dock_pane
                     .deserialize_to(
-                    &project,
-                    &dock_pane_handle,
-                    serialized_workspace.id,
-                    &workspace,
-                    &mut cx,
+                        &project,
+                        &dock_pane_handle,
+                        serialized_workspace.id,
+                        &workspace,
+                        &mut cx,
                     )
                     .await?;
 
-                // Traverse the splits tree and add to things
-                let something = serialized_workspace
-                .center_group
-                .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
-                .await;
-
                 let mut center_items = None;
                 let mut center_group = None;
-                if let Some((group, active_pane, items)) = something {
-                center_items = Some(items);
-                center_group = Some((group, active_pane))
+                // Traverse the splits tree and add to things
+                if let Some((group, active_pane, items)) = serialized_workspace
+                        .center_group
+                        .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+                        .await {
+                    center_items = Some(items);
+                    center_group = Some((group, active_pane))
                 }
 
                 let resulting_list = cx.read(|cx| {
@@ -2584,7 +2581,7 @@ impl Workspace {
                     }
 
                     if workspace.left_sidebar().read(cx).is_open()
-                    != serialized_workspace.left_sidebar_open
+                        != serialized_workspace.left_sidebar_open
                     {
                         workspace.toggle_sidebar(SidebarSide::Left, cx);
                     }
@@ -2641,13 +2638,6 @@ async fn open_items(
     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
     if let Some(serialized_workspace) = serialized_workspace {
-        // TODO kb
-        // If the user is opening a serialized workspace, force open the requested paths
-        // Requested items: (CLI args or whatever)
-        // Restored items: What came from the database
-        // Remaining items = Requested - restored
-        // For each remaining item, call workspace.open_path() (as below)
-
         let workspace = workspace.clone();
         let restored_items = cx
             .update(|cx| {
@@ -2656,7 +2646,7 @@ async fn open_items(
                     serialized_workspace,
                     project_paths_to_open
                         .iter()
-                        .map(|(_, project_path)| project_path)
+                        .map(|(_, project_path)| dbg!(project_path))
                         .cloned()
                         .collect(),
                     cx,
@@ -2966,8 +2956,6 @@ pub fn open_paths(
         Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
     )>,
 > {
-    log::info!("open paths {:?}", abs_paths);
-
     let app_state = app_state.clone();
     let abs_paths = abs_paths.to_vec();
     cx.spawn(|mut cx| async move {

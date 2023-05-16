@@ -203,8 +203,6 @@ impl SerializedPane {
 
             items.push(item_handle.clone());
 
-            log::info!("ACTUALLY SHOWN ITEMS: {:?}", &item_handle);
-
             if let Some(item_handle) = item_handle {
                 workspace.update(cx, |workspace, cx| {
                     let pane_handle = pane_handle

@@ -729,19 +729,11 @@ async fn handle_cli_connection(
                         for (item, path) in items.into_iter().zip(&paths) {
                             match item {
                                 Some(Ok(item)) => {
-                                    log::info!("UPDATED ITEMS: {:?}", item);
-                                    log::info!(
-                                        "caret_positions: {caret_positions:?}, path: {path:?}",
-                                    );
                                     if let Some(point) = caret_positions.remove(path) {
-                                        // TODO kb does not work
-                                        log::info!("@@@@@@@@ {path:?}@{point:?}");
                                         if let Some(active_editor) = item.downcast::<Editor>() {
-                                            log::info!("@@@@@@@@ editor");
                                             active_editor
                                                 .downgrade()
                                                 .update(&mut cx, |editor, cx| {
-                                                    log::info!("@@@@@@@@ update");
                                                     let snapshot =
                                                         editor.snapshot(cx).display_snapshot;
                                                     let point = snapshot
@@ -752,7 +744,6 @@ async fn handle_cli_connection(
                                                         cx,
                                                         |s| s.select_ranges([point..point]),
                                                     );
-                                                    log::info!("@@@@@@@@ finished");
                                                 })
                                                 .log_err();
                                         }
