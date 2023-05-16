@@ -3097,6 +3097,8 @@ impl Editor {
                 copilot
                     .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
@@ -3114,6 +3116,8 @@ impl Editor {
                         copilot.discard_completions(&self.copilot_state.completions, cx)
                     })
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(None, false, cx)
             }
 
             self.display_map
@@ -6874,6 +6878,36 @@ impl Editor {
                     ..snapshot.clip_offset_utf16(selection.end, Bias::Right)
             })
             .collect()
+    }
+
+    fn report_copilot_event(
+        &self,
+        suggestion_id: Option<String>,
+        suggestion_accepted: bool,
+        cx: &AppContext,
+    ) {
+        let Some(project) = &self.project else {
+            return
+        };
+
+        // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
+        let file_extension = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str());
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        let telemetry_settings = cx.global::<Settings>().telemetry();
+
+        let event = ClickhouseEvent::Copilot {
+            suggestion_id,
+            suggestion_accepted,
+            file_extension: file_extension.map(ToString::to_string),
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 
     fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
