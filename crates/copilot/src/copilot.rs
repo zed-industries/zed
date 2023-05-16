@@ -49,7 +49,7 @@ pub fn init(client: &Client, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext
     cx.set_global(copilot.clone());
 
     let telemetry_settings = cx.global::<Settings>().telemetry();
-    let telemetry = client.telemetry();
+    let telemetry = client.telemetry().clone();
 
     cx.subscribe(&copilot, move |_, event, _| match event {
         Event::CompletionAccepted { uuid, file_type } => {
