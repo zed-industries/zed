@@ -119,7 +119,8 @@ actions!(
         NewSearch,
         Feedback,
         Restart,
-        Welcome
+        Welcome,
+        ToggleZoom,
     ]
 );
 
@@ -181,6 +182,7 @@ pub type WorkspaceId = i64;
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+    dock::init(cx);
     pane::init(cx);
     notifications::init(cx);
 
@@ -230,6 +232,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         },
     );
     cx.add_action(Workspace::toggle_panel);
+    cx.add_action(Workspace::toggle_zoom);
     cx.add_action(Workspace::focus_center);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
@@ -441,7 +444,6 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     remote_entity_subscription: Option<client::Subscription>,
     modal: Option<AnyViewHandle>,
-    zoomed: Option<AnyViewHandle>,
     center: PaneGroup,
     left_dock: ViewHandle<Dock>,
     bottom_dock: ViewHandle<Dock>,
@@ -593,7 +595,7 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe_fullscreen(|_, _, cx| cx.notify()),
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
@@ -613,24 +615,14 @@ impl Workspace {
                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
                     .detach_and_log_err(cx);
             }),
-            cx.observe(&left_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
-            }),
-            cx.observe(&bottom_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
-            }),
-            cx.observe(&right_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
-            }),
         ];
+        subscriptions.extend(Self::register_dock(&left_dock, cx));
+        subscriptions.extend(Self::register_dock(&bottom_dock, cx));
+        subscriptions.extend(Self::register_dock(&right_dock, cx));
 
         let mut this = Workspace {
             weak_self: weak_handle.clone(),
             modal: None,
-            zoomed: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
@@ -1305,14 +1297,16 @@ impl Workspace {
         }
     }
 
-    pub fn zoom_in(&mut self, view: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.zoomed = Some(view);
-        cx.notify();
-    }
-
-    pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
-        self.zoomed.take();
-        cx.notify();
+    fn zoomed(&self, cx: &AppContext) -> Option<AnyViewHandle> {
+        self.left_dock
+            .read(cx)
+            .zoomed_panel()
+            .or(self.bottom_dock.read(cx).zoomed_panel())
+            .or(self.right_dock.read(cx).zoomed_panel())
+            .or_else(|| {
+                let pane = self.panes.iter().find(|pane| pane.read(cx).is_zoomed())?;
+                Some(pane.clone().into_any())
+            })
     }
 
     pub fn items<'a>(
@@ -1470,9 +1464,44 @@ impl Workspace {
         cx.notify();
     }
 
+    fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        // Any time the zoom is toggled we will zoom out all panes and docks. Then,
+        // the dock or pane that was zoomed will emit an event to zoom itself back in.
+        self.zoom_out(cx);
+    }
+
+    fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+        }
+
+        self.left_dock
+            .update(cx, |dock, cx| dock.set_zoomed(false, cx));
+        self.bottom_dock
+            .update(cx, |dock, cx| dock.set_zoomed(false, cx));
+        self.right_dock
+            .update(cx, |dock, cx| dock.set_zoomed(false, cx));
+
+        cx.notify();
+    }
+
     pub fn focus_center(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.focus_self();
         cx.notify();
+    }
+
+    fn register_dock(dock: &ViewHandle<Dock>, cx: &mut ViewContext<Self>) -> [Subscription; 2] {
+        [
+            cx.observe(dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.subscribe(dock, |_, dock, event, cx| {
+                dock.update(cx, |dock, cx| match event {
+                    dock::Event::ZoomIn => dock.set_zoomed(true, cx),
+                })
+            }),
+        ]
     }
 
     fn add_pane(&mut self, cx: &mut ViewContext<Self>) -> ViewHandle<Pane> {
@@ -1699,13 +1728,7 @@ impl Workspace {
             }
             pane::Event::ZoomIn => {
                 pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-                self.zoom_in(pane.into_any(), cx);
-            }
-            pane::Event::ZoomOut => {
-                if self.zoomed.as_ref().map_or(false, |zoomed| *zoomed == pane) {
-                    pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
-                    self.zoom_out(cx);
-                }
+                cx.notify();
             }
         }
 
@@ -2757,10 +2780,10 @@ impl View for Workspace {
                             })
                             .with_child(Overlay::new(
                                 Stack::new()
-                                    .with_children(self.zoomed.as_ref().map(|zoomed| {
+                                    .with_children(self.zoomed(cx).map(|zoomed| {
                                         enum ZoomBackground {}
 
-                                        ChildView::new(zoomed, cx)
+                                        ChildView::new(&zoomed, cx)
                                             .contained()
                                             .with_style(theme.workspace.zoomed_foreground)
                                             .aligned()

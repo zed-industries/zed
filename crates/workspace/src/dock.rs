@@ -1,4 +1,4 @@
-use crate::{StatusItemView, Workspace};
+use crate::{StatusItemView, ToggleZoom, Workspace};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
     elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
@@ -10,7 +10,7 @@ use settings::Settings;
 use std::rc::Rc;
 
 pub fn init(cx: &mut AppContext) {
-    cx.capture_action(Dock::toggle_zoom);
+    cx.add_action(Dock::toggle_zoom);
 }
 
 pub trait Panel: View {
@@ -98,6 +98,10 @@ impl From<&dyn PanelHandle> for AnyViewHandle {
     }
 }
 
+pub enum Event {
+    ZoomIn,
+}
+
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
@@ -141,6 +145,7 @@ struct PanelEntry {
     panel: Rc<dyn PanelHandle>,
     size: f32,
     context_menu: ViewHandle<ContextMenu>,
+    zoomed: bool,
     _subscriptions: [Subscription; 2],
 }
 
@@ -187,6 +192,25 @@ impl Dock {
         cx.notify();
     }
 
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        for (ix, entry) in self.panel_entries.iter_mut().enumerate() {
+            if ix == self.active_panel_index && entry.panel.can_zoom(cx) {
+                entry.zoomed = zoomed;
+            } else {
+                entry.zoomed = false;
+            }
+        }
+
+        cx.notify();
+    }
+
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        cx.propagate_action();
+        if !self.active_entry().map_or(false, |entry| entry.zoomed) {
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
     pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
@@ -214,6 +238,7 @@ impl Dock {
         self.panel_entries.push(PanelEntry {
             panel: Rc::new(panel),
             size,
+            zoomed: false,
             context_menu: cx.add_view(|cx| {
                 let mut menu = ContextMenu::new(dock_view_id, cx);
                 menu.set_position_mode(OverlayPositionMode::Local);
@@ -260,10 +285,22 @@ impl Dock {
     }
 
     pub fn active_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
+        let entry = self.active_entry()?;
+        Some(&entry.panel)
+    }
+
+    fn active_entry(&self) -> Option<&PanelEntry> {
         if self.is_open {
-            self.panel_entries
-                .get(self.active_panel_index)
-                .map(|entry| &entry.panel)
+            self.panel_entries.get(self.active_panel_index)
+        } else {
+            None
+        }
+    }
+
+    pub fn zoomed_panel(&self) -> Option<AnyViewHandle> {
+        let entry = self.active_entry()?;
+        if entry.zoomed {
+            Some(entry.panel.as_any().clone())
         } else {
             None
         }
@@ -305,7 +342,7 @@ impl Dock {
 }
 
 impl Entity for Dock {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for Dock {
@@ -314,18 +351,22 @@ impl View for Dock {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(active_panel) = self.active_panel() {
-            let size = self.active_panel_size().unwrap();
-            let style = &cx.global::<Settings>().theme.workspace.dock;
-            ChildView::new(active_panel.as_any(), cx)
-                .contained()
-                .with_style(style.container)
-                .resizable(
-                    self.position.to_resize_handle_side(),
-                    size,
-                    |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
-                )
-                .into_any()
+        if let Some(active_entry) = self.active_entry() {
+            if active_entry.zoomed {
+                Empty::new().into_any()
+            } else {
+                let size = self.active_panel_size().unwrap();
+                let style = &cx.global::<Settings>().theme.workspace.dock;
+                ChildView::new(active_entry.panel.as_any(), cx)
+                    .contained()
+                    .with_style(style.container)
+                    .resizable(
+                        self.position.to_resize_handle_side(),
+                        size,
+                        |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
+                    )
+                    .into_any()
+            }
         } else {
             Empty::new().into_any()
         }

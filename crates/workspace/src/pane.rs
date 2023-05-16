@@ -2,7 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, Workspace,
+    item::WeakItemHandle, toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, ToggleZoom,
+    Workspace,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -69,7 +70,6 @@ actions!(
         SplitUp,
         SplitRight,
         SplitDown,
-        ToggleZoom,
     ]
 );
 
@@ -135,7 +135,6 @@ pub enum Event {
     ChangeItemTitle,
     Focus,
     ZoomIn,
-    ZoomOut,
 }
 
 pub struct Pane {
@@ -662,9 +661,8 @@ impl Pane {
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
-        if self.zoomed {
-            cx.emit(Event::ZoomOut);
-        } else {
+        cx.propagate_action();
+        if !self.zoomed {
             cx.emit(Event::ZoomIn);
         }
     }
