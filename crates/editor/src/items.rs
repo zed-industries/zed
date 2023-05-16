@@ -637,7 +637,7 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("save", cx);
+        self.report_editor_event("save", None, cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
@@ -685,6 +685,11 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
+
+        let file_extension = abs_path
+            .extension()
+            .map(|a| a.to_string_lossy().to_string());
+        self.report_editor_event("save", file_extension, cx);
 
         project.update(cx, |project, cx| {
             project.save_buffer_as(buffer, abs_path, cx)

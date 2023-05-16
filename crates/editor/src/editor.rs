@@ -1330,7 +1330,7 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
         }
 
-        this.report_editor_event("open", cx);
+        this.report_editor_event("open", None, cx);
         this
     }
 
@@ -6897,7 +6897,8 @@ impl Editor {
             .as_singleton()
             .and_then(|b| b.read(cx).file())
             .and_then(|file| Path::new(file.file_name(cx)).extension())
-            .and_then(|e| e.to_str());
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string());
 
         let telemetry = project.read(cx).client().telemetry().clone();
         let telemetry_settings = cx.global::<Settings>().telemetry();
@@ -6905,49 +6906,58 @@ impl Editor {
         let event = ClickhouseEvent::Copilot {
             suggestion_id,
             suggestion_accepted,
-            file_extension: file_extension.map(ToString::to_string),
+            file_extension,
         };
         telemetry.report_clickhouse_event(event, telemetry_settings);
     }
 
-    fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
-        if let Some((project, file)) = self.project.as_ref().zip(
-            self.buffer
-                .read(cx)
-                .as_singleton()
-                .and_then(|b| b.read(cx).file()),
-        ) {
-            let settings = cx.global::<Settings>();
+    fn report_editor_event(
+        &self,
+        name: &'static str,
+        file_extension: Option<String>,
+        cx: &AppContext,
+    ) {
+        let Some(project) = &self.project else {
+            return
+        };
 
-            let extension = Path::new(file.file_name(cx))
-                .extension()
-                .and_then(|e| e.to_str());
-            let telemetry = project.read(cx).client().telemetry().clone();
-            telemetry.report_mixpanel_event(
+        // If None, we are in a file without an extension
+        let file_extension = file_extension.or(self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string()));
+
+        let settings = cx.global::<Settings>();
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        telemetry.report_mixpanel_event(
                 match name {
                     "open" => "open editor",
                     "save" => "save editor",
                     _ => name,
                 },
-                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode, "In Clickhouse": true  }),
+                json!({ "File Extension": file_extension, "Vim Mode": settings.vim_mode, "In Clickhouse": true  }),
                 settings.telemetry(),
             );
-            let event = ClickhouseEvent::Editor {
-                file_extension: extension.map(ToString::to_string),
-                vim_mode: settings.vim_mode,
-                operation: name,
-                copilot_enabled: settings.features.copilot,
-                copilot_enabled_for_language: settings.show_copilot_suggestions(
-                    self.language_at(0, cx)
-                        .map(|language| language.name())
-                        .as_deref(),
-                    self.file_at(0, cx)
-                        .map(|file| file.path().clone())
-                        .as_deref(),
-                ),
-            };
-            telemetry.report_clickhouse_event(event, settings.telemetry())
-        }
+        let event = ClickhouseEvent::Editor {
+            file_extension,
+            vim_mode: settings.vim_mode,
+            operation: name,
+            copilot_enabled: settings.features.copilot,
+            copilot_enabled_for_language: settings.show_copilot_suggestions(
+                self.language_at(0, cx)
+                    .map(|language| language.name())
+                    .as_deref(),
+                self.file_at(0, cx)
+                    .map(|file| file.path().clone())
+                    .as_deref(),
+            ),
+        };
+        telemetry.report_clickhouse_event(event, settings.telemetry())
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
