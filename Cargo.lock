@@ -1338,6 +1338,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-tar",
+ "client",
  "clock",
  "collections",
  "context_menu",

@@ -4,6 +4,7 @@ mod sign_in;
 use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use client::{ClickhouseEvent, Client};
 use collections::HashMap;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
@@ -40,26 +41,35 @@ actions!(
     [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
 );
 
-pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
+pub fn init(client: &Client, node_runtime: Arc<NodeRuntime>, cx: &mut AppContext) {
     let copilot = cx.add_model({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(http, node_runtime, cx)
+        move |cx| Copilot::start(client.http_client(), node_runtime, cx)
     });
     cx.set_global(copilot.clone());
 
-    cx.subscribe(&copilot, |_, event, _| {
-        match event {
-            Event::CompletionAccepted { uuid, file_type } => {
-                // Build event object and pass it in
-                // telemetry.report_clickhouse_event(event, settings.telemetry())
+    let telemetry_settings = cx.global::<Settings>().telemetry();
+    let telemetry = client.telemetry();
+
+    cx.subscribe(&copilot, move |_, event, _| match event {
+        Event::CompletionAccepted { uuid, file_type } => {
+            let event = ClickhouseEvent::Copilot {
+                suggestion_id: uuid.clone(),
+                suggestion_accepted: true,
+                file_extension: file_type.clone().map(|a| a.to_string()),
+            };
+            telemetry.report_clickhouse_event(event, telemetry_settings);
+        }
+        Event::CompletionsDiscarded { uuids, file_type } => {
+            for uuid in uuids {
+                let event = ClickhouseEvent::Copilot {
+                    suggestion_id: uuid.clone(),
+                    suggestion_accepted: false,
+                    file_extension: file_type.clone().map(|a| a.to_string()),
+                };
+                telemetry.report_clickhouse_event(event, telemetry_settings);
             }
-            Event::CompletionsDiscarded { uuids, file_type } => {
-                for uuid in uuids {
-                    // Build event object and pass it in
-                    // telemetry.report_clickhouse_event(event, settings.telemetry())
-                }
-            }
-        };
+        }
     })
     .detach();
 

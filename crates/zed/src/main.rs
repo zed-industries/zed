@@ -178,7 +178,6 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         theme_testbench::init(cx);
-        copilot::init(http.clone(), node_runtime, cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
             .detach();
@@ -196,6 +195,8 @@ fn main() {
             Default::default(),
             cx.global::<Settings>().telemetry(),
         );
+
+        copilot::init(&client, node_runtime, cx);
 
         let app_state = Arc::new(AppState {
             languages,

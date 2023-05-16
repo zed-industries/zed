@@ -22,6 +22,7 @@ test-support = [
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 gpui = { path = "../gpui" }
+client = { path = "../client" }
 language = { path = "../language" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
