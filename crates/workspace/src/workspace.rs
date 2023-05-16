@@ -2646,7 +2646,7 @@ async fn open_items(
                     serialized_workspace,
                     project_paths_to_open
                         .iter()
-                        .map(|(_, project_path)| dbg!(project_path))
+                        .map(|(_, project_path)| project_path)
                         .cloned()
                         .collect(),
                     cx,
