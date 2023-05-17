@@ -22,7 +22,7 @@ pub fn current(cx: &AppContext) -> Arc<Theme> {
 
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::new(source, cx.font_cache().clone()));
-    settings::register_setting::<ThemeSettings>(cx);
+    settings::register::<ThemeSettings>(cx);
 }
 
 #[derive(Deserialize, Default)]

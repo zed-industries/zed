@@ -290,7 +290,7 @@ pub enum Direction {
 }
 
 pub fn init_settings(cx: &mut AppContext) {
-    settings::register_setting::<EditorSettings>(cx);
+    settings::register::<EditorSettings>(cx);
 }
 
 pub fn init(cx: &mut AppContext) {

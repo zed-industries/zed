@@ -116,7 +116,7 @@ impl EventListener for ZedListener {
 }
 
 pub fn init(cx: &mut AppContext) {
-    settings::register_setting::<TerminalSettings>(cx);
+    settings::register::<TerminalSettings>(cx);
 }
 
 #[derive(Deserialize)]

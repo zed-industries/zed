@@ -185,7 +185,7 @@ pub type WorkspaceId = i64;
 impl_actions!(workspace, [ActivatePane]);
 
 pub fn init_settings(cx: &mut AppContext) {
-    settings::register_setting::<WorkspaceSettings>(cx);
+    settings::register::<WorkspaceSettings>(cx);
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {

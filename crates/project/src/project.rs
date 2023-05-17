@@ -390,7 +390,7 @@ impl FormatTrigger {
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
-        settings::register_setting::<ProjectSettings>(cx);
+        settings::register::<ProjectSettings>(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut AppContext) {

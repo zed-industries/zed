@@ -20,7 +20,7 @@ pub use base_keymap_setting::BaseKeymap;
 pub const FIRST_OPEN: &str = "first_open";
 
 pub fn init(cx: &mut AppContext) {
-    settings::register_setting::<BaseKeymap>(cx);
+    settings::register::<BaseKeymap>(cx);
 
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
         let welcome_page = cx.add_view(|cx| WelcomePage::new(workspace, cx));

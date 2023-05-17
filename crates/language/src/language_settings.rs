@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 pub fn init(cx: &mut AppContext) {
-    settings::register_setting::<AllLanguageSettings>(cx);
+    settings::register::<AllLanguageSettings>(cx);
 }
 
 pub fn language_settings<'a>(language: Option<&str>, cx: &'a AppContext) -> &'a LanguageSettings {

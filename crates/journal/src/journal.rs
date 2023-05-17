@@ -47,7 +47,7 @@ impl settings::Setting for JournalSettings {
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
-    settings::register_setting::<JournalSettings>(cx);
+    settings::register::<JournalSettings>(cx);
 
     cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
 }

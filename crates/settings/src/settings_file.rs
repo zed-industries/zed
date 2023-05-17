@@ -7,7 +7,7 @@ use gpui::{executor::Background, AppContext, AssetSource};
 use std::{borrow::Cow, io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
-pub fn register_setting<T: Setting>(cx: &mut AppContext) {
+pub fn register<T: Setting>(cx: &mut AppContext) {
     cx.update_global::<SettingsStore, _, _>(|store, cx| {
         store.register_setting::<T>(cx);
     });

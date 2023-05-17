@@ -77,7 +77,7 @@ impl Setting for AutoUpdateSetting {
 }
 
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
-    settings::register_setting::<AutoUpdateSetting>(cx);
+    settings::register::<AutoUpdateSetting>(cx);
 
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
         let auto_updater = cx.add_model(|cx| {

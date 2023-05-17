@@ -42,7 +42,7 @@ actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 pub fn init(cx: &mut AppContext) {
-    settings::register_setting::<VimModeSetting>(cx);
+    settings::register::<VimModeSetting>(cx);
 
     editor_events::init(cx);
     normal::init(cx);

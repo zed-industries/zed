@@ -71,7 +71,7 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 actions!(client, [SignIn, SignOut]);
 
 pub fn init_settings(cx: &mut AppContext) {
-    settings::register_setting::<TelemetrySettings>(cx);
+    settings::register::<TelemetrySettings>(cx);
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
