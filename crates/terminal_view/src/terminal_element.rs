@@ -16,7 +16,6 @@ use gpui::{
 use itertools::Itertools;
 use language::CursorShape;
 use ordered_float::OrderedFloat;
-use settings::font_size_for_setting;
 use terminal::{
     alacritty_terminal::{
         ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
@@ -531,12 +530,9 @@ impl Element<TerminalView> for TerminalElement {
         let tooltip_style = settings.theme.tooltip.clone();
 
         let font_cache = cx.font_cache();
-        let font_size = font_size_for_setting(
-            terminal_settings
-                .font_size
-                .unwrap_or(settings.buffer_font_size),
-            cx,
-        );
+        let font_size = terminal_settings
+            .font_size(cx)
+            .unwrap_or(settings.buffer_font_size(cx));
         let font_family_name = terminal_settings
             .font_family
             .as_ref()

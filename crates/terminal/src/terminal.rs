@@ -123,7 +123,7 @@ pub fn init(cx: &mut AppContext) {
 pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
-    pub font_size: Option<f32>,
+    font_size: Option<f32>,
     pub font_family: Option<String>,
     pub line_height: TerminalLineHeight,
     pub font_features: Option<fonts::Features>,
@@ -147,6 +147,13 @@ pub struct TerminalSettingsContent {
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
     pub copy_on_select: Option<bool>,
+}
+
+impl TerminalSettings {
+    pub fn font_size(&self, cx: &AppContext) -> Option<f32> {
+        self.font_size
+            .map(|size| theme::adjusted_font_size(size, cx))
+    }
 }
 
 impl settings::Setting for TerminalSettings {

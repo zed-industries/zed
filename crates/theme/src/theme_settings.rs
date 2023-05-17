@@ -12,14 +12,18 @@ use settings::SettingsJsonSchemaParams;
 use std::sync::Arc;
 use util::ResultExt as _;
 
+const MIN_FONT_SIZE: f32 = 6.0;
+
 #[derive(Clone)]
 pub struct ThemeSettings {
     pub buffer_font_family_name: String,
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
-    pub buffer_font_size: f32,
+    buffer_font_size: f32,
     pub theme: Arc<Theme>,
 }
+
+pub struct AdjustedBufferFontSize(pub f32);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -31,6 +35,48 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<fonts::Features>,
     #[serde(default)]
     pub theme: Option<String>,
+}
+
+impl ThemeSettings {
+    pub fn buffer_font_size(&self, cx: &AppContext) -> f32 {
+        if cx.has_global::<AdjustedBufferFontSize>() {
+            cx.global::<AdjustedBufferFontSize>().0
+        } else {
+            self.buffer_font_size
+        }
+        .max(MIN_FONT_SIZE)
+    }
+}
+
+pub fn adjusted_font_size(size: f32, cx: &AppContext) -> f32 {
+    if cx.has_global::<AdjustedBufferFontSize>() {
+        let buffer_font_size = settings::get::<ThemeSettings>(cx).buffer_font_size;
+        let delta = cx.global::<AdjustedBufferFontSize>().0 - buffer_font_size;
+        size + delta
+    } else {
+        size
+    }
+    .max(MIN_FONT_SIZE)
+}
+
+pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut f32)) {
+    if !cx.has_global::<AdjustedBufferFontSize>() {
+        let buffer_font_size = settings::get::<ThemeSettings>(cx).buffer_font_size;
+        cx.set_global(AdjustedBufferFontSize(buffer_font_size));
+    }
+
+    cx.update_global::<AdjustedBufferFontSize, _, _>(|delta, cx| {
+        f(&mut delta.0);
+        delta.0 = delta
+            .0
+            .max(MIN_FONT_SIZE - settings::get::<ThemeSettings>(cx).buffer_font_size);
+    });
+    cx.refresh_windows();
+}
+
+pub fn reset_font_size(cx: &mut AppContext) {
+    cx.remove_global::<AdjustedBufferFontSize>();
+    cx.refresh_windows();
 }
 
 impl settings::Setting for ThemeSettings {

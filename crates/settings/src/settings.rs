@@ -1,11 +1,9 @@
-mod font_size;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
 
 use std::{borrow::Cow, str};
 
-pub use font_size::{adjust_font_size_delta, font_size_for_setting};
 use gpui::AssetSource;
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use settings_file::*;

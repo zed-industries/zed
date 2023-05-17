@@ -13,8 +13,8 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
 
-pub use theme_registry::ThemeRegistry;
-pub use theme_settings::ThemeSettings;
+pub use theme_registry::*;
+pub use theme_settings::*;
 
 pub fn current(cx: &AppContext) -> Arc<Theme> {
     settings::get::<ThemeSettings>(cx).theme.clone()

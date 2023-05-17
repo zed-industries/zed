@@ -682,9 +682,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
         let settings = settings::get::<ThemeSettings>(cx);
         let theme = &settings.theme.editor;
         let style = theme.diagnostic_header.clone();
-        let font_size = (style.text_scale_factor
-            * settings::font_size_for_setting(settings.buffer_font_size, cx))
-        .round();
+        let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/circle_x_mark_12.svg")

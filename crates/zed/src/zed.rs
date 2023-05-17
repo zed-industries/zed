@@ -29,12 +29,9 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{
-    adjust_font_size_delta, KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
-};
+use settings::{KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_button::TerminalButton;
-use theme::ThemeSettings;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 use welcome::BaseKeymap;
@@ -75,8 +72,6 @@ actions!(
         ResetDatabase,
     ]
 );
-
-const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(about);
@@ -121,18 +116,12 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_global_action(quit);
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
-        adjust_font_size_delta(cx, |size, _| *size += 1.0)
+        theme::adjust_font_size(cx, |size| *size += 1.0)
     });
     cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
-        adjust_font_size_delta(cx, |size, cx| {
-            if cx.global::<ThemeSettings>().buffer_font_size + *size > MIN_FONT_SIZE {
-                *size -= 1.0;
-            }
-        })
+        theme::adjust_font_size(cx, |size| *size -= 1.0)
     });
-    cx.add_global_action(move |_: &ResetBufferFontSize, cx| {
-        adjust_font_size_delta(cx, |size, _| *size = 0.0)
-    });
+    cx.add_global_action(move |_: &ResetBufferFontSize, cx| theme::reset_font_size(cx));
     cx.add_global_action(move |_: &install_cli::Install, cx| {
         cx.spawn(|cx| async move {
             install_cli::install_cli(&cx)
@@ -639,7 +628,7 @@ mod tests {
         collections::HashSet,
         path::{Path, PathBuf},
     };
-    use theme::ThemeRegistry;
+    use theme::{ThemeRegistry, ThemeSettings};
     use util::http::FakeHttpClient;
     use workspace::{
         item::{Item, ItemHandle},

@@ -222,7 +222,7 @@ impl ThemeTestbench {
         let settings = settings::get::<ThemeSettings>(cx);
         let font_cache = cx.font_cache();
         let family_id = settings.buffer_font_family;
-        let font_size = settings::font_size_for_setting(settings.buffer_font_size, cx);
+        let font_size = settings.buffer_font_size(cx);
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
