@@ -2,12 +2,11 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use std::{borrow::Cow, str};
-
 use gpui::AssetSource;
 pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
 pub use settings_file::*;
 pub use settings_store::{Setting, SettingsJsonSchemaParams, SettingsStore};
+use std::{borrow::Cow, str};
 
 pub const DEFAULT_SETTINGS_ASSET_PATH: &str = "settings/default.json";
 pub const INITIAL_USER_SETTINGS_ASSET_PATH: &str = "settings/initial_user_settings.json";

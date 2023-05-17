@@ -89,6 +89,7 @@ pub fn handle_settings_file_changes(
                         .set_user_settings(&user_settings_content, cx)
                         .log_err();
                 });
+                cx.refresh_windows();
             });
         }
     })
