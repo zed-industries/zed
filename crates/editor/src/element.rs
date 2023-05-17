@@ -2060,8 +2060,7 @@ impl Element<Editor> for EditorElement {
 
         let show_scrollbars = match cx.global::<Settings>().show_scrollbars {
             settings::ShowScrollbars::Auto => {
-                snapshot.has_scrollbar_info()
-                    || editor.scroll_manager.scrollbars_visible()
+                snapshot.has_scrollbar_info() || editor.scroll_manager.scrollbars_visible()
             }
             settings::ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
             settings::ShowScrollbars::Always => true,
