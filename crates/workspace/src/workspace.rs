@@ -893,6 +893,8 @@ impl Workspace {
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
                 } else if T::should_zoom_out_on_event(event) {
                     this.zoom_out(cx);
+                } else if T::is_focus_event(event) {
+                    cx.notify();
                 }
             }
         })
@@ -1309,16 +1311,42 @@ impl Workspace {
         }
     }
 
-    fn zoomed(&self, cx: &AppContext) -> Option<AnyViewHandle> {
-        self.left_dock
-            .read(cx)
-            .zoomed_panel()
-            .or(self.bottom_dock.read(cx).zoomed_panel())
-            .or(self.right_dock.read(cx).zoomed_panel())
-            .or_else(|| {
-                let pane = self.panes.iter().find(|pane| pane.read(cx).is_zoomed())?;
-                Some(pane.clone().into_any())
-            })
+    fn zoomed(&self, cx: &WindowContext) -> Option<AnyViewHandle> {
+        self.zoomed_panel_for_dock(DockPosition::Left, cx)
+            .or_else(|| self.zoomed_panel_for_dock(DockPosition::Bottom, cx))
+            .or_else(|| self.zoomed_panel_for_dock(DockPosition::Right, cx))
+            .or_else(|| self.zoomed_pane(cx))
+    }
+
+    fn zoomed_panel_for_dock(
+        &self,
+        position: DockPosition,
+        cx: &WindowContext,
+    ) -> Option<AnyViewHandle> {
+        let (dock, other_docks) = match position {
+            DockPosition::Left => (&self.left_dock, [&self.bottom_dock, &self.right_dock]),
+            DockPosition::Bottom => (&self.bottom_dock, [&self.left_dock, &self.right_dock]),
+            DockPosition::Right => (&self.right_dock, [&self.left_dock, &self.bottom_dock]),
+        };
+
+        let zoomed_panel = dock.read(&cx).zoomed_panel()?;
+        if other_docks.iter().all(|dock| !dock.read(cx).has_focus(cx))
+            && !self.active_pane.read(cx).has_focus()
+        {
+            Some(zoomed_panel.as_any().clone())
+        } else {
+            None
+        }
+    }
+
+    fn zoomed_pane(&self, cx: &WindowContext) -> Option<AnyViewHandle> {
+        let active_pane = self.active_pane.read(cx);
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        if active_pane.is_zoomed() && docks.iter().all(|dock| !dock.read(cx).has_focus(cx)) {
+            Some(self.active_pane.clone().into_any())
+        } else {
+            None
+        }
     }
 
     pub fn items<'a>(
@@ -1433,7 +1461,7 @@ impl Workspace {
         });
 
         if let Some(active_item) = active_item {
-            if active_item.is_focused(cx) {
+            if active_item.has_focus(cx) {
                 cx.focus_self();
             } else {
                 cx.focus(active_item.as_any());
@@ -1464,7 +1492,7 @@ impl Workspace {
             dock.active_panel().cloned()
         });
         if let Some(active_item) = active_item {
-            if active_item.is_focused(cx) {
+            if active_item.has_focus(cx) {
                 cx.focus_self();
             } else {
                 cx.focus(active_item.as_any());
@@ -1663,7 +1691,6 @@ impl Workspace {
             });
             self.active_item_path_changed(cx);
             self.last_active_center_pane = Some(pane.downgrade());
-            cx.notify();
         }
 
         self.update_followers(
@@ -1677,6 +1704,8 @@ impl Workspace {
             }),
             cx,
         );
+
+        cx.notify();
     }
 
     fn handle_pane_event(
@@ -1716,9 +1745,11 @@ impl Workspace {
                 self.handle_pane_focused(pane.clone(), cx);
             }
             pane::Event::ZoomIn => {
-                self.zoom_out(cx);
-                pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
-                cx.notify();
+                if pane == self.active_pane {
+                    self.zoom_out(cx);
+                    pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+                    cx.notify();
+                }
             }
             pane::Event::ZoomOut => self.zoom_out(cx),
         }
@@ -2646,6 +2677,33 @@ impl Workspace {
         });
         Self::new(None, 0, project, app_state, cx)
     }
+
+    fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
+        let dock = match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Right => &self.right_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+        };
+        let active_panel = dock.read(cx).active_panel()?;
+        let element = if Some(active_panel.as_any()) == self.zoomed(cx).as_ref() {
+            dock.read(cx).render_placeholder(cx)
+        } else {
+            ChildView::new(dock, cx).into_any()
+        };
+
+        Some(
+            element
+                .constrained()
+                .dynamically(move |constraint, _, cx| match position {
+                    DockPosition::Left | DockPosition::Right => SizeConstraint::new(
+                        Vector2F::new(20., constraint.min.y()),
+                        Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
+                    ),
+                    _ => constraint,
+                })
+                .into_any(),
+        )
+    }
 }
 
 fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
@@ -2702,25 +2760,7 @@ impl View for Workspace {
                             .with_child({
                                 let project = self.project.clone();
                                 Flex::row()
-                                    .with_children(
-                                        if self.left_dock.read(cx).active_panel().is_some() {
-                                            Some(
-                                                ChildView::new(&self.left_dock, cx)
-                                                    .constrained()
-                                                    .dynamically(|constraint, _, cx| {
-                                                        SizeConstraint::new(
-                                                            Vector2F::new(20., constraint.min.y()),
-                                                            Vector2F::new(
-                                                                cx.window_size().x() * 0.8,
-                                                                constraint.max.y(),
-                                                            ),
-                                                        )
-                                                    }),
-                                            )
-                                        } else {
-                                            None
-                                        },
-                                    )
+                                    .with_children(self.render_dock(DockPosition::Left, cx))
                                     .with_child(
                                         Flex::column()
                                             .with_child(
@@ -2730,44 +2770,18 @@ impl View for Workspace {
                                                     &self.follower_states_by_leader,
                                                     self.active_call(),
                                                     self.active_pane(),
+                                                    self.zoomed(cx).as_ref(),
                                                     &self.app_state,
                                                     cx,
                                                 ))
                                                 .flex(1., true),
                                             )
                                             .with_children(
-                                                if self
-                                                    .bottom_dock
-                                                    .read(cx)
-                                                    .active_panel()
-                                                    .is_some()
-                                                {
-                                                    Some(ChildView::new(&self.bottom_dock, cx))
-                                                } else {
-                                                    None
-                                                },
+                                                self.render_dock(DockPosition::Bottom, cx),
                                             )
                                             .flex(1., true),
                                     )
-                                    .with_children(
-                                        if self.right_dock.read(cx).active_panel().is_some() {
-                                            Some(
-                                                ChildView::new(&self.right_dock, cx)
-                                                    .constrained()
-                                                    .dynamically(|constraint, _, cx| {
-                                                        SizeConstraint::new(
-                                                            Vector2F::new(20., constraint.min.y()),
-                                                            Vector2F::new(
-                                                                cx.window_size().x() * 0.8,
-                                                                constraint.max.y(),
-                                                            ),
-                                                        )
-                                                    }),
-                                            )
-                                        } else {
-                                            None
-                                        },
-                                    )
+                                    .with_children(self.render_dock(DockPosition::Right, cx))
                             })
                             .with_child(Overlay::new(
                                 Stack::new()
@@ -2810,6 +2824,7 @@ impl View for Workspace {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         }
+        cx.notify();
     }
 }
 

@@ -1,9 +1,8 @@
 use crate::{StatusItemView, Workspace};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
-    AppContext, Axis, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle, Axis,
+    Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -16,15 +15,17 @@ pub trait Panel: View {
     fn default_size(&self, cx: &WindowContext) -> f32;
     fn icon_path(&self) -> &'static str;
     fn icon_tooltip(&self) -> String;
-    fn icon_label(&self, _: &AppContext) -> Option<String> {
+    fn icon_label(&self, _: &WindowContext) -> Option<String> {
         None
     }
     fn should_change_position_on_event(_: &Self::Event) -> bool;
     fn should_zoom_in_on_event(_: &Self::Event) -> bool;
     fn should_zoom_out_on_event(_: &Self::Event) -> bool;
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>);
-    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
-    fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool;
+    fn should_activate_on_event(_: &Self::Event) -> bool;
+    fn should_close_on_event(_: &Self::Event) -> bool;
+    fn has_focus(&self, cx: &WindowContext) -> bool;
+    fn is_focus_event(_: &Self::Event) -> bool;
 }
 
 pub trait PanelHandle {
@@ -37,7 +38,7 @@ pub trait PanelHandle {
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
     fn icon_tooltip(&self, cx: &WindowContext) -> String;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
-    fn is_focused(&self, cx: &WindowContext) -> bool;
+    fn has_focus(&self, cx: &WindowContext) -> bool;
     fn as_any(&self) -> &AnyViewHandle;
 }
 
@@ -81,8 +82,8 @@ where
         self.read(cx).icon_label(cx)
     }
 
-    fn is_focused(&self, cx: &WindowContext) -> bool {
-        ViewHandle::is_focused(self, cx)
+    fn has_focus(&self, cx: &WindowContext) -> bool {
+        self.read(cx).has_focus(cx)
     }
 
     fn as_any(&self) -> &AnyViewHandle {
@@ -170,6 +171,11 @@ impl Dock {
         self.is_open
     }
 
+    pub fn has_focus(&self, cx: &WindowContext) -> bool {
+        self.active_panel()
+            .map_or(false, |panel| panel.has_focus(cx))
+    }
+
     pub fn active_panel_index(&self) -> usize {
         self.active_panel_index
     }
@@ -220,7 +226,7 @@ impl Dock {
         let subscriptions = [
             cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.subscribe(&panel, |this, panel, event, cx| {
-                if panel.read(cx).should_activate_on_event(event, cx) {
+                if T::should_activate_on_event(event) {
                     if let Some(ix) = this
                         .panel_entries
                         .iter()
@@ -230,7 +236,7 @@ impl Dock {
                         this.activate_panel(ix, cx);
                         cx.focus(&panel);
                     }
-                } else if panel.read(cx).should_close_on_event(event, cx)
+                } else if T::should_close_on_event(event)
                     && this.active_panel().map_or(false, |p| p.id() == panel.id())
                 {
                     this.set_open(false, cx);
@@ -302,10 +308,10 @@ impl Dock {
         }
     }
 
-    pub fn zoomed_panel(&self) -> Option<AnyViewHandle> {
+    pub fn zoomed_panel(&self) -> Option<Rc<dyn PanelHandle>> {
         let entry = self.active_entry()?;
         if entry.zoomed {
-            Some(entry.panel.as_any().clone())
+            Some(entry.panel.clone())
         } else {
             None
         }
@@ -344,6 +350,24 @@ impl Dock {
             cx.notify();
         }
     }
+
+    pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
+        if let Some(active_entry) = self.active_entry() {
+            let style = &cx.global::<Settings>().theme.workspace.dock;
+            Empty::new()
+                .into_any()
+                .contained()
+                .with_style(style.container)
+                .resizable(
+                    self.position.to_resize_handle_side(),
+                    active_entry.size,
+                    |_, _, _| {},
+                )
+                .into_any()
+        } else {
+            Empty::new().into_any()
+        }
+    }
 }
 
 impl Entity for Dock {
@@ -357,21 +381,16 @@ impl View for Dock {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_entry) = self.active_entry() {
-            if active_entry.zoomed {
-                Empty::new().into_any()
-            } else {
-                let size = self.active_panel_size().unwrap();
-                let style = &cx.global::<Settings>().theme.workspace.dock;
-                ChildView::new(active_entry.panel.as_any(), cx)
-                    .contained()
-                    .with_style(style.container)
-                    .resizable(
-                        self.position.to_resize_handle_side(),
-                        size,
-                        |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
-                    )
-                    .into_any()
-            }
+            let style = &cx.global::<Settings>().theme.workspace.dock;
+            ChildView::new(active_entry.panel.as_any(), cx)
+                .contained()
+                .with_style(style.container)
+                .resizable(
+                    self.position.to_resize_handle_side(),
+                    active_entry.size,
+                    |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
+                )
+                .into_any()
         } else {
             Empty::new().into_any()
         }
@@ -604,12 +623,20 @@ pub(crate) mod test {
             false
         }
 
-        fn should_activate_on_event(&self, event: &Self::Event, _: &gpui::AppContext) -> bool {
+        fn should_activate_on_event(event: &Self::Event) -> bool {
             matches!(event, TestPanelEvent::Activated)
         }
 
-        fn should_close_on_event(&self, event: &Self::Event, _: &gpui::AppContext) -> bool {
+        fn should_close_on_event(event: &Self::Event) -> bool {
             matches!(event, TestPanelEvent::Closed)
+        }
+
+        fn has_focus(&self, _cx: &WindowContext) -> bool {
+            unimplemented!()
+        }
+
+        fn is_focus_event(_: &Self::Event) -> bool {
+            unimplemented!()
         }
     }
 }

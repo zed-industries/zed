@@ -20,6 +20,7 @@ pub enum Event {
     DockPositionChanged,
     ZoomIn,
     ZoomOut,
+    Focus,
 }
 
 pub struct TerminalPanel {
@@ -100,6 +101,7 @@ impl TerminalPanel {
             pane::Event::Remove => cx.emit(Event::Close),
             pane::Event::ZoomIn => cx.emit(Event::ZoomIn),
             pane::Event::ZoomOut => cx.emit(Event::ZoomOut),
+            pane::Event::Focus => cx.emit(Event::Focus),
             _ => {}
         }
     }
@@ -148,6 +150,10 @@ impl View for TerminalPanel {
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if self.pane.read(cx).items_len() == 0 {
             self.add_terminal(&Default::default(), cx)
+        }
+
+        if cx.is_self_focused() {
+            cx.focus(&self.pane);
         }
     }
 }
@@ -211,7 +217,7 @@ impl Panel for TerminalPanel {
         "Terminals".to_string()
     }
 
-    fn icon_label(&self, cx: &AppContext) -> Option<String> {
+    fn icon_label(&self, cx: &WindowContext) -> Option<String> {
         let count = self.pane.read(cx).items_len();
         if count == 0 {
             None
@@ -224,11 +230,19 @@ impl Panel for TerminalPanel {
         matches!(event, Event::DockPositionChanged)
     }
 
-    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+    fn should_activate_on_event(_: &Self::Event) -> bool {
         false
     }
 
-    fn should_close_on_event(&self, event: &Event, _: &AppContext) -> bool {
+    fn should_close_on_event(event: &Event) -> bool {
         matches!(event, Event::Close)
+    }
+
+    fn has_focus(&self, cx: &WindowContext) -> bool {
+        self.pane.read(cx).has_focus()
+    }
+
+    fn is_focus_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Focus)
     }
 }

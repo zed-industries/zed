@@ -1699,7 +1699,11 @@ impl View for Pane {
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = true;
+        if !self.has_focus {
+            self.has_focus = true;
+            cx.emit(Event::Focus);
+        }
+
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(true, cx);
         });
@@ -1725,8 +1729,6 @@ impl View for Pane {
                     .insert(active_item.id(), focused.downgrade());
             }
         }
-
-        cx.emit(Event::Focus);
     }
 
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {

@@ -4224,7 +4224,7 @@ impl<T> Hash for WeakViewHandle<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AnyWeakViewHandle {
     window_id: usize,
     view_id: usize,

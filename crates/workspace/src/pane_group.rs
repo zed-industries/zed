@@ -7,7 +7,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    Axis, Border, ModelHandle, ViewContext, ViewHandle,
+    AnyViewHandle, Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -72,6 +72,7 @@ impl PaneGroup {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
@@ -81,6 +82,7 @@ impl PaneGroup {
             follower_states,
             active_call,
             active_pane,
+            zoomed,
             app_state,
             cx,
         )
@@ -135,6 +137,7 @@ impl Member {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
@@ -142,7 +145,7 @@ impl Member {
 
         match self {
             Member::Pane(pane) => {
-                let pane_element = if pane.read(cx).is_zoomed() {
+                let pane_element = if Some(&**pane) == zoomed {
                     Empty::new().into_any()
                 } else {
                     ChildView::new(pane, cx).into_any()
@@ -274,6 +277,7 @@ impl Member {
                 follower_states,
                 active_call,
                 active_pane,
+                zoomed,
                 app_state,
                 cx,
             ),
@@ -378,6 +382,7 @@ impl PaneAxis {
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
@@ -395,6 +400,7 @@ impl PaneAxis {
                     follower_state,
                     active_call,
                     active_pane,
+                    zoomed,
                     app_state,
                     cx,
                 );

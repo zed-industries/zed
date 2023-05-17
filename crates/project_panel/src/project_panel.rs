@@ -13,7 +13,7 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
     AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
@@ -48,6 +48,7 @@ pub struct ProjectPanel {
     context_menu: ViewHandle<ContextMenu>,
     dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakViewHandle<Workspace>,
+    has_focus: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -139,6 +140,7 @@ pub enum Event {
         focus_opened_item: bool,
     },
     DockPositionChanged,
+    Focus,
 }
 
 impl ProjectPanel {
@@ -214,6 +216,7 @@ impl ProjectPanel {
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
+                has_focus: false,
             };
             this.update_visible_entries(None, cx);
 
@@ -259,7 +262,7 @@ impl ProjectPanel {
                         }
                     }
                 }
-                Event::DockPositionChanged => {}
+                _ => {}
             }
         })
         .detach();
@@ -1338,6 +1341,17 @@ impl View for ProjectPanel {
         Self::reset_to_default_keymap_context(keymap);
         keymap.add_identifier("menu");
     }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if !self.has_focus {
+            self.has_focus = true;
+            cx.emit(Event::Focus);
+        }
+    }
+
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
+    }
 }
 
 impl Entity for ProjectPanel {
@@ -1345,7 +1359,7 @@ impl Entity for ProjectPanel {
 }
 
 impl workspace::dock::Panel for ProjectPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         let settings = cx.global::<Settings>();
         match settings.project_panel.dock {
             settings::ProjectPanelDockPosition::Left => DockPosition::Left,
@@ -1369,7 +1383,7 @@ impl workspace::dock::Panel for ProjectPanel {
         })
     }
 
-    fn default_size(&self, cx: &gpui::WindowContext) -> f32 {
+    fn default_size(&self, cx: &WindowContext) -> f32 {
         cx.global::<Settings>().project_panel.default_width
     }
 
@@ -1395,12 +1409,20 @@ impl workspace::dock::Panel for ProjectPanel {
         matches!(event, Event::DockPositionChanged)
     }
 
-    fn should_activate_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+    fn should_activate_on_event(_: &Self::Event) -> bool {
         false
     }
 
-    fn should_close_on_event(&self, _: &Self::Event, _: &AppContext) -> bool {
+    fn should_close_on_event(_: &Self::Event) -> bool {
         false
+    }
+
+    fn has_focus(&self, _: &WindowContext) -> bool {
+        self.has_focus
+    }
+
+    fn is_focus_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Focus)
     }
 }
 
