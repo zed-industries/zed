@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
+use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Editor};
 use gpui::{
     actions, elements::*, geometry::vector::Vector2F, AnyViewHandle, AppContext, Axis, Entity,
     View, ViewContext, ViewHandle,
@@ -8,6 +8,7 @@ use gpui::{
 use menu::{Cancel, Confirm};
 use settings::Settings;
 use text::{Bias, Point};
+use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{Modal, Workspace};
 
 actions!(go_to_line, [Toggle]);
@@ -75,15 +76,16 @@ impl GoToLine {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         self.prev_scroll_position.take();
-        self.active_editor.update(cx, |active_editor, cx| {
-            if let Some(rows) = active_editor.highlighted_rows() {
+        if let Some(point) = self.point_from_query(cx) {
+            self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
+                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                 active_editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                    s.select_ranges([position..position])
+                    s.select_ranges([point..point])
                 });
-            }
-        });
+            });
+        }
+
         cx.emit(Event::Dismissed);
     }
 
@@ -96,16 +98,7 @@ impl GoToLine {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::BufferEdited { .. } => {
-                let line_editor = self.line_editor.read(cx).text(cx);
-                let mut components = line_editor.trim().split(&[',', ':'][..]);
-                let row = components.next().and_then(|row| row.parse::<u32>().ok());
-                let column = components.next().and_then(|row| row.parse::<u32>().ok());
-                if let Some(point) = row.map(|row| {
-                    Point::new(
-                        row.saturating_sub(1),
-                        column.map(|column| column.saturating_sub(1)).unwrap_or(0),
-                    )
-                }) {
+                if let Some(point) = self.point_from_query(cx) {
                     self.active_editor.update(cx, |active_editor, cx| {
                         let snapshot = active_editor.snapshot(cx).display_snapshot;
                         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
@@ -119,6 +112,20 @@ impl GoToLine {
             }
             _ => {}
         }
+    }
+
+    fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
+        let line_editor = self.line_editor.read(cx).text(cx);
+        let mut components = line_editor
+            .splitn(2, FILE_ROW_COLUMN_DELIMITER)
+            .map(str::trim)
+            .fuse();
+        let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
+        let column = components.next().and_then(|col| col.parse::<u32>().ok());
+        Some(Point::new(
+            row.saturating_sub(1),
+            column.unwrap_or(0).saturating_sub(1),
+        ))
     }
 }
 
@@ -147,7 +154,7 @@ impl View for GoToLine {
         let theme = &cx.global::<Settings>().theme.picker;
 
         let label = format!(
-            "{},{} of {} lines",
+            "{}{FILE_ROW_COLUMN_DELIMITER}{} of {} lines",
             self.cursor_point.row + 1,
             self.cursor_point.column + 1,
             self.max_point.row + 1

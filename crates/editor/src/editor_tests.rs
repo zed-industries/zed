@@ -6682,10 +6682,11 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
     cx.update(|cx| {
         cx.set_global(SettingsStore::test(cx));
         cx.set_global(Settings::test(cx));
+        client::init_settings(cx);
         language::init(cx);
-        crate::init(cx);
         Project::init_settings(cx);
         workspace::init_settings(cx);
+        crate::init(cx);
     });
 
     update_test_settings(cx, f);

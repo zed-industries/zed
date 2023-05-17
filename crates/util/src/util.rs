@@ -17,6 +17,8 @@ pub use backtrace::Backtrace;
 use futures::Future;
 use rand::{seq::SliceRandom, Rng};
 
+pub use take_until::*;
+
 #[macro_export]
 macro_rules! debug_panic {
     ( $($fmt_arg:tt)* ) => {

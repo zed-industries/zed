@@ -1,6 +1,7 @@
 use super::{entity_messages, messages, request_messages, ConnectionId, TypedEnvelope};
 use anyhow::{anyhow, Result};
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
+use collections::HashMap;
 use futures::{SinkExt as _, StreamExt as _};
 use prost::Message as _;
 use serde::Serialize;
@@ -484,14 +485,21 @@ pub fn split_worktree_update(
     mut message: UpdateWorktree,
     max_chunk_size: usize,
 ) -> impl Iterator<Item = UpdateWorktree> {
-    let mut done = false;
+    let mut done_files = false;
+
+    let mut repository_map = message
+        .updated_repositories
+        .into_iter()
+        .map(|repo| (repo.work_directory_id, repo))
+        .collect::<HashMap<_, _>>();
+
     iter::from_fn(move || {
-        if done {
+        if done_files {
             return None;
         }
 
         let updated_entries_chunk_size = cmp::min(message.updated_entries.len(), max_chunk_size);
-        let updated_entries = message
+        let updated_entries: Vec<_> = message
             .updated_entries
             .drain(..updated_entries_chunk_size)
             .collect();
@@ -502,21 +510,27 @@ pub fn split_worktree_update(
             .drain(..removed_entries_chunk_size)
             .collect();
 
-        done = message.updated_entries.is_empty() && message.removed_entries.is_empty();
+        done_files = message.updated_entries.is_empty() && message.removed_entries.is_empty();
 
-        // Wait to send repositories until after we've guaranteed that their associated entries
-        // will be read
-        let updated_repositories = if done {
-            mem::take(&mut message.updated_repositories)
-        } else {
-            Default::default()
-        };
+        let mut updated_repositories = Vec::new();
 
-        let removed_repositories = if done {
+        if !repository_map.is_empty() {
+            for entry in &updated_entries {
+                if let Some(repo) = repository_map.remove(&entry.id) {
+                    updated_repositories.push(repo)
+                }
+            }
+        }
+
+        let removed_repositories = if done_files {
             mem::take(&mut message.removed_repositories)
         } else {
             Default::default()
         };
+
+        if done_files {
+            updated_repositories.extend(mem::take(&mut repository_map).into_values());
+        }
 
         Some(UpdateWorktree {
             project_id: message.project_id,
@@ -526,7 +540,7 @@ pub fn split_worktree_update(
             updated_entries,
             removed_entries,
             scan_id: message.scan_id,
-            is_last_update: done && message.is_last_update,
+            is_last_update: done_files && message.is_last_update,
             updated_repositories,
             removed_repositories,
         })

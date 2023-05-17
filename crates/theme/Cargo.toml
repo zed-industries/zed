@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+fs = { path = "../fs" }
 anyhow.workspace = true
 indexmap = "1.6.2"
 parking_lot.workspace = true

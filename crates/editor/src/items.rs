@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use text::Selection;
-use util::{ResultExt, TryFutureExt};
+use util::{paths::FILE_ROW_COLUMN_DELIMITER, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowableItemHandle};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle, ProjectItem},
@@ -566,7 +566,7 @@ impl Item for Editor {
         cx: &AppContext,
     ) -> AnyElement<T> {
         Flex::row()
-            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).aligned())
+            .with_child(Label::new(self.title(cx).to_string(), style.label.clone()).into_any())
             .with_children(detail.and_then(|detail| {
                 let path = path_for_buffer(&self.buffer, detail, false, cx)?;
                 let description = path.to_string_lossy();
@@ -580,6 +580,7 @@ impl Item for Editor {
                     .aligned(),
                 )
             }))
+            .align_children_center()
             .into_any()
     }
 
@@ -636,7 +637,7 @@ impl Item for Editor {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("save", cx);
+        self.report_editor_event("save", None, cx);
         let format = self.perform_format(project.clone(), FormatTrigger::Save, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|_, mut cx| async move {
@@ -684,6 +685,11 @@ impl Item for Editor {
             .read(cx)
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
+
+        let file_extension = abs_path
+            .extension()
+            .map(|a| a.to_string_lossy().to_string());
+        self.report_editor_event("save", file_extension, cx);
 
         project.update(cx, |project, cx| {
             project.save_buffer_as(buffer, abs_path, cx)
@@ -1111,7 +1117,11 @@ impl View for CursorPosition {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(position) = self.position {
             let theme = &cx.global::<Settings>().theme.workspace.status_bar;
-            let mut text = format!("{},{}", position.row + 1, position.column + 1);
+            let mut text = format!(
+                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                position.row + 1,
+                position.column + 1
+            );
             if self.selected_count > 0 {
                 write!(text, " ({} selected)", self.selected_count).unwrap();
             }

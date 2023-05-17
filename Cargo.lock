@@ -1135,6 +1135,7 @@ dependencies = [
  "plist",
  "serde",
  "serde_derive",
+ "util",
 ]
 
 [[package]]
@@ -1228,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -2253,6 +2254,7 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
+ "text",
  "theme",
  "util",
  "workspace",
@@ -2418,6 +2420,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "smol",
+ "sum_tree",
  "tempfile",
  "util",
 ]
@@ -2747,6 +2750,7 @@ dependencies = [
  "postage",
  "settings",
  "text",
+ "util",
  "workspace",
 ]
 
@@ -4838,6 +4842,7 @@ dependencies = [
  "futures 0.3.28",
  "fuzzy",
  "git",
+ "git2",
  "glob",
  "gpui",
  "ignore",
@@ -5930,6 +5935,7 @@ name = "search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "editor",
  "futures 0.3.28",
@@ -6703,6 +6709,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "take-until"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bdb6fa0dfa67b38c1e66b7041ba9dcf23b99d8121907cd31c807a332f7a0bbb"
+
+[[package]]
 name = "target-lexicon"
 version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6847,6 +6859,7 @@ name = "theme"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fs",
  "gpui",
  "indexmap",
  "parking_lot 0.11.2",
@@ -7756,6 +7769,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "take-until",
  "tempdir",
  "url",
 ]
@@ -8736,7 +8750,7 @@ checksum = "09041cd90cf85f7f8b2df60c646f853b7f535ce68f85244eb6731cf89fa498ec"
 
 [[package]]
 name = "zed"
-version = "0.86.0"
+version = "0.87.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

@@ -1287,6 +1287,7 @@ pub mod tests {
             cx.set_global(settings);
 
             language::init(cx);
+            client::init_settings(cx);
             editor::init_settings(cx);
             workspace::init_settings(cx);
         });

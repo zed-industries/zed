@@ -6,7 +6,7 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        AnchorCorner, ChildView, ComponentHost, ContainerStyle, Empty, Flex, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
@@ -16,7 +16,10 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
+use project::{
+    repository::GitFileStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
+    WorktreeId,
+};
 use settings::Settings;
 use std::{
     cmp::Ordering,
@@ -26,7 +29,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use theme::ProjectPanelEntry;
+use theme::{ui::FileName, ProjectPanelEntry};
 use unicase::UniCase;
 use workspace::Workspace;
 
@@ -86,6 +89,7 @@ pub struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
+    git_status: Option<GitFileStatus>,
 }
 
 actions!(
@@ -1008,6 +1012,15 @@ impl ProjectPanel {
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for entry in &visible_worktree_entries[entry_range] {
+                    let path = &entry.path;
+                    let status = (entry.path.parent().is_some() && !entry.is_ignored)
+                        .then(|| {
+                            snapshot
+                                .repo_for(path)
+                                .and_then(|entry| entry.status_for_path(&snapshot, path))
+                        })
+                        .flatten();
+
                     let mut details = EntryDetails {
                         filename: entry
                             .path
@@ -1028,6 +1041,7 @@ impl ProjectPanel {
                         is_cut: self
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
+                        git_status: status,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1096,12 +1110,16 @@ impl ProjectPanel {
                     .flex(1.0, true)
                     .into_any()
             } else {
-                Label::new(details.filename.clone(), style.text.clone())
-                    .contained()
-                    .with_margin_left(style.icon_spacing)
-                    .aligned()
-                    .left()
-                    .into_any()
+                ComponentHost::new(FileName::new(
+                    details.filename.clone(),
+                    details.git_status,
+                    FileName::style(style.text.clone(), &cx.global::<Settings>().theme),
+                ))
+                .contained()
+                .with_margin_left(style.icon_spacing)
+                .aligned()
+                .left()
+                .into_any()
             })
             .constrained()
             .with_height(style.height)

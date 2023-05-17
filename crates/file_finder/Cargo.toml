@@ -16,6 +16,7 @@ menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+text = { path = "../text" }
 util = { path = "../util" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }

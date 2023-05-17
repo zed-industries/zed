@@ -1013,8 +1013,7 @@ mod tests {
                     .zip(expected_styles.iter().cloned())
                     .collect::<Vec<_>>();
                 assert_eq!(
-                    rendered.text,
-                    dbg!(expected_text),
+                    rendered.text, expected_text,
                     "wrong text for input {blocks:?}"
                 );
                 assert_eq!(

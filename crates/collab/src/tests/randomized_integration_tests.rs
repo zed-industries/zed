@@ -8,12 +8,13 @@ use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
 use collections::BTreeMap;
 use editor::Bias;
-use fs::{FakeFs, Fs as _};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _};
 use futures::StreamExt as _;
 use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext};
 use language::{range_to_lsp, FakeLspAdapter, Language, LanguageConfig, PointUtf16};
 use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::{search::SearchQuery, Project, ProjectPath};
 use rand::{
     distributions::{Alphanumeric, DistString},
@@ -766,53 +767,85 @@ async fn apply_client_operation(
             }
         }
 
-        ClientOperation::WriteGitIndex {
-            repo_path,
-            contents,
-        } => {
-            if !client.fs.directories().contains(&repo_path) {
-                return Err(TestError::Inapplicable);
-            }
-
-            log::info!(
-                "{}: writing git index for repo {:?}: {:?}",
-                client.username,
+        ClientOperation::GitOperation { operation } => match operation {
+            GitOperation::WriteGitIndex {
                 repo_path,
-                contents
-            );
+                contents,
+            } => {
+                if !client.fs.directories().contains(&repo_path) {
+                    return Err(TestError::Inapplicable);
+                }
 
-            let dot_git_dir = repo_path.join(".git");
-            let contents = contents
-                .iter()
-                .map(|(path, contents)| (path.as_path(), contents.clone()))
-                .collect::<Vec<_>>();
-            if client.fs.metadata(&dot_git_dir).await?.is_none() {
-                client.fs.create_dir(&dot_git_dir).await?;
+                log::info!(
+                    "{}: writing git index for repo {:?}: {:?}",
+                    client.username,
+                    repo_path,
+                    contents
+                );
+
+                let dot_git_dir = repo_path.join(".git");
+                let contents = contents
+                    .iter()
+                    .map(|(path, contents)| (path.as_path(), contents.clone()))
+                    .collect::<Vec<_>>();
+                if client.fs.metadata(&dot_git_dir).await?.is_none() {
+                    client.fs.create_dir(&dot_git_dir).await?;
+                }
+                client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
             }
-            client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
-        }
-
-        ClientOperation::WriteGitBranch {
-            repo_path,
-            new_branch,
-        } => {
-            if !client.fs.directories().contains(&repo_path) {
-                return Err(TestError::Inapplicable);
-            }
-
-            log::info!(
-                "{}: writing git branch for repo {:?}: {:?}",
-                client.username,
+            GitOperation::WriteGitBranch {
                 repo_path,
-                new_branch
-            );
+                new_branch,
+            } => {
+                if !client.fs.directories().contains(&repo_path) {
+                    return Err(TestError::Inapplicable);
+                }
 
-            let dot_git_dir = repo_path.join(".git");
-            if client.fs.metadata(&dot_git_dir).await?.is_none() {
-                client.fs.create_dir(&dot_git_dir).await?;
+                log::info!(
+                    "{}: writing git branch for repo {:?}: {:?}",
+                    client.username,
+                    repo_path,
+                    new_branch
+                );
+
+                let dot_git_dir = repo_path.join(".git");
+                if client.fs.metadata(&dot_git_dir).await?.is_none() {
+                    client.fs.create_dir(&dot_git_dir).await?;
+                }
+                client.fs.set_branch_name(&dot_git_dir, new_branch).await;
             }
-            client.fs.set_branch_name(&dot_git_dir, new_branch).await;
-        }
+            GitOperation::WriteGitStatuses {
+                repo_path,
+                statuses,
+            } => {
+                if !client.fs.directories().contains(&repo_path) {
+                    return Err(TestError::Inapplicable);
+                }
+
+                log::info!(
+                    "{}: writing git statuses for repo {:?}: {:?}",
+                    client.username,
+                    repo_path,
+                    statuses
+                );
+
+                let dot_git_dir = repo_path.join(".git");
+
+                let statuses = statuses
+                    .iter()
+                    .map(|(path, val)| (path.as_path(), val.clone()))
+                    .collect::<Vec<_>>();
+
+                if client.fs.metadata(&dot_git_dir).await?.is_none() {
+                    client.fs.create_dir(&dot_git_dir).await?;
+                }
+
+                client
+                    .fs
+                    .set_status_for_repo(&dot_git_dir, statuses.as_slice())
+                    .await;
+            }
+        },
     }
     Ok(())
 }
@@ -1181,6 +1214,13 @@ enum ClientOperation {
         is_dir: bool,
         content: String,
     },
+    GitOperation {
+        operation: GitOperation,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+enum GitOperation {
     WriteGitIndex {
         repo_path: PathBuf,
         contents: Vec<(PathBuf, String)>,
@@ -1188,6 +1228,10 @@ enum ClientOperation {
     WriteGitBranch {
         repo_path: PathBuf,
         new_branch: Option<String>,
+    },
+    WriteGitStatuses {
+        repo_path: PathBuf,
+        statuses: Vec<(PathBuf, GitFileStatus)>,
     },
 }
 
@@ -1701,57 +1745,10 @@ impl TestPlan {
                     }
                 }
 
-                // Update a git index
-                91..=93 => {
-                    let repo_path = client
-                        .fs
-                        .directories()
-                        .into_iter()
-                        .choose(&mut self.rng)
-                        .unwrap()
-                        .clone();
-
-                    let mut file_paths = client
-                        .fs
-                        .files()
-                        .into_iter()
-                        .filter(|path| path.starts_with(&repo_path))
-                        .collect::<Vec<_>>();
-                    let count = self.rng.gen_range(0..=file_paths.len());
-                    file_paths.shuffle(&mut self.rng);
-                    file_paths.truncate(count);
-
-                    let mut contents = Vec::new();
-                    for abs_child_file_path in &file_paths {
-                        let child_file_path = abs_child_file_path
-                            .strip_prefix(&repo_path)
-                            .unwrap()
-                            .to_path_buf();
-                        let new_base = Alphanumeric.sample_string(&mut self.rng, 16);
-                        contents.push((child_file_path, new_base));
-                    }
-
-                    break ClientOperation::WriteGitIndex {
-                        repo_path,
-                        contents,
-                    };
-                }
-
-                // Update a git branch
-                94..=95 => {
-                    let repo_path = client
-                        .fs
-                        .directories()
-                        .choose(&mut self.rng)
-                        .unwrap()
-                        .clone();
-
-                    let new_branch = (self.rng.gen_range(0..10) > 3)
-                        .then(|| Alphanumeric.sample_string(&mut self.rng, 8));
-
-                    break ClientOperation::WriteGitBranch {
-                        repo_path,
-                        new_branch,
+                // Update a git related action
+                91..=95 => {
+                    break ClientOperation::GitOperation {
+                        operation: self.generate_git_operation(client),
                     };
                 }
 
@@ -1787,6 +1784,86 @@ impl TestPlan {
                 }
             }
         })
+    }
+
+    fn generate_git_operation(&mut self, client: &TestClient) -> GitOperation {
+        fn generate_file_paths(
+            repo_path: &Path,
+            rng: &mut StdRng,
+            client: &TestClient,
+        ) -> Vec<PathBuf> {
+            let mut paths = client
+                .fs
+                .files()
+                .into_iter()
+                .filter(|path| path.starts_with(repo_path))
+                .collect::<Vec<_>>();
+
+            let count = rng.gen_range(0..=paths.len());
+            paths.shuffle(rng);
+            paths.truncate(count);
+
+            paths
+                .iter()
+                .map(|path| path.strip_prefix(repo_path).unwrap().to_path_buf())
+                .collect::<Vec<_>>()
+        }
+
+        let repo_path = client
+            .fs
+            .directories()
+            .choose(&mut self.rng)
+            .unwrap()
+            .clone();
+
+        match self.rng.gen_range(0..100_u32) {
+            0..=25 => {
+                let file_paths = generate_file_paths(&repo_path, &mut self.rng, client);
+
+                let contents = file_paths
+                    .into_iter()
+                    .map(|path| (path, Alphanumeric.sample_string(&mut self.rng, 16)))
+                    .collect();
+
+                GitOperation::WriteGitIndex {
+                    repo_path,
+                    contents,
+                }
+            }
+            26..=63 => {
+                let new_branch = (self.rng.gen_range(0..10) > 3)
+                    .then(|| Alphanumeric.sample_string(&mut self.rng, 8));
+
+                GitOperation::WriteGitBranch {
+                    repo_path,
+                    new_branch,
+                }
+            }
+            64..=100 => {
+                let file_paths = generate_file_paths(&repo_path, &mut self.rng, client);
+
+                let statuses = file_paths
+                    .into_iter()
+                    .map(|paths| {
+                        (
+                            paths,
+                            match self.rng.gen_range(0..3_u32) {
+                                0 => GitFileStatus::Added,
+                                1 => GitFileStatus::Modified,
+                                2 => GitFileStatus::Conflict,
+                                _ => unreachable!(),
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                GitOperation::WriteGitStatuses {
+                    repo_path,
+                    statuses,
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 
     fn next_root_dir_name(&mut self, user_id: UserId) -> String {

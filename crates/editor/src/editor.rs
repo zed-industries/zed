@@ -1256,6 +1256,16 @@ impl Editor {
 
         let soft_wrap_mode_override =
             (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
+
+        let mut project_subscription = None;
+        if mode == EditorMode::Full && buffer.read(cx).is_singleton() {
+            if let Some(project) = project.as_ref() {
+                project_subscription = Some(cx.observe(project, |_, _, cx| {
+                    cx.emit(Event::TitleChanged);
+                }))
+            }
+        }
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1312,6 +1322,11 @@ impl Editor {
                 cx.observe_global::<Settings, _>(Self::settings_changed),
             ],
         };
+
+        if let Some(project_subscription) = project_subscription {
+            this._subscriptions.push(project_subscription);
+        }
+
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
 
@@ -1323,7 +1338,7 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
         }
 
-        this.report_editor_event("open", cx);
+        this.report_editor_event("open", None, cx);
         this
     }
 
@@ -3090,6 +3105,8 @@ impl Editor {
                 copilot
                     .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
@@ -3107,6 +3124,8 @@ impl Editor {
                         copilot.discard_completions(&self.copilot_state.completions, cx)
                     })
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(None, false, cx)
             }
 
             self.display_map
@@ -6853,48 +6872,88 @@ impl Editor {
             .collect()
     }
 
-    fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
-        if let Some((project, file)) = self.project.as_ref().zip(
-            self.buffer
-                .read(cx)
-                .as_singleton()
-                .and_then(|b| b.read(cx).file()),
-        ) {
-            let vim_mode = cx
-                .global::<SettingsStore>()
-                .untyped_user_settings()
-                .get("vim_mode")
-                == Some(&serde_json::Value::Bool(true));
-            let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
-            let copilot_enabled = all_language_settings(None, cx).copilot_enabled(None, None);
-            let copilot_enabled_for_language = self
-                .buffer
-                .read(cx)
-                .settings_at(0, cx)
-                .show_copilot_suggestions;
+    fn report_copilot_event(
+        &self,
+        suggestion_id: Option<String>,
+        suggestion_accepted: bool,
+        cx: &AppContext,
+    ) {
+        let Some(project) = &self.project else {
+            return
+        };
 
-            let extension = Path::new(file.file_name(cx))
-                .extension()
-                .and_then(|e| e.to_str());
-            let telemetry = project.read(cx).client().telemetry().clone();
-            telemetry.report_mixpanel_event(
-                match name {
-                    "open" => "open editor",
-                    "save" => "save editor",
-                    _ => name,
-                },
-                json!({ "File Extension": extension, "Vim Mode": vim_mode, "In Clickhouse": true  }),
-                telemetry_settings,
-            );
-            let event = ClickhouseEvent::Editor {
-                file_extension: extension.map(ToString::to_string),
-                vim_mode,
-                operation: name,
-                copilot_enabled,
-                copilot_enabled_for_language,
-            };
-            telemetry.report_clickhouse_event(event, telemetry_settings)
-        }
+        // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
+        let file_extension = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string());
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
+
+        let event = ClickhouseEvent::Copilot {
+            suggestion_id,
+            suggestion_accepted,
+            file_extension,
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings);
+    }
+
+    fn report_editor_event(
+        &self,
+        name: &'static str,
+        file_extension: Option<String>,
+        cx: &AppContext,
+    ) {
+        let Some(project) = &self.project else {
+            return
+        };
+
+        // If None, we are in a file without an extension
+        let file_extension = file_extension.or(self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string()));
+
+        let vim_mode = cx
+            .global::<SettingsStore>()
+            .untyped_user_settings()
+            .get("vim_mode")
+            == Some(&serde_json::Value::Bool(true));
+        let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
+        let copilot_enabled = all_language_settings(None, cx).copilot_enabled(None, None);
+        let copilot_enabled_for_language = self
+            .buffer
+            .read(cx)
+            .settings_at(0, cx)
+            .show_copilot_suggestions;
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        telemetry.report_mixpanel_event(
+            match name {
+                "open" => "open editor",
+                "save" => "save editor",
+                _ => name,
+            },
+            json!({ "File Extension": file_extension, "Vim Mode": vim_mode, "In Clickhouse": true  }),
+            telemetry_settings,
+        );
+        let event = ClickhouseEvent::Editor {
+            file_extension,
+            vim_mode,
+            operation: name,
+            copilot_enabled,
+            copilot_enabled_for_language,
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings)
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,

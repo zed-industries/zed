@@ -10,7 +10,7 @@ use editor::{
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions,
     Undo,
 };
-use fs::{FakeFs, Fs as _, LineEnding, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
@@ -2690,6 +2690,154 @@ async fn test_git_branch_name(
     let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
     project_remote_c.read_with(cx_c, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
+    });
+}
+
+#[gpui::test]
+async fn test_git_status_sync(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+            ".git": {},
+            "a.txt": "a",
+            "b.txt": "b",
+            }),
+        )
+        .await;
+
+    const A_TXT: &'static str = "a.txt";
+    const B_TXT: &'static str = "b.txt";
+
+    client_a
+        .fs
+        .as_fake()
+        .set_status_for_repo(
+            Path::new("/dir/.git"),
+            &[
+                (&Path::new(A_TXT), GitFileStatus::Added),
+                (&Path::new(B_TXT), GitFileStatus::Added),
+            ],
+        )
+        .await;
+
+    let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_remote = client_b.build_remote_project(project_id, cx_b).await;
+
+    // Wait for it to catch up to the new status
+    deterministic.run_until_parked();
+
+    #[track_caller]
+    fn assert_status(
+        file: &impl AsRef<Path>,
+        status: Option<GitFileStatus>,
+        project: &Project,
+        cx: &AppContext,
+    ) {
+        let file = file.as_ref();
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        let worktree = worktrees[0].clone();
+        let snapshot = worktree.read(cx).snapshot();
+        let root_entry = snapshot.root_git_entry().unwrap();
+        assert_eq!(root_entry.status_for_file(&snapshot, file), status);
+    }
+
+    // Smoke test status reading
+    project_local.read_with(cx_a, |project, cx| {
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
+    });
+    project_remote.read_with(cx_b, |project, cx| {
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_status_for_repo(
+            Path::new("/dir/.git"),
+            &[
+                (&Path::new(A_TXT), GitFileStatus::Modified),
+                (&Path::new(B_TXT), GitFileStatus::Modified),
+            ],
+        )
+        .await;
+
+    // Wait for buffer_local_a to receive it
+    deterministic.run_until_parked();
+
+    // Smoke test status reading
+    project_local.read_with(cx_a, |project, cx| {
+        assert_status(
+            &Path::new(A_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+        assert_status(
+            &Path::new(B_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+    });
+    project_remote.read_with(cx_b, |project, cx| {
+        assert_status(
+            &Path::new(A_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+        assert_status(
+            &Path::new(B_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+    });
+
+    // And synchronization while joining
+    let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
+    deterministic.run_until_parked();
+
+    project_remote_c.read_with(cx_c, |project, cx| {
+        assert_status(
+            &Path::new(A_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+        assert_status(
+            &Path::new(B_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
     });
 }
 

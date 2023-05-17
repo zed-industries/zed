@@ -259,7 +259,7 @@ impl RegisteredBuffer {
 
 #[derive(Debug)]
 pub struct Completion {
-    uuid: String,
+    pub uuid: String,
     pub range: Range<Anchor>,
     pub text: String,
 }
