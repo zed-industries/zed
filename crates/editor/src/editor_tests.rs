@@ -6684,6 +6684,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         cx.set_global(Settings::test(cx));
         language::init(cx);
         crate::init(cx);
+        Project::init_settings(cx);
     });
 
     update_test_settings(cx, f);

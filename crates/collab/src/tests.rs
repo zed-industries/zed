@@ -201,7 +201,7 @@ impl TestServer {
         });
 
         cx.update(|cx| {
-            Project::init(&client);
+            Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);
             editor::init_settings(cx);

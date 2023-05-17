@@ -157,7 +157,7 @@ fn main() {
         cx.set_global(client.clone());
 
         context_menu::init(cx);
-        project::Project::init(&client);
+        project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
         editor::init(cx);

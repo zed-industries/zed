@@ -94,6 +94,7 @@ smol = { version = "1.2" }
 tempdir = { version = "0.3.7" }
 thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
+toml = { version = "0.5" }
 unindent = { version = "0.1.7" }
 
 [patch.crates-io]

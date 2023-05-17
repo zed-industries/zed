@@ -1,6 +1,7 @@
 mod ignore;
 mod lsp_command;
 mod lsp_glob_set;
+mod project_settings;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
@@ -42,6 +43,7 @@ use lsp::{
 use lsp_command::*;
 use lsp_glob_set::LspGlobSet;
 use postage::watch;
+use project_settings::ProjectSettings;
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
@@ -385,7 +387,13 @@ impl FormatTrigger {
 }
 
 impl Project {
-    pub fn init(client: &Arc<Client>) {
+    pub fn init_settings(cx: &mut AppContext) {
+        settings::register_setting::<ProjectSettings>(cx);
+    }
+
+    pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+        Self::init_settings(cx);
+
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
         client.add_model_message_handler(Self::handle_remove_collaborator);
@@ -2206,7 +2214,9 @@ impl Project {
                 None => continue,
             };
 
-            let lsp = &cx.global::<Settings>().lsp.get(&adapter.name.0);
+            let lsp = settings::get_setting::<ProjectSettings>(None, cx)
+                .lsp
+                .get(&adapter.name.0);
             let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
             let mut initialization_options = adapter.initialization_options.clone();

@@ -40,6 +40,7 @@ impl<'a> EditorLspTestContext<'a> {
             language::init(cx);
             crate::init(cx);
             pane::init(cx);
+            Project::init_settings(cx);
         });
 
         let file_name = format!(

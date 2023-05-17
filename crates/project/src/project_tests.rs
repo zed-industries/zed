@@ -3723,5 +3723,6 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.set_global(SettingsStore::test(cx));
         language::init(cx);
+        Project::init_settings(cx);
     });
 }

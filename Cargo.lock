@@ -4852,6 +4852,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rpc",
+ "schemars",
  "serde",
  "serde_derive",
  "serde_json",

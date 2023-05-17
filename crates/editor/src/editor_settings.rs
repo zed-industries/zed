@@ -25,10 +25,7 @@ impl Setting for EditorSettings {
         default_value: &Self::FileContent,
         user_values: &[&Self::FileContent],
         _: &gpui::AppContext,
-    ) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
+    ) -> anyhow::Result<Self> {
         Self::load_via_json_merge(default_value, user_values)
     }
 }

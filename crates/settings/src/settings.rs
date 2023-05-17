@@ -19,7 +19,7 @@ use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use std::{borrow::Cow, collections::HashMap, str, sync::Arc};
+use std::{borrow::Cow, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
 
@@ -44,7 +44,6 @@ pub struct Settings {
     pub default_dock_anchor: DockAnchor,
     pub git: GitSettings,
     pub git_overrides: GitSettings,
-    pub lsp: HashMap<Arc<str>, LspSettings>,
     pub theme: Arc<Theme>,
     pub base_keymap: BaseKeymap,
 }
@@ -80,7 +79,6 @@ impl Setting for Settings {
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            lsp: defaults.lsp.clone(),
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
             base_keymap: Default::default(),
         };
@@ -290,17 +288,9 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub git: Option<GitSettings>,
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettings>,
-    #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
     pub base_keymap: Option<BaseKeymap>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct LspSettings {
-    pub initialization_options: Option<Value>,
 }
 
 impl Settings {
@@ -340,7 +330,6 @@ impl Settings {
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
             git: defaults.git.unwrap(),
             git_overrides: Default::default(),
-            lsp: defaults.lsp.clone(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             base_keymap: Default::default(),
         }
@@ -388,7 +377,6 @@ impl Settings {
         merge(&mut self.base_keymap, data.base_keymap);
 
         self.git_overrides = data.git.unwrap_or_default();
-        self.lsp = data.lsp;
     }
 
     pub fn git_gutter(&self) -> GitGutter {
@@ -416,7 +404,6 @@ impl Settings {
             default_dock_anchor: DockAnchor::Bottom,
             git: Default::default(),
             git_overrides: Default::default(),
-            lsp: Default::default(),
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
             base_keymap: Default::default(),
         }

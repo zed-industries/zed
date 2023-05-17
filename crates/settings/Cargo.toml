@@ -32,7 +32,7 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
-toml = "0.5"
+toml.workspace = true
 tree-sitter = "*"
 tree-sitter-json = "*"
 
