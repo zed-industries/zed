@@ -25,10 +25,11 @@ pub struct FileFinderDelegate {
     latest_search_id: usize,
     latest_search_did_cancel: bool,
     latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
-    relative_to: Option<Arc<Path>>,
+    currently_opened_path: Option<ProjectPath>,
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
     cancel_flag: Arc<AtomicBool>,
+    history_items: Vec<ProjectPath>,
 }
 
 actions!(file_finder, [Toggle]);
@@ -38,17 +39,26 @@ pub fn init(cx: &mut AppContext) {
     FileFinder::init(cx);
 }
 
+const MAX_RECENT_SELECTIONS: usize = 20;
+
 fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
-        let relative_to = workspace
+        let history_items = workspace.recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx);
+        let currently_opened_path = workspace
             .active_item(cx)
-            .and_then(|item| item.project_path(cx))
-            .map(|project_path| project_path.path.clone());
+            .and_then(|item| item.project_path(cx));
+
         let project = workspace.project().clone();
         let workspace = cx.handle().downgrade();
         let finder = cx.add_view(|cx| {
             Picker::new(
-                FileFinderDelegate::new(workspace, project, relative_to, cx),
+                FileFinderDelegate::new(
+                    workspace,
+                    project,
+                    currently_opened_path,
+                    history_items,
+                    cx,
+                ),
                 cx,
             )
         });
@@ -106,7 +116,8 @@ impl FileFinderDelegate {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
         project: ModelHandle<Project>,
-        relative_to: Option<Arc<Path>>,
+        currently_opened_path: Option<ProjectPath>,
+        history_items: Vec<ProjectPath>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
         cx.observe(&project, |picker, _, cx| {
@@ -120,10 +131,11 @@ impl FileFinderDelegate {
             latest_search_id: 0,
             latest_search_did_cancel: false,
             latest_search_query: None,
-            relative_to,
+            currently_opened_path,
             matches: Vec::new(),
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            history_items,
         }
     }
 
@@ -132,7 +144,10 @@ impl FileFinderDelegate {
         query: PathLikeWithPosition<FileSearchQuery>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Task<()> {
-        let relative_to = self.relative_to.clone();
+        let relative_to = self
+            .currently_opened_path
+            .as_ref()
+            .map(|project_path| Arc::clone(&project_path.path));
         let worktrees = self
             .project
             .read(cx)
@@ -239,12 +254,22 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.matches.clear();
+
             self.matches = self
-                .project
-                .read(cx)
-                .search_panel_state()
-                .recent_selections()
-                .cloned()
+                .currently_opened_path
+                .iter() // if exists, bubble the currently opened path to the top
+                .chain(self.history_items.iter().filter(|history_item| {
+                    Some(*history_item) != self.currently_opened_path.as_ref()
+                }))
+                .enumerate()
+                .map(|(i, history_item)| PathMatch {
+                    score: i as f64,
+                    positions: Vec::new(),
+                    worktree_id: history_item.worktree_id.0,
+                    path: Arc::clone(&history_item.path),
+                    path_prefix: "".into(),
+                    distance_to_relative_ancestor: usize::MAX,
+                })
                 .collect();
             cx.notify();
             Task::ready(())
@@ -268,10 +293,6 @@ impl PickerDelegate for FileFinderDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<FileFinder>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade(cx) {
-                self.project.update(cx, |project, _cx| {
-                    project.update_search_panel_state().add_selection(m.clone())
-                });
-
                 let project_path = ProjectPath {
                     worktree_id: WorktreeId::from_usize(m.worktree_id),
                     path: m.path.clone(),
@@ -613,6 +634,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -697,6 +719,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -732,6 +755,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -797,6 +821,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -846,13 +871,17 @@ mod tests {
         // When workspace has an active item, sort items which are closer to that item
         // first when they have the same name. In this case, b.txt is closer to dir2's a.txt
         // so that one should be sorted earlier
-        let b_path = Some(Arc::from(Path::new("/root/dir2/b.txt")));
+        let b_path = Some(ProjectPath {
+            worktree_id: WorktreeId(workspace.id()),
+            path: Arc::from(Path::new("/root/dir2/b.txt")),
+        });
         let (_, finder) = cx.add_window(|cx| {
             Picker::new(
                 FileFinderDelegate::new(
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     b_path,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -897,6 +926,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -910,97 +940,6 @@ mod tests {
         cx.read(|cx| {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_query_history(cx: &mut gpui::TestAppContext) {
-        let app_state = init_test(cx);
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                "/src",
-                json!({
-                    "test": {
-                        "first.rs": "// First Rust file",
-                        "second.rs": "// Second Rust file",
-                        "third.rs": "// Third Rust file",
-                    }
-                }),
-            )
-            .await;
-
-        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
-        cx.dispatch_action(window_id, Toggle);
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches("fir".to_string(), cx)
-            })
-            .await;
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
-
-        cx.dispatch_action(window_id, Toggle);
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches("sec".to_string(), cx)
-            })
-            .await;
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
-
-        finder.read_with(cx, |finder, cx| {
-            let recent_query_paths = finder
-                .delegate()
-                .project
-                .read(cx)
-                .search_panel_state()
-                .recent_selections()
-                .map(|query| query.path.to_path_buf())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                vec![
-                    Path::new("test/second.rs").to_path_buf(),
-                    Path::new("test/first.rs").to_path_buf(),
-                ],
-                recent_query_paths,
-                "Two finder queries should produce only two recent queries. Second query should be more recent (first)"
-            )
-        });
-
-        cx.dispatch_action(window_id, Toggle);
-        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
-        finder
-            .update(cx, |finder, cx| {
-                finder.delegate_mut().update_matches("fir".to_string(), cx)
-            })
-            .await;
-        cx.dispatch_action(window_id, SelectNext);
-        cx.dispatch_action(window_id, Confirm);
-
-        finder.read_with(cx, |finder, cx| {
-            let recent_query_paths = finder
-                .delegate()
-                .project
-                .read(cx)
-                .search_panel_state()
-                .recent_selections()
-                .map(|query| query.path.to_path_buf())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                vec![
-                    Path::new("test/first.rs").to_path_buf(),
-                    Path::new("test/second.rs").to_path_buf(),
-                ],
-                recent_query_paths,
-                "Three finder queries on two different files should produce only two recent queries. First query should be more recent (first), since got queried again"
-            )
         });
     }
 

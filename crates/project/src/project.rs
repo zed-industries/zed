@@ -12,14 +12,13 @@ mod project_tests;
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, TypedEnvelope, UserStore};
 use clock::ReplicaId;
-use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     future::{try_join_all, Shared},
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
-use fuzzy::PathMatch;
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
     ModelHandle, Task, WeakModelHandle,
@@ -136,7 +135,6 @@ pub struct Project {
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
     copilot_enabled: bool,
-    search_panel_state: SearchPanelState,
 }
 
 struct LspBufferSnapshot {
@@ -390,42 +388,6 @@ impl FormatTrigger {
     }
 }
 
-const MAX_RECENT_SELECTIONS: usize = 20;
-
-#[derive(Debug, Default)]
-pub struct SearchPanelState {
-    recent_selections: VecDeque<PathMatch>,
-}
-
-impl SearchPanelState {
-    pub fn recent_selections(&self) -> impl Iterator<Item = &PathMatch> {
-        self.recent_selections.iter().rev()
-    }
-
-    pub fn add_selection(&mut self, mut new_selection: PathMatch) {
-        let old_len = self.recent_selections.len();
-
-        // remove `new_selection` element, if it's in the list
-        self.recent_selections.retain(|old_selection| {
-            old_selection.worktree_id != new_selection.worktree_id
-                || old_selection.path != new_selection.path
-        });
-        // if `new_selection` was not present and we're adding a new element,
-        // ensure we do not exceed max allowed elements
-        if self.recent_selections.len() == old_len {
-            if self.recent_selections.len() >= MAX_RECENT_SELECTIONS {
-                self.recent_selections.pop_front();
-            }
-        }
-
-        // do not highlight query matches in the selection
-        new_selection.positions.clear();
-        // always re-add the element even if it exists to the back
-        // this way, it gets to the top as the most recently selected element
-        self.recent_selections.push_back(new_selection);
-    }
-}
-
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
         settings::register::<ProjectSettings>(cx);
@@ -525,7 +487,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 copilot_enabled: Copilot::global(cx).is_some(),
-                search_panel_state: SearchPanelState::default(),
             }
         })
     }
@@ -616,7 +577,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 copilot_enabled: Copilot::global(cx).is_some(),
-                search_panel_state: SearchPanelState::default(),
             };
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
@@ -6473,14 +6433,6 @@ impl Project {
                     None
                 }
             })
-    }
-
-    pub fn search_panel_state(&self) -> &SearchPanelState {
-        &self.search_panel_state
-    }
-
-    pub fn update_search_panel_state(&mut self) -> &mut SearchPanelState {
-        &mut self.search_panel_state
     }
 
     fn primary_language_servers_for_buffer(

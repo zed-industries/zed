@@ -12,6 +12,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Border, Element, SizeConstraint, ViewContext, ViewHandle,
 };
+use std::sync::{atomic::AtomicUsize, Arc};
 use theme::Theme;
 pub use toggle_dock_button::ToggleDockButton;
 
@@ -170,13 +171,21 @@ impl Dock {
     pub fn new(
         default_item_factory: DockDefaultItemFactory,
         background_actions: BackgroundActions,
+        pane_history_timestamp: Arc<AtomicUsize>,
         cx: &mut ViewContext<Workspace>,
     ) -> Self {
         let position =
             DockPosition::Hidden(settings::get::<WorkspaceSettings>(cx).default_dock_anchor);
         let workspace = cx.weak_handle();
-        let pane =
-            cx.add_view(|cx| Pane::new(workspace, Some(position.anchor()), background_actions, cx));
+        let pane = cx.add_view(|cx| {
+            Pane::new(
+                workspace,
+                Some(position.anchor()),
+                background_actions,
+                pane_history_timestamp,
+                cx,
+            )
+        });
         pane.update(cx, |pane, cx| {
             pane.set_active(false, cx);
         });
