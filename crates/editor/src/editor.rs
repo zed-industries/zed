@@ -516,6 +516,15 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+impl EditorSnapshot {
+    fn has_scrollbar_info(&self) -> bool {
+        self.buffer_snapshot
+            .git_diff_hunks_in_range(0..self.max_point().row(), false)
+            .next()
+            .is_some()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct SelectionHistoryEntry {
     selections: Arc<[Selection<Anchor>]>,

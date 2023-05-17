@@ -46,6 +46,7 @@ pub struct Settings {
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_call_status_icon: bool,
+    pub show_scrollbars: ShowScrollbars,
     pub vim_mode: bool,
     pub autosave: Autosave,
     pub default_dock_anchor: DockAnchor,
@@ -66,6 +67,16 @@ pub struct Settings {
     pub telemetry_overrides: TelemetrySettings,
     pub auto_update: bool,
     pub base_keymap: BaseKeymap,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowScrollbars {
+    #[default]
+    Auto,
+    System,
+    Always,
+    Never,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
@@ -390,6 +401,8 @@ pub struct SettingsFileContent {
     #[serde(default)]
     pub active_pane_magnification: Option<f32>,
     #[serde(default)]
+    pub show_scrollbars: Option<ShowScrollbars>,
+    #[serde(default)]
     pub cursor_blink: Option<bool>,
     #[serde(default)]
     pub confirm_quit: Option<bool>,
@@ -547,6 +560,7 @@ impl Settings {
             features: Features {
                 copilot: defaults.features.copilot.unwrap(),
             },
+            show_scrollbars: defaults.show_scrollbars.unwrap(),
         }
     }
 
@@ -598,6 +612,7 @@ impl Settings {
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
+        merge(&mut self.show_scrollbars, data.show_scrollbars);
         merge(&mut self.features.copilot, data.features.copilot);
 
         if let Some(copilot) = data.copilot {
@@ -830,6 +845,7 @@ impl Settings {
             auto_update: true,
             base_keymap: Default::default(),
             features: Features { copilot: true },
+            show_scrollbars: Default::default(),
         }
     }
 

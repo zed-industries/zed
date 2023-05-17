@@ -43,6 +43,19 @@
   // 3. Draw all invisible symbols:
   //   "all"
   "show_whitespaces": "selection",
+  // Whether to show the scrollbar in the editor.
+  // This setting can take four values:
+  //
+  // 1. Show the scrollbar if there's important information or
+  //    follow the system's configured behavior (default):
+  //   "auto"
+  // 2. Match the system's configured behavior:
+  //    "system"
+  // 3. Always show the scrollbar:
+  //    "always"
+  // 4. Never show the scrollbar:
+  //    "never"
+  "show_scrollbars": "auto",
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
