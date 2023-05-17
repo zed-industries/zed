@@ -1,8 +1,8 @@
-use std::time::Duration;
-
+use crate::EditorSettings;
 use gpui::{Entity, ModelContext};
 use settings::Settings;
 use smol::Timer;
+use std::time::Duration;
 
 pub struct BlinkManager {
     blink_interval: Duration,
@@ -64,7 +64,7 @@ impl BlinkManager {
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ModelContext<Self>) {
-        if cx.global::<Settings>().cursor_blink {
+        if settings::get_setting::<EditorSettings>(None, cx).cursor_blink {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();

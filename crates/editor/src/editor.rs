@@ -1,5 +1,6 @@
 mod blink_manager;
 pub mod display_map;
+mod editor_settings;
 mod element;
 
 mod git;
@@ -28,6 +29,7 @@ use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
+pub use editor_settings::EditorSettings;
 pub use element::*;
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -287,7 +289,12 @@ pub enum Direction {
     Next,
 }
 
+pub fn init_settings(cx: &mut AppContext) {
+    settings::register_setting::<EditorSettings>(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.add_action(Editor::new_file);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
@@ -2354,7 +2361,7 @@ impl Editor {
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        if !cx.global::<Settings>().show_completions_on_input {
+        if !settings::get_setting::<EditorSettings>(None, cx).show_completions_on_input {
             return;
         }
 

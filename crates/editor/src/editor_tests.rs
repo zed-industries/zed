@@ -4697,8 +4697,10 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     apply_additional_edits.await.unwrap();
 
     cx.update(|cx| {
-        cx.update_global::<Settings, _, _>(|settings, _| {
-            settings.show_completions_on_input = false;
+        cx.update_global::<SettingsStore, _, _>(|settings, cx| {
+            settings.update_user_settings::<EditorSettings>(cx, |settings| {
+                settings.show_completions_on_input = Some(false);
+            });
         })
     });
     cx.set_state("editorˇ");

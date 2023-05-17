@@ -1281,11 +1281,13 @@ pub mod tests {
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
             cx.set_global(ActiveSearches::default());
+
             let mut settings = Settings::test(cx);
             settings.theme = Arc::new(theme);
             cx.set_global(settings);
 
             language::init(cx);
+            editor::init_settings(cx);
         });
     }
 }

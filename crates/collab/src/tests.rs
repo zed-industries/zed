@@ -186,11 +186,6 @@ impl TestServer {
                 })
             });
 
-        cx.update(|cx| {
-            client::init(&client, cx);
-            language::init(cx);
-        });
-
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
         let app_state = Arc::new(workspace::AppState {
@@ -205,8 +200,11 @@ impl TestServer {
             background_actions: || &[],
         });
 
-        Project::init(&client);
         cx.update(|cx| {
+            Project::init(&client);
+            client::init(&client, cx);
+            language::init(cx);
+            editor::init_settings(cx);
             workspace::init(app_state.clone(), cx);
             call::init(client.clone(), user_store.clone(), cx);
         });

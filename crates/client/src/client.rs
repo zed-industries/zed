@@ -70,10 +70,14 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 actions!(client, [SignIn, SignOut]);
 
-pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
-    let client = Arc::downgrade(client);
+pub fn init_settings(cx: &mut AppContext) {
     settings::register_setting::<TelemetrySettings>(cx);
+}
 
+pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+    init_settings(cx);
+
+    let client = Arc::downgrade(client);
     cx.add_global_action({
         let client = client.clone();
         move |_: &SignIn, cx| {

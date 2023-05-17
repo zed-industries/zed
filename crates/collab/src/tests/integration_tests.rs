@@ -27,7 +27,7 @@ use lsp::LanguageServerId;
 use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
-use settings::{SettingsStore};
+use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -1439,7 +1439,6 @@ async fn test_host_disconnect(
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    cx_b.update(editor::init);
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1448,6 +1447,8 @@ async fn test_host_disconnect(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -1546,7 +1547,6 @@ async fn test_project_reconnect(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_b.update(editor::init);
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1554,6 +1554,8 @@ async fn test_project_reconnect(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -4992,7 +4994,6 @@ async fn test_collaborating_with_code_actions(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_b.update(editor::init);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -5000,6 +5001,8 @@ async fn test_collaborating_with_code_actions(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -5205,7 +5208,6 @@ async fn test_collaborating_with_renames(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_b.update(editor::init);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -5213,6 +5215,8 @@ async fn test_collaborating_with_renames(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -5395,8 +5399,6 @@ async fn test_language_server_statuses(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-
-    cx_b.update(editor::init);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -5404,6 +5406,8 @@ async fn test_language_server_statuses(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -6112,8 +6116,6 @@ async fn test_basic_following(
     cx_d: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -6130,6 +6132,9 @@ async fn test_basic_following(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -6709,9 +6714,6 @@ async fn test_following_tab_order(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
-
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6720,6 +6722,9 @@ async fn test_following_tab_order(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -6831,9 +6836,6 @@ async fn test_peers_following_each_other(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
-
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6842,6 +6844,9 @@ async fn test_peers_following_each_other(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     // Client A shares a project.
     client_a
@@ -7002,8 +7007,6 @@ async fn test_auto_unfollowing(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(&deterministic).await;
@@ -7014,6 +7017,9 @@ async fn test_auto_unfollowing(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     // Client A shares a project.
     client_a
@@ -7169,8 +7175,6 @@ async fn test_peers_simultaneously_following_each_other(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -7179,6 +7183,9 @@ async fn test_peers_simultaneously_following_each_other(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;

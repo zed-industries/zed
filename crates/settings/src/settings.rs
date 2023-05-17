@@ -38,10 +38,7 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub active_pane_magnification: f32,
-    pub cursor_blink: bool,
     pub confirm_quit: bool,
-    pub hover_popover_enabled: bool,
-    pub show_completions_on_input: bool,
     pub show_call_status_icon: bool,
     pub autosave: Autosave,
     pub default_dock_anchor: DockAnchor,
@@ -78,9 +75,6 @@ impl Setting for Settings {
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             confirm_quit: defaults.confirm_quit.unwrap(),
-            cursor_blink: defaults.cursor_blink.unwrap(),
-            hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
-            show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
@@ -341,9 +335,6 @@ impl Settings {
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             active_pane_magnification: defaults.active_pane_magnification.unwrap(),
             confirm_quit: defaults.confirm_quit.unwrap(),
-            cursor_blink: defaults.cursor_blink.unwrap(),
-            hover_popover_enabled: defaults.hover_popover_enabled.unwrap(),
-            show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             show_call_status_icon: defaults.show_call_status_icon.unwrap(),
             autosave: defaults.autosave.unwrap(),
             default_dock_anchor: defaults.default_dock_anchor.unwrap(),
@@ -391,13 +382,7 @@ impl Settings {
             &mut self.active_pane_magnification,
             data.active_pane_magnification,
         );
-        merge(&mut self.cursor_blink, data.cursor_blink);
         merge(&mut self.confirm_quit, data.confirm_quit);
-        merge(&mut self.hover_popover_enabled, data.hover_popover_enabled);
-        merge(
-            &mut self.show_completions_on_input,
-            data.show_completions_on_input,
-        );
         merge(&mut self.autosave, data.autosave);
         merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
@@ -426,9 +411,6 @@ impl Settings {
             buffer_font_size: 14.,
             active_pane_magnification: 1.,
             confirm_quit: false,
-            cursor_blink: true,
-            hover_popover_enabled: true,
-            show_completions_on_input: true,
             show_call_status_icon: true,
             autosave: Autosave::Off,
             default_dock_anchor: DockAnchor::Bottom,

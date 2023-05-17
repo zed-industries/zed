@@ -1935,6 +1935,7 @@ mod tests {
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
             language::init(cx);
+            editor::init_settings(cx);
         });
     }
 }
