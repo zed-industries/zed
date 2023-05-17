@@ -176,6 +176,12 @@ impl Dock {
             .map_or(false, |panel| panel.has_focus(cx))
     }
 
+    pub fn panel_index<T: Panel>(&self) -> Option<usize> {
+        self.panel_entries
+            .iter()
+            .position(|entry| entry.panel.as_any().is::<T>())
+    }
+
     pub fn active_panel_index(&self) -> usize {
         self.active_panel_index
     }

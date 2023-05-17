@@ -31,14 +31,11 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{Settings, DEFAULT_SETTINGS_ASSET_PATH};
 use std::{borrow::Cow, str, sync::Arc};
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{
-    create_and_open_local_file, dock::DockPosition, open_new, AppState, NewFile, NewWindow,
-    Workspace,
-};
+use workspace::{create_and_open_local_file, open_new, AppState, NewFile, NewWindow, Workspace};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -242,7 +239,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         |workspace: &mut Workspace,
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_panel_focus(DockPosition::Left, 0, cx);
+            workspace.toggle_panel_focus::<ProjectPanel>(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace,
+         _: &terminal_panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<TerminalPanel>(cx);
         },
     );
     cx.add_global_action({

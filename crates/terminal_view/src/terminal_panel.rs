@@ -1,7 +1,7 @@
 use crate::TerminalView;
 use gpui::{
-    elements::*, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
+    actions, elements::*, AppContext, Entity, ModelHandle, Subscription, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::Project;
 use settings::{settings_file::SettingsFile, Settings, TerminalDockPosition, WorkingDirectory};
@@ -10,6 +10,8 @@ use workspace::{
     dock::{DockPosition, Panel},
     pane, DraggedItem, Pane, Workspace,
 };
+
+actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalPanel::add_terminal);

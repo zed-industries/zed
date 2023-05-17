@@ -116,6 +116,7 @@ actions!(
         FollowNextCollaborator,
         ToggleLeftDock,
         NewTerminal,
+        ToggleTerminalFocus,
         NewSearch,
         Feedback,
         Restart,
@@ -1475,33 +1476,27 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_panel_focus(
-        &mut self,
-        dock_position: DockPosition,
-        panel_index: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let dock = match dock_position {
-            DockPosition::Left => &mut self.left_dock,
-            DockPosition::Bottom => &mut self.bottom_dock,
-            DockPosition::Right => &mut self.right_dock,
-        };
-        let active_item = dock.update(cx, |dock, cx| {
-            dock.set_open(true, cx);
-            dock.activate_panel(panel_index, cx);
-            dock.active_panel().cloned()
-        });
-        if let Some(active_item) = active_item {
-            if active_item.has_focus(cx) {
-                cx.focus_self();
-            } else {
-                cx.focus(active_item.as_any());
+    pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel_index) = dock.read(cx).panel_index::<T>() {
+                let active_item = dock.update(cx, |dock, cx| {
+                    dock.set_open(true, cx);
+                    dock.activate_panel(panel_index, cx);
+                    dock.active_panel().cloned()
+                });
+                if let Some(active_item) = active_item {
+                    if active_item.has_focus(cx) {
+                        cx.focus_self();
+                    } else {
+                        cx.focus(active_item.as_any());
+                    }
+                }
+
+                self.serialize_workspace(cx);
+                cx.notify();
+                break;
             }
         }
-
-        self.serialize_workspace(cx);
-
-        cx.notify();
     }
 
     fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {

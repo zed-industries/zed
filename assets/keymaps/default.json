@@ -39,7 +39,8 @@
             "cmd-shift-n": "workspace::NewWindow",
             "cmd-o": "workspace::Open",
             "alt-cmd-o": "projects::OpenRecent",
-            "ctrl-`": "workspace::NewTerminal"
+            "ctrl-~": "workspace::NewTerminal",
+            "ctrl-`": "terminal_panel::ToggleFocus"
         }
     },
     {
