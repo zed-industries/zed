@@ -7,7 +7,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::Fs;
-use settings::{update_settings_file, Settings};
+use settings::update_settings_file;
 use std::sync::Arc;
 use util::ResultExt;
 use workspace::Workspace;
@@ -139,7 +139,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> gpui::AnyElement<Picker<Self>> {
-        let theme = &cx.global::<Settings>().theme;
+        let theme = &theme::current(cx);
         let keymap_match = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);
 

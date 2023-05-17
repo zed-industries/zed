@@ -254,6 +254,7 @@ impl settings::Setting for AllLanguageSettings {
     fn json_schema(
         generator: &mut schemars::gen::SchemaGenerator,
         params: &settings::SettingsJsonSchemaParams,
+        _: &AppContext,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
 

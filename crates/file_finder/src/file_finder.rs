@@ -5,7 +5,6 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
-use settings::Settings;
 use std::{
     path::Path,
     sync::{
@@ -324,8 +323,8 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
         let path_match = &self.matches[ix];
-        let settings = cx.global::<Settings>();
-        let style = settings.theme.picker.item.style_for(mouse_state, selected);
+        let theme = theme::current(cx);
+        let style = theme.picker.item.style_for(mouse_state, selected);
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
         Flex::column()
@@ -909,6 +908,7 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             let state = AppState::test(cx);
+            theme::init((), cx);
             language::init(cx);
             super::init(cx);
             editor::init(cx);

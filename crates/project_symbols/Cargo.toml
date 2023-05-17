@@ -17,7 +17,9 @@ project = { path = "../project" }
 text = { path = "../text" }
 settings = { path = "../settings" }
 workspace = { path = "../workspace" }
+theme = { path = "../theme" }
 util = { path = "../util" }
+
 anyhow.workspace = true
 ordered-float.workspace = true
 postage.workspace = true
@@ -30,4 +32,5 @@ gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

@@ -13,7 +13,6 @@ use gpui::{
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
-use settings::Settings;
 use std::{any::Any, sync::Arc};
 use util::ResultExt;
 use workspace::{
@@ -93,7 +92,7 @@ impl View for BufferSearchBar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let editor_container = if self.query_contains_error {
             theme.search.invalid_editor
         } else {
@@ -324,16 +323,12 @@ impl BufferSearchBar {
             return None;
         }
 
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.is_search_option_enabled(option);
         Some(
             MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
-                let style = cx
-                    .global::<Settings>()
-                    .theme
-                    .search
-                    .option_button
-                    .style_for(state, is_active);
+                let theme = theme::current(cx);
+                let style = theme.search.option_button.style_for(state, is_active);
                 Label::new(icon, style.text.clone())
                     .contained()
                     .with_style(style.container)
@@ -371,16 +366,12 @@ impl BufferSearchBar {
                 tooltip = "Select Next Match";
             }
         };
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum NavButton {}
         MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
-            let style = cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, false);
+            let theme = theme::current(cx);
+            let style = theme.search.option_button.style_for(state, false);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -408,7 +399,7 @@ impl BufferSearchBar {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let tooltip = "Dismiss Buffer Search";
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum CloseButton {}
         MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {

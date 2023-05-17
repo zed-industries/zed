@@ -20,9 +20,6 @@ pub struct ThemeRegistry {
     next_theme_id: AtomicUsize,
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
-
 impl ThemeRegistry {
     pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>) -> Arc<Self> {
         let this = Arc::new(Self {
@@ -35,8 +32,13 @@ impl ThemeRegistry {
 
         #[cfg(any(test, feature = "test-support"))]
         this.themes.lock().insert(
-            EMPTY_THEME_NAME.to_string(),
-            gpui::fonts::with_font_cache(this.font_cache.clone(), || Arc::new(Theme::default())),
+            settings::EMPTY_THEME_NAME.to_string(),
+            gpui::fonts::with_font_cache(this.font_cache.clone(), || {
+                let mut theme = Theme::default();
+                theme.meta.id = this.next_theme_id.fetch_add(1, SeqCst);
+                theme.meta.name = settings::EMPTY_THEME_NAME.into();
+                Arc::new(theme)
+            }),
         );
 
         this

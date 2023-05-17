@@ -13,7 +13,6 @@ use gpui::{
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
 use project::{Project, WorktreeId};
-use settings::Settings;
 use std::{borrow::Cow, sync::Arc};
 use theme::{ui, Theme};
 use workspace::{
@@ -304,7 +303,7 @@ impl View for LspLogToolbarItemView {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let Some(log_view) = self.log_view.as_ref() else { return Empty::new().into_any() };
         let project = self.project.read(cx);
         let log_view = log_view.read(cx);

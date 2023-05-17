@@ -20,7 +20,6 @@ use project::{
     repository::GitFileStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use settings::Settings;
 use std::{
     cmp::Ordering,
     collections::{hash_map, HashMap},
@@ -1113,7 +1112,7 @@ impl ProjectPanel {
                 ComponentHost::new(FileName::new(
                     details.filename.clone(),
                     details.git_status,
-                    FileName::style(style.text.clone(), &cx.global::<Settings>().theme),
+                    FileName::style(style.text.clone(), &theme::current(cx)),
                 ))
                 .contained()
                 .with_margin_left(style.icon_spacing)
@@ -1223,7 +1222,7 @@ impl ProjectPanel {
             let row_container_style = theme.dragged_entry.container;
 
             move |_, cx: &mut ViewContext<Workspace>| {
-                let theme = cx.global::<Settings>().theme.clone();
+                let theme = theme::current(cx).clone();
                 Self::render_entry_visual_element(
                     &details,
                     None,
@@ -1246,7 +1245,7 @@ impl View for ProjectPanel {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
         enum ProjectPanel {}
-        let theme = &cx.global::<Settings>().theme.project_panel;
+        let theme = &theme::current(cx).project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let last_worktree_root_id = self.last_worktree_root_id;
@@ -1265,7 +1264,7 @@ impl View for ProjectPanel {
                                 .sum(),
                             cx,
                             move |this, range, items, cx| {
-                                let theme = cx.global::<Settings>().theme.clone();
+                                let theme = theme::current(cx).clone();
                                 let mut dragged_entry_destination =
                                     this.dragged_entry_destination.clone();
                                 this.for_each_visible_entry(range, cx, |id, details, cx| {
@@ -1302,8 +1301,7 @@ impl View for ProjectPanel {
                 .with_child(
                     MouseEventHandler::<Self, _>::new(2, cx, {
                         let button_style = theme.open_project_button.clone();
-                        let context_menu_item_style =
-                            cx.global::<Settings>().theme.context_menu.item.clone();
+                        let context_menu_item_style = theme::current(cx).context_menu.item.clone();
                         move |state, cx| {
                             let button_style = button_style.style_for(state, false).clone();
                             let context_menu_item =
@@ -1952,6 +1950,7 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
             workspace::init_settings(cx);

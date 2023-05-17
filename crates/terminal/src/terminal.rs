@@ -33,7 +33,6 @@ use mappings::mouse::{
 use procinfo::LocalProcessInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use util::truncate_and_trailoff;
 
 use std::{
@@ -700,7 +699,7 @@ impl Terminal {
         match event {
             InternalEvent::ColorRequest(index, format) => {
                 let color = term.colors()[*index].unwrap_or_else(|| {
-                    let term_style = &cx.global::<Settings>().theme.terminal;
+                    let term_style = &theme::current(cx).terminal;
                     to_alac_rgb(get_color_at_index(index, &term_style))
                 });
                 self.write_to_pty(format(color))

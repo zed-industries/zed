@@ -73,7 +73,7 @@ use scroll::{
 };
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::{
@@ -88,7 +88,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
-use theme::{DiagnosticStyle, Theme};
+use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
 
@@ -1237,8 +1237,8 @@ impl Editor {
     ) -> Self {
         let editor_view_id = cx.view_id();
         let display_map = cx.add_model(|cx| {
-            let settings = cx.global::<Settings>();
-            let style = build_style(&*settings, get_field_editor_theme.as_deref(), None, cx);
+            let settings = settings::get_setting::<ThemeSettings>(None, cx);
+            let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(
                 buffer.clone(),
                 style.text.font_id,
@@ -1319,7 +1319,7 @@ impl Editor {
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-                cx.observe_global::<Settings, _>(Self::settings_changed),
+                cx.observe_global::<SettingsStore, _>(Self::settings_changed),
             ],
         };
 
@@ -1418,7 +1418,7 @@ impl Editor {
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
-            cx.global::<Settings>(),
+            settings::get_setting::<ThemeSettings>(None, cx),
             self.get_field_editor_theme.as_deref(),
             self.override_text_style.as_deref(),
             cx,
@@ -6561,8 +6561,8 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        let theme = cx.global::<Settings>().theme.as_ref();
-        self.background_highlights_in_range(start..end, &snapshot, theme)
+        let theme = theme::current(cx);
+        self.background_highlights_in_range(start..end, &snapshot, theme.as_ref())
     }
 
     fn document_highlights_for_position<'a>(
@@ -6985,7 +6985,7 @@ impl Editor {
         let mut lines = Vec::new();
         let mut line: VecDeque<Chunk> = VecDeque::new();
 
-        let theme = &cx.global::<Settings>().theme.editor.syntax;
+        let theme = &theme::current(cx).editor.syntax;
 
         for chunk in chunks {
             let highlight = chunk.syntax_highlight_id.and_then(|id| id.name(theme));
@@ -7407,7 +7407,7 @@ impl View for Editor {
 }
 
 fn build_style(
-    settings: &Settings,
+    settings: &ThemeSettings,
     get_field_editor_theme: Option<&GetFieldEditorTheme>,
     override_text_style: Option<&OverrideTextStyle>,
     cx: &AppContext,
@@ -7607,7 +7607,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     }
 
     Arc::new(move |cx: &mut BlockContext| {
-        let settings = cx.global::<Settings>();
+        let settings = settings::get_setting::<ThemeSettings>(None, cx);
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
         let font_size = (style.text_scale_factor

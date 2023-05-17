@@ -6,7 +6,6 @@ use gpui::{
     View, ViewContext, ViewHandle,
 };
 use menu::{Cancel, Confirm};
-use settings::Settings;
 use text::{Bias, Point};
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{Modal, Workspace};
@@ -151,7 +150,7 @@ impl View for GoToLine {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme.picker;
+        let theme = &theme::current(cx).picker;
 
         let label = format!(
             "{}{FILE_ROW_COLUMN_DELIMITER}{} of {} lines",

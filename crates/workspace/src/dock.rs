@@ -408,7 +408,6 @@ mod tests {
 
     use gpui::{AppContext, BorrowWindowContext, TestAppContext, ViewContext, WindowContext};
     use project::{FakeFs, Project};
-    use theme::ThemeRegistry;
 
     use super::*;
     use crate::{
@@ -468,7 +467,6 @@ mod tests {
                 project.clone(),
                 Arc::new(AppState {
                     languages: project.read(cx).languages().clone(),
-                    themes: ThemeRegistry::new((), cx.font_cache().clone()),
                     client: project.read(cx).client(),
                     user_store: project.read(cx).user_store(),
                     fs: project.read(cx).fs().clone(),
@@ -615,7 +613,6 @@ mod tests {
                     project.clone(),
                     Arc::new(AppState {
                         languages: project.read(cx).languages().clone(),
-                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
                         client: project.read(cx).client(),
                         user_store: project.read(cx).user_store(),
                         fs: project.read(cx).fs().clone(),

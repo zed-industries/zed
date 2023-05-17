@@ -3806,10 +3806,9 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use language::{Buffer, Rope};
     use rand::prelude::*;
-    use settings::Settings;
+    use settings::SettingsStore;
     use std::{env, rc::Rc};
     use unindent::Unindent;
-
     use util::test::sample_text;
 
     #[gpui::test]
@@ -5055,7 +5054,8 @@ mod tests {
 
     #[gpui::test]
     fn test_history(cx: &mut AppContext) {
-        cx.set_global(Settings::test(cx));
+        cx.set_global(SettingsStore::test(cx));
+
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));

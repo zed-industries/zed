@@ -5,7 +5,6 @@ use gpui::{
     ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::Settings;
 use std::cmp;
 use util::ResultExt;
 use workspace::Workspace;
@@ -185,8 +184,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> AnyElement<Picker<Self>> {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
-        let settings = cx.global::<Settings>();
-        let theme = &settings.theme;
+        let theme = theme::current(cx);
         let style = theme.picker.item.style_for(mouse_state, selected);
         let key_style = &theme.command_palette.key.style_for(mouse_state, selected);
         let keystroke_spacing = theme.command_palette.keystroke_spacing;
@@ -366,6 +364,7 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
+            theme::init((), cx);
             language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);

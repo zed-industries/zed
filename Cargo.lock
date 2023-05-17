@@ -20,6 +20,7 @@ dependencies = [
  "project",
  "settings",
  "smallvec",
+ "theme",
  "util",
  "workspace",
 ]
@@ -2750,6 +2751,7 @@ dependencies = [
  "postage",
  "settings",
  "text",
+ "theme",
  "util",
  "workspace",
 ]
@@ -4398,6 +4400,7 @@ dependencies = [
  "settings",
  "smol",
  "text",
+ "theme",
  "workspace",
 ]
 
@@ -4915,6 +4918,7 @@ dependencies = [
  "settings",
  "smol",
  "text",
+ "theme",
  "util",
  "workspace",
 ]
@@ -5235,6 +5239,7 @@ dependencies = [
  "settings",
  "smol",
  "text",
+ "theme",
  "util",
  "workspace",
 ]
@@ -6135,7 +6140,6 @@ dependencies = [
  "smallvec",
  "sqlez",
  "staff_mode",
- "theme",
  "toml",
  "tree-sitter",
  "tree-sitter-json 0.19.0",
@@ -6863,10 +6867,13 @@ dependencies = [
  "gpui",
  "indexmap",
  "parking_lot 0.11.2",
+ "schemars",
  "serde",
  "serde_derive",
  "serde_json",
+ "settings",
  "toml",
+ "util",
 ]
 
 [[package]]

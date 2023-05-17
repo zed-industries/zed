@@ -1,19 +1,31 @@
 mod theme_registry;
+mod theme_settings;
+pub mod ui;
 
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
-    platform, Border, MouseState,
+    platform, AppContext, AssetSource, Border, MouseState,
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
 
-pub mod ui;
+pub use theme_registry::ThemeRegistry;
+pub use theme_settings::ThemeSettings;
 
-pub use theme_registry::*;
+pub fn current(cx: &AppContext) -> Arc<Theme> {
+    settings::get_setting::<ThemeSettings>(None, cx)
+        .theme
+        .clone()
+}
+
+pub fn init(source: impl AssetSource, cx: &mut AppContext) {
+    cx.set_global(ThemeRegistry::new(source, cx.font_cache().clone()));
+    settings::register_setting::<ThemeSettings>(cx);
+}
 
 #[derive(Deserialize, Default)]
 pub struct Theme {

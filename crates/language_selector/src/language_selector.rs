@@ -8,7 +8,6 @@ use gpui::{actions, elements::*, AppContext, ModelHandle, MouseState, ViewContex
 use language::{Buffer, LanguageRegistry};
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::Project;
-use settings::Settings;
 use std::sync::Arc;
 use util::ResultExt;
 use workspace::Workspace;
@@ -179,8 +178,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         selected: bool,
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let settings = cx.global::<Settings>();
-        let theme = &settings.theme;
+        let theme = theme::current(cx);
         let mat = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);
         let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());

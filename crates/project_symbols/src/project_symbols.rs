@@ -9,7 +9,6 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::{Project, Symbol};
-use settings::Settings;
 use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use util::ResultExt;
 use workspace::Workspace;
@@ -195,12 +194,13 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         selected: bool,
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let string_match = &self.matches[ix];
-        let settings = cx.global::<Settings>();
-        let style = &settings.theme.picker.item;
+        let theme = theme::current(cx);
+        let style = &theme.picker.item;
         let current_style = style.style_for(mouse_state, selected);
+
+        let string_match = &self.matches[ix];
         let symbol = &self.symbols[string_match.candidate_id];
-        let syntax_runs = styled_runs_for_code_label(&symbol.label, &settings.theme.editor.syntax);
+        let syntax_runs = styled_runs_for_code_label(&symbol.label, &theme.editor.syntax);
 
         let mut path = symbol.path.path.to_string_lossy();
         if self.show_worktree_root_name {
@@ -371,8 +371,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
-            cx.set_global(Settings::test(cx));
             cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);

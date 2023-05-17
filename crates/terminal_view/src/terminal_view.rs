@@ -904,6 +904,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
         let params = cx.update(AppState::test);
+        cx.update(|cx| theme::init((), cx));
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));

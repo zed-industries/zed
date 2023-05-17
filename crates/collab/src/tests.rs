@@ -19,7 +19,7 @@ use gpui::{
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
     env,
@@ -30,7 +30,6 @@ use std::{
         Arc,
     },
 };
-use theme::ThemeRegistry;
 use util::http::FakeHttpClient;
 use workspace::Workspace;
 
@@ -103,7 +102,6 @@ impl TestServer {
     async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
-            cx.set_global(Settings::test(cx));
         });
 
         let http = FakeHttpClient::with_404_response();
@@ -192,7 +190,6 @@ impl TestServer {
             client: client.clone(),
             user_store: user_store.clone(),
             languages: Arc::new(LanguageRegistry::test()),
-            themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _| unimplemented!(),
@@ -201,6 +198,7 @@ impl TestServer {
         });
 
         cx.update(|cx| {
+            theme::init((), cx);
             Project::init(&client, cx);
             client::init(&client, cx);
             language::init(cx);

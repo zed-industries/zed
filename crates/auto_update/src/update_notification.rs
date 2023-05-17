@@ -5,7 +5,6 @@ use gpui::{
     Element, Entity, View, ViewContext,
 };
 use menu::Cancel;
-use settings::Settings;
 use util::channel::ReleaseChannel;
 use workspace::notifications::Notification;
 
@@ -27,7 +26,7 @@ impl View for UpdateNotification {
     }
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let theme = &theme.update_notification;
 
         let app_name = cx.global::<ReleaseChannel>().display_name();

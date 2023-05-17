@@ -18,6 +18,7 @@ picker = { path = "../picker" }
 settings = { path = "../settings" }
 text = { path = "../text" }
 util = { path = "../util"}
+theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 
 ordered-float.workspace = true

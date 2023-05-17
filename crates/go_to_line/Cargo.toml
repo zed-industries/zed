@@ -16,4 +16,5 @@ settings = { path = "../settings" }
 text = { path = "../text" }
 workspace = { path = "../workspace" }
 postage.workspace = true
+theme = { path = "../theme" }
 util = { path = "../util" }

@@ -30,10 +30,11 @@ use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{
-    adjust_font_size_delta, KeymapFileContent, Settings, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
+    adjust_font_size_delta, KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
 };
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_button::TerminalButton;
+use theme::ThemeSettings;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 use welcome::BaseKeymap;
@@ -124,7 +125,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     });
     cx.add_global_action(move |_: &DecreaseBufferFontSize, cx| {
         adjust_font_size_delta(cx, |size, cx| {
-            if cx.global::<Settings>().buffer_font_size + *size > MIN_FONT_SIZE {
+            if cx.global::<ThemeSettings>().buffer_font_size + *size > MIN_FONT_SIZE {
                 *size -= 1.0;
             }
         })
@@ -258,9 +259,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
             }
         }
     });
-    activity_indicator::init(cx);
-    lsp_log::init(cx);
-    call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
     load_default_keymap(cx);
 }
 
@@ -1910,7 +1908,7 @@ mod tests {
 
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
-            cx.set_global(ThemeRegistry::new(Assets, cx.font_cache().clone()));
+            theme::init(Assets, cx);
             welcome::init(cx);
 
             cx.add_global_action(|_: &A, _cx| {});
@@ -2038,15 +2036,25 @@ mod tests {
             ])
             .unwrap();
         let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-        let settings = Settings::defaults(Assets, cx.font_cache(), &themes);
+        let mut settings = SettingsStore::default();
+        settings
+            .set_default_settings(&settings::default_settings(), cx)
+            .unwrap();
+        cx.set_global(settings);
+        theme::init(Assets, cx);
 
         let mut has_default_theme = false;
         for theme_name in themes.list(false).map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
-            if theme.meta.name == settings.theme.meta.name {
+            assert_eq!(theme.meta.name, theme_name);
+            if theme.meta.name
+                == settings::get_setting::<ThemeSettings>(None, cx)
+                    .theme
+                    .meta
+                    .name
+            {
                 has_default_theme = true;
             }
-            assert_eq!(theme.meta.name, theme_name);
         }
         assert!(has_default_theme);
     }
@@ -2056,10 +2064,9 @@ mod tests {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
-        let themes = ThemeRegistry::new((), cx.font_cache().clone());
         let http = FakeHttpClient::with_404_response();
         let node_runtime = NodeRuntime::new(http, cx.background().to_owned());
-        languages::init(languages.clone(), themes, node_runtime);
+        languages::init(languages.clone(), node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }
@@ -2073,6 +2080,7 @@ mod tests {
             let state = Arc::get_mut(&mut app_state).unwrap();
             state.initialize_workspace = initialize_workspace;
             state.build_window_options = build_window_options;
+            theme::init((), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             language::init(cx);

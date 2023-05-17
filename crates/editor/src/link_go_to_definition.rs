@@ -2,7 +2,6 @@ use crate::{Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase};
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
 use project::LocationLink;
-use settings::Settings;
 use std::ops::Range;
 use util::TryFutureExt;
 
@@ -210,7 +209,7 @@ pub fn show_link_definition(
                         });
 
                         // Highlight symbol using theme link definition highlight style
-                        let style = cx.global::<Settings>().theme.editor.link_definition;
+                        let style = theme::current(cx).editor.link_definition;
                         this.highlight_text::<LinkGoToDefinitionState>(
                             vec![highlight_range],
                             style,

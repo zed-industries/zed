@@ -16,6 +16,8 @@ gpui = { path = "../gpui" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 util = { path = "../util" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+
 futures.workspace = true
 smallvec.workspace = true

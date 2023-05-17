@@ -23,9 +23,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::Fs;
 use serde::{Deserialize, Serialize};
-use settings::{
-    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
-};
+use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
@@ -56,7 +54,6 @@ use welcome::{show_welcome_experience, FIRST_OPEN};
 use fs::RealFs;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
-use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings,
@@ -84,7 +81,6 @@ fn main() {
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
-    let themes = ThemeRegistry::new(Assets, app.font_cache());
     let user_settings_file_rx =
         watch_config_file(app.background(), fs.clone(), paths::SETTINGS.clone());
     let user_keymap_file_rx =
@@ -124,7 +120,6 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
-        cx.set_global(themes.clone());
 
         #[cfg(debug_assertions)]
         cx.set_global(StaffMode(true));
@@ -148,11 +143,12 @@ fn main() {
         let languages = Arc::new(languages);
         let node_runtime = NodeRuntime::new(http.clone(), cx.background().to_owned());
 
-        languages::init(languages.clone(), themes.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         cx.set_global(client.clone());
 
+        theme::init(Assets, cx);
         context_menu::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
@@ -171,13 +167,12 @@ fn main() {
         theme_testbench::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
 
-        cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
-            .detach();
+        cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
 
-        languages.set_theme(cx.global::<Settings>().theme.clone());
-        cx.observe_global::<Settings, _>({
+        languages.set_theme(theme::current(cx).clone());
+        cx.observe_global::<SettingsStore, _>({
             let languages = languages.clone();
-            move |cx| languages.set_theme(cx.global::<Settings>().theme.clone())
+            move |cx| languages.set_theme(theme::current(cx).clone())
         })
         .detach();
 
@@ -190,7 +185,6 @@ fn main() {
 
         let app_state = Arc::new(AppState {
             languages,
-            themes,
             client: client.clone(),
             user_store,
             fs,
@@ -208,10 +202,13 @@ fn main() {
         journal::init(app_state.clone(), cx);
         language_selector::init(cx);
         theme_selector::init(cx);
-        zed::init(&app_state, cx);
+        activity_indicator::init(cx);
+        lsp_log::init(cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
         welcome::init(cx);
+        zed::init(&app_state, cx);
 
         cx.set_menus(menus::menus());
 
@@ -584,11 +581,7 @@ fn load_embedded_fonts(app: &App) {
 }
 
 #[cfg(debug_assertions)]
-async fn watch_themes(
-    fs: Arc<dyn Fs>,
-    themes: Arc<ThemeRegistry>,
-    mut cx: AsyncAppContext,
-) -> Option<()> {
+async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
     let mut events = fs
         .watch("styles/src".as_ref(), Duration::from_millis(100))
         .await;
@@ -600,7 +593,7 @@ async fn watch_themes(
             .await
             .log_err()?;
         if output.status.success() {
-            cx.update(|cx| theme_selector::reload(themes.clone(), cx))
+            cx.update(|cx| theme_selector::reload(cx))
         } else {
             eprintln!(
                 "build script failed {}",

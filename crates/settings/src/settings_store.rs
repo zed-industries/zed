@@ -40,7 +40,11 @@ pub trait Setting: 'static {
     where
         Self: Sized;
 
-    fn json_schema(generator: &mut SchemaGenerator, _: &SettingsJsonSchemaParams) -> RootSchema {
+    fn json_schema(
+        generator: &mut SchemaGenerator,
+        _: &SettingsJsonSchemaParams,
+        _: &AppContext,
+    ) -> RootSchema {
         generator.root_schema_for::<Self::FileContent>()
     }
 
@@ -75,7 +79,7 @@ pub trait Setting: 'static {
 }
 
 pub struct SettingsJsonSchemaParams<'a> {
-    pub theme_names: &'a [String],
+    pub staff_mode: bool,
     pub language_names: &'a [String],
 }
 
@@ -112,6 +116,7 @@ trait AnySettingValue {
         &self,
         generator: &mut SchemaGenerator,
         _: &SettingsJsonSchemaParams,
+        cx: &AppContext,
     ) -> RootSchema;
 }
 
@@ -167,6 +172,16 @@ impl SettingsStore {
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
+    }
+
+    /// Override the global value for a setting.
+    ///
+    /// The given value will be overwritten if the user settings file changes.
+    pub fn override_global<T: Setting>(&mut self, value: T) {
+        self.setting_values
+            .get_mut(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .set_global_value(Box::new(value))
     }
 
     /// Get the user's settings as a raw JSON value.
@@ -342,7 +357,11 @@ impl SettingsStore {
         Ok(())
     }
 
-    pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams) -> serde_json::Value {
+    pub fn json_schema(
+        &self,
+        schema_params: &SettingsJsonSchemaParams,
+        cx: &AppContext,
+    ) -> serde_json::Value {
         use schemars::{
             gen::SchemaSettings,
             schema::{Schema, SchemaObject},
@@ -355,7 +374,7 @@ impl SettingsStore {
         let mut combined_schema = RootSchema::default();
 
         for setting_value in self.setting_values.values() {
-            let setting_schema = setting_value.json_schema(&mut generator, schema_params);
+            let setting_schema = setting_value.json_schema(&mut generator, schema_params, cx);
             combined_schema
                 .definitions
                 .extend(setting_schema.definitions);
@@ -552,8 +571,9 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
         &self,
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
+        cx: &AppContext,
     ) -> RootSchema {
-        T::json_schema(generator, params)
+        T::json_schema(generator, params, cx)
     }
 }
 

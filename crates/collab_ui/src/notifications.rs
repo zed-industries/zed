@@ -4,7 +4,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, Element, View, ViewContext,
 };
-use settings::Settings;
 use std::sync::Arc;
 
 enum Dismiss {}
@@ -22,7 +21,7 @@ where
     F: 'static + Fn(&mut V, &mut ViewContext<V>),
     V: View,
 {
-    let theme = cx.global::<Settings>().theme.clone();
+    let theme = theme::current(cx).clone();
     let theme = &theme.contact_notification;
 
     Flex::column()

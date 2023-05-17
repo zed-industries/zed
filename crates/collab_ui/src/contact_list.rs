@@ -14,7 +14,6 @@ use gpui::{
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::Project;
 use serde::Deserialize;
-use settings::Settings;
 use std::{mem, sync::Arc};
 use theme::IconButton;
 use workspace::Workspace;
@@ -192,7 +191,7 @@ impl ContactList {
         .detach();
 
         let list_state = ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
-            let theme = cx.global::<Settings>().theme.clone();
+            let theme = theme::current(cx).clone();
             let is_selected = this.selection == Some(ix);
             let current_project_id = this.project.read(cx).remote_id();
 
@@ -1313,7 +1312,7 @@ impl View for ContactList {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum AddContact {}
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
 
         Flex::column()
             .with_child(

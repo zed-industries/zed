@@ -10,7 +10,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::language_settings::{self, all_language_settings, AllLanguageSettings};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{update_settings_file, SettingsStore};
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
 use workspace::{
@@ -46,8 +46,7 @@ impl View for CopilotButton {
             return Empty::new().into_any();
         }
 
-        let settings = cx.global::<Settings>();
-        let theme = settings.theme.clone();
+        let theme = theme::current(cx).clone();
         let active = self.popup_menu.read(cx).visible();
         let Some(copilot) = Copilot::global(cx) else {
             return Empty::new().into_any();
@@ -158,7 +157,7 @@ impl CopilotButton {
 
         Copilot::global(cx).map(|copilot| cx.observe(&copilot, |_, _, cx| cx.notify()).detach());
 
-        cx.observe_global::<Settings, _>(move |_, cx| cx.notify())
+        cx.observe_global::<SettingsStore, _>(move |_, cx| cx.notify())
             .detach();
 
         Self {
@@ -249,7 +248,7 @@ impl CopilotButton {
 
         menu_options.push(ContextMenuItem::Separator);
 
-        let icon_style = cx.global::<Settings>().theme.copilot.out_link_icon.clone();
+        let icon_style = theme::current(cx).copilot.out_link_icon.clone();
         menu_options.push(ContextMenuItem::action(
             move |state: &mut MouseState, style: &theme::ContextMenuItem| {
                 Flex::row()
@@ -316,7 +315,7 @@ async fn configure_disabled_globs(
     let settings_editor = workspace
         .update(&mut cx, |_, cx| {
             create_and_open_local_file(&paths::SETTINGS, cx, || {
-                Settings::initial_user_settings_content(&assets::Assets)
+                settings::initial_user_settings_content(&assets::Assets)
                     .as_ref()
                     .into()
             })

@@ -4,7 +4,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use settings::Settings;
 use std::sync::Arc;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -55,7 +54,7 @@ impl View for ActiveBufferLanguage {
             };
 
             MouseEventHandler::<Self, Self>::new(0, cx, |state, cx| {
-                let theme = &cx.global::<Settings>().theme.workspace.status_bar;
+                let theme = &theme::current(cx).workspace.status_bar;
                 let style = theme.active_language.style_for(state, false);
                 Label::new(active_language_text, style.text.clone())
                     .contained()

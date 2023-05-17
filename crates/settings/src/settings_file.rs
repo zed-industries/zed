@@ -1,7 +1,4 @@
-use crate::{
-    settings_store::parse_json_with_comments, settings_store::SettingsStore, Setting, Settings,
-    DEFAULT_SETTINGS_ASSET_PATH,
-};
+use crate::{settings_store::SettingsStore, Setting, DEFAULT_SETTINGS_ASSET_PATH};
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
@@ -35,15 +32,20 @@ pub fn default_settings() -> Cow<'static, str> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
+
+#[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {
-    let mut value =
-        parse_json_with_comments::<serde_json::Value>(default_settings().as_ref()).unwrap();
+    let mut value = crate::settings_store::parse_json_with_comments::<serde_json::Value>(
+        default_settings().as_ref(),
+    )
+    .unwrap();
     util::merge_non_null_json_value_into(
         serde_json::json!({
             "buffer_font_family": "Courier",
             "buffer_font_features": {},
             "buffer_font_size": 14,
-            "theme": theme::EMPTY_THEME_NAME,
+            "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
     );
@@ -85,10 +87,6 @@ pub fn handle_settings_file_changes(
         store
             .set_user_settings(&user_settings_content, cx)
             .log_err();
-
-        // TODO - remove the Settings global, use the SettingsStore instead.
-        store.register_setting::<Settings>(cx);
-        cx.set_global(store.get::<Settings>(None).clone());
     });
     cx.spawn(move |mut cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
@@ -97,9 +95,6 @@ pub fn handle_settings_file_changes(
                     store
                         .set_user_settings(&user_settings_content, cx)
                         .log_err();
-
-                    // TODO - remove the Settings global, use the SettingsStore instead.
-                    cx.set_global(store.get::<Settings>(None).clone());
                 });
             });
         }
@@ -113,7 +108,7 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
         Err(err) => {
             if let Some(e) = err.downcast_ref::<std::io::Error>() {
                 if e.kind() == ErrorKind::NotFound {
-                    return Ok(Settings::initial_user_settings_content(&Assets).to_string());
+                    return Ok(crate::initial_user_settings_content(&Assets).to_string());
                 }
             }
             return Err(err);

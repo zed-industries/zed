@@ -5452,7 +5452,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         let mut highlighted_ranges = editor.background_highlights_in_range(
             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
             &snapshot,
-            cx.global::<Settings>().theme.as_ref(),
+            theme::current(cx).as_ref(),
         );
         // Enforce a consistent ordering based on color without relying on the ordering of the
         // highlight's `TypeId` which is non-deterministic.
@@ -5482,7 +5482,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             editor.background_highlights_in_range(
                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                 &snapshot,
-                cx.global::<Settings>().theme.as_ref(),
+                theme::current(cx).as_ref(),
             ),
             &[(
                 DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
@@ -6681,7 +6681,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
 
     cx.update(|cx| {
         cx.set_global(SettingsStore::test(cx));
-        cx.set_global(Settings::test(cx));
+        theme::init((), cx);
         client::init_settings(cx);
         language::init(cx);
         Project::init_settings(cx);

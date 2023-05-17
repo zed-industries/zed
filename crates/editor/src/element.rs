@@ -40,7 +40,6 @@ use language::{
     Selection,
 };
 use project::ProjectPath;
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -611,7 +610,7 @@ impl EditorElement {
         layout: &mut LayoutState,
         cx: &mut ViewContext<Editor>,
     ) {
-        let diff_style = &cx.global::<Settings>().theme.editor.diff.clone();
+        let diff_style = &theme::current(cx).editor.diff.clone();
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -1417,7 +1416,7 @@ impl EditorElement {
         editor: &mut Editor,
         cx: &mut LayoutContext<Editor>,
     ) -> (f32, Vec<BlockLayout>) {
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
         let scroll_x = snapshot.scroll_anchor.offset.x();
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
@@ -1936,11 +1935,11 @@ impl Element<Editor> for EditorElement {
         let is_singleton = editor.is_singleton(cx);
 
         let highlighted_rows = editor.highlighted_rows();
-        let theme = cx.global::<Settings>().theme.as_ref();
+        let theme = theme::current(cx);
         let highlighted_ranges = editor.background_highlights_in_range(
             start_anchor..end_anchor,
             &snapshot.display_snapshot,
-            theme,
+            theme.as_ref(),
         );
 
         fold_ranges.extend(

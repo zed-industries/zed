@@ -10,7 +10,6 @@ use gpui::{
 use highlighted_workspace_location::HighlightedWorkspaceLocation;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::Settings;
 use std::sync::Arc;
 use workspace::{
     notifications::simple_message_notification::MessageNotification, Workspace, WorkspaceLocation,
@@ -173,9 +172,10 @@ impl PickerDelegate for RecentProjectsDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let settings = cx.global::<Settings>();
+        let theme = theme::current(cx);
+        let style = theme.picker.item.style_for(mouse_state, selected);
+
         let string_match = &self.matches[ix];
-        let style = settings.theme.picker.item.style_for(mouse_state, selected);
 
         let highlighted_location = HighlightedWorkspaceLocation::new(
             &string_match,

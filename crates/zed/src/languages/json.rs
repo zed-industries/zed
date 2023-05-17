@@ -16,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::ThemeRegistry;
 use util::http::HttpClient;
 use util::{paths, ResultExt};
 
@@ -30,20 +29,11 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 pub struct JsonLspAdapter {
     node: Arc<NodeRuntime>,
     languages: Arc<LanguageRegistry>,
-    themes: Arc<ThemeRegistry>,
 }
 
 impl JsonLspAdapter {
-    pub fn new(
-        node: Arc<NodeRuntime>,
-        languages: Arc<LanguageRegistry>,
-        themes: Arc<ThemeRegistry>,
-    ) -> Self {
-        JsonLspAdapter {
-            node,
-            languages,
-            themes,
-        }
+    pub fn new(node: Arc<NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
+        JsonLspAdapter { node, languages }
     }
 }
 
@@ -128,18 +118,15 @@ impl LspAdapter for JsonLspAdapter {
         cx: &mut AppContext,
     ) -> Option<BoxFuture<'static, serde_json::Value>> {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
-        let theme_names = &self
-            .themes
-            .list(**cx.default_global::<StaffMode>())
-            .map(|meta| meta.name)
-            .collect::<Vec<_>>();
+        let staff_mode = cx.global::<StaffMode>().0;
         let language_names = &self.languages.language_names();
-        let settings_schema = cx
-            .global::<SettingsStore>()
-            .json_schema(&SettingsJsonSchemaParams {
-                theme_names,
+        let settings_schema = cx.global::<SettingsStore>().json_schema(
+            &SettingsJsonSchemaParams {
                 language_names,
-            });
+                staff_mode,
+            },
+            cx,
+        );
         Some(
             future::ready(serde_json::json!({
                 "json": {

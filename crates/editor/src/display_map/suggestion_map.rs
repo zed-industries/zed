@@ -578,7 +578,7 @@ mod tests {
     use crate::{display_map::fold_map::FoldMap, MultiBuffer};
     use gpui::AppContext;
     use rand::{prelude::StdRng, Rng};
-    use settings::Settings;
+    use settings::SettingsStore;
     use std::{
         env,
         ops::{Bound, RangeBounds},
@@ -631,7 +631,8 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_suggestions(cx: &mut AppContext, mut rng: StdRng) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
+
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -832,6 +833,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn init_test(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        theme::init((), cx);
     }
 
     impl SuggestionMap {

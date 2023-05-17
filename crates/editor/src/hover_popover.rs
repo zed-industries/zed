@@ -12,7 +12,6 @@ use gpui::{
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
 use project::{HoverBlock, HoverBlockKind, Project};
-use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
 
@@ -654,7 +653,7 @@ impl DiagnosticPopover {
             _ => style.hover_popover.container,
         };
 
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
 
         MouseEventHandler::<DiagnosticPopover, _>::new(0, cx, |_, _| {
             text.with_soft_wrap(true)

@@ -367,10 +367,9 @@ pub fn split_display_range_by_lines(
 
 #[cfg(test)]
 mod tests {
-    use settings::{Settings, SettingsStore};
-
     use super::*;
     use crate::{test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange, MultiBuffer};
+    use settings::SettingsStore;
 
     #[gpui::test]
     fn test_previous_word_start(cx: &mut gpui::AppContext) {
@@ -703,7 +702,7 @@ mod tests {
 
     fn init_test(cx: &mut gpui::AppContext) {
         cx.set_global(SettingsStore::test(cx));
-        cx.set_global(Settings::test(cx));
+        theme::init((), cx);
         language::init(cx);
         crate::init(cx);
     }

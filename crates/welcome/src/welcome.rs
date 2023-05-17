@@ -8,7 +8,7 @@ use gpui::{
     elements::{Flex, Label, ParentElement},
     AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext, WeakViewHandle,
 };
-use settings::{update_settings_file, Settings};
+use settings::{update_settings_file, SettingsStore};
 use std::{borrow::Cow, sync::Arc};
 use workspace::{
     item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
@@ -61,9 +61,7 @@ impl View for WelcomePage {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let self_handle = cx.handle();
-        let settings = cx.global::<Settings>();
-        let theme = settings.theme.clone();
-
+        let theme = theme::current(cx);
         let width = theme.welcome.page_width;
 
         let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
@@ -224,7 +222,7 @@ impl WelcomePage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         WelcomePage {
             workspace: workspace.weak_handle(),
-            _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
+            _settings_subscription: cx.observe_global::<SettingsStore, _>(move |_, cx| cx.notify()),
         }
     }
 }
@@ -260,7 +258,7 @@ impl Item for WelcomePage {
     ) -> Option<Self> {
         Some(WelcomePage {
             workspace: self.workspace.clone(),
-            _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
+            _settings_subscription: cx.observe_global::<SettingsStore, _>(move |_, cx| cx.notify()),
         })
     }
 }

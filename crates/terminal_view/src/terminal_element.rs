@@ -16,7 +16,7 @@ use gpui::{
 use itertools::Itertools;
 use language::CursorShape;
 use ordered_float::OrderedFloat;
-use settings::{font_size_for_setting, Settings};
+use settings::font_size_for_setting;
 use terminal::{
     alacritty_terminal::{
         ansi::{Color as AnsiColor, Color::Named, CursorShape as AlacCursorShape, NamedColor},
@@ -27,7 +27,7 @@ use terminal::{
     mappings::colors::convert_color,
     IndexedCell, Terminal, TerminalContent, TerminalSettings, TerminalSize,
 };
-use theme::TerminalStyle;
+use theme::{TerminalStyle, ThemeSettings};
 use util::ResultExt;
 
 use std::{fmt::Debug, ops::RangeInclusive};
@@ -522,7 +522,7 @@ impl Element<TerminalView> for TerminalElement {
         view: &mut TerminalView,
         cx: &mut LayoutContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let settings = cx.global::<Settings>();
+        let settings = settings::get_setting::<ThemeSettings>(None, cx);
         let terminal_settings = settings::get_setting::<TerminalSettings>(None, cx);
 
         //Setup layout information

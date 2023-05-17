@@ -47,7 +47,7 @@ use project_settings::ProjectSettings;
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -610,12 +610,6 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
-        if !cx.read(|cx| cx.has_global::<Settings>()) {
-            cx.update(|cx| {
-                cx.set_global(Settings::test(cx));
-            });
-        }
-
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
         let http_client = util::http::FakeHttpClient::with_404_response();
@@ -2137,7 +2131,7 @@ impl Project {
         let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
         let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
 
-        let settings_observation = cx.observe_global::<Settings, _>(move |_, _| {
+        let settings_observation = cx.observe_global::<SettingsStore, _>(move |_, _| {
             *settings_changed_tx.borrow_mut() = ();
         });
         cx.spawn_weak(|this, mut cx| async move {

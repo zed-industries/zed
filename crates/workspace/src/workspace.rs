@@ -76,12 +76,11 @@ pub use persistence::{
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::Settings;
 use shared_screen::SharedScreen;
 use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
-use theme::{Theme, ThemeRegistry};
+use theme::Theme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::{async_iife, paths, ResultExt};
 pub use workspace_settings::{AutosaveSetting, DockAnchor, GitGutterSetting, WorkspaceSettings};
@@ -276,7 +275,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
             create_and_open_local_file(&paths::SETTINGS, cx, || {
-                Settings::initial_user_settings_content(&Assets)
+                settings::initial_user_settings_content(&Assets)
                     .as_ref()
                     .into()
             })
@@ -361,7 +360,6 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
-    pub themes: Arc<ThemeRegistry>,
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
@@ -379,7 +377,6 @@ impl AppState {
 
         if !cx.has_global::<SettingsStore>() {
             cx.set_global(SettingsStore::test(cx));
-            cx.set_global(Settings::test(cx));
         }
 
         let fs = fs::FakeFs::new(cx.background().clone());
@@ -387,14 +384,13 @@ impl AppState {
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let themes = ThemeRegistry::new((), cx.font_cache().clone());
 
+        theme::init((), cx);
         client::init(&client, cx);
         crate::init_settings(cx);
 
         Arc::new(Self {
             client,
-            themes,
             fs,
             languages,
             user_store,
@@ -1992,7 +1988,7 @@ impl Workspace {
             enum DisconnectedOverlay {}
             Some(
                 MouseEventHandler::<DisconnectedOverlay, _>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme;
+                    let theme = &theme::current(cx);
                     Label::new(
                         "Your connection to the remote project has been lost.",
                         theme.workspace.disconnected_overlay.text.clone(),
@@ -2630,7 +2626,6 @@ impl Workspace {
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
-            themes: ThemeRegistry::new((), cx.font_cache().clone()),
             client: project.read(cx).client(),
             user_store: project.read(cx).user_store(),
             fs: project.read(cx).fs().clone(),
@@ -2776,7 +2771,7 @@ impl View for Workspace {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         Stack::new()
             .with_child(
                 Flex::column()
@@ -3798,7 +3793,7 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
-            cx.set_global(Settings::test(cx));
+            theme::init((), cx);
             language::init(cx);
             crate::init_settings(cx);
         });
