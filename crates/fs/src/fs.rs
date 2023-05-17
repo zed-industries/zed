@@ -1083,7 +1083,7 @@ impl Fs for FakeFs {
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<Mutex<dyn GitRepository>>> {
         let state = self.state.lock();
-        let entry = state.read_path(abs_dot_git).unwrap();
+        let entry = state.read_path(abs_dot_git).log_err()?;
         let mut entry = entry.lock();
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
             let state = git_repo_state

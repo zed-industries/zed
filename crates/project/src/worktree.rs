@@ -2737,7 +2737,6 @@ impl BackgroundScanner {
         });
         snapshot.snapshot.repository_entries = git_repository_entries;
 
-        snapshot.removed_entry_ids.clear();
         snapshot.completed_scan_id = snapshot.scan_id;
 
         drop(snapshot);
@@ -2821,7 +2820,11 @@ impl BackgroundScanner {
 
     fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
         let mut prev_state = self.prev_state.lock();
-        let new_snapshot = self.snapshot.lock().clone();
+        let new_snapshot = {
+            let mut snapshot = self.snapshot.lock();
+            snapshot.removed_entry_ids.clear();
+            snapshot.clone()
+        };
         let old_snapshot = mem::replace(&mut prev_state.snapshot, new_snapshot.snapshot.clone());
 
         let changes = self.build_change_set(

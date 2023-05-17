@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashSet};
 use editor::Bias;
 use fs::{repository::GitFileStatus, FakeFs, Fs as _};
 use futures::StreamExt as _;
@@ -764,6 +764,29 @@ async fn apply_client_operation(
             }
         }
 
+        ClientOperation::RenameDirectory { from, to } => {
+            if !client.fs.directories().contains(&from) {
+                return Err(TestError::Inapplicable);
+            }
+
+            if from.parent().unwrap() != to.parent().unwrap() {
+                panic!("Bad test generation, trying to rename a directory into another directory");
+            }
+
+            client
+                .fs
+                .rename(
+                    &from,
+                    &to,
+                    fs::RenameOptions {
+                        overwrite: false,
+                        ignore_if_exists: true,
+                    },
+                )
+                .await
+                .unwrap()
+        }
+
         ClientOperation::GitOperation { operation } => match operation {
             GitOperation::WriteGitIndex {
                 repo_path,
@@ -1210,6 +1233,10 @@ enum ClientOperation {
         path: PathBuf,
         is_dir: bool,
         content: String,
+    },
+    RenameDirectory {
+        from: PathBuf,
+        to: PathBuf,
     },
     GitOperation {
         operation: GitOperation,
@@ -1750,7 +1777,7 @@ impl TestPlan {
                 }
 
                 // Create or update a file or directory
-                96.. => {
+                96..=98 => {
                     let is_dir = self.rng.gen::<bool>();
                     let content;
                     let mut path;
@@ -1778,6 +1805,41 @@ impl TestPlan {
                         is_dir,
                         content,
                     };
+                }
+                // Rename a directory
+                99.. => {
+                    let mut worktree_roots = HashSet::default();
+                    for project in client.local_projects().iter() {
+                        project.read_with(cx, |project, cx| {
+                            for worktree in project.worktrees(cx) {
+                                worktree_roots.insert(worktree.read(cx).abs_path());
+                            }
+                       });
+                    }
+
+                    let non_root_directories = client
+                        .fs
+                        .directories()
+                        .into_iter()
+                        .filter(|dir| !worktree_roots.contains(dir.as_path()))
+                        .collect::<Vec<_>>();
+
+                    let from = non_root_directories.choose(&mut self.rng);
+
+                    if from == None {
+                        continue;
+                    }
+
+                    let from = from.unwrap().to_path_buf();
+
+                    if from.parent() == None {
+                        continue;
+                    }
+
+                    let new_name = gen_file_name(&mut self.rng);
+                    let to = from.parent().unwrap().join(new_name);
+
+                    break ClientOperation::RenameDirectory { from, to };
                 }
             }
         })
