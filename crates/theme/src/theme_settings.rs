@@ -19,7 +19,7 @@ pub struct ThemeSettings {
     pub buffer_font_family_name: String,
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
-    buffer_font_size: f32,
+    pub(crate) buffer_font_size: f32,
     pub theme: Arc<Theme>,
 }
 
@@ -75,8 +75,10 @@ pub fn adjust_font_size(cx: &mut AppContext, f: fn(&mut f32)) {
 }
 
 pub fn reset_font_size(cx: &mut AppContext) {
-    cx.remove_global::<AdjustedBufferFontSize>();
-    cx.refresh_windows();
+    if cx.has_global::<AdjustedBufferFontSize>() {
+        cx.remove_global::<AdjustedBufferFontSize>();
+        cx.refresh_windows();
+    }
 }
 
 impl settings::Setting for ThemeSettings {

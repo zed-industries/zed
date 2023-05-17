@@ -10,6 +10,7 @@ use gpui::{
 };
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
+use settings::SettingsStore;
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonStyle, CheckboxStyle, IconStyle, ModalStyle, SvgStyle};
 
@@ -23,6 +24,16 @@ pub fn current(cx: &AppContext) -> Arc<Theme> {
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {
     cx.set_global(ThemeRegistry::new(source, cx.font_cache().clone()));
     settings::register::<ThemeSettings>(cx);
+
+    let mut prev_buffer_font_size = settings::get::<ThemeSettings>(cx).buffer_font_size;
+    cx.observe_global::<SettingsStore, _>(move |cx| {
+        let buffer_font_size = settings::get::<ThemeSettings>(cx).buffer_font_size;
+        if buffer_font_size != prev_buffer_font_size {
+            prev_buffer_font_size = buffer_font_size;
+            reset_font_size(cx);
+        }
+    })
+    .detach();
 }
 
 #[derive(Deserialize, Default)]
