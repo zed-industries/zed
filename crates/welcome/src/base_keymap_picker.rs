@@ -1,3 +1,4 @@
+use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -6,7 +7,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use project::Fs;
-use settings::{update_settings_file, BaseKeymap, Settings};
+use settings::{update_settings_file, Settings};
 use std::sync::Arc;
 use util::ResultExt;
 use workspace::Workspace;
@@ -39,10 +40,10 @@ pub struct BaseKeymapSelectorDelegate {
 
 impl BaseKeymapSelectorDelegate {
     fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<BaseKeymapSelector>) -> Self {
-        let base = cx.global::<Settings>().base_keymap;
+        let base = settings::get_setting::<BaseKeymap>(None, cx);
         let selected_index = BaseKeymap::OPTIONS
             .iter()
-            .position(|(_, value)| *value == base)
+            .position(|(_, value)| value == base)
             .unwrap_or(0);
         Self {
             matches: Vec::new(),
@@ -122,8 +123,8 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<BaseKeymapSelector>) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
-            update_settings_file::<Settings>(self.fs.clone(), cx, move |settings| {
-                settings.base_keymap = Some(base_keymap)
+            update_settings_file::<BaseKeymap>(self.fs.clone(), cx, move |setting| {
+                *setting = Some(base_keymap)
             });
         }
         cx.emit(PickerEvent::Dismiss);

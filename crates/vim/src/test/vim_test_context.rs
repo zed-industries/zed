@@ -27,7 +27,7 @@ impl<'a> VimTestContext<'a> {
             cx.update_global(|store: &mut SettingsStore, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
-            settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
+            settings::KeymapFileContent::load_asset("keymaps/vim.json", cx).unwrap();
         });
 
         // Setup search toolbars and keypress hook

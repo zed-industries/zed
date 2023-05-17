@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use feedback::{
     feedback_info_text::FeedbackInfoText, submit_feedback_button::SubmitFeedbackButton,
 };
-use futures::StreamExt;
+use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions,
     geometry::vector::vec2f,
@@ -29,11 +29,14 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{adjust_font_size_delta, Settings, DEFAULT_SETTINGS_ASSET_PATH};
+use settings::{
+    adjust_font_size_delta, KeymapFileContent, Settings, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
+};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_button::TerminalButton;
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
+use welcome::BaseKeymap;
 pub use workspace;
 use workspace::{
     create_and_open_local_file, open_new, sidebar::SidebarSide, AppState, NewFile, NewWindow,
@@ -258,7 +261,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     activity_indicator::init(cx);
     lsp_log::init(cx);
     call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-    settings::KeymapFileContent::load_defaults(cx);
+    load_default_keymap(cx);
 }
 
 pub fn initialize_workspace(
@@ -478,6 +481,52 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         .detach();
 }
 
+pub fn load_default_keymap(cx: &mut AppContext) {
+    for path in ["keymaps/default.json", "keymaps/vim.json"] {
+        KeymapFileContent::load_asset(path, cx).unwrap();
+    }
+
+    if let Some(asset_path) = settings::get_setting::<BaseKeymap>(None, cx).asset_path() {
+        KeymapFileContent::load_asset(asset_path, cx).unwrap();
+    }
+}
+
+pub fn handle_keymap_file_changes(
+    mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+) {
+    cx.spawn(move |mut cx| async move {
+        let mut settings_subscription = None;
+        while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
+            if let Ok(keymap_content) = KeymapFileContent::parse(&user_keymap_content) {
+                cx.update(|cx| {
+                    cx.clear_bindings();
+                    load_default_keymap(cx);
+                    keymap_content.clone().add_to_cx(cx).log_err();
+                });
+
+                let mut old_base_keymap =
+                    cx.read(|cx| *settings::get_setting::<BaseKeymap>(None, cx));
+                drop(settings_subscription);
+                settings_subscription = Some(cx.update(|cx| {
+                    cx.observe_global::<SettingsStore, _>(move |cx| {
+                        let new_base_keymap = *settings::get_setting::<BaseKeymap>(None, cx);
+                        if new_base_keymap != old_base_keymap {
+                            old_base_keymap = new_base_keymap.clone();
+
+                            cx.clear_bindings();
+                            load_default_keymap(cx);
+                            keymap_content.clone().add_to_cx(cx).log_err();
+                        }
+                    })
+                    .detach();
+                }));
+            }
+        }
+    })
+    .detach();
+}
+
 fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
     workspace.with_local_workspace(cx, move |workspace, cx| {
         let app_state = workspace.app_state().clone();
@@ -579,11 +628,16 @@ mod tests {
     use super::*;
     use assets::Assets;
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
-    use gpui::{executor::Deterministic, AppContext, AssetSource, TestAppContext, ViewHandle};
+    use fs::{FakeFs, Fs};
+    use gpui::{
+        elements::Empty, executor::Deterministic, Action, AnyElement, AppContext, AssetSource,
+        Element, Entity, TestAppContext, View, ViewHandle,
+    };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;
     use project::{Project, ProjectPath};
     use serde_json::json;
+    use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
     use std::{
         collections::HashSet,
         path::{Path, PathBuf},
@@ -1794,6 +1848,175 @@ mod tests {
                 let item = workspace.active_item(cx)?;
                 item.project_path(cx)
             })
+        }
+    }
+
+    #[gpui::test]
+    async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
+        struct TestView;
+
+        impl Entity for TestView {
+            type Event = ();
+        }
+
+        impl View for TestView {
+            fn ui_name() -> &'static str {
+                "TestView"
+            }
+
+            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+                Empty::new().into_any()
+            }
+        }
+
+        let executor = cx.background();
+        let fs = FakeFs::new(executor.clone());
+
+        actions!(test, [A, B]);
+        // From the Atom keymap
+        actions!(workspace, [ActivatePreviousPane]);
+        // From the JetBrains keymap
+        actions!(pane, [ActivatePrevItem]);
+
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+            {
+                "base_keymap": "Atom"
+            }
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+            [
+                {
+                    "bindings": {
+                        "backspace": "test::A"
+                    }
+                }
+            ]
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            cx.set_global(ThemeRegistry::new(Assets, cx.font_cache().clone()));
+            welcome::init(cx);
+
+            cx.add_global_action(|_: &A, _cx| {});
+            cx.add_global_action(|_: &B, _cx| {});
+            cx.add_global_action(|_: &ActivatePreviousPane, _cx| {});
+            cx.add_global_action(|_: &ActivatePrevItem, _cx| {});
+
+            let settings_rx = watch_config_file(
+                executor.clone(),
+                fs.clone(),
+                PathBuf::from("/settings.json"),
+            );
+            let keymap_rx =
+                watch_config_file(executor.clone(), fs.clone(), PathBuf::from("/keymap.json"));
+
+            handle_keymap_file_changes(keymap_rx, cx);
+            handle_settings_file_changes(settings_rx, cx);
+        });
+
+        cx.foreground().run_until_parked();
+
+        let (window_id, _view) = cx.add_window(|_| TestView);
+
+        // Test loading the keymap base at all
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &A), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test modifying the users keymap, while retaining the base keymap
+        fs.save(
+            "/keymap.json".as_ref(),
+            &r#"
+            [
+                {
+                    "bindings": {
+                        "backspace": "test::B"
+                    }
+                }
+            ]
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.foreground().run_until_parked();
+
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &B), ("k", &ActivatePreviousPane)],
+            line!(),
+        );
+
+        // Test modifying the base, while retaining the users keymap
+        fs.save(
+            "/settings.json".as_ref(),
+            &r#"
+            {
+                "base_keymap": "JetBrains"
+            }
+            "#
+            .into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        cx.foreground().run_until_parked();
+
+        assert_key_bindings_for(
+            window_id,
+            cx,
+            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            line!(),
+        );
+
+        fn assert_key_bindings_for<'a>(
+            window_id: usize,
+            cx: &TestAppContext,
+            actions: Vec<(&'static str, &'a dyn Action)>,
+            line: u32,
+        ) {
+            for (key, action) in actions {
+                // assert that...
+                assert!(
+                    cx.available_actions(window_id, 0)
+                        .into_iter()
+                        .any(|(_, bound_action, b)| {
+                            // action names match...
+                            bound_action.name() == action.name()
+                        && bound_action.namespace() == action.namespace()
+                        // and key strokes contain the given key
+                        && b.iter()
+                            .any(|binding| binding.keystrokes().iter().any(|k| k.key == key))
+                        }),
+                    "On {} Failed to find {} with key binding {}",
+                    line,
+                    action.name(),
+                    key
+                );
+            }
         }
     }
 

@@ -11,8 +11,6 @@ path = "src/welcome.rs"
 test-support = []
 
 [dependencies]
-anyhow.workspace = true
-log.workspace = true
 client = { path = "../client" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
@@ -27,3 +25,8 @@ theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 picker = { path = "../picker" }
 workspace = { path = "../workspace" }
+
+anyhow.workspace = true
+log.workspace = true
+schemars.workspace = true
+serde.workspace = true

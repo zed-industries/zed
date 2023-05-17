@@ -1,7 +1,7 @@
 mod base_keymap_picker;
+mod base_keymap_setting;
 
-use std::{borrow::Cow, sync::Arc};
-
+use crate::base_keymap_picker::ToggleBaseKeymapSelector;
 use client::TelemetrySettings;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
@@ -9,17 +9,19 @@ use gpui::{
     AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext, WeakViewHandle,
 };
 use settings::{update_settings_file, Settings};
-
+use std::{borrow::Cow, sync::Arc};
 use workspace::{
     item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
 };
 
-use crate::base_keymap_picker::ToggleBaseKeymapSelector;
+pub use base_keymap_setting::BaseKeymap;
 
 pub const FIRST_OPEN: &str = "first_open";
 
 pub fn init(cx: &mut AppContext) {
+    settings::register_setting::<BaseKeymap>(cx);
+
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
         let welcome_page = cx.add_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item(Box::new(welcome_page), cx)

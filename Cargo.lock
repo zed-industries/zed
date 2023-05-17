@@ -8353,6 +8353,8 @@ dependencies = [
  "log",
  "picker",
  "project",
+ "schemars",
+ "serde",
  "settings",
  "theme",
  "theme_selector",

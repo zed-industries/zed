@@ -1,4 +1,4 @@
-use crate::{settings_store::parse_json_with_comments, Settings};
+use crate::settings_store::parse_json_with_comments;
 use anyhow::{Context, Result};
 use assets::Assets;
 use collections::BTreeMap;
@@ -41,20 +41,14 @@ impl JsonSchema for KeymapAction {
 struct ActionWithData(Box<str>, Box<RawValue>);
 
 impl KeymapFileContent {
-    pub fn load_defaults(cx: &mut AppContext) {
-        for path in ["keymaps/default.json", "keymaps/vim.json"] {
-            Self::load(path, cx).unwrap();
-        }
-
-        if let Some(asset_path) = cx.global::<Settings>().base_keymap.asset_path() {
-            Self::load(asset_path, cx).log_err();
-        }
-    }
-
-    pub fn load(asset_path: &str, cx: &mut AppContext) -> Result<()> {
+    pub fn load_asset(asset_path: &str, cx: &mut AppContext) -> Result<()> {
         let content = Assets::get(asset_path).unwrap().data;
         let content_str = std::str::from_utf8(content.as_ref()).unwrap();
-        parse_json_with_comments::<Self>(content_str)?.add_to_cx(cx)
+        Self::parse(content_str)?.add_to_cx(cx)
+    }
+
+    pub fn parse(content: &str) -> Result<Self> {
+        parse_json_with_comments::<Self>(content)
     }
 
     pub fn add_to_cx(self, cx: &mut AppContext) -> Result<()> {

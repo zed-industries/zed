@@ -24,8 +24,7 @@ use parking_lot::Mutex;
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::{
-    default_settings, handle_keymap_file_changes, handle_settings_file_changes, watch_config_file,
-    Settings, SettingsStore,
+    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
@@ -63,7 +62,9 @@ use workspace::{
     dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings,
     Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{
+    self, build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
+};
 
 fn main() {
     let http = http::client();

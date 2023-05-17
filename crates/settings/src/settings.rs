@@ -34,7 +34,6 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub theme: Arc<Theme>,
-    pub base_keymap: BaseKeymap,
 }
 
 impl Setting for Settings {
@@ -62,7 +61,6 @@ impl Setting for Settings {
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
-            base_keymap: Default::default(),
         };
 
         for value in user_values.into_iter().copied().cloned() {
@@ -111,48 +109,6 @@ impl Setting for Settings {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-pub enum BaseKeymap {
-    #[default]
-    VSCode,
-    JetBrains,
-    SublimeText,
-    Atom,
-    TextMate,
-}
-
-impl BaseKeymap {
-    pub const OPTIONS: [(&'static str, Self); 5] = [
-        ("VSCode (Default)", Self::VSCode),
-        ("Atom", Self::Atom),
-        ("JetBrains", Self::JetBrains),
-        ("Sublime Text", Self::SublimeText),
-        ("TextMate", Self::TextMate),
-    ];
-
-    pub fn asset_path(&self) -> Option<&'static str> {
-        match self {
-            BaseKeymap::JetBrains => Some("keymaps/jetbrains.json"),
-            BaseKeymap::SublimeText => Some("keymaps/sublime_text.json"),
-            BaseKeymap::Atom => Some("keymaps/atom.json"),
-            BaseKeymap::TextMate => Some("keymaps/textmate.json"),
-            BaseKeymap::VSCode => None,
-        }
-    }
-
-    pub fn names() -> impl Iterator<Item = &'static str> {
-        Self::OPTIONS.iter().map(|(name, _)| *name)
-    }
-
-    pub fn from_names(option: &str) -> BaseKeymap {
-        Self::OPTIONS
-            .iter()
-            .copied()
-            .find_map(|(name, value)| (name == option).then(|| value))
-            .unwrap_or_default()
-    }
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
     #[serde(default)]
@@ -163,8 +119,6 @@ pub struct SettingsFileContent {
     pub buffer_font_features: Option<fonts::Features>,
     #[serde(default)]
     pub theme: Option<String>,
-    #[serde(default)]
-    pub base_keymap: Option<BaseKeymap>,
 }
 
 impl Settings {
@@ -198,7 +152,6 @@ impl Settings {
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
-            base_keymap: Default::default(),
         }
     }
 
@@ -234,7 +187,6 @@ impl Settings {
         }
 
         merge(&mut self.buffer_font_size, data.buffer_font_size);
-        merge(&mut self.base_keymap, data.base_keymap);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -248,7 +200,6 @@ impl Settings {
                 .unwrap(),
             buffer_font_size: 14.,
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
-            base_keymap: Default::default(),
         }
     }
 

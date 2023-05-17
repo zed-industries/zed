@@ -1,6 +1,15 @@
 {
   // The name of the Zed theme to use for the UI
   "theme": "One Dark",
+  // The name of a base set of key bindings to use.
+  // This setting can take four values, each named after another
+  // text editor:
+  //
+  // 1. "VSCode"
+  // 2. "JetBrains"
+  // 3. "SublimeText"
+  // 4. "Atom"
+  "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
     // Show Copilot icon in status bar
