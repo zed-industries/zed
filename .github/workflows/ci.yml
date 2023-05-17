@@ -42,6 +42,7 @@ jobs:
     runs-on:
       - self-hosted
       - test
+    needs: rustfmt
     env:
       RUSTFLAGS: -D warnings
     steps:
