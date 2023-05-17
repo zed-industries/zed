@@ -132,10 +132,6 @@ fn main() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
-        if !stdout_is_a_pty() {
-            upload_previous_panics(http.clone(), cx);
-        }
-
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
         languages.set_executor(cx.background().clone());
@@ -194,7 +190,7 @@ fn main() {
             background_actions,
         });
         cx.set_global(Arc::downgrade(&app_state));
-        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
@@ -222,6 +218,8 @@ fn main() {
                 workspace::open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx);
             }
         } else {
+            upload_previous_panics(http.clone(), cx);
+
             // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
             // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
             if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
@@ -605,10 +603,7 @@ async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
 }
 
 #[cfg(not(debug_assertions))]
-async fn watch_themes(
-    _fs: Arc<dyn Fs>,
-    _cx: AsyncAppContext,
-) -> Option<()> {
+async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
     None
 }
 
