@@ -368,7 +368,7 @@ pub fn build_window_options(
 }
 
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
-    let should_confirm = settings::get_setting::<WorkspaceSettings>(None, cx).confirm_quit;
+    let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspaces = cx
             .window_ids()
@@ -484,7 +484,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
         KeymapFileContent::load_asset(path, cx).unwrap();
     }
 
-    if let Some(asset_path) = settings::get_setting::<BaseKeymap>(None, cx).asset_path() {
+    if let Some(asset_path) = settings::get::<BaseKeymap>(cx).asset_path() {
         KeymapFileContent::load_asset(asset_path, cx).unwrap();
     }
 }
@@ -503,12 +503,11 @@ pub fn handle_keymap_file_changes(
                     keymap_content.clone().add_to_cx(cx).log_err();
                 });
 
-                let mut old_base_keymap =
-                    cx.read(|cx| *settings::get_setting::<BaseKeymap>(None, cx));
+                let mut old_base_keymap = cx.read(|cx| *settings::get::<BaseKeymap>(cx));
                 drop(settings_subscription);
                 settings_subscription = Some(cx.update(|cx| {
                     cx.observe_global::<SettingsStore, _>(move |cx| {
-                        let new_base_keymap = *settings::get_setting::<BaseKeymap>(None, cx);
+                        let new_base_keymap = *settings::get::<BaseKeymap>(cx);
                         if new_base_keymap != old_base_keymap {
                             old_base_keymap = new_base_keymap.clone();
 
@@ -2047,12 +2046,7 @@ mod tests {
         for theme_name in themes.list(false).map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.meta.name, theme_name);
-            if theme.meta.name
-                == settings::get_setting::<ThemeSettings>(None, cx)
-                    .theme
-                    .meta
-                    .name
-            {
+            if theme.meta.name == settings::get::<ThemeSettings>(cx).theme.meta.name {
                 has_default_theme = true;
             }
         }

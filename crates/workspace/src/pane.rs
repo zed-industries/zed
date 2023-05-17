@@ -1024,7 +1024,7 @@ impl Pane {
         } else if is_dirty && (can_save || is_singleton) {
             let will_autosave = cx.read(|cx| {
                 matches!(
-                    settings::get_setting::<WorkspaceSettings>(None, cx).autosave,
+                    settings::get::<WorkspaceSettings>(cx).autosave,
                     AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
                 ) && Self::can_autosave_item(&*item, cx)
             });

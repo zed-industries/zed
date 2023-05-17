@@ -172,9 +172,8 @@ impl Dock {
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Workspace>,
     ) -> Self {
-        let position = DockPosition::Hidden(
-            settings::get_setting::<WorkspaceSettings>(None, cx).default_dock_anchor,
-        );
+        let position =
+            DockPosition::Hidden(settings::get::<WorkspaceSettings>(cx).default_dock_anchor);
         let workspace = cx.weak_handle();
         let pane =
             cx.add_view(|cx| Pane::new(workspace, Some(position.anchor()), background_actions, cx));

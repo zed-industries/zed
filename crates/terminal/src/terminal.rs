@@ -1149,7 +1149,7 @@ impl Terminal {
     }
 
     pub fn mouse_up(&mut self, e: &MouseUp, origin: Vector2F, cx: &mut ModelContext<Self>) {
-        let setting = settings::get_setting::<TerminalSettings>(None, cx);
+        let setting = settings::get::<TerminalSettings>(cx);
 
         let position = e.position.sub(origin);
         if self.mouse_mode(e.shift) {

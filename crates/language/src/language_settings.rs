@@ -12,19 +12,12 @@ pub fn init(cx: &mut AppContext) {
     settings::register_setting::<AllLanguageSettings>(cx);
 }
 
-pub fn language_settings<'a>(
-    path: Option<&Path>,
-    language: Option<&str>,
-    cx: &'a AppContext,
-) -> &'a LanguageSettings {
-    settings::get_setting::<AllLanguageSettings>(path, cx).language(language)
+pub fn language_settings<'a>(language: Option<&str>, cx: &'a AppContext) -> &'a LanguageSettings {
+    settings::get::<AllLanguageSettings>(cx).language(language)
 }
 
-pub fn all_language_settings<'a>(
-    path: Option<&Path>,
-    cx: &'a AppContext,
-) -> &'a AllLanguageSettings {
-    settings::get_setting::<AllLanguageSettings>(path, cx)
+pub fn all_language_settings<'a>(cx: &'a AppContext) -> &'a AllLanguageSettings {
+    settings::get::<AllLanguageSettings>(cx)
 }
 
 #[derive(Debug, Clone)]

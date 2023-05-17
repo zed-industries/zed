@@ -1246,7 +1246,7 @@ impl Editor {
     ) -> Self {
         let editor_view_id = cx.view_id();
         let display_map = cx.add_model(|cx| {
-            let settings = settings::get_setting::<ThemeSettings>(None, cx);
+            let settings = settings::get::<ThemeSettings>(cx);
             let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(
                 buffer.clone(),
@@ -1427,7 +1427,7 @@ impl Editor {
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
-            settings::get_setting::<ThemeSettings>(None, cx),
+            settings::get::<ThemeSettings>(cx),
             self.get_field_editor_theme.as_deref(),
             self.override_text_style.as_deref(),
             cx,
@@ -2385,7 +2385,7 @@ impl Editor {
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        if !settings::get_setting::<EditorSettings>(None, cx).show_completions_on_input {
+        if !settings::get::<EditorSettings>(cx).show_completions_on_input {
             return;
         }
 
@@ -3156,7 +3156,7 @@ impl Editor {
         let language_name = snapshot
             .language_at(location)
             .map(|language| language.name());
-        let settings = all_language_settings(None, cx);
+        let settings = all_language_settings(cx);
         settings.copilot_enabled(language_name.as_deref(), path)
     }
 
@@ -6902,7 +6902,7 @@ impl Editor {
             .map(|a| a.to_string());
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
         let event = ClickhouseEvent::Copilot {
             suggestion_id,
@@ -6937,8 +6937,8 @@ impl Editor {
             .untyped_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
-        let copilot_enabled = all_language_settings(None, cx).copilot_enabled(None, None);
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        let copilot_enabled = all_language_settings(cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
@@ -7616,7 +7616,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     }
 
     Arc::new(move |cx: &mut BlockContext| {
-        let settings = settings::get_setting::<ThemeSettings>(None, cx);
+        let settings = settings::get::<ThemeSettings>(cx);
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
         let font_size = (style.text_scale_factor

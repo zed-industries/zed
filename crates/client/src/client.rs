@@ -781,7 +781,7 @@ impl Client {
                     self.telemetry().report_mixpanel_event(
                         "read credentials from keychain",
                         Default::default(),
-                        *settings::get_setting::<TelemetrySettings>(None, cx),
+                        *settings::get::<TelemetrySettings>(cx),
                     );
                 });
             }
@@ -1075,8 +1075,7 @@ impl Client {
         let telemetry = self.telemetry.clone();
         let http = self.http.clone();
 
-        let telemetry_settings =
-            cx.read(|cx| *settings::get_setting::<TelemetrySettings>(None, cx));
+        let telemetry_settings = cx.read(|cx| *settings::get::<TelemetrySettings>(cx));
 
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the

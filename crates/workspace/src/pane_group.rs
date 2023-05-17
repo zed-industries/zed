@@ -379,8 +379,7 @@ impl PaneAxis {
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
                 let mut flex = 1.0;
                 if member.contains(active_pane) {
-                    flex = settings::get_setting::<WorkspaceSettings>(None, cx)
-                        .active_pane_magnification;
+                    flex = settings::get::<WorkspaceSettings>(cx).active_pane_magnification;
                 }
 
                 let mut member = member.render(

@@ -64,7 +64,7 @@ impl View for WelcomePage {
         let theme = theme::current(cx);
         let width = theme.welcome.page_width;
 
-        let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
         enum Metrics {}
         enum Diagnostics {}

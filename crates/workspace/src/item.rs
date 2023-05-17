@@ -450,7 +450,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                             }
 
                             ItemEvent::Edit => {
-                                let settings = settings::get_setting::<WorkspaceSettings>(None, cx);
+                                let settings = settings::get::<WorkspaceSettings>(cx);
                                 let debounce_delay = settings.git.gutter_debounce;
 
                                 if let AutosaveSetting::AfterDelay { milliseconds } =
@@ -501,7 +501,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
             cx.observe_focus(self, move |workspace, item, focused, cx| {
                 if !focused
-                    && settings::get_setting::<WorkspaceSettings>(None, cx).autosave
+                    && settings::get::<WorkspaceSettings>(cx).autosave
                         == AutosaveSetting::OnFocusChange
                 {
                     Pane::autosave_item(&item, workspace.project.clone(), cx)

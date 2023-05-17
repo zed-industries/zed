@@ -17,9 +17,7 @@ pub use theme_registry::ThemeRegistry;
 pub use theme_settings::ThemeSettings;
 
 pub fn current(cx: &AppContext) -> Arc<Theme> {
-    settings::get_setting::<ThemeSettings>(None, cx)
-        .theme
-        .clone()
+    settings::get::<ThemeSettings>(cx).theme.clone()
 }
 
 pub fn init(source: impl AssetSource, cx: &mut AppContext) {

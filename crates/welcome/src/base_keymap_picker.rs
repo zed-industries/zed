@@ -40,7 +40,7 @@ pub struct BaseKeymapSelectorDelegate {
 
 impl BaseKeymapSelectorDelegate {
     fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<BaseKeymapSelector>) -> Self {
-        let base = settings::get_setting::<BaseKeymap>(None, cx);
+        let base = settings::get::<BaseKeymap>(cx);
         let selected_index = BaseKeymap::OPTIONS
             .iter()
             .position(|(_, value)| value == base)

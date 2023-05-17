@@ -4,14 +4,7 @@ use assets::Assets;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{executor::Background, AppContext, AssetSource};
-use std::{
-    borrow::Cow,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-    time::Duration,
-};
+use std::{borrow::Cow, io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
 use util::{paths, ResultExt};
 
 pub fn register_setting<T: Setting>(cx: &mut AppContext) {
@@ -20,8 +13,8 @@ pub fn register_setting<T: Setting>(cx: &mut AppContext) {
     });
 }
 
-pub fn get_setting<'a, T: Setting>(path: Option<&Path>, cx: &'a AppContext) -> &'a T {
-    cx.global::<SettingsStore>().get(path)
+pub fn get<'a, T: Setting>(cx: &'a AppContext) -> &'a T {
+    cx.global::<SettingsStore>().get(None)
 }
 
 pub fn default_settings() -> Cow<'static, str> {

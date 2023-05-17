@@ -64,7 +64,7 @@ impl BlinkManager {
     }
 
     fn blink_cursors(&mut self, epoch: usize, cx: &mut ModelContext<Self>) {
-        if settings::get_setting::<EditorSettings>(None, cx).cursor_blink {
+        if settings::get::<EditorSettings>(cx).cursor_blink {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();

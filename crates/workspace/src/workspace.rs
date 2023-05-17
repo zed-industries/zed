@@ -2359,7 +2359,7 @@ impl Workspace {
                         item.workspace_deactivated(cx);
                     }
                     if matches!(
-                        settings::get_setting::<WorkspaceSettings>(None, cx).autosave,
+                        settings::get::<WorkspaceSettings>(cx).autosave,
                         AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
                     ) {
                         for item in pane.items() {
@@ -3140,7 +3140,7 @@ pub fn join_remote_project(
 }
 
 pub fn restart(_: &Restart, cx: &mut AppContext) {
-    let should_confirm = settings::get_setting::<WorkspaceSettings>(None, cx).confirm_quit;
+    let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspaces = cx
             .window_ids()

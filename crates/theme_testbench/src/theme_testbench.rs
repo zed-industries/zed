@@ -219,7 +219,7 @@ impl ThemeTestbench {
     }
 
     fn render_label(text: String, style: &Style, cx: &mut ViewContext<Self>) -> Label {
-        let settings = settings::get_setting::<ThemeSettings>(None, cx);
+        let settings = settings::get::<ThemeSettings>(cx);
         let font_cache = cx.font_cache();
         let family_id = settings.buffer_font_family;
         let font_size = settings::font_size_for_setting(settings.buffer_font_size, cx);

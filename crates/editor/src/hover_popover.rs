@@ -37,7 +37,7 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewContext<Editor>) {
-    if settings::get_setting::<EditorSettings>(None, cx).hover_popover_enabled {
+    if settings::get::<EditorSettings>(cx).hover_popover_enabled {
         if let Some(point) = point {
             show_hover(editor, point, false, cx);
         } else {

@@ -247,7 +247,7 @@ impl Telemetry {
         is_staff: bool,
         cx: &AppContext,
     ) {
-        if !settings::get_setting::<TelemetrySettings>(None, cx).metrics {
+        if !settings::get::<TelemetrySettings>(cx).metrics {
             return;
         }
 

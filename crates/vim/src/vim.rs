@@ -95,11 +95,11 @@ pub fn init(cx: &mut AppContext) {
         filter.filtered_namespaces.insert("vim");
     });
     cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
-        vim.set_enabled(settings::get_setting::<VimModeSetting>(None, cx).0, cx)
+        vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
     });
     cx.observe_global::<SettingsStore, _>(|cx| {
         cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
-            vim.set_enabled(settings::get_setting::<VimModeSetting>(None, cx).0, cx)
+            vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
         });
     })
     .detach();

@@ -16,7 +16,7 @@ pub fn init(cx: &mut AppContext) {
         if let Some(room) = call.read(cx).room() {
             if room.read(cx).is_screen_sharing() {
                 if status_indicator.is_none()
-                    && settings::get_setting::<WorkspaceSettings>(None, cx).show_call_status_icon
+                    && settings::get::<WorkspaceSettings>(cx).show_call_status_icon
                 {
                     status_indicator = Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
                 }

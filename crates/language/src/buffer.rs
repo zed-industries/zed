@@ -1827,7 +1827,7 @@ impl BufferSnapshot {
 
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
         let language_name = self.language_at(position).map(|language| language.name());
-        let settings = language_settings(None, language_name.as_deref(), cx);
+        let settings = language_settings(language_name.as_deref(), cx);
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2152,7 +2152,7 @@ impl BufferSnapshot {
         cx: &'a AppContext,
     ) -> &'a LanguageSettings {
         let language = self.language_at(position);
-        language_settings(None, language.map(|l| l.name()).as_deref(), cx)
+        language_settings(language.map(|l| l.name()).as_deref(), cx)
     }
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {

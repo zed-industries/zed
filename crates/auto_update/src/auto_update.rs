@@ -83,12 +83,12 @@ pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppCo
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url);
 
-            let mut update_subscription = settings::get_setting::<AutoUpdateSetting>(None, cx)
+            let mut update_subscription = settings::get::<AutoUpdateSetting>(cx)
                 .0
                 .then(|| updater.start_polling(cx));
 
             cx.observe_global::<SettingsStore, _>(move |updater, cx| {
-                if settings::get_setting::<AutoUpdateSetting>(None, cx).0 {
+                if settings::get::<AutoUpdateSetting>(cx).0 {
                     if update_subscription.is_none() {
                         update_subscription = Some(updater.start_polling(cx))
                     }
@@ -281,7 +281,7 @@ impl AutoUpdater {
             let release_channel = cx
                 .has_global::<ReleaseChannel>()
                 .then(|| cx.global::<ReleaseChannel>().display_name());
-            let telemetry = settings::get_setting::<TelemetrySettings>(None, cx).metrics;
+            let telemetry = settings::get::<TelemetrySettings>(cx).metrics;
 
             (installation_id, release_channel, telemetry)
         });

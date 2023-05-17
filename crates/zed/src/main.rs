@@ -180,7 +180,7 @@ fn main() {
         client.telemetry().report_mixpanel_event(
             "start app",
             Default::default(),
-            *settings::get_setting::<TelemetrySettings>(None, cx),
+            *settings::get::<TelemetrySettings>(cx),
         );
 
         let app_state = Arc::new(AppState {
@@ -441,7 +441,7 @@ fn init_panic_hook(app_version: String) {
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let telemetry_settings = *settings::get_setting::<TelemetrySettings>(None, cx);
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
     cx.background()
         .spawn({
@@ -800,7 +800,7 @@ pub fn dock_default_item_factory(
     workspace: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
 ) -> Option<Box<dyn ItemHandle>> {
-    let strategy = settings::get_setting::<TerminalSettings>(None, cx)
+    let strategy = settings::get::<TerminalSettings>(cx)
         .working_directory
         .clone();
     let working_directory = get_working_directory(workspace, cx, strategy);

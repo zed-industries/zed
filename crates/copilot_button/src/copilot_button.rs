@@ -41,7 +41,7 @@ impl View for CopilotButton {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let all_language_settings = &all_language_settings(None, cx);
+        let all_language_settings = &all_language_settings(cx);
         if !all_language_settings.copilot.feature_enabled {
             return Empty::new().into_any();
         }
@@ -198,7 +198,7 @@ impl CopilotButton {
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
             let language_enabled =
-                language_settings::language_settings(None, Some(language.as_ref()), cx)
+                language_settings::language_settings(Some(language.as_ref()), cx)
                     .show_copilot_suggestions;
             menu_options.push(ContextMenuItem::handler(
                 format!(
@@ -210,7 +210,7 @@ impl CopilotButton {
             ));
         }
 
-        let settings = settings::get_setting::<AllLanguageSettings>(None, cx);
+        let settings = settings::get::<AllLanguageSettings>(cx);
 
         if let Some(path) = self.path.as_ref() {
             let path_enabled = settings.copilot_enabled_for_path(path);
@@ -282,7 +282,7 @@ impl CopilotButton {
         let path = snapshot.file_at(suggestion_anchor).map(|file| file.path());
 
         self.editor_enabled = Some(
-            all_language_settings(None, cx)
+            all_language_settings(cx)
                 .copilot_enabled(language_name.as_deref(), path.map(|p| p.as_ref())),
         );
         self.language = language_name;
@@ -364,15 +364,14 @@ async fn configure_disabled_globs(
 }
 
 fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions = all_language_settings(None, cx).copilot_enabled(None, None);
+    let show_copilot_suggestions = all_language_settings(cx).copilot_enabled(None, None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
         file.defaults.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
     });
 }
 
 fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions =
-        all_language_settings(None, cx).copilot_enabled(Some(&language), None);
+    let show_copilot_suggestions = all_language_settings(cx).copilot_enabled(Some(&language), None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
         file.languages
             .entry(language)

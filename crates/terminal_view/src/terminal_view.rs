@@ -103,7 +103,7 @@ impl TerminalView {
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let strategy = settings::get_setting::<TerminalSettings>(None, cx);
+        let strategy = settings::get::<TerminalSettings>(cx);
         let working_directory =
             get_working_directory(workspace, cx, strategy.working_directory.clone());
 
@@ -217,7 +217,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
-                    settings::get_setting::<TerminalSettings>(None, cx).option_as_meta,
+                    settings::get::<TerminalSettings>(cx).option_as_meta,
                 )
             });
         }
@@ -243,7 +243,7 @@ impl TerminalView {
             return true;
         }
 
-        match settings::get_setting::<TerminalSettings>(None, cx).blinking {
+        match settings::get::<TerminalSettings>(cx).blinking {
             //If the user requested to never blink, don't blink it.
             TerminalBlink::Off => true,
             //If the terminal is controlling it, check terminal mode
@@ -336,7 +336,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &keystroke,
-                    settings::get_setting::<TerminalSettings>(None, cx).option_as_meta,
+                    settings::get::<TerminalSettings>(cx).option_as_meta,
                 );
             });
         }
@@ -399,7 +399,7 @@ impl View for TerminalView {
         self.terminal.update(cx, |term, cx| {
             term.try_keystroke(
                 &event.keystroke,
-                settings::get_setting::<TerminalSettings>(None, cx).option_as_meta,
+                settings::get::<TerminalSettings>(cx).option_as_meta,
             )
         })
     }
@@ -601,7 +601,7 @@ impl Item for TerminalView {
                 .flatten()
                 .or_else(|| {
                     cx.read(|cx| {
-                        let strategy = settings::get_setting::<TerminalSettings>(None, cx)
+                        let strategy = settings::get::<TerminalSettings>(cx)
                             .working_directory
                             .clone();
                         workspace

@@ -679,7 +679,7 @@ impl Item for ProjectDiagnosticsEditor {
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
     Arc::new(move |cx| {
-        let settings = settings::get_setting::<ThemeSettings>(None, cx);
+        let settings = settings::get::<ThemeSettings>(cx);
         let theme = &settings.theme.editor;
         let style = theme.diagnostic_header.clone();
         let font_size = (style.text_scale_factor

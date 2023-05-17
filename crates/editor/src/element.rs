@@ -550,7 +550,7 @@ impl EditorElement {
         let scroll_top = scroll_position.y() * line_height;
 
         let show_gutter = matches!(
-            settings::get_setting::<WorkspaceSettings>(None, cx)
+            settings::get::<WorkspaceSettings>(cx)
                 .git
                 .git_gutter
                 .unwrap_or_default(),
@@ -2060,15 +2060,14 @@ impl Element<Editor> for EditorElement {
             ));
         }
 
-        let show_scrollbars =
-            match settings::get_setting::<EditorSettings>(None, cx).show_scrollbars {
-                ShowScrollbars::Auto => {
-                    snapshot.has_scrollbar_info() || editor.scroll_manager.scrollbars_visible()
-                }
-                ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
-                ShowScrollbars::Always => true,
-                ShowScrollbars::Never => false,
-            };
+        let show_scrollbars = match settings::get::<EditorSettings>(cx).show_scrollbars {
+            ShowScrollbars::Auto => {
+                snapshot.has_scrollbar_info() || editor.scroll_manager.scrollbars_visible()
+            }
+            ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
+            ShowScrollbars::Always => true,
+            ShowScrollbars::Never => false,
+        };
 
         let include_root = editor
             .project

@@ -53,7 +53,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
 }
 
 pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut AppContext) {
-    let settings = settings::get_setting::<JournalSettings>(None, cx);
+    let settings = settings::get::<JournalSettings>(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
         None => {

@@ -631,7 +631,7 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let settings = all_language_settings(None, cx);
+        let settings = all_language_settings(cx);
 
         let mut language_servers_to_start = Vec::new();
         for buffer in self.opened_buffers.values() {
@@ -2208,7 +2208,7 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        if !language_settings(None, Some(&language.name()), cx).enable_language_server {
+        if !language_settings(Some(&language.name()), cx).enable_language_server {
             return;
         }
 
@@ -2229,7 +2229,7 @@ impl Project {
                 None => continue,
             };
 
-            let lsp = settings::get_setting::<ProjectSettings>(None, cx)
+            let lsp = settings::get::<ProjectSettings>(cx)
                 .lsp
                 .get(&adapter.name.0);
             let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
@@ -3259,8 +3259,7 @@ impl Project {
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
                     let settings = buffer.read_with(&cx, |buffer, cx| {
                         let language_name = buffer.language().map(|language| language.name());
-                        language_settings(buffer_abs_path.as_deref(), language_name.as_deref(), cx)
-                            .clone()
+                        language_settings(language_name.as_deref(), cx).clone()
                     });
 
                     let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;

@@ -19,7 +19,7 @@ impl Project {
                 "creating terminals as a guest is not supported yet"
             ));
         } else {
-            let settings = settings::get_setting::<TerminalSettings>(None, cx);
+            let settings = settings::get::<TerminalSettings>(cx);
 
             let terminal = TerminalBuilder::new(
                 working_directory.clone(),

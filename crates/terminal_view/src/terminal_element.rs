@@ -522,8 +522,8 @@ impl Element<TerminalView> for TerminalElement {
         view: &mut TerminalView,
         cx: &mut LayoutContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
-        let settings = settings::get_setting::<ThemeSettings>(None, cx);
-        let terminal_settings = settings::get_setting::<TerminalSettings>(None, cx);
+        let settings = settings::get::<ThemeSettings>(cx);
+        let terminal_settings = settings::get::<TerminalSettings>(cx);
 
         //Setup layout information
         let terminal_theme = settings.theme.terminal.clone(); //TODO: Try to minimize this clone.
