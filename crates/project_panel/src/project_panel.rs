@@ -1395,6 +1395,10 @@ impl workspace::dock::Panel for ProjectPanel {
         false
     }
 
+    fn is_zoomed(&self, _: &WindowContext) -> bool {
+        false
+    }
+
     fn set_zoomed(&mut self, _: bool, _: &mut ViewContext<Self>) {}
 
     fn icon_path(&self) -> &'static str {

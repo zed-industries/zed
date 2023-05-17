@@ -207,6 +207,10 @@ impl Panel for TerminalPanel {
         matches!(event, Event::ZoomOut)
     }
 
+    fn is_zoomed(&self, cx: &WindowContext) -> bool {
+        self.pane.read(cx).is_zoomed()
+    }
+
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
         self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
     }

@@ -1330,7 +1330,7 @@ impl Workspace {
             DockPosition::Right => (&self.right_dock, [&self.left_dock, &self.bottom_dock]),
         };
 
-        let zoomed_panel = dock.read(&cx).zoomed_panel()?;
+        let zoomed_panel = dock.read(&cx).zoomed_panel(cx)?;
         if other_docks.iter().all(|dock| !dock.read(cx).has_focus(cx))
             && !self.active_pane.read(cx).has_focus()
         {

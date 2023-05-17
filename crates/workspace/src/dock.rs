@@ -21,6 +21,7 @@ pub trait Panel: View {
     fn should_change_position_on_event(_: &Self::Event) -> bool;
     fn should_zoom_in_on_event(_: &Self::Event) -> bool;
     fn should_zoom_out_on_event(_: &Self::Event) -> bool;
+    fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>);
     fn should_activate_on_event(_: &Self::Event) -> bool;
     fn should_close_on_event(_: &Self::Event) -> bool;
@@ -33,6 +34,7 @@ pub trait PanelHandle {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition, cx: &WindowContext) -> bool;
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
+    fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn default_size(&self, cx: &WindowContext) -> f32;
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
@@ -64,6 +66,10 @@ where
 
     fn default_size(&self, cx: &WindowContext) -> f32 {
         self.read(cx).default_size(cx)
+    }
+
+    fn is_zoomed(&self, cx: &WindowContext) -> bool {
+        self.read(cx).is_zoomed(cx)
     }
 
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext) {
@@ -140,7 +146,6 @@ struct PanelEntry {
     panel: Rc<dyn PanelHandle>,
     size: f32,
     context_menu: ViewHandle<ContextMenu>,
-    zoomed: bool,
     _subscriptions: [Subscription; 2],
 }
 
@@ -206,12 +211,10 @@ impl Dock {
     ) {
         for entry in &mut self.panel_entries {
             if entry.panel.as_any() == panel {
-                if zoomed != entry.zoomed {
-                    entry.zoomed = zoomed;
+                if zoomed != entry.panel.is_zoomed(cx) {
                     entry.panel.set_zoomed(zoomed, cx);
                 }
-            } else if entry.zoomed {
-                entry.zoomed = false;
+            } else if entry.panel.is_zoomed(cx) {
                 entry.panel.set_zoomed(false, cx);
             }
         }
@@ -221,8 +224,7 @@ impl Dock {
 
     pub fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
         for entry in &mut self.panel_entries {
-            if entry.zoomed {
-                entry.zoomed = false;
+            if entry.panel.is_zoomed(cx) {
                 entry.panel.set_zoomed(false, cx);
             }
         }
@@ -255,7 +257,6 @@ impl Dock {
         self.panel_entries.push(PanelEntry {
             panel: Rc::new(panel),
             size,
-            zoomed: false,
             context_menu: cx.add_view(|cx| {
                 let mut menu = ContextMenu::new(dock_view_id, cx);
                 menu.set_position_mode(OverlayPositionMode::Local);
@@ -314,9 +315,9 @@ impl Dock {
         }
     }
 
-    pub fn zoomed_panel(&self) -> Option<Rc<dyn PanelHandle>> {
+    pub fn zoomed_panel(&self, cx: &WindowContext) -> Option<Rc<dyn PanelHandle>> {
         let entry = self.active_entry()?;
-        if entry.zoomed {
+        if entry.panel.is_zoomed(cx) {
             Some(entry.panel.clone())
         } else {
             None
@@ -596,6 +597,10 @@ pub(crate) mod test {
         fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
             self.position = position;
             cx.emit(TestPanelEvent::PositionChanged);
+        }
+
+        fn is_zoomed(&self, _: &WindowContext) -> bool {
+            unimplemented!()
         }
 
         fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {
