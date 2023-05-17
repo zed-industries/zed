@@ -130,6 +130,27 @@ define_connection! {
         ALTER TABLE workspaces ADD COLUMN window_width REAL;
         ALTER TABLE workspaces ADD COLUMN window_height REAL;
         ALTER TABLE workspaces ADD COLUMN display BLOB;
+    ),
+    // Drop foreign key constraint from workspaces.dock_pane to panes table.
+    sql!(
+        CREATE TABLE workspaces_2(
+            workspace_id INTEGER PRIMARY KEY,
+            workspace_location BLOB UNIQUE,
+            dock_visible INTEGER, // Deprecated. Preserving so users can downgrade Zed.
+            dock_anchor TEXT, // Deprecated. Preserving so users can downgrade Zed.
+            dock_pane INTEGER, // Deprecated.  Preserving so users can downgrade Zed.
+            left_sidebar_open INTEGER, // Boolean
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            window_state TEXT,
+            window_x REAL,
+            window_y REAL,
+            window_width REAL,
+            window_height REAL,
+            display BLOB
+        ) STRICT;
+        INSERT INTO workspaces_2 SELECT * FROM workspaces;
+        DROP TABLE workspaces;
+        ALTER TABLE workspaces_2 RENAME TO workspaces;
     )];
 }
 
