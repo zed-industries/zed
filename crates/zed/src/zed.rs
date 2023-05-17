@@ -37,7 +37,7 @@ use uuid::Uuid;
 pub use workspace;
 use workspace::{
     create_and_open_local_file, open_new, sidebar::SidebarSide, AppState, NewFile, NewWindow,
-    Workspace,
+    Workspace, WorkspaceSettings,
 };
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -367,7 +367,7 @@ pub fn build_window_options(
 }
 
 fn quit(_: &Quit, cx: &mut gpui::AppContext) {
-    let should_confirm = cx.global::<Settings>().confirm_quit;
+    let should_confirm = settings::get_setting::<WorkspaceSettings>(None, cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspaces = cx
             .window_ids()

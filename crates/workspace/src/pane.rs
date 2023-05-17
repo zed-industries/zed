@@ -5,7 +5,8 @@ use crate::{
     dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, Dock, ExpandDock},
     item::WeakItemHandle,
     toolbar::Toolbar,
-    Item, NewFile, NewSearch, NewTerminal, Workspace,
+    AutosaveSetting, DockAnchor, Item, NewFile, NewSearch, NewTerminal, Workspace,
+    WorkspaceSettings,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -29,7 +30,7 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::{Autosave, DockAnchor, Settings};
+use settings::Settings;
 use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
 use theme::Theme;
 use util::ResultExt;
@@ -1024,8 +1025,8 @@ impl Pane {
         } else if is_dirty && (can_save || is_singleton) {
             let will_autosave = cx.read(|cx| {
                 matches!(
-                    cx.global::<Settings>().autosave,
-                    Autosave::OnFocusChange | Autosave::OnWindowChange
+                    settings::get_setting::<WorkspaceSettings>(None, cx).autosave,
+                    AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
                 ) && Self::can_autosave_item(&*item, cx)
             });
             let should_save = if should_prompt_for_save && !will_autosave {
@@ -2087,10 +2088,11 @@ mod tests {
     use crate::item::test::{TestItem, TestProjectItem};
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_remove_active_empty(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2104,7 +2106,7 @@ mod tests {
     #[gpui::test]
     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2192,7 +2194,7 @@ mod tests {
     #[gpui::test]
     async fn test_add_item_with_existing_item(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2268,7 +2270,7 @@ mod tests {
     #[gpui::test]
     async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2377,7 +2379,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_item_ordering(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2424,7 +2426,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_inactive_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2443,7 +2445,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_clean_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2470,7 +2472,7 @@ mod tests {
         deterministic: Arc<Deterministic>,
         cx: &mut TestAppContext,
     ) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2492,7 +2494,7 @@ mod tests {
         deterministic: Arc<Deterministic>,
         cx: &mut TestAppContext,
     ) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2511,7 +2513,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_all_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2529,6 +2531,14 @@ mod tests {
 
         deterministic.run_until_parked();
         assert_item_labels(&pane, [], cx);
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            cx.set_global(settings::Settings::test(cx));
+            crate::init_settings(cx);
+        });
     }
 
     fn add_labeled_item(

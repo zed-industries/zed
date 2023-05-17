@@ -787,22 +787,18 @@ fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
+    use std::path::Path;
     use workspace::AppState;
 
-    use std::path::Path;
+    // Working directory calculation tests
 
-    ///Working directory calculation tests
-
-    ///No Worktrees in project -> home_dir()
+    // No Worktrees in project -> home_dir()
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
-        //Setup variables
-        let (project, workspace) = blank_workspace(cx).await;
-        //Test
+        let (project, workspace) = init_test(cx).await;
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -818,14 +814,12 @@ mod tests {
         });
     }
 
-    ///No active entry, but a worktree, worktree is a file -> home_dir()
+    // No active entry, but a worktree, worktree is a file -> home_dir()
     #[gpui::test]
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
-        //Setup variables
+        let (project, workspace) = init_test(cx).await;
 
-        let (project, workspace) = blank_workspace(cx).await;
         create_file_wt(project.clone(), "/root.txt", cx).await;
-
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -841,14 +835,12 @@ mod tests {
         });
     }
 
-    //No active entry, but a worktree, worktree is a folder -> worktree_folder
+    // No active entry, but a worktree, worktree is a folder -> worktree_folder
     #[gpui::test]
     async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
-        //Setup variables
-        let (project, workspace) = blank_workspace(cx).await;
-        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let (project, workspace) = init_test(cx).await;
 
-        //Test
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
         cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -863,17 +855,15 @@ mod tests {
         });
     }
 
-    //Active entry with a work tree, worktree is a file -> home_dir()
+    // Active entry with a work tree, worktree is a file -> home_dir()
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
-        //Setup variables
+        let (project, workspace) = init_test(cx).await;
 
-        let (project, workspace) = blank_workspace(cx).await;
         let (_wt, _entry) = create_folder_wt(project.clone(), "/root1/", cx).await;
         let (wt2, entry2) = create_file_wt(project.clone(), "/root2.txt", cx).await;
         insert_active_entry_for(wt2, entry2, project.clone(), cx);
 
-        //Test
         cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -887,16 +877,15 @@ mod tests {
         });
     }
 
-    //Active entry, with a worktree, worktree is a folder -> worktree_folder
+    // Active entry, with a worktree, worktree is a folder -> worktree_folder
     #[gpui::test]
     async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
-        //Setup variables
-        let (project, workspace) = blank_workspace(cx).await;
+        let (project, workspace) = init_test(cx).await;
+
         let (_wt, _entry) = create_folder_wt(project.clone(), "/root1/", cx).await;
         let (wt2, entry2) = create_folder_wt(project.clone(), "/root2/", cx).await;
         insert_active_entry_for(wt2, entry2, project.clone(), cx);
 
-        //Test
         cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -910,8 +899,8 @@ mod tests {
         });
     }
 
-    ///Creates a worktree with 1 file: /root.txt
-    pub async fn blank_workspace(
+    /// Creates a worktree with 1 file: /root.txt
+    pub async fn init_test(
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
         let params = cx.update(AppState::test);
@@ -922,7 +911,7 @@ mod tests {
         (project, workspace)
     }
 
-    ///Creates a worktree with 1 folder: /root{suffix}/
+    /// Creates a worktree with 1 folder: /root{suffix}/
     async fn create_folder_wt(
         project: ModelHandle<Project>,
         path: impl AsRef<Path>,
@@ -931,7 +920,7 @@ mod tests {
         create_wt(project, true, path, cx).await
     }
 
-    ///Creates a worktree with 1 file: /root{suffix}.txt
+    /// Creates a worktree with 1 file: /root{suffix}.txt
     async fn create_file_wt(
         project: ModelHandle<Project>,
         path: impl AsRef<Path>,

@@ -41,6 +41,7 @@ impl<'a> EditorLspTestContext<'a> {
             crate::init(cx);
             pane::init(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
         });
 
         let file_name = format!(

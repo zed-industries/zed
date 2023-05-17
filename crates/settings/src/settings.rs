@@ -3,7 +3,7 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use gpui::{
     font_cache::{FamilyId, FontCache},
     fonts, AppContext, AssetSource,
@@ -15,10 +15,6 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlez::{
-    bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
-};
 use std::{borrow::Cow, str, sync::Arc};
 use theme::{Theme, ThemeRegistry};
 use util::ResultExt as _;
@@ -37,13 +33,6 @@ pub struct Settings {
     pub buffer_font_features: fonts::Features,
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
-    pub active_pane_magnification: f32,
-    pub confirm_quit: bool,
-    pub show_call_status_icon: bool,
-    pub autosave: Autosave,
-    pub default_dock_anchor: DockAnchor,
-    pub git: GitSettings,
-    pub git_overrides: GitSettings,
     pub theme: Arc<Theme>,
     pub base_keymap: BaseKeymap,
 }
@@ -72,13 +61,6 @@ impl Setting for Settings {
             buffer_font_family_name: defaults.buffer_font_family.clone().unwrap(),
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
-            active_pane_magnification: defaults.active_pane_magnification.unwrap(),
-            confirm_quit: defaults.confirm_quit.unwrap(),
-            show_call_status_icon: defaults.show_call_status_icon.unwrap(),
-            autosave: defaults.autosave.unwrap(),
-            default_dock_anchor: defaults.default_dock_anchor.unwrap(),
-            git: defaults.git.unwrap(),
-            git_overrides: Default::default(),
             theme: themes.get(defaults.theme.as_ref().unwrap()).unwrap(),
             base_keymap: Default::default(),
         };
@@ -201,65 +183,6 @@ impl BaseKeymap {
             .unwrap_or_default()
     }
 }
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct GitSettings {
-    pub git_gutter: Option<GitGutter>,
-    pub gutter_debounce: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GitGutter {
-    #[default]
-    TrackedFiles,
-    Hide,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Autosave {
-    Off,
-    AfterDelay { milliseconds: u64 },
-    OnFocusChange,
-    OnWindowChange,
-}
-
-#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DockAnchor {
-    #[default]
-    Bottom,
-    Right,
-    Expanded,
-}
-
-impl StaticColumnCount for DockAnchor {}
-impl Bind for DockAnchor {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        match self {
-            DockAnchor::Bottom => "Bottom",
-            DockAnchor::Right => "Right",
-            DockAnchor::Expanded => "Expanded",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl Column for DockAnchor {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
-            Ok((
-                match anchor_text.as_ref() {
-                    "Bottom" => DockAnchor::Bottom,
-                    "Right" => DockAnchor::Right,
-                    "Expanded" => DockAnchor::Expanded,
-                    _ => bail!("Stored dock anchor is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
-}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsFileContent {
@@ -269,24 +192,6 @@ pub struct SettingsFileContent {
     pub buffer_font_size: Option<f32>,
     #[serde(default)]
     pub buffer_font_features: Option<fonts::Features>,
-    #[serde(default)]
-    pub active_pane_magnification: Option<f32>,
-    #[serde(default)]
-    pub cursor_blink: Option<bool>,
-    #[serde(default)]
-    pub confirm_quit: Option<bool>,
-    #[serde(default)]
-    pub hover_popover_enabled: Option<bool>,
-    #[serde(default)]
-    pub show_completions_on_input: Option<bool>,
-    #[serde(default)]
-    pub show_call_status_icon: Option<bool>,
-    #[serde(default)]
-    pub autosave: Option<Autosave>,
-    #[serde(default)]
-    pub default_dock_anchor: Option<DockAnchor>,
-    #[serde(default)]
-    pub git: Option<GitSettings>,
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
@@ -323,13 +228,6 @@ impl Settings {
             buffer_font_family_name: defaults.buffer_font_family.unwrap(),
             buffer_font_features,
             buffer_font_size: defaults.buffer_font_size.unwrap(),
-            active_pane_magnification: defaults.active_pane_magnification.unwrap(),
-            confirm_quit: defaults.confirm_quit.unwrap(),
-            show_call_status_icon: defaults.show_call_status_icon.unwrap(),
-            autosave: defaults.autosave.unwrap(),
-            default_dock_anchor: defaults.default_dock_anchor.unwrap(),
-            git: defaults.git.unwrap(),
-            git_overrides: Default::default(),
             theme: themes.get(&defaults.theme.unwrap()).unwrap(),
             base_keymap: Default::default(),
         }
@@ -367,24 +265,7 @@ impl Settings {
         }
 
         merge(&mut self.buffer_font_size, data.buffer_font_size);
-        merge(
-            &mut self.active_pane_magnification,
-            data.active_pane_magnification,
-        );
-        merge(&mut self.confirm_quit, data.confirm_quit);
-        merge(&mut self.autosave, data.autosave);
-        merge(&mut self.default_dock_anchor, data.default_dock_anchor);
         merge(&mut self.base_keymap, data.base_keymap);
-
-        self.git_overrides = data.git.unwrap_or_default();
-    }
-
-    pub fn git_gutter(&self) -> GitGutter {
-        self.git_overrides.git_gutter.unwrap_or_else(|| {
-            self.git
-                .git_gutter
-                .expect("git_gutter should be some by setting setup")
-        })
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -397,13 +278,6 @@ impl Settings {
                 .load_family(&["Monaco"], &Default::default())
                 .unwrap(),
             buffer_font_size: 14.,
-            active_pane_magnification: 1.,
-            confirm_quit: false,
-            show_call_status_icon: true,
-            autosave: Autosave::Off,
-            default_dock_anchor: DockAnchor::Bottom,
-            git: Default::default(),
-            git_overrides: Default::default(),
             theme: gpui::fonts::with_font_cache(cx.font_cache().clone(), Default::default),
             base_keymap: Default::default(),
         }

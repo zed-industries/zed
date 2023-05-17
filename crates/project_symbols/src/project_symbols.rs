@@ -375,6 +375,7 @@ mod tests {
             cx.set_global(SettingsStore::test(cx));
             language::init(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
         });
     }
 

@@ -1,5 +1,6 @@
 use crate::{
-    dock::DockPosition, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId,
+    dock::DockPosition, DockAnchor, ItemDeserializers, Member, Pane, PaneAxis, Workspace,
+    WorkspaceId,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
@@ -11,7 +12,6 @@ use gpui::{
     platform::WindowBounds, AsyncAppContext, Axis, ModelHandle, Task, ViewHandle, WeakViewHandle,
 };
 use project::Project;
-use settings::DockAnchor;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -305,10 +305,9 @@ impl Column for DockPosition {
 
 #[cfg(test)]
 mod tests {
-    use db::sqlez::connection::Connection;
-    use settings::DockAnchor;
-
     use super::WorkspaceLocation;
+    use crate::DockAnchor;
+    use db::sqlez::connection::Connection;
 
     #[test]
     fn test_workspace_round_trips() {

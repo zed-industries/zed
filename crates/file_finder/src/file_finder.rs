@@ -658,6 +658,7 @@ mod tests {
             language::init(cx);
             super::init(cx);
             editor::init(cx);
+            workspace::init_settings(cx);
             state
         })
     }

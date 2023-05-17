@@ -1288,6 +1288,7 @@ pub mod tests {
 
             language::init(cx);
             editor::init_settings(cx);
+            workspace::init_settings(cx);
         });
     }
 }

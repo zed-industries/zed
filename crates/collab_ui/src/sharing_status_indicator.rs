@@ -6,7 +6,7 @@ use gpui::{
     platform::{Appearance, MouseButton},
     AnyElement, AppContext, Element, Entity, View, ViewContext,
 };
-use settings::Settings;
+use workspace::WorkspaceSettings;
 
 pub fn init(cx: &mut AppContext) {
     let active_call = ActiveCall::global(cx);
@@ -15,7 +15,9 @@ pub fn init(cx: &mut AppContext) {
     cx.observe(&active_call, move |call, cx| {
         if let Some(room) = call.read(cx).room() {
             if room.read(cx).is_screen_sharing() {
-                if status_indicator.is_none() && cx.global::<Settings>().show_call_status_icon {
+                if status_indicator.is_none()
+                    && settings::get_setting::<WorkspaceSettings>(None, cx).show_call_status_icon
+                {
                     status_indicator = Some(cx.add_status_bar_item(|_| SharingStatusIndicator));
                 }
             } else if let Some((window_id, _)) = status_indicator.take() {

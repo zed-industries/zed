@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{AppState, FollowerStatesByLeader, Pane, Workspace};
+use crate::{AppState, FollowerStatesByLeader, Pane, Workspace, WorkspaceSettings};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use gpui::{
@@ -11,7 +11,6 @@ use gpui::{
 };
 use project::Project;
 use serde::Deserialize;
-use settings::Settings;
 use theme::Theme;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -380,7 +379,8 @@ impl PaneAxis {
             .with_children(self.members.iter().enumerate().map(|(ix, member)| {
                 let mut flex = 1.0;
                 if member.contains(active_pane) {
-                    flex = cx.global::<Settings>().active_pane_magnification;
+                    flex = settings::get_setting::<WorkspaceSettings>(None, cx)
+                        .active_pane_magnification;
                 }
 
                 let mut member = member.render(

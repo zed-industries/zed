@@ -497,13 +497,10 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
-
-    use std::sync::Arc;
-
-    use db::open_test_db;
-    use settings::DockAnchor;
-
     use super::*;
+    use crate::DockAnchor;
+    use db::open_test_db;
+    use std::sync::Arc;
 
     #[gpui::test]
     async fn test_next_id_stability() {
