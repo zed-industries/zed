@@ -1,7 +1,10 @@
 use anyhow::Result;
 use collections::HashMap;
 use gpui::AppContext;
-use schemars::JsonSchema;
+use schemars::{
+    schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
@@ -246,6 +249,61 @@ impl settings::Setting for AllLanguageSettings {
             defaults,
             languages,
         })
+    }
+
+    fn json_schema(
+        generator: &mut schemars::gen::SchemaGenerator,
+        params: &settings::SettingsJsonSchemaParams,
+    ) -> schemars::schema::RootSchema {
+        let mut root_schema = generator.root_schema_for::<Self::FileContent>();
+
+        // Create a schema for a 'languages overrides' object, associating editor
+        // settings with specific langauges.
+        assert!(root_schema
+            .definitions
+            .contains_key("LanguageSettingsContent"));
+
+        let languages_object_schema = SchemaObject {
+            instance_type: Some(InstanceType::Object.into()),
+            object: Some(Box::new(ObjectValidation {
+                properties: params
+                    .language_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            Schema::new_ref("#/definitions/LanguageSettingsContent".into()),
+                        )
+                    })
+                    .collect(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        root_schema
+            .definitions
+            .extend([("Languages".into(), languages_object_schema.into())]);
+
+        root_schema
+            .schema
+            .object
+            .as_mut()
+            .unwrap()
+            .properties
+            .extend([
+                (
+                    "languages".to_owned(),
+                    Schema::new_ref("#/definitions/Languages".into()),
+                ),
+                // For backward compatibility
+                (
+                    "language_overrides".to_owned(),
+                    Schema::new_ref("#/definitions/Languages".into()),
+                ),
+            ]);
+
+        root_schema
     }
 }
 

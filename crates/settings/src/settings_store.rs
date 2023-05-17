@@ -308,7 +308,8 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &AppContext,
     ) -> Result<()> {
-        self.default_deserialized_settings = Some(serde_json::from_str(default_settings_content)?);
+        self.default_deserialized_settings =
+            Some(parse_json_with_comments(default_settings_content)?);
         self.recompute_values(None, cx)?;
         Ok(())
     }
@@ -319,7 +320,7 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &AppContext,
     ) -> Result<()> {
-        self.user_deserialized_settings = Some(serde_json::from_str(user_settings_content)?);
+        self.user_deserialized_settings = Some(parse_json_with_comments(user_settings_content)?);
         self.recompute_values(None, cx)?;
         Ok(())
     }
@@ -333,7 +334,7 @@ impl SettingsStore {
     ) -> Result<()> {
         if let Some(content) = settings_content {
             self.local_deserialized_settings
-                .insert(path.clone(), serde_json::from_str(content)?);
+                .insert(path.clone(), parse_json_with_comments(content)?);
         } else {
             self.local_deserialized_settings.remove(&path);
         }
