@@ -607,7 +607,6 @@ async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
 #[cfg(not(debug_assertions))]
 async fn watch_themes(
     _fs: Arc<dyn Fs>,
-    _themes: Arc<ThemeRegistry>,
     _cx: AsyncAppContext,
 ) -> Option<()> {
     None
