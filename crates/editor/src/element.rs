@@ -2064,6 +2064,7 @@ impl Element<Editor> for EditorElement {
             }
             settings::ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
             settings::ShowScrollbars::Always => true,
+            settings::ShowScrollbars::Never => false,
         };
 
         let include_root = editor

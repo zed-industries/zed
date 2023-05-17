@@ -76,6 +76,7 @@ pub enum ShowScrollbars {
     Auto,
     System,
     Always,
+    Never,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]

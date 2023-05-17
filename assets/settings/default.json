@@ -53,6 +53,8 @@
   //    "system"
   // 3. Always show the scrollbar:
   //    "always"
+  // 4. Never show the scrollbar:
+  //    "never"
   "show_scrollbars": "auto",
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
