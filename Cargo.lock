@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "anyhow",
  "async-tungstenite",
