@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
+    editor_settings::ShowScrollbars,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
@@ -13,7 +14,7 @@ use crate::{
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
     },
-    mouse_context_menu, EditorStyle, GutterHover, UnfoldAt,
+    mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -1026,15 +1027,16 @@ impl EditorElement {
         let mut first_row_y_offset = 0.0;
 
         // Impose a minimum height on the scrollbar thumb
+        let row_height = height / max_row;
         let min_thumb_height =
             style.min_height_factor * cx.font_cache.line_height(self.style.text.font_size);
-        let thumb_height = (row_range.end - row_range.start) * height / max_row;
+        let thumb_height = (row_range.end - row_range.start) * row_height;
         if thumb_height < min_thumb_height {
             first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
             height -= min_thumb_height - thumb_height;
         }
 
-        let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * height / max_row };
+        let y_for_row = |row: f32| -> f32 { top + first_row_y_offset + row * row_height };
 
         let thumb_top = y_for_row(row_range.start) - first_row_y_offset;
         let thumb_bottom = y_for_row(row_range.end) + first_row_y_offset;
@@ -1048,6 +1050,50 @@ impl EditorElement {
                 background: style.track.background_color,
                 ..Default::default()
             });
+
+            let diff_style = theme::current(cx).editor.diff.clone();
+            for hunk in layout
+                .position_map
+                .snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range(0..(max_row.floor() as u32), false)
+            {
+                let start_y = y_for_row(hunk.buffer_range.start as f32);
+                let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
+                    y_for_row((hunk.buffer_range.end + 1) as f32)
+                } else {
+                    y_for_row((hunk.buffer_range.end) as f32)
+                };
+
+                if end_y - start_y < 1. {
+                    end_y = start_y + 1.;
+                }
+                let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
+
+                let color = match hunk.status() {
+                    DiffHunkStatus::Added => diff_style.inserted,
+                    DiffHunkStatus::Modified => diff_style.modified,
+                    DiffHunkStatus::Removed => diff_style.deleted,
+                };
+
+                let border = Border {
+                    width: 1.,
+                    color: style.thumb.border.color,
+                    overlay: false,
+                    top: false,
+                    right: true,
+                    bottom: false,
+                    left: true,
+                };
+
+                scene.push_quad(Quad {
+                    bounds,
+                    background: Some(color),
+                    border,
+                    corner_radius: style.thumb.corner_radius,
+                })
+            }
+
             scene.push_quad(Quad {
                 bounds: thumb_bounds,
                 border: style.thumb.border,
@@ -2014,7 +2060,16 @@ impl Element<Editor> for EditorElement {
             ));
         }
 
-        let show_scrollbars = editor.scroll_manager.scrollbars_visible();
+        let show_scrollbars =
+            match settings::get_setting::<EditorSettings>(None, cx).show_scrollbars {
+                ShowScrollbars::Auto => {
+                    snapshot.has_scrollbar_info() || editor.scroll_manager.scrollbars_visible()
+                }
+                ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
+                ShowScrollbars::Always => true,
+                ShowScrollbars::Never => false,
+            };
+
         let include_root = editor
             .project
             .as_ref()

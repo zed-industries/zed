@@ -7,6 +7,17 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
+    pub show_scrollbars: ShowScrollbars,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowScrollbars {
+    #[default]
+    Auto,
+    System,
+    Always,
+    Never,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -14,6 +25,7 @@ pub struct EditorSettingsContent {
     pub cursor_blink: Option<bool>,
     pub hover_popover_enabled: Option<bool>,
     pub show_completions_on_input: Option<bool>,
+    pub show_scrollbars: Option<ShowScrollbars>,
 }
 
 impl Setting for EditorSettings {
