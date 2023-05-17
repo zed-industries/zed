@@ -5,7 +5,6 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
-use settings::Settings;
 use std::{
     path::Path,
     sync::{
@@ -324,8 +323,8 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
         let path_match = &self.matches[ix];
-        let settings = cx.global::<Settings>();
-        let style = settings.theme.picker.item.style_for(mouse_state, selected);
+        let theme = theme::current(cx);
+        let style = theme.picker.item.style_for(mouse_state, selected);
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
         Flex::column()
@@ -344,9 +343,11 @@ impl PickerDelegate for FileFinderDelegate {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use editor::Editor;
-    use gpui::executor::Deterministic;
+    use gpui::TestAppContext;
     use menu::{Confirm, SelectNext};
     use serde_json::json;
     use workspace::{AppState, Workspace};
@@ -359,13 +360,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(|cx| {
-            super::init(cx);
-            editor::init(cx);
-            AppState::test(cx)
-        });
-
+    async fn test_matching_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -415,15 +411,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_row_column_numbers_query_inside_file(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let app_state = cx.update(|cx| {
-            super::init(cx);
-            editor::init(cx);
-            AppState::test(cx)
-        });
+    async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
 
         let first_file_name = "first.rs";
         let first_file_contents = "// First Rust file";
@@ -484,9 +473,9 @@ mod tests {
             let active_item = active_pane.read(cx).active_item().unwrap();
             active_item.downcast::<Editor>().unwrap()
         });
-        deterministic.advance_clock(std::time::Duration::from_secs(2));
-        deterministic.start_waiting();
-        deterministic.finish_waiting();
+        cx.foreground().advance_clock(Duration::from_secs(2));
+        cx.foreground().start_waiting();
+        cx.foreground().finish_waiting();
         editor.update(cx, |editor, cx| {
             let all_selections = editor.selections.all_adjusted(cx);
             assert_eq!(
@@ -505,15 +494,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_row_column_numbers_query_outside_file(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
-        let app_state = cx.update(|cx| {
-            super::init(cx);
-            editor::init(cx);
-            AppState::test(cx)
-        });
+    async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
 
         let first_file_name = "first.rs";
         let first_file_contents = "// First Rust file";
@@ -574,9 +556,9 @@ mod tests {
             let active_item = active_pane.read(cx).active_item().unwrap();
             active_item.downcast::<Editor>().unwrap()
         });
-        deterministic.advance_clock(std::time::Duration::from_secs(2));
-        deterministic.start_waiting();
-        deterministic.finish_waiting();
+        cx.foreground().advance_clock(Duration::from_secs(2));
+        cx.foreground().start_waiting();
+        cx.foreground().finish_waiting();
         editor.update(cx, |editor, cx| {
             let all_selections = editor.selections.all_adjusted(cx);
             assert_eq!(
@@ -595,8 +577,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_matching_cancellation(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_matching_cancellation(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -664,8 +646,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_ignored_files(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_ignored_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -720,8 +702,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_single_file_worktrees(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -778,10 +760,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multiple_matches_with_same_relative_path(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
+    async fn test_multiple_matches_with_same_relative_path(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -834,10 +814,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_path_distance_ordering(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
+    async fn test_path_distance_ordering(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -886,8 +864,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_worktree_without_files(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -924,6 +902,19 @@ mod tests {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
         });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme::init((), cx);
+            language::init(cx);
+            super::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            state
+        })
     }
 
     fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {

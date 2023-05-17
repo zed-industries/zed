@@ -1,5 +1,9 @@
 mod toggle_dock_button;
 
+use crate::{
+    sidebar::SidebarSide, BackgroundActions, DockAnchor, ItemHandle, Pane, Workspace,
+    WorkspaceSettings,
+};
 use collections::HashMap;
 use gpui::{
     actions,
@@ -8,10 +12,7 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Border, Element, SizeConstraint, ViewContext, ViewHandle,
 };
-use settings::{DockAnchor, Settings};
 use theme::Theme;
-
-use crate::{sidebar::SidebarSide, BackgroundActions, ItemHandle, Pane, Workspace};
 pub use toggle_dock_button::ToggleDockButton;
 
 actions!(
@@ -171,7 +172,8 @@ impl Dock {
         background_actions: BackgroundActions,
         cx: &mut ViewContext<Workspace>,
     ) -> Self {
-        let position = DockPosition::Hidden(cx.global::<Settings>().default_dock_anchor);
+        let position =
+            DockPosition::Hidden(settings::get::<WorkspaceSettings>(cx).default_dock_anchor);
         let workspace = cx.weak_handle();
         let pane =
             cx.add_view(|cx| Pane::new(workspace, Some(position.anchor()), background_actions, cx));
@@ -405,8 +407,6 @@ mod tests {
 
     use gpui::{AppContext, BorrowWindowContext, TestAppContext, ViewContext, WindowContext};
     use project::{FakeFs, Project};
-    use settings::Settings;
-    use theme::ThemeRegistry;
 
     use super::*;
     use crate::{
@@ -417,6 +417,7 @@ mod tests {
         },
         register_deserializable_item,
         sidebar::Sidebar,
+        tests::init_test,
         AppState, ItemHandle, Workspace,
     };
 
@@ -429,8 +430,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_dock_workspace_infinite_loop(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
 
         cx.update(|cx| {
             register_deserializable_item::<item::test::TestItem>(cx);
@@ -466,7 +466,6 @@ mod tests {
                 project.clone(),
                 Arc::new(AppState {
                     languages: project.read(cx).languages().clone(),
-                    themes: ThemeRegistry::new((), cx.font_cache().clone()),
                     client: project.read(cx).client(),
                     user_store: project.read(cx).user_store(),
                     fs: project.read(cx).fs().clone(),
@@ -602,7 +601,7 @@ mod tests {
 
     impl<'a> DockTestContext<'a> {
         pub async fn new(cx: &'a mut TestAppContext) -> DockTestContext<'a> {
-            Settings::test_async(cx);
+            init_test(cx);
             let fs = FakeFs::new(cx.background());
 
             cx.update(|cx| init(cx));
@@ -613,7 +612,6 @@ mod tests {
                     project.clone(),
                     Arc::new(AppState {
                         languages: project.read(cx).languages().clone(),
-                        themes: ThemeRegistry::new((), cx.font_cache().clone()),
                         client: project.read(cx).client(),
                         user_store: project.read(cx).user_store(),
                         fs: project.read(cx).fs().clone(),

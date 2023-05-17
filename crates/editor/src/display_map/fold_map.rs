@@ -1204,7 +1204,7 @@ mod tests {
     use crate::{MultiBuffer, ToPoint};
     use collections::HashSet;
     use rand::prelude::*;
-    use settings::Settings;
+    use settings::SettingsStore;
     use std::{cmp::Reverse, env, mem, sync::Arc};
     use sum_tree::TreeMap;
     use util::test::sample_text;
@@ -1213,7 +1213,7 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1286,7 +1286,7 @@ mod tests {
 
     #[gpui::test]
     fn test_adjacent_folds(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1349,7 +1349,7 @@ mod tests {
 
     #[gpui::test]
     fn test_merging_folds_via_edit(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1400,7 +1400,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_folds(cx: &mut gpui::AppContext, mut rng: StdRng) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -1674,6 +1674,10 @@ mod tests {
             [Some(0), Some(3), Some(5), Some(6)]
         );
         assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [Some(6)]);
+    }
+
+    fn init_test(cx: &mut gpui::AppContext) {
+        cx.set_global(SettingsStore::test(cx));
     }
 
     impl FoldMap {

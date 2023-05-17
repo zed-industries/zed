@@ -10,6 +10,7 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle,
 };
 use language::{
+    language_settings::{all_language_settings, language_settings},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -17,7 +18,7 @@ use log::{debug, error};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use request::{LogMessage, StatusNotification};
-use settings::Settings;
+use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     ffi::OsString,
@@ -302,56 +303,34 @@ impl Copilot {
         node_runtime: Arc<NodeRuntime>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.observe_global::<Settings, _>({
-            let http = http.clone();
-            let node_runtime = node_runtime.clone();
-            move |this, cx| {
-                if cx.global::<Settings>().features.copilot {
-                    if matches!(this.server, CopilotServer::Disabled) {
-                        let start_task = cx
-                            .spawn({
-                                let http = http.clone();
-                                let node_runtime = node_runtime.clone();
-                                move |this, cx| {
-                                    Self::start_language_server(http, node_runtime, this, cx)
-                                }
-                            })
-                            .shared();
-                        this.server = CopilotServer::Starting { task: start_task };
-                        cx.notify();
-                    }
-                } else {
-                    this.server = CopilotServer::Disabled;
-                    cx.notify();
-                }
-            }
-        })
-        .detach();
+        let mut this = Self {
+            http,
+            node_runtime,
+            server: CopilotServer::Disabled,
+            buffers: Default::default(),
+        };
+        this.enable_or_disable_copilot(cx);
+        cx.observe_global::<SettingsStore, _>(move |this, cx| this.enable_or_disable_copilot(cx))
+            .detach();
+        this
+    }
 
-        if cx.global::<Settings>().features.copilot {
-            let start_task = cx
-                .spawn({
-                    let http = http.clone();
-                    let node_runtime = node_runtime.clone();
-                    move |this, cx| async {
-                        Self::start_language_server(http, node_runtime, this, cx).await
-                    }
-                })
-                .shared();
-
-            Self {
-                http,
-                node_runtime,
-                server: CopilotServer::Starting { task: start_task },
-                buffers: Default::default(),
+    fn enable_or_disable_copilot(&mut self, cx: &mut ModelContext<Copilot>) {
+        let http = self.http.clone();
+        let node_runtime = self.node_runtime.clone();
+        if all_language_settings(cx).copilot_enabled(None, None) {
+            if matches!(self.server, CopilotServer::Disabled) {
+                let start_task = cx
+                    .spawn({
+                        move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+                    })
+                    .shared();
+                self.server = CopilotServer::Starting { task: start_task };
+                cx.notify();
             }
         } else {
-            Self {
-                http,
-                node_runtime,
-                server: CopilotServer::Disabled,
-                buffers: Default::default(),
-            }
+            self.server = CopilotServer::Disabled;
+            cx.notify();
         }
     }
 
@@ -805,13 +784,13 @@ impl Copilot {
         let snapshot = registered_buffer.report_changes(buffer, cx);
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
-        let settings = cx.global::<Settings>();
         let position = position.to_point_utf16(buffer);
-        let language = buffer.language_at(position);
-        let language_name = language.map(|language| language.name());
-        let language_name = language_name.as_deref();
-        let tab_size = settings.tab_size(language_name);
-        let hard_tabs = settings.hard_tabs(language_name);
+        let settings = language_settings(
+            buffer.language_at(position).map(|l| l.name()).as_deref(),
+            cx,
+        );
+        let tab_size = settings.tab_size;
+        let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
             .file()
             .map(|file| file.path().to_path_buf())

@@ -1,7 +1,6 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
 
@@ -98,7 +97,7 @@ impl PickerDelegate for ContactFinderDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let theme = &cx.global::<Settings>().theme;
+        let theme = &theme::current(cx);
         let user = &self.potential_contacts[ix];
         let request_status = self.user_store.read(cx).contact_request_status(user);
 

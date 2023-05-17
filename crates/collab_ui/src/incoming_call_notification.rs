@@ -9,7 +9,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
     AnyElement, AppContext, Entity, View, ViewContext,
 };
-use settings::Settings;
 use util::ResultExt;
 use workspace::AppState;
 
@@ -26,7 +25,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             if let Some(incoming_call) = incoming_call {
                 const PADDING: f32 = 16.;
                 let window_size = cx.read(|cx| {
-                    let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+                    let theme = &theme::current(cx).incoming_call_notification;
                     vec2f(theme.window_width, theme.window_height)
                 });
 
@@ -106,7 +105,7 @@ impl IncomingCallNotification {
     }
 
     fn render_caller(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+        let theme = &theme::current(cx).incoming_call_notification;
         let default_project = proto::ParticipantProject::default();
         let initial_project = self
             .call
@@ -170,10 +169,11 @@ impl IncomingCallNotification {
         enum Accept {}
         enum Decline {}
 
+        let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Accept, Self>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+                MouseEventHandler::<Accept, Self>::new(0, cx, |_, _| {
+                    let theme = &theme.incoming_call_notification;
                     Label::new("Accept", theme.accept_button.text.clone())
                         .aligned()
                         .contained()
@@ -186,8 +186,8 @@ impl IncomingCallNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Decline, Self>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.incoming_call_notification;
+                MouseEventHandler::<Decline, Self>::new(0, cx, |_, _| {
+                    let theme = &theme.incoming_call_notification;
                     Label::new("Decline", theme.decline_button.text.clone())
                         .aligned()
                         .contained()
@@ -200,12 +200,7 @@ impl IncomingCallNotification {
                 .flex(1., true),
             )
             .constrained()
-            .with_width(
-                cx.global::<Settings>()
-                    .theme
-                    .incoming_call_notification
-                    .button_width,
-            )
+            .with_width(theme.incoming_call_notification.button_width)
             .into_any()
     }
 }
@@ -220,12 +215,7 @@ impl View for IncomingCallNotification {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let background = cx
-            .global::<Settings>()
-            .theme
-            .incoming_call_notification
-            .background;
-
+        let background = theme::current(cx).incoming_call_notification.background;
         Flex::row()
             .with_child(self.render_caller(cx))
             .with_child(self.render_buttons(cx))

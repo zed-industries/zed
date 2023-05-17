@@ -8,7 +8,6 @@ use gpui::{
     View, ViewContext,
 };
 use menu::*;
-use settings::Settings;
 use std::{any::TypeId, borrow::Cow, sync::Arc, time::Duration};
 
 pub fn init(cx: &mut AppContext) {
@@ -323,7 +322,7 @@ impl ContextMenu {
     }
 
     fn render_menu_for_measurement(&self, cx: &mut ViewContext<Self>) -> impl Element<ContextMenu> {
-        let style = cx.global::<Settings>().theme.context_menu.clone();
+        let style = theme::current(cx).context_menu.clone();
         Flex::row()
             .with_child(
                 Flex::column().with_children(self.items.iter().enumerate().map(|(ix, item)| {
@@ -403,7 +402,7 @@ impl ContextMenu {
         enum Menu {}
         enum MenuItem {}
 
-        let style = cx.global::<Settings>().theme.context_menu.clone();
+        let style = theme::current(cx).context_menu.clone();
 
         MouseEventHandler::<Menu, ContextMenu>::new(0, cx, |_, cx| {
             Flex::column()

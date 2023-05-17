@@ -9,7 +9,9 @@ use git::diff::DiffHunk;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
+    char_kind,
+    language_settings::{language_settings, LanguageSettings},
+    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
@@ -1370,6 +1372,15 @@ impl MultiBuffer {
     ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
+    }
+
+    pub fn settings_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        let language = self.language_at(point, cx);
+        language_settings(language.map(|l| l.name()).as_deref(), cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
@@ -2764,6 +2775,16 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
+    pub fn settings_at<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer, offset)| buffer.settings_at(offset, cx))
+            .unwrap_or_else(|| language_settings(None, cx))
+    }
+
     pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
@@ -3785,10 +3806,9 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use language::{Buffer, Rope};
     use rand::prelude::*;
-    use settings::Settings;
+    use settings::SettingsStore;
     use std::{env, rc::Rc};
     use unindent::Unindent;
-
     use util::test::sample_text;
 
     #[gpui::test]
@@ -5034,7 +5054,8 @@ mod tests {
 
     #[gpui::test]
     fn test_history(cx: &mut AppContext) {
-        cx.set_global(Settings::test(cx));
+        cx.set_global(SettingsStore::test(cx));
+
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));

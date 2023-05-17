@@ -16,7 +16,9 @@ language = { path = "../language" }
 picker = { path = "../picker" }
 settings = { path = "../settings" }
 text = { path = "../text" }
+theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+
 ordered-float.workspace = true
 postage.workspace = true
 smol.workspace = true

@@ -57,7 +57,7 @@ impl<D: PickerDelegate> View for Picker<D> {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = (self.theme.lock())(&cx.global::<settings::Settings>().theme);
+        let theme = (self.theme.lock())(theme::current(cx).as_ref());
         let query = self.query(cx);
         let match_count = self.delegate.match_count();
 

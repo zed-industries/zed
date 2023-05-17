@@ -9,7 +9,6 @@ use gpui::{
 };
 use picker::PickerEvent;
 use project::Project;
-use settings::Settings;
 use workspace::Workspace;
 
 actions!(contacts_popover, [ToggleContactFinder]);
@@ -108,7 +107,7 @@ impl View for ContactsPopover {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let child = match &self.child {
             Child::ContactList(child) => ChildView::new(child, cx),
             Child::ContactFinder(child) => ChildView::new(child, cx),

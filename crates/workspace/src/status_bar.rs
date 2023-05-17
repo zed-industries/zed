@@ -11,7 +11,6 @@ use gpui::{
     AnyElement, AnyViewHandle, Entity, LayoutContext, SceneBuilder, SizeConstraint, Subscription,
     View, ViewContext, ViewHandle, WindowContext,
 };
-use settings::Settings;
 
 pub trait StatusItemView: View {
     fn set_active_pane_item(
@@ -47,7 +46,7 @@ impl View for StatusBar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme.workspace.status_bar;
+        let theme = &theme::current(cx).workspace.status_bar;
 
         StatusBarElement {
             left: Flex::row()

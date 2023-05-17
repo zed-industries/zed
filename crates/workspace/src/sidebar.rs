@@ -4,7 +4,6 @@ use gpui::{
     AppContext, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use serde::Deserialize;
-use settings::Settings;
 use std::rc::Rc;
 
 pub trait SidebarItem: View {
@@ -192,7 +191,7 @@ impl View for Sidebar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_item) = self.active_item() {
             enum ResizeHandleTag {}
-            let style = &cx.global::<Settings>().theme.workspace.sidebar;
+            let style = &theme::current(cx).workspace.sidebar;
             ChildView::new(active_item.as_any(), cx)
                 .contained()
                 .with_style(style.container)
@@ -231,7 +230,7 @@ impl View for SidebarButtons {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme;
+        let theme = &theme::current(cx);
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.sidebar_buttons;
         let sidebar = self.sidebar.read(cx);

@@ -22,13 +22,26 @@ pub struct ThemeRegistry {
 
 impl ThemeRegistry {
     pub fn new(source: impl AssetSource, font_cache: Arc<FontCache>) -> Arc<Self> {
-        Arc::new(Self {
+        let this = Arc::new(Self {
             assets: Box::new(source),
             themes: Default::default(),
             theme_data: Default::default(),
             next_theme_id: Default::default(),
             font_cache,
-        })
+        });
+
+        #[cfg(any(test, feature = "test-support"))]
+        this.themes.lock().insert(
+            settings::EMPTY_THEME_NAME.to_string(),
+            gpui::fonts::with_font_cache(this.font_cache.clone(), || {
+                let mut theme = Theme::default();
+                theme.meta.id = this.next_theme_id.fetch_add(1, SeqCst);
+                theme.meta.name = settings::EMPTY_THEME_NAME.into();
+                Arc::new(theme)
+            }),
+        );
+
+        this
     }
 
     pub fn list(&self, staff: bool) -> impl Iterator<Item = ThemeMeta> + '_ {

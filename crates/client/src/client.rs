@@ -15,19 +15,17 @@ use futures::{
     TryStreamExt,
 };
 use gpui::{
-    actions,
-    platform::AppVersion,
-    serde_json::{self},
-    AnyModelHandle, AnyWeakModelHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
-    ModelHandle, Task, View, ViewContext, WeakViewHandle,
+    actions, platform::AppVersion, serde_json, AnyModelHandle, AnyWeakModelHandle,
+    AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Task, View, ViewContext,
+    WeakViewHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
-use serde::Deserialize;
-use settings::Settings;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -72,25 +70,34 @@ pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 actions!(client, [SignIn, SignOut]);
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init_settings(cx: &mut AppContext) {
+    settings::register::<TelemetrySettings>(cx);
+}
+
+pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+    init_settings(cx);
+
+    let client = Arc::downgrade(client);
     cx.add_global_action({
         let client = client.clone();
         move |_: &SignIn, cx| {
-            let client = client.clone();
-            cx.spawn(
-                |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
-            )
-            .detach();
+            if let Some(client) = client.upgrade() {
+                cx.spawn(
+                    |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
+                )
+                .detach();
+            }
         }
     });
     cx.add_global_action({
         let client = client.clone();
         move |_: &SignOut, cx| {
-            let client = client.clone();
-            cx.spawn(|cx| async move {
-                client.disconnect(&cx);
-            })
-            .detach();
+            if let Some(client) = client.upgrade() {
+                cx.spawn(|cx| async move {
+                    client.disconnect(&cx);
+                })
+                .detach();
+            }
         }
     });
 }
@@ -326,6 +333,42 @@ impl<T: Entity> Drop for PendingEntitySubscription<T> {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct TelemetrySettings {
+    pub diagnostics: bool,
+    pub metrics: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TelemetrySettingsContent {
+    pub diagnostics: Option<bool>,
+    pub metrics: Option<bool>,
+}
+
+impl settings::Setting for TelemetrySettings {
+    const KEY: Option<&'static str> = Some("telemetry");
+
+    type FileContent = TelemetrySettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &AppContext,
+    ) -> Result<Self> {
+        Ok(Self {
+            diagnostics: user_values.first().and_then(|v| v.diagnostics).unwrap_or(
+                default_value
+                    .diagnostics
+                    .ok_or_else(Self::missing_default)?,
+            ),
+            metrics: user_values
+                .first()
+                .and_then(|v| v.metrics)
+                .unwrap_or(default_value.metrics.ok_or_else(Self::missing_default)?),
+        })
+    }
+}
+
 impl Client {
     pub fn new(http: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         Arc::new(Self {
@@ -447,9 +490,7 @@ impl Client {
                 }));
             }
             Status::SignedOut | Status::UpgradeRequired => {
-                let telemetry_settings = cx.read(|cx| cx.global::<Settings>().telemetry());
-                self.telemetry
-                    .set_authenticated_user_info(None, false, telemetry_settings);
+                cx.read(|cx| self.telemetry.set_authenticated_user_info(None, false, cx));
                 state._reconnect_task.take();
             }
             _ => {}
@@ -740,7 +781,7 @@ impl Client {
                     self.telemetry().report_mixpanel_event(
                         "read credentials from keychain",
                         Default::default(),
-                        cx.global::<Settings>().telemetry(),
+                        *settings::get::<TelemetrySettings>(cx),
                     );
                 });
             }
@@ -1033,7 +1074,8 @@ impl Client {
         let executor = cx.background();
         let telemetry = self.telemetry.clone();
         let http = self.http.clone();
-        let metrics_enabled = cx.read(|cx| cx.global::<Settings>().telemetry());
+
+        let telemetry_settings = cx.read(|cx| *settings::get::<TelemetrySettings>(cx));
 
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
@@ -1120,7 +1162,7 @@ impl Client {
             telemetry.report_mixpanel_event(
                 "authenticate with browser",
                 Default::default(),
-                metrics_enabled,
+                telemetry_settings,
             );
 
             Ok(Credentials {

@@ -50,6 +50,7 @@ parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
 regex.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
@@ -57,7 +58,7 @@ sha2 = "0.10"
 similar = "1.3"
 smol.workspace = true
 thiserror.workspace = true
-toml = "0.5"
+toml.workspace = true
 itertools = "0.10"
 
 [dev-dependencies]

@@ -1,6 +1,7 @@
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
+pub mod language_settings;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -57,6 +58,10 @@ pub use diagnostic_set::DiagnosticEntry;
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use tree_sitter::{Parser, Tree};
+
+pub fn init(cx: &mut AppContext) {
+    language_settings::init(cx);
+}
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());

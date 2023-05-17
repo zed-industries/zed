@@ -20,7 +20,6 @@ use language::{
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
 use serde_json::json;
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -30,6 +29,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use theme::ThemeSettings;
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
@@ -89,7 +89,7 @@ impl View for ProjectDiagnosticsEditor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if self.path_states.is_empty() {
-            let theme = &cx.global::<Settings>().theme.project_diagnostics;
+            let theme = &theme::current(cx).project_diagnostics;
             Label::new("No problems in workspace", theme.empty_message.clone())
                 .aligned()
                 .contained()
@@ -537,7 +537,7 @@ impl Item for ProjectDiagnosticsEditor {
         render_summary(
             &self.summary,
             &style.label.text,
-            &cx.global::<Settings>().theme.project_diagnostics,
+            &theme::current(cx).project_diagnostics,
         )
     }
 
@@ -679,10 +679,10 @@ impl Item for ProjectDiagnosticsEditor {
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, highlights) = highlight_diagnostic_message(Vec::new(), &diagnostic.message);
     Arc::new(move |cx| {
-        let settings = cx.global::<Settings>();
+        let settings = settings::get::<ThemeSettings>(cx);
         let theme = &settings.theme.editor;
         let style = theme.diagnostic_header.clone();
-        let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
+        let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/circle_x_mark_12.svg")
@@ -818,33 +818,35 @@ mod tests {
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
+    use settings::SettingsStore;
     use unindent::Unindent as _;
 
     #[gpui::test]
     async fn test_diagnostics(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/test",
             json!({
                 "consts.rs": "
-                        const a: i32 = 'a';
-                        const b: i32 = c;
-                    "
+                    const a: i32 = 'a';
+                    const b: i32 = c;
+                "
                 .unindent(),
 
                 "main.rs": "
-                        fn main() {
-                            let x = vec![];
-                            let y = vec![];
-                            a(x);
-                            b(y);
-                            // comment 1
-                            // comment 2
-                            c(y);
-                            d(x);
-                        }
-                    "
+                    fn main() {
+                        let x = vec![];
+                        let y = vec![];
+                        a(x);
+                        b(y);
+                        // comment 1
+                        // comment 2
+                        c(y);
+                        d(x);
+                    }
+                "
                 .unindent(),
             }),
         )
@@ -1225,7 +1227,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/test",
@@ -1486,6 +1489,16 @@ mod tests {
                     "e();",   // context
                 )
             );
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+            language::init(cx);
+            client::init_settings(cx);
+            workspace::init_settings(cx);
         });
     }
 

@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+test-support = [
+    "gpui/test-support",
+    "fs/test-support",
+    "settings/test-support"
+]
+
 [lib]
 path = "src/theme.rs"
 doctest = false
@@ -11,10 +18,19 @@ doctest = false
 [dependencies]
 gpui = { path = "../gpui" }
 fs = { path = "../fs" }
+settings = { path = "../settings" }
+util = { path = "../util" }
+
 anyhow.workspace = true
 indexmap = "1.6.2"
 parking_lot.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-toml = "0.5"
+toml.workspace = true
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+fs = { path = "../fs", features = ["test-support"] }
+settings = { path = "../settings", features = ["test-support"] }

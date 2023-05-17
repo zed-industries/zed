@@ -13,6 +13,7 @@ pub mod shared_screen;
 pub mod sidebar;
 mod status_bar;
 mod toolbar;
+mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
 use assets::Assets;
@@ -75,14 +76,14 @@ pub use persistence::{
 use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
-use settings::{Autosave, DockAnchor, Settings};
 use shared_screen::SharedScreen;
 use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
-use theme::{Theme, ThemeRegistry};
+use theme::Theme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::{async_iife, paths, ResultExt};
+pub use workspace_settings::{AutosaveSetting, DockAnchor, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -183,7 +184,12 @@ pub type WorkspaceId = i64;
 
 impl_actions!(workspace, [ActivatePane]);
 
+pub fn init_settings(cx: &mut AppContext) {
+    settings::register::<WorkspaceSettings>(cx);
+}
+
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
+    init_settings(cx);
     pane::init(cx);
     dock::init(cx);
     notifications::init(cx);
@@ -269,7 +275,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
             create_and_open_local_file(&paths::SETTINGS, cx, || {
-                Settings::initial_user_settings_content(&Assets)
+                settings::initial_user_settings_content(&Assets)
                     .as_ref()
                     .into()
             })
@@ -354,7 +360,6 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
-    pub themes: Arc<ThemeRegistry>,
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
@@ -368,18 +373,24 @@ pub struct AppState {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
-        let settings = Settings::test(cx);
-        cx.set_global(settings);
+        use settings::SettingsStore;
+
+        if !cx.has_global::<SettingsStore>() {
+            cx.set_global(SettingsStore::test(cx));
+        }
 
         let fs = fs::FakeFs::new(cx.background().clone());
         let languages = Arc::new(LanguageRegistry::test());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let themes = ThemeRegistry::new((), cx.font_cache().clone());
+
+        theme::init((), cx);
+        client::init(&client, cx);
+        crate::init_settings(cx);
+
         Arc::new(Self {
             client,
-            themes,
             fs,
             languages,
             user_store,
@@ -1977,7 +1988,7 @@ impl Workspace {
             enum DisconnectedOverlay {}
             Some(
                 MouseEventHandler::<DisconnectedOverlay, _>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme;
+                    let theme = &theme::current(cx);
                     Label::new(
                         "Your connection to the remote project has been lost.",
                         theme.workspace.disconnected_overlay.text.clone(),
@@ -2348,8 +2359,8 @@ impl Workspace {
                         item.workspace_deactivated(cx);
                     }
                     if matches!(
-                        cx.global::<Settings>().autosave,
-                        Autosave::OnWindowChange | Autosave::OnFocusChange
+                        settings::get::<WorkspaceSettings>(cx).autosave,
+                        AutosaveSetting::OnWindowChange | AutosaveSetting::OnFocusChange
                     ) {
                         for item in pane.items() {
                             Pane::autosave_item(item.as_ref(), self.project.clone(), cx)
@@ -2615,7 +2626,6 @@ impl Workspace {
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
-            themes: ThemeRegistry::new((), cx.font_cache().clone()),
             client: project.read(cx).client(),
             user_store: project.read(cx).user_store(),
             fs: project.read(cx).fs().clone(),
@@ -2761,7 +2771,7 @@ impl View for Workspace {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         Stack::new()
             .with_child(
                 Flex::column()
@@ -3130,7 +3140,7 @@ pub fn join_remote_project(
 }
 
 pub fn restart(_: &Restart, cx: &mut AppContext) {
-    let should_confirm = cx.global::<Settings>().confirm_quit;
+    let should_confirm = settings::get::<WorkspaceSettings>(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspaces = cx
             .window_ids()
@@ -3191,20 +3201,18 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
-
-    use crate::item::test::{TestItem, TestItemEvent, TestProjectItem};
-
     use super::*;
+    use crate::item::test::{TestItem, TestItemEvent, TestProjectItem};
     use fs::FakeFs;
     use gpui::{executor::Deterministic, TestAppContext};
     use project::{Project, ProjectEntryId};
     use serde_json::json;
+    use settings::SettingsStore;
+    use std::{cell::RefCell, rc::Rc};
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         let project = Project::test(fs, [], cx).await;
@@ -3252,8 +3260,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_tracking_active_path(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root1",
@@ -3356,8 +3364,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_window(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
@@ -3392,8 +3400,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_pane_items(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -3499,8 +3507,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_prompting_to_save_only_on_last_item_for_entry(cx: &mut TestAppContext) {
-        cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
@@ -3605,9 +3613,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_autosave(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
-        deterministic.forbid_parking();
+        init_test(cx);
 
-        Settings::test_async(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
@@ -3623,8 +3630,10 @@ mod tests {
 
         // Autosave on window change.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnWindowChange;
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                })
             });
             item.is_dirty = true;
         });
@@ -3637,8 +3646,10 @@ mod tests {
         // Autosave on focus change.
         item.update(cx, |item, cx| {
             cx.focus_self();
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnFocusChange;
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                })
             });
             item.is_dirty = true;
         });
@@ -3661,8 +3672,10 @@ mod tests {
 
         // Autosave after delay.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::AfterDelay { milliseconds: 500 };
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                })
             });
             item.is_dirty = true;
             cx.emit(TestItemEvent::Edit);
@@ -3678,8 +3691,10 @@ mod tests {
 
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.autosave = Autosave::OnFocusChange;
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                })
             });
             item.is_dirty = true;
         });
@@ -3719,12 +3734,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_pane_navigation(
-        deterministic: Arc<Deterministic>,
-        cx: &mut gpui::TestAppContext,
-    ) {
-        deterministic.forbid_parking();
-        Settings::test_async(cx);
+    async fn test_pane_navigation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
@@ -3774,6 +3786,16 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+            language::init(cx);
+            crate::init_settings(cx);
         });
     }
 }

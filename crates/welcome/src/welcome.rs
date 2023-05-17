@@ -1,24 +1,27 @@
 mod base_keymap_picker;
+mod base_keymap_setting;
 
-use std::{borrow::Cow, sync::Arc};
-
+use crate::base_keymap_picker::ToggleBaseKeymapSelector;
+use client::TelemetrySettings;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     elements::{Flex, Label, ParentElement},
     AnyElement, AppContext, Element, Entity, Subscription, View, ViewContext, WeakViewHandle,
 };
-use settings::{settings_file::SettingsFile, Settings};
-
+use settings::{update_settings_file, SettingsStore};
+use std::{borrow::Cow, sync::Arc};
 use workspace::{
     item::Item, open_new, sidebar::SidebarSide, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
 };
 
-use crate::base_keymap_picker::ToggleBaseKeymapSelector;
+pub use base_keymap_setting::BaseKeymap;
 
 pub const FIRST_OPEN: &str = "first_open";
 
 pub fn init(cx: &mut AppContext) {
+    settings::register::<BaseKeymap>(cx);
+
     cx.add_action(|workspace: &mut Workspace, _: &Welcome, cx| {
         let welcome_page = cx.add_view(|cx| WelcomePage::new(workspace, cx));
         workspace.add_item(Box::new(welcome_page), cx)
@@ -58,15 +61,10 @@ impl View for WelcomePage {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
         let self_handle = cx.handle();
-        let settings = cx.global::<Settings>();
-        let theme = settings.theme.clone();
-
+        let theme = theme::current(cx);
         let width = theme.welcome.page_width;
 
-        let (diagnostics, metrics) = {
-            let telemetry = settings.telemetry();
-            (telemetry.diagnostics(), telemetry.metrics())
-        };
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
         enum Metrics {}
         enum Diagnostics {}
@@ -166,13 +164,18 @@ impl View for WelcomePage {
                                         .with_style(theme.welcome.usage_note.container),
                                     ),
                                 &theme.welcome.checkbox,
-                                metrics,
+                                telemetry_settings.metrics,
                                 0,
                                 cx,
-                                |_, checked, cx| {
-                                    SettingsFile::update(cx, move |file| {
-                                        file.telemetry.set_metrics(checked)
-                                    })
+                                |this, checked, cx| {
+                                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                                        let fs = workspace.read(cx).app_state().fs.clone();
+                                        update_settings_file::<TelemetrySettings>(
+                                            fs,
+                                            cx,
+                                            move |setting| setting.metrics = Some(checked),
+                                        )
+                                    }
                                 },
                             )
                             .contained()
@@ -182,13 +185,18 @@ impl View for WelcomePage {
                             theme::ui::checkbox::<Diagnostics, Self, _>(
                                 "Send crash reports",
                                 &theme.welcome.checkbox,
-                                diagnostics,
+                                telemetry_settings.diagnostics,
                                 0,
                                 cx,
-                                |_, checked, cx| {
-                                    SettingsFile::update(cx, move |file| {
-                                        file.telemetry.set_diagnostics(checked)
-                                    })
+                                |this, checked, cx| {
+                                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                                        let fs = workspace.read(cx).app_state().fs.clone();
+                                        update_settings_file::<TelemetrySettings>(
+                                            fs,
+                                            cx,
+                                            move |setting| setting.diagnostics = Some(checked),
+                                        )
+                                    }
                                 },
                             )
                             .contained()
@@ -214,7 +222,7 @@ impl WelcomePage {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         WelcomePage {
             workspace: workspace.weak_handle(),
-            _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
+            _settings_subscription: cx.observe_global::<SettingsStore, _>(move |_, cx| cx.notify()),
         }
     }
 }
@@ -250,7 +258,7 @@ impl Item for WelcomePage {
     ) -> Option<Self> {
         Some(WelcomePage {
             workspace: self.workspace.clone(),
-            _settings_subscription: cx.observe_global::<Settings, _>(move |_, cx| cx.notify()),
+            _settings_subscription: cx.observe_global::<SettingsStore, _>(move |_, cx| cx.notify()),
         })
     }
 }

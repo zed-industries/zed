@@ -1,6 +1,6 @@
 use crate::{
-    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSnapshot,
-    EditorStyle, RangeToAnchorExt,
+    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings,
+    EditorSnapshot, EditorStyle, RangeToAnchorExt,
 };
 use futures::FutureExt;
 use gpui::{
@@ -12,7 +12,6 @@ use gpui::{
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
 use project::{HoverBlock, HoverBlockKind, Project};
-use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
 
@@ -38,7 +37,7 @@ pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
 pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewContext<Editor>) {
-    if cx.global::<Settings>().hover_popover_enabled {
+    if settings::get::<EditorSettings>(cx).hover_popover_enabled {
         if let Some(point) = point {
             show_hover(editor, point, false, cx);
         } else {
@@ -654,7 +653,7 @@ impl DiagnosticPopover {
             _ => style.hover_popover.container,
         };
 
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
 
         MouseEventHandler::<DiagnosticPopover, _>::new(0, cx, |_, _| {
             text.with_soft_wrap(true)
@@ -694,7 +693,7 @@ impl DiagnosticPopover {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
+    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use gpui::fonts::Weight;
     use indoc::indoc;
     use language::{Diagnostic, DiagnosticSet};
@@ -706,6 +705,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_mouse_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -773,6 +774,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_keyboard_hover_info_popover(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -816,6 +819,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -882,7 +887,8 @@ mod tests {
 
     #[gpui::test]
     fn test_render_blocks(cx: &mut gpui::TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx, |_| {});
+
         cx.add_window(|cx| {
             let editor = Editor::single_line(None, cx);
             let style = editor.style(cx);

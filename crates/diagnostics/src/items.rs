@@ -7,7 +7,6 @@ use gpui::{
 };
 use language::Diagnostic;
 use lsp::LanguageServerId;
-use settings::Settings;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ProjectDiagnosticsEditor;
@@ -92,13 +91,12 @@ impl View for DiagnosticIndicator {
         enum Summary {}
         enum Message {}
 
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
         let in_progress = !self.in_progress_checks.is_empty();
         let mut element = Flex::row().with_child(
             MouseEventHandler::<Summary, _>::new(0, cx, |state, cx| {
-                let style = cx
-                    .global::<Settings>()
-                    .theme
+                let theme = theme::current(cx);
+                let style = theme
                     .workspace
                     .status_bar
                     .diagnostic_summary
@@ -184,7 +182,7 @@ impl View for DiagnosticIndicator {
             .into_any(),
         );
 
-        let style = &cx.global::<Settings>().theme.workspace.status_bar;
+        let style = &theme::current(cx).workspace.status_bar;
         let item_spacing = style.item_spacing;
 
         if in_progress {

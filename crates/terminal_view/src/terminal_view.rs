@@ -2,6 +2,7 @@ mod persistence;
 pub mod terminal_button;
 pub mod terminal_element;
 
+use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
 use context_menu::{ContextMenu, ContextMenuItem};
 use dirs::home_dir;
 use gpui::{
@@ -16,7 +17,6 @@ use gpui::{
 };
 use project::{LocalWorktree, Project};
 use serde::Deserialize;
-use settings::{Settings, TerminalBlink, WorkingDirectory};
 use smallvec::{smallvec, SmallVec};
 use smol::Timer;
 use std::{
@@ -30,7 +30,7 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, Terminal,
+    Event, Terminal, TerminalBlink, WorkingDirectory,
 };
 use util::ResultExt;
 use workspace::{
@@ -41,7 +41,7 @@ use workspace::{
     Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
-use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
+pub use terminal::TerminalSettings;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -63,6 +63,8 @@ actions!(
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
+    terminal::init(cx);
+
     cx.add_action(TerminalView::deploy);
 
     register_deserializable_item::<TerminalView>(cx);
@@ -101,9 +103,9 @@ impl TerminalView {
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let strategy = cx.global::<Settings>().terminal_strategy();
-
-        let working_directory = get_working_directory(workspace, cx, strategy);
+        let strategy = settings::get::<TerminalSettings>(cx);
+        let working_directory =
+            get_working_directory(workspace, cx, strategy.working_directory.clone());
 
         let window_id = cx.window_id();
         let terminal = workspace
@@ -215,10 +217,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
-                    cx.global::<Settings>()
-                        .terminal_overrides
-                        .option_as_meta
-                        .unwrap_or(false),
+                    settings::get::<TerminalSettings>(cx).option_as_meta,
                 )
             });
         }
@@ -244,16 +243,7 @@ impl TerminalView {
             return true;
         }
 
-        let setting = {
-            let settings = cx.global::<Settings>();
-            settings
-                .terminal_overrides
-                .blinking
-                .clone()
-                .unwrap_or(TerminalBlink::TerminalControlled)
-        };
-
-        match setting {
+        match settings::get::<TerminalSettings>(cx).blinking {
             //If the user requested to never blink, don't blink it.
             TerminalBlink::Off => true,
             //If the terminal is controlling it, check terminal mode
@@ -346,10 +336,7 @@ impl TerminalView {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &keystroke,
-                    cx.global::<Settings>()
-                        .terminal_overrides
-                        .option_as_meta
-                        .unwrap_or(false),
+                    settings::get::<TerminalSettings>(cx).option_as_meta,
                 );
             });
         }
@@ -412,10 +399,7 @@ impl View for TerminalView {
         self.terminal.update(cx, |term, cx| {
             term.try_keystroke(
                 &event.keystroke,
-                cx.global::<Settings>()
-                    .terminal_overrides
-                    .option_as_meta
-                    .unwrap_or(false),
+                settings::get::<TerminalSettings>(cx).option_as_meta,
             )
         })
     }
@@ -617,7 +601,9 @@ impl Item for TerminalView {
                 .flatten()
                 .or_else(|| {
                     cx.read(|cx| {
-                        let strategy = cx.global::<Settings>().terminal_strategy();
+                        let strategy = settings::get::<TerminalSettings>(cx)
+                            .working_directory
+                            .clone();
                         workspace
                             .upgrade(cx)
                             .map(|workspace| {
@@ -801,22 +787,18 @@ fn get_path_from_wt(wt: &LocalWorktree) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
+    use std::path::Path;
     use workspace::AppState;
 
-    use std::path::Path;
+    // Working directory calculation tests
 
-    ///Working directory calculation tests
-
-    ///No Worktrees in project -> home_dir()
+    // No Worktrees in project -> home_dir()
     #[gpui::test]
     async fn no_worktree(cx: &mut TestAppContext) {
-        //Setup variables
-        let (project, workspace) = blank_workspace(cx).await;
-        //Test
+        let (project, workspace) = init_test(cx).await;
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -832,14 +814,12 @@ mod tests {
         });
     }
 
-    ///No active entry, but a worktree, worktree is a file -> home_dir()
+    // No active entry, but a worktree, worktree is a file -> home_dir()
     #[gpui::test]
     async fn no_active_entry_worktree_is_file(cx: &mut TestAppContext) {
-        //Setup variables
+        let (project, workspace) = init_test(cx).await;
 
-        let (project, workspace) = blank_workspace(cx).await;
         create_file_wt(project.clone(), "/root.txt", cx).await;
-
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -855,14 +835,12 @@ mod tests {
         });
     }
 
-    //No active entry, but a worktree, worktree is a folder -> worktree_folder
+    // No active entry, but a worktree, worktree is a folder -> worktree_folder
     #[gpui::test]
     async fn no_active_entry_worktree_is_dir(cx: &mut TestAppContext) {
-        //Setup variables
-        let (project, workspace) = blank_workspace(cx).await;
-        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let (project, workspace) = init_test(cx).await;
 
-        //Test
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
         cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -877,17 +855,15 @@ mod tests {
         });
     }
 
-    //Active entry with a work tree, worktree is a file -> home_dir()
+    // Active entry with a work tree, worktree is a file -> home_dir()
     #[gpui::test]
     async fn active_entry_worktree_is_file(cx: &mut TestAppContext) {
-        //Setup variables
+        let (project, workspace) = init_test(cx).await;
 
-        let (project, workspace) = blank_workspace(cx).await;
         let (_wt, _entry) = create_folder_wt(project.clone(), "/root1/", cx).await;
         let (wt2, entry2) = create_file_wt(project.clone(), "/root2.txt", cx).await;
         insert_active_entry_for(wt2, entry2, project.clone(), cx);
 
-        //Test
         cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -901,16 +877,15 @@ mod tests {
         });
     }
 
-    //Active entry, with a worktree, worktree is a folder -> worktree_folder
+    // Active entry, with a worktree, worktree is a folder -> worktree_folder
     #[gpui::test]
     async fn active_entry_worktree_is_dir(cx: &mut TestAppContext) {
-        //Setup variables
-        let (project, workspace) = blank_workspace(cx).await;
+        let (project, workspace) = init_test(cx).await;
+
         let (_wt, _entry) = create_folder_wt(project.clone(), "/root1/", cx).await;
         let (wt2, entry2) = create_folder_wt(project.clone(), "/root2/", cx).await;
         insert_active_entry_for(wt2, entry2, project.clone(), cx);
 
-        //Test
         cx.update(|cx| {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
@@ -924,11 +899,12 @@ mod tests {
         });
     }
 
-    ///Creates a worktree with 1 file: /root.txt
-    pub async fn blank_workspace(
+    /// Creates a worktree with 1 file: /root.txt
+    pub async fn init_test(
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
         let params = cx.update(AppState::test);
+        cx.update(|cx| theme::init((), cx));
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
@@ -936,7 +912,7 @@ mod tests {
         (project, workspace)
     }
 
-    ///Creates a worktree with 1 folder: /root{suffix}/
+    /// Creates a worktree with 1 folder: /root{suffix}/
     async fn create_folder_wt(
         project: ModelHandle<Project>,
         path: impl AsRef<Path>,
@@ -945,7 +921,7 @@ mod tests {
         create_wt(project, true, path, cx).await
     }
 
-    ///Creates a worktree with 1 file: /root{suffix}.txt
+    /// Creates a worktree with 1 file: /root{suffix}.txt
     async fn create_file_wt(
         project: ModelHandle<Project>,
         path: impl AsRef<Path>,

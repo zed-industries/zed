@@ -11,6 +11,7 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
+fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 theme = { path = "../theme" }

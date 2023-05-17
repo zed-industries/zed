@@ -3,7 +3,6 @@ pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
-use theme::ThemeRegistry;
 
 mod c;
 mod elixir;
@@ -32,11 +31,7 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(
-    languages: Arc<LanguageRegistry>,
-    themes: Arc<ThemeRegistry>,
-    node_runtime: Arc<NodeRuntime>,
-) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
     fn adapter_arc(adapter: impl LspAdapter) -> Arc<dyn LspAdapter> {
         Arc::new(adapter)
     }
@@ -69,7 +64,6 @@ pub fn init(
             vec![adapter_arc(json::JsonLspAdapter::new(
                 node_runtime.clone(),
                 languages.clone(),
-                themes.clone(),
             ))],
         ),
         ("markdown", tree_sitter_markdown::language(), vec![]),

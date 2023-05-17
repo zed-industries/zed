@@ -3,6 +3,7 @@ use crate::{
     FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace,
     WorkspaceId,
 };
+use crate::{AutosaveSetting, WorkspaceSettings};
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
@@ -10,7 +11,6 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
-use settings::{Autosave, Settings};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -450,8 +450,11 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                             }
 
                             ItemEvent::Edit => {
-                                if let Autosave::AfterDelay { milliseconds } =
-                                    cx.global::<Settings>().autosave
+                                let settings = settings::get::<WorkspaceSettings>(cx);
+                                let debounce_delay = settings.git.gutter_debounce;
+
+                                if let AutosaveSetting::AfterDelay { milliseconds } =
+                                    settings.autosave
                                 {
                                     let delay = Duration::from_millis(milliseconds);
                                     let item = item.clone();
@@ -459,9 +462,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                         Pane::autosave_item(&item, workspace.project().clone(), cx)
                                     });
                                 }
-
-                                let settings = cx.global::<Settings>();
-                                let debounce_delay = settings.git_overrides.gutter_debounce;
 
                                 let item = item.clone();
 
@@ -500,7 +500,10 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                 }));
 
             cx.observe_focus(self, move |workspace, item, focused, cx| {
-                if !focused && cx.global::<Settings>().autosave == Autosave::OnFocusChange {
+                if !focused
+                    && settings::get::<WorkspaceSettings>(cx).autosave
+                        == AutosaveSetting::OnFocusChange
+                {
                     Pane::autosave_item(&item, workspace.project.clone(), cx)
                         .detach_and_log_err(cx);
                 }

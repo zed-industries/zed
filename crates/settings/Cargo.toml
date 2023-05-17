@@ -9,7 +9,7 @@ path = "src/settings.rs"
 doctest = false
 
 [features]
-test-support = []
+test-support = ["gpui/test-support", "fs/test-support"]
 
 [dependencies]
 assets = { path = "../assets" }
@@ -17,21 +17,21 @@ collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 sqlez = { path = "../sqlez" }
 fs = { path = "../fs" }
-anyhow.workspace = true
-futures.workspace = true
-theme = { path = "../theme" }
 staff_mode = { path = "../staff_mode" }
 util = { path = "../util" }
 
+anyhow.workspace = true
+futures.workspace = true
 glob.workspace = true
 json_comments = "0.2"
 lazy_static.workspace = true
 postage.workspace = true
-schemars = "0.8"
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-toml = "0.5"
+smallvec.workspace = true
+toml.workspace = true
 tree-sitter = "*"
 tree-sitter-json = "*"
 

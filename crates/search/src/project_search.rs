@@ -17,7 +17,6 @@ use gpui::{
 };
 use menu::Confirm;
 use project::{search::SearchQuery, Project};
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -195,7 +194,7 @@ impl View for ProjectSearchView {
         if model.match_ranges.is_empty() {
             enum Status {}
 
-            let theme = cx.global::<Settings>().theme.clone();
+            let theme = theme::current(cx).clone();
             let text = if self.query_editor.read(cx).text(cx).is_empty() {
                 ""
             } else if model.pending_search.is_some() {
@@ -903,16 +902,12 @@ impl ProjectSearchBar {
                 tooltip = "Select Next Match";
             }
         };
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
 
         enum NavButton {}
         MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
-            let style = &cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, false);
+            let theme = theme::current(cx);
+            let style = theme.search.option_button.style_for(state, false);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -939,15 +934,11 @@ impl ProjectSearchBar {
         option: SearchOption,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
         let is_active = self.is_option_enabled(option, cx);
         MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
-            let style = &cx
-                .global::<Settings>()
-                .theme
-                .search
-                .option_button
-                .style_for(state, is_active);
+            let theme = theme::current(cx);
+            let style = theme.search.option_button.style_for(state, is_active);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -992,7 +983,7 @@ impl View for ProjectSearchBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(search) = self.active_project_search.as_ref() {
             let search = search.read(cx);
-            let theme = cx.global::<Settings>().theme.clone();
+            let theme = theme::current(cx).clone();
             let query_container_style = if search.panels_with_errors.contains(&InputPanel::Query) {
                 theme.search.invalid_editor
             } else {
@@ -1146,25 +1137,19 @@ impl ToolbarItemView for ProjectSearchBar {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use editor::DisplayPoint;
     use gpui::{color::Color, executor::Deterministic, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
+    use settings::SettingsStore;
     use std::sync::Arc;
+    use theme::ThemeSettings;
 
     #[gpui::test]
     async fn test_project_search(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        let fonts = cx.font_cache();
-        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
-        theme.search.match_background = Color::red();
-        cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.theme = Arc::new(theme);
-            cx.set_global(settings);
-            cx.set_global(ActiveSearches::default());
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1277,6 +1262,29 @@ mod tests {
                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
                 [DisplayPoint::new(2, 37)..DisplayPoint::new(2, 40)]
             );
+        });
+    }
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        let fonts = cx.font_cache();
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), theme::Theme::default);
+        theme.search.match_background = Color::red();
+
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            cx.set_global(ActiveSearches::default());
+
+            theme::init((), cx);
+            cx.update_global::<SettingsStore, _, _>(|store, _| {
+                let mut settings = store.get::<ThemeSettings>(None).clone();
+                settings.theme = Arc::new(theme);
+                store.override_global(settings)
+            });
+
+            language::init(cx);
+            client::init_settings(cx);
+            editor::init_settings(cx);
+            workspace::init_settings(cx);
         });
     }
 }

@@ -16,7 +16,6 @@ use language::{
 };
 use project::{FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -1116,7 +1115,7 @@ impl View for CursorPosition {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(position) = self.position {
-            let theme = &cx.global::<Settings>().theme.workspace.status_bar;
+            let theme = &theme::current(cx).workspace.status_bar;
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
                 position.row + 1,

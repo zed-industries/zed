@@ -85,6 +85,7 @@ parking_lot = { version = "0.11.1" }
 postage = { version = "0.5", features = ["futures-traits"] }
 rand = { version = "0.8.5" }
 regex = { version = "1.5" }
+schemars = { version = "0.8" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
@@ -93,6 +94,7 @@ smol = { version = "1.2" }
 tempdir = { version = "0.3.7" }
 thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
+toml = { version = "0.5" }
 unindent = { version = "0.1.7" }
 
 [patch.crates-io]

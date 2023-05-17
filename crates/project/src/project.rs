@@ -1,6 +1,7 @@
 mod ignore;
 mod lsp_command;
 mod lsp_glob_set;
+mod project_settings;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
@@ -23,6 +24,7 @@ use gpui::{
     ModelHandle, Task, WeakModelHandle,
 };
 use language::{
+    language_settings::{all_language_settings, language_settings, FormatOnSave, Formatter},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
@@ -41,10 +43,11 @@ use lsp::{
 use lsp_command::*;
 use lsp_glob_set::LspGlobSet;
 use postage::watch;
+use project_settings::ProjectSettings;
 use rand::prelude::*;
 use search::SearchQuery;
 use serde::Serialize;
-use settings::{FormatOnSave, Formatter, Settings};
+use settings::SettingsStore;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::{
@@ -64,9 +67,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-
 use terminals::Terminals;
-
 use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
 
 pub use fs::*;
@@ -388,7 +389,13 @@ impl FormatTrigger {
 }
 
 impl Project {
-    pub fn init(client: &Arc<Client>) {
+    pub fn init_settings(cx: &mut AppContext) {
+        settings::register::<ProjectSettings>(cx);
+    }
+
+    pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+        Self::init_settings(cx);
+
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
         client.add_model_message_handler(Self::handle_remove_collaborator);
@@ -458,7 +465,9 @@ impl Project {
                 client_state: None,
                 opened_buffer: watch::channel(),
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![cx.observe_global::<Settings, _>(Self::on_settings_changed)],
+                _subscriptions: vec![
+                    cx.observe_global::<SettingsStore, _>(Self::on_settings_changed)
+                ],
                 _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 active_entry: None,
@@ -601,12 +610,6 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
-        if !cx.read(|cx| cx.has_global::<Settings>()) {
-            cx.update(|cx| {
-                cx.set_global(Settings::test(cx));
-            });
-        }
-
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
         let http_client = util::http::FakeHttpClient::with_404_response();
@@ -628,7 +631,7 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let settings = cx.global::<Settings>();
+        let settings = all_language_settings(cx);
 
         let mut language_servers_to_start = Vec::new();
         for buffer in self.opened_buffers.values() {
@@ -636,7 +639,10 @@ impl Project {
                 let buffer = buffer.read(cx);
                 if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
                 {
-                    if settings.enable_language_server(Some(&language.name())) {
+                    if settings
+                        .language(Some(&language.name()))
+                        .enable_language_server
+                    {
                         let worktree = file.worktree.read(cx);
                         language_servers_to_start.push((
                             worktree.id(),
@@ -651,7 +657,10 @@ impl Project {
         let mut language_servers_to_stop = Vec::new();
         for language in self.languages.to_vec() {
             for lsp_adapter in language.lsp_adapters() {
-                if !settings.enable_language_server(Some(&language.name())) {
+                if !settings
+                    .language(Some(&language.name()))
+                    .enable_language_server
+                {
                     let lsp_name = &lsp_adapter.name;
                     for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
                         if lsp_name == started_lsp_name {
@@ -2122,7 +2131,7 @@ impl Project {
         let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
         let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
 
-        let settings_observation = cx.observe_global::<Settings, _>(move |_, _| {
+        let settings_observation = cx.observe_global::<SettingsStore, _>(move |_, _| {
             *settings_changed_tx.borrow_mut() = ();
         });
         cx.spawn_weak(|this, mut cx| async move {
@@ -2199,10 +2208,7 @@ impl Project {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        if !cx
-            .global::<Settings>()
-            .enable_language_server(Some(&language.name()))
-        {
+        if !language_settings(Some(&language.name()), cx).enable_language_server {
             return;
         }
 
@@ -2223,7 +2229,9 @@ impl Project {
                 None => continue,
             };
 
-            let lsp = &cx.global::<Settings>().lsp.get(&adapter.name.0);
+            let lsp = settings::get::<ProjectSettings>(cx)
+                .lsp
+                .get(&adapter.name.0);
             let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
             let mut initialization_options = adapter.initialization_options.clone();
@@ -3249,23 +3257,16 @@ impl Project {
 
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
-                    let (
-                        format_on_save,
-                        remove_trailing_whitespace,
-                        ensure_final_newline,
-                        formatter,
-                        tab_size,
-                    ) = buffer.read_with(&cx, |buffer, cx| {
-                        let settings = cx.global::<Settings>();
+                    let settings = buffer.read_with(&cx, |buffer, cx| {
                         let language_name = buffer.language().map(|language| language.name());
-                        (
-                            settings.format_on_save(language_name.as_deref()),
-                            settings.remove_trailing_whitespace_on_save(language_name.as_deref()),
-                            settings.ensure_final_newline_on_save(language_name.as_deref()),
-                            settings.formatter(language_name.as_deref()),
-                            settings.tab_size(language_name.as_deref()),
-                        )
+                        language_settings(language_name.as_deref(), cx).clone()
                     });
+
+                    let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
+                    let ensure_final_newline = settings.ensure_final_newline_on_save;
+                    let format_on_save = settings.format_on_save.clone();
+                    let formatter = settings.formatter.clone();
+                    let tab_size = settings.tab_size;
 
                     // First, format buffer's whitespace according to the settings.
                     let trailing_whitespace_diff = if remove_trailing_whitespace {

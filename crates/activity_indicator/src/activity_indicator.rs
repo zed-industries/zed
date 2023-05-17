@@ -9,7 +9,6 @@ use gpui::{
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus};
 use project::{LanguageServerProgress, Project};
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc};
 use util::ResultExt;
@@ -325,12 +324,7 @@ impl View for ActivityIndicator {
         } = self.content_to_render(cx);
 
         let mut element = MouseEventHandler::<Self, _>::new(0, cx, |state, cx| {
-            let theme = &cx
-                .global::<Settings>()
-                .theme
-                .workspace
-                .status_bar
-                .lsp_status;
+            let theme = &theme::current(cx).workspace.status_bar.lsp_status;
             let style = if state.hovered() && on_click.is_some() {
                 theme.hover.as_ref().unwrap_or(&theme.default)
             } else {

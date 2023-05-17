@@ -5,7 +5,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use settings::Settings;
 use std::any::TypeId;
 use workspace::{
     dock::{Dock, FocusDock},
@@ -43,7 +42,7 @@ impl View for TerminalButton {
 
         let has_terminals = !project.local_terminal_handles().is_empty();
         let terminal_count = project.local_terminal_handles().len() as i32;
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
 
         Stack::new()
             .with_child(

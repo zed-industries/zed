@@ -5,7 +5,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Element, Entity, Task, View, ViewContext, ViewHandle,
 };
-use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
 pub fn init(cx: &mut AppContext) {
@@ -46,7 +45,7 @@ impl View for SubmitFeedbackButton {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         enum SubmitFeedbackButton {}
         MouseEventHandler::<SubmitFeedbackButton, Self>::new(0, cx, |state, _| {
             let style = theme.feedback.submit_button.style_for(state, false);

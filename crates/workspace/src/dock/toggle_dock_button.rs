@@ -6,7 +6,6 @@ use gpui::{
     platform::MouseButton,
     AnyElement, Element, Entity, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use settings::Settings;
 
 pub struct ToggleDockButton {
     workspace: WeakViewHandle<Workspace>,
@@ -43,7 +42,7 @@ impl View for ToggleDockButton {
         let dock_position = workspace.read(cx).dock.position;
         let dock_pane = workspace.read(cx).dock_pane().clone();
 
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
 
         let button = MouseEventHandler::<Self, _>::new(0, cx, {
             let theme = theme.clone();
