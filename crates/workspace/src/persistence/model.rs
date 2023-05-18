@@ -60,7 +60,6 @@ pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
     pub center_group: SerializedPaneGroup,
-    pub left_sidebar_open: bool,
     pub bounds: Option<WindowBounds>,
     pub display: Option<Uuid>,
     pub docks: DockStructure,
@@ -100,17 +99,17 @@ impl Bind for DockStructure {
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct DockData {
     pub(crate) visible: bool,
-    pub(crate) size: Option<f32>,
+    pub(crate) active_panel: Option<String>,
 }
 
 impl Column for DockData {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (visible, next_index) = Option::<bool>::column(statement, start_index)?;
-        let (size, next_index) = Option::<f32>::column(statement, next_index)?;
+        let (active_panel, next_index) = Option::<String>::column(statement, next_index)?;
         Ok((
             DockData {
                 visible: visible.unwrap_or(false),
-                size,
+                active_panel,
             },
             next_index,
         ))
@@ -120,7 +119,7 @@ impl Column for DockData {
 impl Bind for DockData {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.visible, start_index)?;
-        statement.bind(&self.size, next_index)
+        statement.bind(&self.active_panel, next_index)
     }
 }
 

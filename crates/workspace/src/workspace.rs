@@ -2580,39 +2580,45 @@ impl Workspace {
         fn build_serialized_docks(this: &Workspace, cx: &AppContext) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
-            let left_size = left_dock
-                .active_panel()
-                .map(|panel| left_dock.panel_size(panel.as_ref()))
-                .flatten();
+            let left_active_panel = left_dock.active_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                        .to_string(),
+                )
+            });
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
-            let right_size = right_dock
-                .active_panel()
-                .map(|panel| right_dock.panel_size(panel.as_ref()))
-                .flatten();
+            let right_active_panel = right_dock.active_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                        .to_string(),
+                )
+            });
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
-            let bottom_size = bottom_dock
-                .active_panel()
-                .map(|panel| bottom_dock.panel_size(panel.as_ref()))
-                .flatten();
+            let bottom_active_panel = bottom_dock.active_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                        .to_string(),
+                )
+            });
 
-            DockStructure {
+            dbg!(DockStructure {
                 left: DockData {
                     visible: left_visible,
-                    size: left_size,
+                    active_panel: left_active_panel,
                 },
                 right: DockData {
                     visible: right_visible,
-                    size: right_size,
+                    active_panel: right_active_panel,
                 },
                 bottom: DockData {
                     visible: bottom_visible,
-                    size: bottom_size,
+                    active_panel: bottom_active_panel,
                 },
-            }
+            })
         }
 
         if let Some(location) = self.location(cx) {
@@ -2627,7 +2633,6 @@ impl Workspace {
                     id: self.database_id,
                     location,
                     center_group,
-                    left_sidebar_open: self.left_dock.read(cx).is_open(),
                     bounds: Default::default(),
                     display: Default::default(),
                     docks,
@@ -2686,22 +2691,15 @@ impl Workspace {
 
                 let docks = serialized_workspace.docks;
                 workspace.left_dock.update(cx, |dock, cx| {
+                    dbg!(docks.left.visible);
                     dock.set_open(docks.left.visible, cx);
-                    if let Some(size) = docks.left.size {
-                        dock.resize_active_panel(size, cx);
-                    }
+                    dbg!(dock.is_open());
                 });
                 workspace.right_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.right.visible, cx);
-                    if let Some(size) = docks.right.size {
-                        dock.resize_active_panel(size, cx);
-                    }
                 });
                 workspace.bottom_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.bottom.visible, cx);
-                    if let Some(size) = docks.bottom.size {
-                        dock.resize_active_panel(size, cx);
-                    }
                 });
 
                 cx.notify();
