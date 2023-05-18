@@ -1114,6 +1114,8 @@ fn get_injections(
     let mut query_cursor = QueryCursorHandle::new();
     let mut prev_match = None;
 
+    // Ensure that a `ParseStep` is created for every combined injection language, even
+    // if there currently no matches for that injection.
     combined_injection_ranges.clear();
     for pattern in &config.patterns {
         if let (Some(language_name), true) = (pattern.language.as_ref(), pattern.combined) {
@@ -1174,8 +1176,8 @@ fn get_injections(
                 if let Some(language) = language {
                     if combined {
                         combined_injection_ranges
-                            .get_mut(&language.clone())
-                            .unwrap()
+                            .entry(language.clone())
+                            .or_default()
                             .extend(content_ranges);
                     } else {
                         queue.push(ParseStep {
