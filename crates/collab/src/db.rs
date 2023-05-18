@@ -1592,7 +1592,10 @@ impl Database {
                             worktree_repository_statuses::Entity::find()
                                 .filter(
                                     Condition::all()
-                                        .add(worktree_repository_statuses::Column::ProjectId.eq(project.id))
+                                        .add(
+                                            worktree_repository_statuses::Column::ProjectId
+                                                .eq(project.id),
+                                        )
                                         .add(
                                             worktree_repository_statuses::Column::WorktreeId
                                                 .eq(worktree.id),
