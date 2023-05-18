@@ -1165,6 +1165,9 @@ impl MultiBuffer {
     ) {
         self.sync(cx);
         let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
+        if ids.is_empty() {
+            return;
+        }
 
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
@@ -4080,19 +4083,25 @@ mod tests {
 
         let leader_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let follower_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let follower_edit_event_count = Rc::new(RefCell::new(0));
 
         follower_multibuffer.update(cx, |_, cx| {
-            cx.subscribe(&leader_multibuffer, |follower, _, event, cx| {
-                match event.clone() {
+            let follower_edit_event_count = follower_edit_event_count.clone();
+            cx.subscribe(
+                &leader_multibuffer,
+                move |follower, _, event, cx| match event.clone() {
                     Event::ExcerptsAdded {
                         buffer,
                         predecessor,
                         excerpts,
                     } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
                     Event::ExcerptsRemoved { ids } => follower.remove_excerpts(ids, cx),
+                    Event::Edited => {
+                        *follower_edit_event_count.borrow_mut() += 1;
+                    }
                     _ => {}
-                }
-            })
+                },
+            )
             .detach();
         });
 
@@ -4131,6 +4140,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
+        assert_eq!(*follower_edit_event_count.borrow(), 2);
 
         leader_multibuffer.update(cx, |leader, cx| {
             let excerpt_ids = leader.excerpt_ids();
@@ -4140,6 +4150,27 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
+        assert_eq!(*follower_edit_event_count.borrow(), 3);
+
+        // Removing an empty set of excerpts is a noop.
+        leader_multibuffer.update(cx, |leader, cx| {
+            leader.remove_excerpts([], cx);
+        });
+        assert_eq!(
+            leader_multibuffer.read(cx).snapshot(cx).text(),
+            follower_multibuffer.read(cx).snapshot(cx).text(),
+        );
+        assert_eq!(*follower_edit_event_count.borrow(), 3);
+
+        // Adding an empty set of excerpts is a noop.
+        leader_multibuffer.update(cx, |leader, cx| {
+            leader.push_excerpts::<usize>(buffer_2.clone(), [], cx);
+        });
+        assert_eq!(
+            leader_multibuffer.read(cx).snapshot(cx).text(),
+            follower_multibuffer.read(cx).snapshot(cx).text(),
+        );
+        assert_eq!(*follower_edit_event_count.borrow(), 3);
 
         leader_multibuffer.update(cx, |leader, cx| {
             leader.clear(cx);
@@ -4148,6 +4179,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
+        assert_eq!(*follower_edit_event_count.borrow(), 4);
     }
 
     #[gpui::test]

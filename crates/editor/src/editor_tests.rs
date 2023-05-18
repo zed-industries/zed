@@ -5459,10 +5459,12 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     });
 
     let is_still_following = Rc::new(RefCell::new(true));
+    let follower_edit_event_count = Rc::new(RefCell::new(0));
     let pending_update = Rc::new(RefCell::new(None));
     follower.update(cx, {
         let update = pending_update.clone();
         let is_still_following = is_still_following.clone();
+        let follower_edit_event_count = follower_edit_event_count.clone();
         |_, cx| {
             cx.subscribe(&leader, move |_, leader, event, cx| {
                 leader
@@ -5474,6 +5476,9 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             cx.subscribe(&follower, move |_, _, event, cx| {
                 if Editor::should_unfollow_on_event(event, cx) {
                     *is_still_following.borrow_mut() = false;
+                }
+                if let Event::BufferEdited = event {
+                    *follower_edit_event_count.borrow_mut() += 1;
                 }
             })
             .detach();
@@ -5494,6 +5499,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
     });
     assert_eq!(*is_still_following.borrow(), true);
+    assert_eq!(*follower_edit_event_count.borrow(), 0);
 
     // Update the scroll position only
     leader.update(cx, |leader, cx| {
@@ -5510,6 +5516,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         vec2f(1.5, 3.5)
     );
     assert_eq!(*is_still_following.borrow(), true);
+    assert_eq!(*follower_edit_event_count.borrow(), 0);
 
     // Update the selections and scroll position. The follower's scroll position is updated
     // via autoscroll, not via the leader's exact scroll position.
