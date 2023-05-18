@@ -373,14 +373,14 @@ impl PickerDelegate for FileFinderDelegate {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{assert_eq, collections::HashMap, time::Duration};
 
     use super::*;
     use editor::Editor;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, ViewHandle};
     use menu::{Confirm, SelectNext};
     use serde_json::json;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, Pane, Workspace};
 
     #[ctor::ctor]
     fn init_logger() {
@@ -867,12 +867,17 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            WorktreeId(worktrees[0].id())
+        });
 
         // When workspace has an active item, sort items which are closer to that item
         // first when they have the same name. In this case, b.txt is closer to dir2's a.txt
         // so that one should be sorted earlier
         let b_path = Some(ProjectPath {
-            worktree_id: WorktreeId(workspace.id()),
+            worktree_id,
             path: Arc::from(Path::new("/root/dir2/b.txt")),
         });
         let (_, finder) = cx.add_window(|cx| {
@@ -941,6 +946,243 @@ mod tests {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_query_history(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            WorktreeId(worktrees[0].id())
+        });
+
+        // Open and close panels, getting their history items afterwards.
+        // Ensure history items get populated with opened items, and items are kept in a certain order.
+        // The history lags one opened buffer behind, since it's updated in the search panel only on its reopen.
+        //
+        // TODO: without closing, the opened items do not propagate their history changes for some reason
+        // it does work in real app though, only tests do not propagate.
+
+        let initial_history = open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert!(
+            initial_history.is_empty(),
+            "Should have no history before opening any files"
+        );
+
+        let history_after_first = open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_first,
+            vec![ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("test/first.rs")),
+            }],
+            "Should show 1st opened item in the history when opening the 2nd item"
+        );
+
+        let history_after_second = open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_second,
+            vec![
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+            ],
+            "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
+2nd item should be the first in the history, as the last opened."
+        );
+
+        let history_after_third = open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_third,
+            vec![
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+            ],
+            "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
+3rd item should be the first in the history, as the last opened."
+        );
+
+        let history_after_second_again = open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_second_again,
+            vec![
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+            ],
+            "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
+2nd item, as the last opened, 3rd item should go next as it was opened right before."
+        );
+    }
+
+    async fn open_close_queried_buffer(
+        input: &str,
+        expected_matches: usize,
+        expected_editor_title: &str,
+        window_id: usize,
+        workspace: &ViewHandle<Workspace>,
+        deterministic: &gpui::executor::Deterministic,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<ProjectPath> {
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches(input.to_string(), cx)
+            })
+            .await;
+        let history_items = finder.read_with(cx, |finder, _| {
+            assert_eq!(
+                finder.delegate().matches.len(),
+                expected_matches,
+                "Unexpected number of matches found for query {input}"
+            );
+            finder.delegate().history_items.clone()
+        });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+        deterministic.run_until_parked();
+        active_pane
+            .condition(cx, |pane, _| pane.active_item().is_some())
+            .await;
+        cx.read(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            let active_editor_title = active_item
+                .as_any()
+                .downcast_ref::<Editor>()
+                .unwrap()
+                .read(cx)
+                .title(cx);
+            assert_eq!(
+                expected_editor_title, active_editor_title,
+                "Unexpected editor title for query {input}"
+            );
+        });
+
+        let mut original_items = HashMap::new();
+        cx.read(|cx| {
+            for pane in workspace.read(cx).panes() {
+                let pane_id = pane.id();
+                let pane = pane.read(cx);
+                let insertion_result = original_items.insert(pane_id, pane.items().count());
+                assert!(insertion_result.is_none(), "Pane id {pane_id} collision");
+            }
+        });
+        workspace.update(cx, |workspace, cx| {
+            Pane::close_active_item(workspace, &workspace::CloseActiveItem, cx);
+        });
+        deterministic.run_until_parked();
+        cx.read(|cx| {
+            for pane in workspace.read(cx).panes() {
+                let pane_id = pane.id();
+                let pane = pane.read(cx);
+                match original_items.remove(&pane_id) {
+                    Some(original_items) => {
+                        assert_eq!(
+                            pane.items().count(),
+                            original_items.saturating_sub(1),
+                            "Pane id {pane_id} should have item closed"
+                        );
+                    }
+                    None => panic!("Pane id {pane_id} not found in original items"),
+                }
+            }
+        });
+
+        history_items
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
