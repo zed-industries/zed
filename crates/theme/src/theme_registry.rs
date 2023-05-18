@@ -30,7 +30,6 @@ impl ThemeRegistry {
             font_cache,
         });
 
-        #[cfg(any(test, feature = "test-support"))]
         this.themes.lock().insert(
             settings::EMPTY_THEME_NAME.to_string(),
             gpui::fonts::with_font_cache(this.font_cache.clone(), || {

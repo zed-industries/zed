@@ -24,7 +24,6 @@ pub fn default_settings() -> Cow<'static, str> {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
 pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
 
 #[cfg(any(test, feature = "test-support"))]

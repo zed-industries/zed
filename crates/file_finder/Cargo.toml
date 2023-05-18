@@ -26,6 +26,7 @@ postage.workspace = true
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
 
 serde_json.workspace = true
 ctor.workspace = true
