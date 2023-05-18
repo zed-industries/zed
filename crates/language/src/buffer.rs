@@ -682,21 +682,29 @@ impl Buffer {
         self.git_diff_status.diff.needs_update(self)
     }
 
-    fn git_diff_recalc_2(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base = &self.diff_base?;
+    pub fn git_diff_recalc_2(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+        let diff_base = self.diff_base.clone()?; // TODO: Make this an Arc
         let snapshot = self.snapshot();
-        let handle = cx.weak_handle();
 
         let mut diff = self.git_diff_status.diff.clone();
-        Some(cx.background().spawn(async move {
+        let diff = cx.background().spawn(async move {
             diff.update(&diff_base, &snapshot).await;
-            if let Some(this) = handle.upgrade(cx) {
-                // this.update(cx)
+            diff
+        });
+
+        let handle = cx.weak_handle();
+        Some(cx.spawn_weak(|_, mut cx| async move {
+            let buffer_diff = diff.await;
+            if let Some(this) = handle.upgrade(&mut cx) {
+                this.update(&mut cx, |this, _| {
+                    this.git_diff_status.diff = buffer_diff;
+                    this.git_diff_update_count += 1;
+                })
             }
         }))
     }
 
-    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
+    fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
         if self.git_diff_status.update_in_progress {
             self.git_diff_status.update_requested = true;
             return;

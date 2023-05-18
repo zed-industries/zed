@@ -719,11 +719,7 @@ impl LocalWorktree {
                 .background()
                 .spawn(async move { text::Buffer::new(0, id, contents) })
                 .await;
-            Ok(cx.add_model(|cx| {
-                let mut buffer = Buffer::build(text_buffer, diff_base, Some(Arc::new(file)));
-                buffer.git_diff_recalc(cx);
-                buffer
-            }))
+            Ok(cx.add_model(|_| Buffer::build(text_buffer, diff_base, Some(Arc::new(file)))))
         })
     }
 

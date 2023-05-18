@@ -1610,6 +1610,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.request_buffer_diff_recalculation(buffer, cx);
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
         });
@@ -1928,17 +1929,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
-            self.buffers_needing_diff.insert(buffer.downgrade());
-            if self.buffers_needing_diff.len() == 1 {
-                let this = cx.weak_handle();
-                cx.defer(move |cx| {
-                    if let Some(this) = this.upgrade(cx) {
-                        this.update(cx, |this, cx| {
-                            this.recalculate_buffer_diffs(cx);
-                        });
-                    }
-                });
-            }
+            self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
         match event {
@@ -2080,11 +2071,33 @@ impl Project {
         None
     }
 
+    fn request_buffer_diff_recalculation(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.buffers_needing_diff.insert(buffer.downgrade());
+        if self.buffers_needing_diff.len() == 1 {
+            let this = cx.weak_handle();
+            cx.defer(move |cx| {
+                if let Some(this) = this.upgrade(cx) {
+                    this.update(cx, |this, cx| {
+                        this.recalculate_buffer_diffs(cx);
+                    });
+                }
+            });
+        }
+    }
+
     fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) {
         cx.spawn(|this, mut cx| async move {
-            let tasks: Vec<_> = this.update(&mut cx, |this, cx| {
-                this.buffers_needing_diff
-                    .drain()
+            let buffers: Vec<_> = this.update(&mut cx, |this, _| {
+                this.buffers_needing_diff.drain().collect()
+            });
+
+            let tasks: Vec<_> = this.update(&mut cx, |_, cx| {
+                buffers
+                    .iter()
                     .filter_map(|buffer| {
                         let buffer = buffer.upgrade(cx)?;
                         buffer.update(cx, |buffer, cx| buffer.git_diff_recalc_2(cx))
@@ -2092,11 +2105,18 @@ impl Project {
                     .collect()
             });
 
-            let updates = futures::future::join_all(tasks).await;
+            futures::future::join_all(tasks).await;
 
             this.update(&mut cx, |this, cx| {
                 if !this.buffers_needing_diff.is_empty() {
                     this.recalculate_buffer_diffs(cx);
+                } else {
+                    // TODO: Would a `ModelContext<Project>.notify()` suffice here?
+                    for buffer in buffers {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, |_, cx| cx.notify());
+                        }
+                    }
                 }
             });
         })
@@ -6229,11 +6249,13 @@ impl Project {
                 let Some(this) = this.upgrade(&cx) else {
                     return Err(anyhow!("project dropped"));
                 };
+
                 let buffer = this.read_with(&cx, |this, cx| {
                     this.opened_buffers
                         .get(&id)
                         .and_then(|buffer| buffer.upgrade(cx))
                 });
+
                 if let Some(buffer) = buffer {
                     break buffer;
                 } else if this.read_with(&cx, |this, _| this.is_read_only()) {
@@ -6244,12 +6266,13 @@ impl Project {
                     this.incomplete_remote_buffers.entry(id).or_default();
                 });
                 drop(this);
+
                 opened_buffer_rx
                     .next()
                     .await
                     .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
             };
-            buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
+
             Ok(buffer)
         })
     }
