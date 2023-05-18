@@ -130,6 +130,7 @@ pub struct Project {
     incomplete_remote_buffers: HashMap<u64, Option<ModelHandle<Buffer>>>,
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<u64>,
+    buffers_needing_diff: HashSet<WeakModelHandle<Buffer>>,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
@@ -484,6 +485,7 @@ impl Project {
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 buffers_being_formatted: Default::default(),
+                buffers_needing_diff: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
@@ -573,6 +575,7 @@ impl Project {
                 last_workspace_edits_by_language_server: Default::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
+                buffers_needing_diff: Default::default(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
@@ -1924,6 +1927,20 @@ impl Project {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
+            self.buffers_needing_diff.insert(buffer.downgrade());
+            if self.buffers_needing_diff.len() == 1 {
+                let this = cx.weak_handle();
+                cx.defer(move |cx| {
+                    if let Some(this) = this.upgrade(cx) {
+                        this.update(cx, |this, cx| {
+                            this.recalculate_buffer_diffs(cx);
+                        });
+                    }
+                });
+            }
+        }
+
         match event {
             BufferEvent::Operation(operation) => {
                 self.buffer_ordered_messages_tx
@@ -2061,6 +2078,29 @@ impl Project {
         }
 
         None
+    }
+
+    fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) {
+        cx.spawn(|this, mut cx| async move {
+            let tasks: Vec<_> = this.update(&mut cx, |this, cx| {
+                this.buffers_needing_diff
+                    .drain()
+                    .filter_map(|buffer| {
+                        let buffer = buffer.upgrade(cx)?;
+                        buffer.update(cx, |buffer, cx| buffer.git_diff_recalc_2(cx))
+                    })
+                    .collect()
+            });
+
+            let updates = futures::future::join_all(tasks).await;
+
+            this.update(&mut cx, |this, cx| {
+                if !this.buffers_needing_diff.is_empty() {
+                    this.recalculate_buffer_diffs(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn language_servers_for_worktree(
