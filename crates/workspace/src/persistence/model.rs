@@ -63,6 +63,65 @@ pub struct SerializedWorkspace {
     pub left_sidebar_open: bool,
     pub bounds: Option<WindowBounds>,
     pub display: Option<Uuid>,
+    pub docks: DockStructure,
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct DockStructure {
+    pub(crate) left: DockData,
+    pub(crate) right: DockData,
+    pub(crate) bottom: DockData,
+}
+
+impl Column for DockStructure {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (left, next_index) = DockData::column(statement, start_index)?;
+        let (right, next_index) = DockData::column(statement, next_index)?;
+        let (bottom, next_index) = DockData::column(statement, next_index)?;
+        Ok((
+            DockStructure {
+                left,
+                right,
+                bottom,
+            },
+            next_index,
+        ))
+    }
+}
+
+impl Bind for DockStructure {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.left, start_index)?;
+        let next_index = statement.bind(&self.right, next_index)?;
+        statement.bind(&self.bottom, next_index)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct DockData {
+    pub(crate) visible: bool,
+    pub(crate) size: Option<f32>,
+}
+
+impl Column for DockData {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (visible, next_index) = Option::<bool>::column(statement, start_index)?;
+        let (size, next_index) = Option::<f32>::column(statement, next_index)?;
+        Ok((
+            DockData {
+                visible: visible.unwrap_or(false),
+                size,
+            },
+            next_index,
+        ))
+    }
+}
+
+impl Bind for DockData {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.visible, start_index)?;
+        statement.bind(&self.size, next_index)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -251,9 +310,9 @@ impl StaticColumnCount for SerializedItem {
 }
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(self.kind.clone(), start_index)?;
-        let next_index = statement.bind(self.item_id, next_index)?;
-        statement.bind(self.active, next_index)
+        let next_index = statement.bind(&self.kind, start_index)?;
+        let next_index = statement.bind(&self.item_id, next_index)?;
+        statement.bind(&self.active, next_index)
     }
 }
 

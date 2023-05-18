@@ -58,7 +58,9 @@ use std::{
 
 use crate::{
     notifications::simple_message_notification::MessageNotification,
-    persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+    persistence::model::{
+        DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+    },
 };
 use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, TogglePanel};
 use lazy_static::lazy_static;
@@ -2575,12 +2577,51 @@ impl Workspace {
             }
         }
 
+        fn build_serialized_docks(this: &Workspace, cx: &AppContext) -> DockStructure {
+            let left_dock = this.left_dock.read(cx);
+            let left_visible = left_dock.is_open();
+            let left_size = left_dock
+                .active_panel()
+                .map(|panel| left_dock.panel_size(panel.as_ref()))
+                .flatten();
+
+            let right_dock = this.right_dock.read(cx);
+            let right_visible = right_dock.is_open();
+            let right_size = right_dock
+                .active_panel()
+                .map(|panel| right_dock.panel_size(panel.as_ref()))
+                .flatten();
+
+            let bottom_dock = this.bottom_dock.read(cx);
+            let bottom_visible = bottom_dock.is_open();
+            let bottom_size = bottom_dock
+                .active_panel()
+                .map(|panel| bottom_dock.panel_size(panel.as_ref()))
+                .flatten();
+
+            DockStructure {
+                left: DockData {
+                    visible: left_visible,
+                    size: left_size,
+                },
+                right: DockData {
+                    visible: right_visible,
+                    size: right_size,
+                },
+                bottom: DockData {
+                    visible: bottom_visible,
+                    size: bottom_size,
+                },
+            }
+        }
+
         if let Some(location) = self.location(cx) {
             // Load bearing special case:
             //  - with_local_workspace() relies on this to not have other stuff open
             //    when you open your log
             if !location.paths().is_empty() {
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
+                let docks = build_serialized_docks(self, cx);
 
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
@@ -2589,6 +2630,7 @@ impl Workspace {
                     left_sidebar_open: self.left_dock.read(cx).is_open(),
                     bounds: Default::default(),
                     display: Default::default(),
+                    docks,
                 };
 
                 cx.background()
@@ -2642,11 +2684,25 @@ impl Workspace {
                     }
                 }
 
-                if workspace.left_dock().read(cx).is_open()
-                    != serialized_workspace.left_sidebar_open
-                {
-                    workspace.toggle_dock(DockPosition::Left, cx);
-                }
+                let docks = serialized_workspace.docks;
+                workspace.left_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.left.visible, cx);
+                    if let Some(size) = docks.left.size {
+                        dock.resize_active_panel(size, cx);
+                    }
+                });
+                workspace.right_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.right.visible, cx);
+                    if let Some(size) = docks.right.size {
+                        dock.resize_active_panel(size, cx);
+                    }
+                });
+                workspace.bottom_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.bottom.visible, cx);
+                    if let Some(size) = docks.bottom.size {
+                        dock.resize_active_panel(size, cx);
+                    }
+                });
 
                 cx.notify();
             })?;

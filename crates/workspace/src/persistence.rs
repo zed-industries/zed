@@ -18,6 +18,9 @@ use model::{
     WorkspaceLocation,
 };
 
+use self::model::DockStructure;
+
+
 define_connection! {
     // Current schema shape using pseudo-rust syntax:
     //
@@ -151,6 +154,15 @@ define_connection! {
         INSERT INTO workspaces_2 SELECT * FROM workspaces;
         DROP TABLE workspaces;
         ALTER TABLE workspaces_2 RENAME TO workspaces;
+    ),
+    // Add panels related information
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN left_dock_visible INTEGER; //bool
+        ALTER TABLE workspaces ADD COLUMN left_dock_size REAL;
+        ALTER TABLE workspaces ADD COLUMN right_dock_visible INTEGER; //bool
+        ALTER TABLE workspaces ADD COLUMN right_dock_size REAL;
+        ALTER TABLE workspaces ADD COLUMN bottom_dock_visible INTEGER; //bool
+        ALTER TABLE workspaces ADD COLUMN bottom_dock_size REAL;
     )];
 }
 
@@ -166,12 +178,13 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, left_sidebar_open, bounds, display): (
+        let (workspace_id, workspace_location, left_sidebar_open, bounds, display, docks): (
             WorkspaceId,
             WorkspaceLocation,
             bool,
             Option<WindowBounds>,
             Option<Uuid>,
+            DockStructure
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -183,7 +196,13 @@ impl WorkspaceDb {
                     window_y,
                     window_width,
                     window_height,
-                    display
+                    display,
+                    left_dock_visible,
+                    left_dock_size,
+                    right_dock_visible,
+                    right_dock_size,
+                    bottom_dock_visible,
+                    bottom_dock_size
                 FROM workspaces
                 WHERE workspace_location = ?
             })
@@ -202,6 +221,7 @@ impl WorkspaceDb {
             left_sidebar_open,
             bounds,
             display,
+            docks
         })
     }
 
@@ -227,15 +247,27 @@ impl WorkspaceDb {
                         workspace_id,
                         workspace_location,
                         left_sidebar_open,
+                        left_dock_visible,
+                        left_dock_size,
+                        right_dock_visible,
+                        right_dock_size,
+                        bottom_dock_visible,
+                        bottom_dock_size,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         workspace_location = ?2,
                         left_sidebar_open = ?3,
+                        left_dock_visible = ?4,
+                        left_dock_size = ?5,
+                        right_dock_visible = ?6,
+                        right_dock_size = ?7,
+                        bottom_dock_visible = ?8,
+                        bottom_dock_size = ?9,
                         timestamp = CURRENT_TIMESTAMP
-                ))?((workspace.id, &workspace.location))
+                ))?((workspace.id, &workspace.location, workspace.left_sidebar_open, workspace.docks))
                 .context("Updating workspace")?;
 
                 // Save center pane group
@@ -549,19 +581,22 @@ mod tests {
         let mut workspace_1 = SerializedWorkspace {
             id: 1,
             location: (["/tmp", "/tmp2"]).into(),
-            center_group: Default::default(),
             left_sidebar_open: true,
+            center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
         };
 
         let mut _workspace_2 = SerializedWorkspace {
             id: 2,
             location: (["/tmp"]).into(),
-            center_group: Default::default(),
             left_sidebar_open: false,
+            center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
+
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -659,6 +694,7 @@ mod tests {
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -687,6 +723,7 @@ mod tests {
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -696,6 +733,7 @@ mod tests {
             left_sidebar_open: false,
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -732,6 +770,7 @@ mod tests {
             left_sidebar_open: false,
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -765,6 +804,7 @@ mod tests {
             left_sidebar_open: true,
             bounds: Default::default(),
             display: Default::default(),
+            docks: Default::default()
         }
     }
 

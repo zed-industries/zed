@@ -29,7 +29,7 @@ impl Connection {
         query: &str,
     ) -> Result<impl 'a + FnMut(B) -> Result<()>> {
         let mut statement = Statement::prepare(self, query)?;
-        Ok(move |bindings| statement.with_bindings(bindings)?.exec())
+        Ok(move |bindings| statement.with_bindings(&bindings)?.exec())
     }
 
     /// Prepare a statement which has no bindings and returns a `Vec<C>`.
@@ -55,7 +55,7 @@ impl Connection {
         query: &str,
     ) -> Result<impl 'a + FnMut(B) -> Result<Vec<C>>> {
         let mut statement = Statement::prepare(self, query)?;
-        Ok(move |bindings| statement.with_bindings(bindings)?.rows::<C>())
+        Ok(move |bindings| statement.with_bindings(&bindings)?.rows::<C>())
     }
 
     /// Prepare a statement that selects a single row from the database.
@@ -87,7 +87,7 @@ impl Connection {
         let mut statement = Statement::prepare(self, query)?;
         Ok(move |bindings| {
             statement
-                .with_bindings(bindings)
+                .with_bindings(&bindings)
                 .context("Bindings failed")?
                 .maybe_row::<C>()
                 .context("Maybe row failed")
