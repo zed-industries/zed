@@ -1514,6 +1514,7 @@ impl Database {
                         let mut db_entries = worktree_entry::Entity::find()
                             .filter(
                                 Condition::all()
+                                    .add(worktree_entry::Column::ProjectId.eq(project.id))
                                     .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
                                     .add(entry_filter),
                             )
@@ -1553,6 +1554,7 @@ impl Database {
                         let mut db_repositories = worktree_repository::Entity::find()
                             .filter(
                                 Condition::all()
+                                    .add(worktree_repository::Column::ProjectId.eq(project.id))
                                     .add(worktree_repository::Column::WorktreeId.eq(worktree.id))
                                     .add(repository_entry_filter),
                             )
@@ -1590,6 +1592,7 @@ impl Database {
                             worktree_repository_statuses::Entity::find()
                                 .filter(
                                     Condition::all()
+                                        .add(worktree_repository_statuses::Column::ProjectId.eq(project.id))
                                         .add(
                                             worktree_repository_statuses::Column::WorktreeId
                                                 .eq(worktree.id),
