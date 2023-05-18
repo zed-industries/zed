@@ -8676,6 +8676,7 @@ dependencies = [
  "gpui",
  "indoc",
  "install_cli",
+ "itertools",
  "language",
  "lazy_static",
  "log",

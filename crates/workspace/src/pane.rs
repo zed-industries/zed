@@ -30,7 +30,17 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
+use std::{
+    any::Any,
+    cell::RefCell,
+    cmp, mem,
+    path::Path,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use theme::Theme;
 use util::ResultExt;
 
@@ -159,6 +169,8 @@ pub struct ItemNavHistory {
     item: Rc<dyn WeakItemHandle>,
 }
 
+pub struct PaneNavHistory(Rc<RefCell<NavHistory>>);
+
 struct NavHistory {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
@@ -166,6 +178,7 @@ struct NavHistory {
     closed_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
     pane: WeakViewHandle<Pane>,
+    next_timestamp: Arc<AtomicUsize>,
 }
 
 #[derive(Copy, Clone)]
@@ -187,6 +200,7 @@ impl Default for NavigationMode {
 pub struct NavigationEntry {
     pub item: Rc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any>>,
+    pub timestamp: usize,
 }
 
 struct DraggedItem {
@@ -226,6 +240,7 @@ impl Pane {
         workspace: WeakViewHandle<Workspace>,
         docked: Option<DockAnchor>,
         background_actions: BackgroundActions,
+        next_timestamp: Arc<AtomicUsize>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let pane_view_id = cx.view_id();
@@ -249,6 +264,7 @@ impl Pane {
                 closed_stack: Default::default(),
                 paths_by_item: Default::default(),
                 pane: handle.clone(),
+                next_timestamp,
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             tab_bar_context_menu: TabBarContextMenu {
@@ -290,6 +306,10 @@ impl Pane {
             history: self.nav_history.clone(),
             item: Rc::new(item.downgrade()),
         }
+    }
+
+    pub fn nav_history(&self) -> PaneNavHistory {
+        PaneNavHistory(self.nav_history.clone())
     }
 
     pub fn go_back(
@@ -1942,6 +1962,7 @@ impl NavHistory {
                 self.backward_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
                 self.forward_stack.clear();
             }
@@ -1952,6 +1973,7 @@ impl NavHistory {
                 self.forward_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
             NavigationMode::GoingForward => {
@@ -1961,6 +1983,7 @@ impl NavHistory {
                 self.backward_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
             NavigationMode::ClosingItem => {
@@ -1970,6 +1993,7 @@ impl NavHistory {
                 self.closed_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
         }
@@ -1982,6 +2006,31 @@ impl NavHistory {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+}
+
+impl PaneNavHistory {
+    pub fn for_each_entry(
+        &self,
+        cx: &AppContext,
+        mut f: impl FnMut(&NavigationEntry, ProjectPath),
+    ) {
+        let borrowed_history = self.0.borrow();
+        borrowed_history
+            .forward_stack
+            .iter()
+            .chain(borrowed_history.backward_stack.iter())
+            .chain(borrowed_history.closed_stack.iter())
+            .for_each(|entry| {
+                if let Some(path) = borrowed_history.paths_by_item.get(&entry.item.id()) {
+                    f(entry, path.clone());
+                } else if let Some(item) = entry.item.upgrade(cx) {
+                    let path = item.project_path(cx);
+                    if let Some(path) = path {
+                        f(entry, path);
+                    }
+                }
+            })
     }
 }
 

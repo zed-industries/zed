@@ -47,6 +47,7 @@ use gpui::{
     WindowContext,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
+use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 use std::{
     any::TypeId,
@@ -55,7 +56,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     str,
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
     time::Duration,
 };
 
@@ -481,6 +482,7 @@ pub struct Workspace {
     _window_subscriptions: [Subscription; 3],
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
+    pane_history_timestamp: Arc<AtomicUsize>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -542,15 +544,24 @@ impl Workspace {
         .detach();
 
         let weak_handle = cx.weak_handle();
+        let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
-        let center_pane = cx
-            .add_view(|cx| Pane::new(weak_handle.clone(), None, app_state.background_actions, cx));
+        let center_pane = cx.add_view(|cx| {
+            Pane::new(
+                weak_handle.clone(),
+                None,
+                app_state.background_actions,
+                pane_history_timestamp.clone(),
+                cx,
+            )
+        });
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
         let dock = Dock::new(
             app_state.dock_default_item_factory,
             app_state.background_actions,
+            pane_history_timestamp.clone(),
             cx,
         );
         let dock_pane = dock.pane().clone();
@@ -665,6 +676,7 @@ impl Workspace {
             _apply_leader_updates,
             leader_updates_tx,
             _window_subscriptions: subscriptions,
+            pane_history_timestamp,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
@@ -823,6 +835,39 @@ impl Workspace {
 
     pub fn project(&self) -> &ModelHandle<Project> {
         &self.project
+    }
+
+    pub fn recent_navigation_history(
+        &self,
+        limit: Option<usize>,
+        cx: &AppContext,
+    ) -> Vec<ProjectPath> {
+        let mut history: HashMap<ProjectPath, usize> = HashMap::default();
+        for pane in &self.panes {
+            let pane = pane.read(cx);
+            pane.nav_history()
+                .for_each_entry(cx, |entry, project_path| {
+                    let timestamp = entry.timestamp;
+                    match history.entry(project_path) {
+                        hash_map::Entry::Occupied(mut entry) => {
+                            if &timestamp > entry.get() {
+                                entry.insert(timestamp);
+                            }
+                        }
+                        hash_map::Entry::Vacant(entry) => {
+                            entry.insert(timestamp);
+                        }
+                    }
+                });
+        }
+
+        history
+            .into_iter()
+            .sorted_by_key(|(_, timestamp)| *timestamp)
+            .map(|(project_path, _)| project_path)
+            .rev()
+            .take(limit.unwrap_or(usize::MAX))
+            .collect()
     }
 
     pub fn client(&self) -> &Client {
@@ -1386,6 +1431,7 @@ impl Workspace {
                 self.weak_handle(),
                 None,
                 self.app_state.background_actions,
+                self.pane_history_timestamp.clone(),
                 cx,
             )
         });
