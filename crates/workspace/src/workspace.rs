@@ -537,6 +537,12 @@ impl Workspace {
                     cx.remove_window();
                 }
 
+                project::Event::DeletedEntry(entry_id) => {
+                    for pane in this.panes.iter() {
+                        pane.update(cx, |pane, cx| pane.delete_item(*entry_id, cx));
+                    }
+                }
+
                 _ => {}
             }
             cx.notify()

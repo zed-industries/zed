@@ -1305,6 +1305,25 @@ impl Pane {
         &self.toolbar
     }
 
+    pub fn delete_item(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Option<()> {
+        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some((i, item.id()))
+            } else {
+                None
+            }
+        })?;
+
+        self.remove_item(item_index_to_delete, false, cx);
+        self.nav_history.borrow_mut().remove_item(item_id);
+
+        Some(())
+    }
+
     fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
         let active_item = self
             .items
@@ -2006,6 +2025,15 @@ impl NavHistory {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+
+    fn remove_item(&mut self, item_id: usize) {
+        self.paths_by_item.remove(&item_id);
+        self.backward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        self.forward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        self.closed_stack.retain(|entry| entry.item.id() != item_id);
     }
 }
 
