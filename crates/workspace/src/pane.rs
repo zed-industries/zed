@@ -711,10 +711,7 @@ impl Pane {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
 
-        if pane.items.is_empty() {
-            return None;
-        }
-        let active_item_id = pane.items[pane.active_item_index].id();
+        let active_item_id = pane.items.get(pane.active_item_index)?.id();
 
         let task = Self::close_item_by_id(workspace, pane_handle, active_item_id, cx);
 
@@ -742,7 +739,8 @@ impl Pane {
     ) -> Option<Task<Result<()>>> {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
+
+        let active_item_id = pane.items.get(pane.active_item_index)?.id();
 
         let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
             item_id != active_item_id
@@ -785,7 +783,7 @@ impl Pane {
     ) -> Option<Task<Result<()>>> {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
+        let active_item_id = pane.items.get(pane.active_item_index)?.id();
 
         let task = Self::close_items_to_the_left_by_id(workspace, pane_handle, active_item_id, cx);
 
@@ -825,7 +823,7 @@ impl Pane {
     ) -> Option<Task<Result<()>>> {
         let pane_handle = workspace.active_pane().clone();
         let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
+        let active_item_id = pane.items.get(pane.active_item_index)?.id();
 
         let task = Self::close_items_to_the_right_by_id(workspace, pane_handle, active_item_id, cx);
 
