@@ -226,7 +226,7 @@ pub enum LanguageServerState {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
-        watched_paths: LspGlobSet,
+        watched_paths: HashMap<WorktreeId, LspGlobSet>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
 }
@@ -2869,7 +2869,25 @@ impl Project {
         {
             watched_paths.clear();
             for watcher in params.watchers {
-                watched_paths.add_pattern(&watcher.glob_pattern).log_err();
+                for worktree in &self.worktrees {
+                    if let Some(worktree) = worktree.upgrade(cx) {
+                        let worktree = worktree.read(cx);
+                        if let Some(abs_path) = worktree.abs_path().to_str() {
+                            if let Some(suffix) = watcher
+                                .glob_pattern
+                                .strip_prefix(abs_path)
+                                .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
+                            {
+                                watched_paths
+                                    .entry(worktree.id())
+                                    .or_default()
+                                    .add_pattern(suffix)
+                                    .log_err();
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             cx.notify();
         }
@@ -4708,24 +4726,34 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree_handle.read(cx).id();
+        let mut language_server_ids = self
+            .language_server_ids
+            .iter()
+            .filter_map(|((server_worktree_id, _), server_id)| {
+                (*server_worktree_id == worktree_id).then_some(*server_id)
+            })
+            .collect::<Vec<_>>();
+        language_server_ids.sort();
+        language_server_ids.dedup();
+
         let abs_path = worktree_handle.read(cx).abs_path();
-        for ((server_worktree_id, _), server_id) in &self.language_server_ids {
-            if *server_worktree_id == worktree_id {
-                if let Some(server) = self.language_servers.get(server_id) {
-                    if let LanguageServerState::Running {
-                        server,
-                        watched_paths,
-                        ..
-                    } = server
-                    {
+        for server_id in &language_server_ids {
+            if let Some(server) = self.language_servers.get(server_id) {
+                if let LanguageServerState::Running {
+                    server,
+                    watched_paths,
+                    ..
+                } = server
+                {
+                    if let Some(watched_paths) = watched_paths.get(&worktree_id) {
                         let params = lsp::DidChangeWatchedFilesParams {
                             changes: changes
                                 .iter()
                                 .filter_map(|((path, _), change)| {
-                                    let path = abs_path.join(path);
                                     if watched_paths.matches(&path) {
                                         Some(lsp::FileEvent {
-                                            uri: lsp::Url::from_file_path(path).unwrap(),
+                                            uri: lsp::Url::from_file_path(abs_path.join(path))
+                                                .unwrap(),
                                             typ: match change {
                                                 PathChange::Added => lsp::FileChangeType::CREATED,
                                                 PathChange::Removed => lsp::FileChangeType::DELETED,

@@ -73,6 +73,14 @@ impl LspGlobSet {
     }
 }
 
+impl std::fmt::Debug for LspGlobSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_set()
+            .entries(self.patterns.iter().map(|p| p.as_str()))
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
