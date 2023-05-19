@@ -125,7 +125,7 @@ impl Snapshot {
         let mut max_len = 0;
         let mut current_candidate = None;
         for (work_directory, repo) in (&self.repository_entries).iter() {
-            if repo.contains(self, path) {
+            if path.starts_with(&work_directory.0) {
                 if work_directory.0.as_os_str().len() >= max_len {
                     current_candidate = Some(repo);
                     max_len = work_directory.0.as_os_str().len();
@@ -167,10 +167,6 @@ impl RepositoryEntry {
         snapshot
             .entry_for_id(self.work_directory_id())
             .map(|entry| RepositoryWorkDirectory(entry.path.clone()))
-    }
-
-    pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
-        self.work_directory.contains(snapshot, path)
     }
 
     pub fn status_for_file(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
@@ -305,14 +301,6 @@ impl AsRef<Path> for RepositoryWorkDirectory {
 pub struct WorkDirectoryEntry(ProjectEntryId);
 
 impl WorkDirectoryEntry {
-    // Note that these paths should be relative to the worktree root.
-    pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
-        snapshot
-            .entry_for_id(self.0)
-            .map(|entry| path.starts_with(&entry.path))
-            .unwrap_or(false)
-    }
-
     pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Option<RepoPath> {
         worktree.entry_for_id(self.0).and_then(|entry| {
             path.strip_prefix(&entry.path)
