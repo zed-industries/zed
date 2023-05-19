@@ -328,10 +328,9 @@ async fn configure_disabled_globs(
                 cx.global::<Settings>()
                     .copilot
                     .disabled_globs
-                    .clone()
                     .iter()
                     .map(|glob| glob.as_str().to_string())
-                    .collect::<Vec<_>>()
+                    .collect()
             });
 
             if let Some(path_to_disable) = &path_to_disable {

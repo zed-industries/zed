@@ -2,12 +2,14 @@ use crate::{
     SearchOption, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleWholeWord,
 };
+use anyhow::Result;
 use collections::HashMap;
 use editor::{
     items::active_match_index, scroll::autoscroll::Autoscroll, Anchor, Editor, MultiBuffer,
     SelectAll, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
+use globset::{Glob, GlobMatcher};
 use gpui::{
     actions,
     elements::*,
@@ -572,46 +574,30 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut ViewContext<Self>) -> Option<SearchQuery> {
         let text = self.query_editor.read(cx).text(cx);
-        let included_files = match self
-            .included_files_editor
-            .read(cx)
-            .text(cx)
-            .split(',')
-            .map(str::trim)
-            .filter(|glob_str| !glob_str.is_empty())
-            .map(|glob_str| glob::Pattern::new(glob_str))
-            .collect::<Result<_, _>>()
-        {
-            Ok(included_files) => {
-                self.panels_with_errors.remove(&InputPanel::Include);
-                included_files
-            }
-            Err(_e) => {
-                self.panels_with_errors.insert(InputPanel::Include);
-                cx.notify();
-                return None;
-            }
-        };
-        let excluded_files = match self
-            .excluded_files_editor
-            .read(cx)
-            .text(cx)
-            .split(',')
-            .map(str::trim)
-            .filter(|glob_str| !glob_str.is_empty())
-            .map(|glob_str| glob::Pattern::new(glob_str))
-            .collect::<Result<_, _>>()
-        {
-            Ok(excluded_files) => {
-                self.panels_with_errors.remove(&InputPanel::Exclude);
-                excluded_files
-            }
-            Err(_e) => {
-                self.panels_with_errors.insert(InputPanel::Exclude);
-                cx.notify();
-                return None;
-            }
-        };
+        let included_files =
+            match Self::load_glob_set(&self.included_files_editor.read(cx).text(cx)) {
+                Ok(included_files) => {
+                    self.panels_with_errors.remove(&InputPanel::Include);
+                    included_files
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Include);
+                    cx.notify();
+                    return None;
+                }
+            };
+        let excluded_files =
+            match Self::load_glob_set(&self.excluded_files_editor.read(cx).text(cx)) {
+                Ok(excluded_files) => {
+                    self.panels_with_errors.remove(&InputPanel::Exclude);
+                    excluded_files
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Exclude);
+                    cx.notify();
+                    return None;
+                }
+            };
         if self.regex {
             match SearchQuery::regex(
                 text,
@@ -639,6 +625,14 @@ impl ProjectSearchView {
                 excluded_files,
             ))
         }
+    }
+
+    fn load_glob_set(text: &str) -> Result<Vec<GlobMatcher>> {
+        text.split(',')
+            .map(str::trim)
+            .filter(|glob_str| !glob_str.is_empty())
+            .map(|glob_str| anyhow::Ok(Glob::new(glob_str)?.compile_matcher()))
+            .collect()
     }
 
     fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
