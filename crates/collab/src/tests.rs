@@ -194,7 +194,7 @@ impl TestServer {
             themes: ThemeRegistry::new((), cx.font_cache()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _| unimplemented!(),
+            initialize_workspace: |_, _, _, _| unimplemented!(),
             background_actions: || &[],
         });
 

@@ -35,7 +35,10 @@ use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 pub use workspace;
-use workspace::{create_and_open_local_file, open_new, AppState, NewFile, NewWindow, Workspace};
+use workspace::{
+    create_and_open_local_file, dock::PanelHandle, open_new, AppState, NewFile, NewWindow,
+    Workspace,
+};
 
 #[derive(Deserialize, Clone, PartialEq)]
 pub struct OpenBrowser {
@@ -279,6 +282,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
 
 pub fn initialize_workspace(
     workspace: &mut Workspace,
+    was_deserialized: bool,
     app_state: &Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) {
@@ -316,7 +320,21 @@ pub fn initialize_workspace(
     workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
     let project_panel = ProjectPanel::new(workspace, cx);
+    let project_panel_position = project_panel.position(cx);
     workspace.add_panel(project_panel, cx);
+    if !was_deserialized
+        && workspace
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .any(|tree| {
+                tree.read(cx)
+                    .root_entry()
+                    .map_or(false, |entry| entry.is_dir())
+            })
+    {
+        workspace.toggle_dock(project_panel_position, cx);
+    }
 
     let terminal_panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
     workspace.add_panel(terminal_panel, cx);

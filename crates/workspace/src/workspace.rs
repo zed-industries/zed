@@ -361,7 +361,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
-    pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
+    pub initialize_workspace: fn(&mut Workspace, bool, &Arc<AppState>, &mut ViewContext<Workspace>),
     pub background_actions: BackgroundActions,
 }
 
@@ -383,7 +383,7 @@ impl AppState {
             fs,
             languages,
             user_store,
-            initialize_workspace: |_, _, _| {},
+            initialize_workspace: |_, _, _, _| {},
             build_window_options: |_, _, _| Default::default(),
             background_actions: || &[],
         })
@@ -733,6 +733,7 @@ impl Workspace {
             let build_workspace =
                 |cx: &mut ViewContext<Workspace>,
                  serialized_workspace: Option<SerializedWorkspace>| {
+                    let was_deserialized = serialized_workspace.is_some();
                     let mut workspace = Workspace::new(
                         serialized_workspace,
                         workspace_id,
@@ -740,7 +741,12 @@ impl Workspace {
                         app_state.clone(),
                         cx,
                     );
-                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                    (app_state.initialize_workspace)(
+                        &mut workspace,
+                        was_deserialized,
+                        &app_state,
+                        cx,
+                    );
                     workspace
                 };
 
@@ -2734,7 +2740,7 @@ impl Workspace {
             user_store: project.read(cx).user_store(),
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _| {},
+            initialize_workspace: |_, _, _, _| {},
             background_actions: || &[],
         });
         Self::new(None, 0, project, app_state, cx)
@@ -2998,28 +3004,11 @@ pub fn open_paths(
                     .await,
             ))
         } else {
-            let contains_directory =
-                futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
-                    .await
-                    .contains(&false);
-
-            cx.update(|cx| {
-                let task =
-                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx);
-
-                cx.spawn(|mut cx| async move {
-                    let (workspace, items) = task.await;
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        if contains_directory {
-                            workspace.toggle_dock(DockPosition::Left, cx);
-                        }
-                    })?;
-
-                    anyhow::Ok((workspace, items))
+            Ok(cx
+                .update(|cx| {
+                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx)
                 })
-            })
-            .await
+                .await)
         }
     })
 }
@@ -3109,9 +3098,8 @@ pub fn join_remote_project(
             let (_, workspace) = cx.add_window(
                 (app_state.build_window_options)(None, None, cx.platform().as_ref()),
                 |cx| {
-                    let mut workspace =
-                        Workspace::new(Default::default(), 0, project, app_state.clone(), cx);
-                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
+                    let mut workspace = Workspace::new(None, 0, project, app_state.clone(), cx);
+                    (app_state.initialize_workspace)(&mut workspace, false, &app_state, cx);
                     workspace
                 },
             );
