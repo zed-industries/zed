@@ -652,7 +652,7 @@ impl EditorElement {
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
-                    let row = *display_row_range.start();
+                    let row = display_row_range.start;
 
                     let offset = line_height / 2.;
                     let start_y = row as f32 * line_height - offset - scroll_top;
@@ -674,11 +674,11 @@ impl EditorElement {
                 }
             };
 
-            let start_row = *display_row_range.start();
-            let end_row = *display_row_range.end();
+            let start_row = display_row_range.start;
+            let end_row = display_row_range.end;
 
             let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = end_row as f32 * line_height - scroll_top + line_height;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
             let width = diff_style.width_em * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
