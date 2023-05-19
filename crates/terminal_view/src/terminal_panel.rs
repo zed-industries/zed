@@ -1,14 +1,19 @@
 use crate::TerminalView;
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, anyhow, elements::*, AppContext, Entity, Subscription, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
+    actions, anyhow::Result, elements::*, serde_json, AppContext, AsyncAppContext, Entity,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
+use serde::{Deserialize, Serialize};
 use settings::{settings_file::SettingsFile, Settings, TerminalDockPosition, WorkingDirectory};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
+    item::Item,
     pane, DraggedItem, Pane, Workspace,
 };
+
+const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
 
 actions!(terminal_panel, [ToggleFocus]);
 
@@ -27,6 +32,7 @@ pub enum Event {
 pub struct TerminalPanel {
     pane: ViewHandle<Pane>,
     workspace: WeakViewHandle<Workspace>,
+    pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -86,8 +92,77 @@ impl TerminalPanel {
         Self {
             pane,
             workspace: workspace.weak_handle(),
+            pending_serialization: Task::ready(None),
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn load(
+        workspace: WeakViewHandle<Workspace>,
+        cx: AsyncAppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let serialized_panel = if let Some(panel) = cx
+                .background()
+                .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
+                .await?
+            {
+                Some(serde_json::from_str::<SerializedTerminalPanel>(&panel)?)
+            } else {
+                None
+            };
+            let (panel, pane, items) = workspace.update(&mut cx, |workspace, cx| {
+                let panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
+                let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
+                    panel.update(cx, |panel, cx| {
+                        panel.pane.update(cx, |_, cx| {
+                            serialized_panel
+                                .items
+                                .iter()
+                                .map(|item_id| {
+                                    TerminalView::deserialize(
+                                        workspace.project().clone(),
+                                        workspace.weak_handle(),
+                                        workspace.database_id(),
+                                        *item_id,
+                                        cx,
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                } else {
+                    Default::default()
+                };
+                let pane = panel.read(cx).pane.clone();
+                (panel, pane, items)
+            })?;
+
+            let items = futures::future::join_all(items).await;
+            workspace.update(&mut cx, |workspace, cx| {
+                let active_item_id = serialized_panel
+                    .as_ref()
+                    .and_then(|panel| panel.active_item_id);
+                let mut active_ix = None;
+                for item in items {
+                    if let Some(item) = item.log_err() {
+                        let item_id = item.id();
+                        Pane::add_item(workspace, &pane, Box::new(item), false, false, None, cx);
+                        if Some(item_id) == active_item_id {
+                            active_ix = Some(pane.read(cx).items_len() - 1);
+                        }
+                    }
+                }
+
+                if let Some(active_ix) = active_ix {
+                    pane.update(cx, |pane, cx| {
+                        pane.activate_item(active_ix, false, false, cx)
+                    });
+                }
+            })?;
+
+            Ok(panel)
+        })
     }
 
     fn handle_pane_event(
@@ -97,6 +172,8 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            pane::Event::ActivateItem { .. } => self.serialize(cx),
+            pane::Event::RemoveItem { .. } => self.serialize(cx),
             pane::Event::Remove => cx.emit(Event::Close),
             pane::Event::ZoomIn => cx.emit(Event::ZoomIn),
             pane::Event::ZoomOut => cx.emit(Event::ZoomOut),
@@ -131,9 +208,35 @@ impl TerminalPanel {
                     Pane::add_item(workspace, &pane, terminal, true, true, None, cx);
                 }
             })?;
+            this.update(&mut cx, |this, cx| this.serialize(cx))?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let items = self
+            .pane
+            .read(cx)
+            .items()
+            .map(|item| item.id())
+            .collect::<Vec<_>>();
+        let active_item_id = self.pane.read(cx).active_item().map(|item| item.id());
+        self.pending_serialization = cx.background().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        TERMINAL_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedTerminalPanel {
+                            items,
+                            active_item_id,
+                        })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 }
 
@@ -254,4 +357,10 @@ impl Panel for TerminalPanel {
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializedTerminalPanel {
+    items: Vec<usize>,
+    active_item_id: Option<usize>,
 }

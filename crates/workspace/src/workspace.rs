@@ -361,7 +361,8 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
-    pub initialize_workspace: fn(&mut Workspace, bool, &Arc<AppState>, &mut ViewContext<Workspace>),
+    pub initialize_workspace:
+        fn(WeakViewHandle<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<Result<()>>,
     pub background_actions: BackgroundActions,
 }
 
@@ -383,7 +384,7 @@ impl AppState {
             fs,
             languages,
             user_store,
-            initialize_workspace: |_, _, _, _| {},
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
             background_actions: || &[],
         })
@@ -730,31 +731,19 @@ impl Workspace {
                         ))
                     });
 
-            let build_workspace =
-                |cx: &mut ViewContext<Workspace>,
-                 serialized_workspace: Option<SerializedWorkspace>| {
-                    let was_deserialized = serialized_workspace.is_some();
-                    let mut workspace = Workspace::new(
-                        serialized_workspace,
-                        workspace_id,
-                        project_handle.clone(),
-                        app_state.clone(),
-                        cx,
-                    );
-                    (app_state.initialize_workspace)(
-                        &mut workspace,
-                        was_deserialized,
-                        &app_state,
-                        cx,
-                    );
-                    workspace
-                };
+            let was_deserialized = serialized_workspace.is_some();
 
             let workspace = requesting_window_id
                 .and_then(|window_id| {
                     cx.update(|cx| {
                         cx.replace_root_view(window_id, |cx| {
-                            build_workspace(cx, serialized_workspace.take())
+                            Workspace::new(
+                                serialized_workspace.take(),
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
                         })
                     })
                 })
@@ -794,10 +783,27 @@ impl Workspace {
                     // Use the serialized workspace to construct the new window
                     cx.add_window(
                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                        |cx| build_workspace(cx, serialized_workspace),
+                        |cx| {
+                            Workspace::new(
+                                serialized_workspace,
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        },
                     )
                     .1
                 });
+
+            (app_state.initialize_workspace)(
+                workspace.downgrade(),
+                was_deserialized,
+                app_state.clone(),
+                cx.clone(),
+            )
+            .await
+            .log_err();
 
             let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
@@ -2740,7 +2746,7 @@ impl Workspace {
             user_store: project.read(cx).user_store(),
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _, _| {},
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             background_actions: || &[],
         });
         Self::new(None, 0, project, app_state, cx)
@@ -3097,12 +3103,17 @@ pub fn join_remote_project(
 
             let (_, workspace) = cx.add_window(
                 (app_state.build_window_options)(None, None, cx.platform().as_ref()),
-                |cx| {
-                    let mut workspace = Workspace::new(None, 0, project, app_state.clone(), cx);
-                    (app_state.initialize_workspace)(&mut workspace, false, &app_state, cx);
-                    workspace
-                },
+                |cx| Workspace::new(None, 0, project, app_state.clone(), cx),
             );
+            (app_state.initialize_workspace)(
+                workspace.downgrade(),
+                false,
+                app_state.clone(),
+                cx.clone(),
+            )
+            .await
+            .log_err();
+
             workspace.downgrade()
         };
 

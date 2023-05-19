@@ -18,10 +18,11 @@ use feedback::{
 use futures::StreamExt;
 use gpui::{
     actions,
+    anyhow::{self, Result},
     geometry::vector::vec2f,
     impl_actions,
     platform::{Platform, PromptLevel, TitlebarOptions, WindowBounds, WindowKind, WindowOptions},
-    AppContext, ViewContext,
+    AppContext, AsyncAppContext, Task, ViewContext, WeakViewHandle,
 };
 pub use lsp;
 pub use project;
@@ -281,93 +282,105 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
 }
 
 pub fn initialize_workspace(
-    workspace: &mut Workspace,
+    workspace_handle: WeakViewHandle<Workspace>,
     was_deserialized: bool,
-    app_state: &Arc<AppState>,
-    cx: &mut ViewContext<Workspace>,
-) {
-    let workspace_handle = cx.handle();
-    cx.subscribe(&workspace_handle, {
-        move |workspace, _, event, cx| {
-            if let workspace::Event::PaneAdded(pane) = event {
-                pane.update(cx, |pane, cx| {
-                    pane.toolbar().update(cx, |toolbar, cx| {
-                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
-                        toolbar.add_item(breadcrumbs, cx);
-                        let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                        toolbar.add_item(buffer_search_bar, cx);
-                        let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                        toolbar.add_item(project_search_bar, cx);
-                        let submit_feedback_button = cx.add_view(|_| SubmitFeedbackButton::new());
-                        toolbar.add_item(submit_feedback_button, cx);
-                        let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
-                        toolbar.add_item(feedback_info_text, cx);
-                        let lsp_log_item = cx.add_view(|_| {
-                            lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
+    app_state: Arc<AppState>,
+    cx: AsyncAppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|mut cx| async move {
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            let workspace_handle = cx.handle();
+            cx.subscribe(&workspace_handle, {
+                move |workspace, _, event, cx| {
+                    if let workspace::Event::PaneAdded(pane) = event {
+                        pane.update(cx, |pane, cx| {
+                            pane.toolbar().update(cx, |toolbar, cx| {
+                                let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
+                                toolbar.add_item(breadcrumbs, cx);
+                                let buffer_search_bar = cx.add_view(BufferSearchBar::new);
+                                toolbar.add_item(buffer_search_bar, cx);
+                                let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                                toolbar.add_item(project_search_bar, cx);
+                                let submit_feedback_button =
+                                    cx.add_view(|_| SubmitFeedbackButton::new());
+                                toolbar.add_item(submit_feedback_button, cx);
+                                let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
+                                toolbar.add_item(feedback_info_text, cx);
+                                let lsp_log_item = cx.add_view(|_| {
+                                    lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
+                                });
+                                toolbar.add_item(lsp_log_item, cx);
+                            })
                         });
-                        toolbar.add_item(lsp_log_item, cx);
-                    })
-                });
-            }
-        }
-    })
-    .detach();
-
-    cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
-
-    let collab_titlebar_item =
-        cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
-    workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
-
-    let project_panel = ProjectPanel::new(workspace, cx);
-    let project_panel_position = project_panel.position(cx);
-    workspace.add_panel(project_panel, cx);
-    if !was_deserialized
-        && workspace
-            .project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .any(|tree| {
-                tree.read(cx)
-                    .root_entry()
-                    .map_or(false, |entry| entry.is_dir())
+                    }
+                }
             })
-    {
-        workspace.toggle_dock(project_panel_position, cx);
-    }
+            .detach();
 
-    let terminal_panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
-    workspace.add_panel(terminal_panel, cx);
+            cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
 
-    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
-    let diagnostic_summary =
-        cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-    let activity_indicator =
-        activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
-    let active_buffer_language =
-        cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
-    let feedback_button =
-        cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
-    let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    workspace.status_bar().update(cx, |status_bar, cx| {
-        status_bar.add_left_item(diagnostic_summary, cx);
-        status_bar.add_left_item(activity_indicator, cx);
-        status_bar.add_right_item(feedback_button, cx);
-        status_bar.add_right_item(copilot, cx);
-        status_bar.add_right_item(active_buffer_language, cx);
-        status_bar.add_right_item(cursor_position, cx);
-    });
+            let collab_titlebar_item =
+                cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
+            workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
 
-    auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+            let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(cx));
+            let diagnostic_summary =
+                cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            let activity_indicator = activity_indicator::ActivityIndicator::new(
+                workspace,
+                app_state.languages.clone(),
+                cx,
+            );
+            let active_buffer_language =
+                cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            let feedback_button = cx.add_view(|_| {
+                feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
+            });
+            let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_left_item(diagnostic_summary, cx);
+                status_bar.add_left_item(activity_indicator, cx);
+                status_bar.add_right_item(feedback_button, cx);
+                status_bar.add_right_item(copilot, cx);
+                status_bar.add_right_item(active_buffer_language, cx);
+                status_bar.add_right_item(cursor_position, cx);
+            });
 
-    vim::observe_keystrokes(cx);
+            auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
 
-    cx.on_window_should_close(|workspace, cx| {
-        if let Some(task) = workspace.close(&Default::default(), cx) {
-            task.detach_and_log_err(cx);
-        }
-        false
-    });
+            vim::observe_keystrokes(cx);
+
+            cx.on_window_should_close(|workspace, cx| {
+                if let Some(task) = workspace.close(&Default::default(), cx) {
+                    task.detach_and_log_err(cx);
+                }
+                false
+            });
+
+            let project_panel = ProjectPanel::new(workspace, cx);
+            let project_panel_position = project_panel.position(cx);
+            workspace.add_panel(project_panel, cx);
+            if !was_deserialized
+                && workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .any(|tree| {
+                        tree.read(cx)
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_dir())
+                    })
+            {
+                workspace.toggle_dock(project_panel_position, cx);
+            }
+        })?;
+
+        let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone()).await?;
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            workspace.add_panel(terminal_panel, cx)
+        })?;
+        Ok(())
+    })
 }
 
 pub fn build_window_options(
