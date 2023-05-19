@@ -1643,8 +1643,38 @@ impl Snapshot {
         self.traverse_from_offset(true, include_ignored, 0)
     }
 
-    pub fn repositories(&self) -> impl Iterator<Item = &RepositoryEntry> {
-        self.repository_entries.values()
+    pub fn repositories(&self) -> impl Iterator<Item = (&Arc<Path>, &RepositoryEntry)> {
+        self.repository_entries
+            .iter()
+            .map(|(path, entry)| (&path.0, entry))
+    }
+
+    /// Given an ordered iterator of entries, returns an iterator of those entries,
+    /// along with their containing git repository.
+    pub fn entries_with_repos<'a>(
+        &'a self,
+        entries: impl 'a + Iterator<Item = &'a Entry>,
+    ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
+        let mut containing_repos = Vec::<(&Arc<Path>, &RepositoryEntry)>::new();
+        let mut repositories = self.repositories().peekable();
+        entries.map(move |entry| {
+            while let Some((repo_path, _)) = containing_repos.last() {
+                if !entry.path.starts_with(repo_path) {
+                    containing_repos.pop();
+                } else {
+                    break;
+                }
+            }
+            while let Some((repo_path, _)) = repositories.peek() {
+                if entry.path.starts_with(repo_path) {
+                    containing_repos.push(repositories.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            let repo = containing_repos.last().map(|(_, repo)| *repo);
+            (entry, repo)
+        })
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
@@ -4008,6 +4038,7 @@ mod tests {
     #[gpui::test]
     async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         let root = temp_tree(json!({
+            "c.txt": "",
             "dir1": {
                 ".git": {},
                 "deps": {
@@ -4022,7 +4053,6 @@ mod tests {
                     "b.txt": ""
                 }
             },
-            "c.txt": "",
         }));
 
         let http_client = FakeHttpClient::with_404_response();
@@ -4061,6 +4091,33 @@ mod tests {
                     .work_directory(tree)
                     .map(|directory| directory.as_ref().to_owned()),
                 Some(Path::new("dir1/deps/dep1").to_owned())
+            );
+
+            let entries = tree.files(false, 0);
+
+            let paths_with_repos = tree
+                .entries_with_repos(entries)
+                .map(|(entry, repo)| {
+                    (
+                        entry.path.as_ref(),
+                        repo.and_then(|repo| {
+                            repo.work_directory(&tree)
+                                .map(|work_directory| work_directory.0.to_path_buf())
+                        }),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                paths_with_repos,
+                &[
+                    (Path::new("c.txt"), None),
+                    (
+                        Path::new("dir1/deps/dep1/src/a.txt"),
+                        Some(Path::new("dir1/deps/dep1").into())
+                    ),
+                    (Path::new("dir1/src/b.txt"), Some(Path::new("dir1").into())),
+                ]
             );
         });
 
