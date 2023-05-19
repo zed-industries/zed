@@ -1480,7 +1480,7 @@ impl Workspace {
 
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
-            if let Some(panel_index) = dock.read(cx).panel_index::<T>() {
+            if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let active_item = dock.update(cx, |dock, cx| {
                     dock.set_open(true, cx);
                     dock.activate_panel(panel_index, cx);
@@ -2605,7 +2605,7 @@ impl Workspace {
                 )
             });
 
-            dbg!(DockStructure {
+            DockStructure {
                 left: DockData {
                     visible: left_visible,
                     active_panel: left_active_panel,
@@ -2618,7 +2618,7 @@ impl Workspace {
                     visible: bottom_visible,
                     active_panel: bottom_active_panel,
                 },
-            })
+            }
         }
 
         if let Some(location) = self.location(cx) {
@@ -2691,15 +2691,28 @@ impl Workspace {
 
                 let docks = serialized_workspace.docks;
                 workspace.left_dock.update(cx, |dock, cx| {
-                    dbg!(docks.left.visible);
                     dock.set_open(docks.left.visible, cx);
-                    dbg!(dock.is_open());
+                    if let Some(active_panel) = docks.left.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
+                        }
+                    }
                 });
                 workspace.right_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.right.visible, cx);
+                    if let Some(active_panel) = docks.right.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
+                        }
+                    }
                 });
                 workspace.bottom_dock.update(cx, |dock, cx| {
                     dock.set_open(docks.bottom.visible, cx);
+                    if let Some(active_panel) = docks.bottom.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
+                        }
+                    }
                 });
 
                 cx.notify();

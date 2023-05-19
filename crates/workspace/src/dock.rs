@@ -1,8 +1,9 @@
 use crate::{StatusItemView, Workspace};
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
-    elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle, Axis,
-    Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    elements::*, impl_actions, platform::CursorStyle, platform::MouseButton, AnyViewHandle,
+    AppContext, Axis, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use serde::Deserialize;
 use settings::Settings;
@@ -181,10 +182,17 @@ impl Dock {
             .map_or(false, |panel| panel.has_focus(cx))
     }
 
-    pub fn panel_index<T: Panel>(&self) -> Option<usize> {
+    pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
         self.panel_entries
             .iter()
             .position(|entry| entry.panel.as_any().is::<T>())
+    }
+
+    pub fn panel_index_for_ui_name(&self, ui_name: &str, cx: &AppContext) -> Option<usize> {
+        self.panel_entries.iter().position(|entry| {
+            let panel = entry.panel.as_any();
+            cx.view_ui_name(panel.window_id(), panel.id()) == Some(ui_name)
+        })
     }
 
     pub fn active_panel_index(&self) -> usize {
