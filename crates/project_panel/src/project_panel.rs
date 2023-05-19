@@ -1011,14 +1011,11 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                for entry in &visible_worktree_entries[entry_range] {
-                    let path = &entry.path;
+                for (entry, repo) in
+                    snapshot.entries_with_repos(visible_worktree_entries[entry_range].iter())
+                {
                     let status = (entry.path.parent().is_some() && !entry.is_ignored)
-                        .then(|| {
-                            snapshot
-                                .repo_for(path)
-                                .and_then(|entry| entry.status_for_path(&snapshot, path))
-                        })
+                        .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
                         .flatten();
 
                     let mut details = EntryDetails {
