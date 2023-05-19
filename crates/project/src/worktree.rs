@@ -120,25 +120,6 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
-impl Snapshot {
-    pub fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
-        let mut max_len = 0;
-        let mut current_candidate = None;
-        for (work_directory, repo) in (&self.repository_entries).iter() {
-            if path.starts_with(&work_directory.0) {
-                if work_directory.0.as_os_str().len() >= max_len {
-                    current_candidate = Some(repo);
-                    max_len = work_directory.0.as_os_str().len();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        current_candidate.map(|entry| entry.to_owned())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
@@ -900,7 +881,7 @@ impl LocalWorktree {
 
         let mut index_task = None;
 
-        if let Some(repo) = snapshot.repo_for(&path) {
+        if let Some(repo) = snapshot.repository_for_path(&path) {
             let repo_path = repo.work_directory.relativize(self, &path).unwrap();
             if let Some(repo) = self.git_repositories.get(&*repo.work_directory) {
                 let repo = repo.repo_ptr.to_owned();
@@ -1635,9 +1616,27 @@ impl Snapshot {
             .map(|(path, entry)| (&path.0, entry))
     }
 
+    /// Get the repository whose work directory contains the given path.
+    pub fn repository_for_path(&self, path: &Path) -> Option<RepositoryEntry> {
+        let mut max_len = 0;
+        let mut current_candidate = None;
+        for (work_directory, repo) in (&self.repository_entries).iter() {
+            if path.starts_with(&work_directory.0) {
+                if work_directory.0.as_os_str().len() >= max_len {
+                    current_candidate = Some(repo);
+                    max_len = work_directory.0.as_os_str().len();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        current_candidate.map(|entry| entry.to_owned())
+    }
+
     /// Given an ordered iterator of entries, returns an iterator of those entries,
     /// along with their containing git repository.
-    pub fn entries_with_repos<'a>(
+    pub fn entries_with_repositories<'a>(
         &'a self,
         entries: impl 'a + Iterator<Item = &'a Entry>,
     ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
@@ -3077,7 +3076,7 @@ impl BackgroundScanner {
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
             let scan_id = snapshot.scan_id;
-            let repo = snapshot.repo_for(&path)?;
+            let repo = snapshot.repository_for_path(&path)?;
 
             let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
 
@@ -3153,7 +3152,7 @@ impl BackgroundScanner {
                 return None;
             }
 
-            let repo = snapshot.repo_for(&path)?;
+            let repo = snapshot.repository_for_path(&path)?;
 
             let work_dir = repo.work_directory(snapshot)?;
             let work_dir_id = repo.work_directory.clone();
@@ -4064,9 +4063,9 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for("c.txt".as_ref()).is_none());
+            assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
 
-            let entry = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
+            let entry = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
             assert_eq!(
                 entry
                     .work_directory(tree)
@@ -4074,7 +4073,9 @@ mod tests {
                 Some(Path::new("dir1").to_owned())
             );
 
-            let entry = tree.repo_for("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
+            let entry = tree
+                .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
+                .unwrap();
             assert_eq!(
                 entry
                     .work_directory(tree)
@@ -4085,7 +4086,7 @@ mod tests {
             let entries = tree.files(false, 0);
 
             let paths_with_repos = tree
-                .entries_with_repos(entries)
+                .entries_with_repositories(entries)
                 .map(|(entry, repo)| {
                     (
                         entry.path.as_ref(),
@@ -4138,7 +4139,9 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
+            assert!(tree
+                .repository_for_path("dir1/src/b.txt".as_ref())
+                .is_none());
         });
     }
 
