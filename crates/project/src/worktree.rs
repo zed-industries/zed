@@ -125,7 +125,7 @@ impl Snapshot {
         let mut max_len = 0;
         let mut current_candidate = None;
         for (work_directory, repo) in (&self.repository_entries).iter() {
-            if repo.contains(self, path) {
+            if path.starts_with(&work_directory.0) {
                 if work_directory.0.as_os_str().len() >= max_len {
                     current_candidate = Some(repo);
                     max_len = work_directory.0.as_os_str().len();
