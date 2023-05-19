@@ -169,10 +169,6 @@ impl RepositoryEntry {
             .map(|entry| RepositoryWorkDirectory(entry.path.clone()))
     }
 
-    pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
-        self.work_directory.contains(snapshot, path)
-    }
-
     pub fn status_for_file(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
         self.work_directory
             .relativize(snapshot, path)
@@ -305,14 +301,6 @@ impl AsRef<Path> for RepositoryWorkDirectory {
 pub struct WorkDirectoryEntry(ProjectEntryId);
 
 impl WorkDirectoryEntry {
-    // Note that these paths should be relative to the worktree root.
-    pub(crate) fn contains(&self, snapshot: &Snapshot, path: &Path) -> bool {
-        snapshot
-            .entry_for_id(self.0)
-            .map(|entry| path.starts_with(&entry.path))
-            .unwrap_or(false)
-    }
-
     pub(crate) fn relativize(&self, worktree: &Snapshot, path: &Path) -> Option<RepoPath> {
         worktree.entry_for_id(self.0).and_then(|entry| {
             path.strip_prefix(&entry.path)
