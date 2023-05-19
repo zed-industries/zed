@@ -331,7 +331,6 @@ pub struct LocalSnapshot {
     // work_directory_id
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
-    next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
 }
 
@@ -418,7 +417,6 @@ impl Worktree {
                 ignores_by_parent_abs_path: Default::default(),
                 removed_entry_ids: Default::default(),
                 git_repositories: Default::default(),
-                next_entry_id,
                 snapshot: Snapshot {
                     id: WorktreeId::from_usize(cx.model_id()),
                     abs_path: abs_path.clone(),
@@ -437,7 +435,7 @@ impl Worktree {
                     Entry::new(
                         Arc::from(Path::new("")),
                         &metadata,
-                        &snapshot.next_entry_id,
+                        &next_entry_id,
                         snapshot.root_char_bag,
                     ),
                     fs.as_ref(),
@@ -481,6 +479,7 @@ impl Worktree {
                     let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
                     BackgroundScanner::new(
                         snapshot,
+                        next_entry_id,
                         fs,
                         scan_states_tx,
                         background,
@@ -1229,7 +1228,6 @@ impl LocalWorktree {
                     let mut prev_snapshot = LocalSnapshot {
                         ignores_by_parent_abs_path: Default::default(),
                         removed_entry_ids: Default::default(),
-                        next_entry_id: Default::default(),
                         git_repositories: Default::default(),
                         snapshot: Snapshot {
                             id: WorktreeId(worktree_id as usize),
@@ -2571,6 +2569,7 @@ struct BackgroundScanner {
     executor: Arc<executor::Background>,
     refresh_requests_rx: channel::Receiver<(Vec<PathBuf>, barrier::Sender)>,
     prev_state: Mutex<BackgroundScannerState>,
+    next_entry_id: Arc<AtomicUsize>,
     finished_initial_scan: bool,
 }
 
@@ -2582,6 +2581,7 @@ struct BackgroundScannerState {
 impl BackgroundScanner {
     fn new(
         snapshot: LocalSnapshot,
+        next_entry_id: Arc<AtomicUsize>,
         fs: Arc<dyn Fs>,
         status_updates_tx: UnboundedSender<ScanState>,
         executor: Arc<executor::Background>,
@@ -2592,6 +2592,7 @@ impl BackgroundScanner {
             status_updates_tx,
             executor,
             refresh_requests_rx,
+            next_entry_id,
             prev_state: Mutex::new(BackgroundScannerState {
                 snapshot: snapshot.snapshot.clone(),
                 event_paths: Default::default(),
@@ -2864,7 +2865,7 @@ impl BackgroundScanner {
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
-                snapshot.next_entry_id.clone(),
+                self.next_entry_id.clone(),
             )
         };
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
@@ -3036,7 +3037,7 @@ impl BackgroundScanner {
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
-                        snapshot.next_entry_id.as_ref(),
+                        self.next_entry_id.as_ref(),
                         snapshot.root_char_bag,
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
