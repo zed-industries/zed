@@ -1,0 +1,21 @@
+[package]
+name = "ai"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/ai.rs"
+doctest = false
+
+[dependencies]
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+
+anyhow.workspace = true
+async-openai = "0.10.3"
+pulldown-cmark = "0.9.2"
+unindent.workspace = true
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }

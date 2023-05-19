@@ -46,6 +46,7 @@ collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 live_kit_server = { path = "../live_kit_server" }
 media = { path = "../media" }
+nanoid = "0.4"
 
 anyhow.workspace = true
 async-trait.workspace = true
