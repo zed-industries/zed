@@ -805,6 +805,8 @@ impl Workspace {
             .await
             .log_err();
 
+            cx.update_window(workspace.window_id(), |cx| cx.activate_window());
+
             let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
 

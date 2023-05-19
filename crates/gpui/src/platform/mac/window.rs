@@ -614,7 +614,7 @@ impl Window {
             }
             if options.focus {
                 native_window.makeKeyAndOrderFront_(nil);
-            } else {
+            } else if options.show {
                 native_window.orderFront_(nil);
             }
 
