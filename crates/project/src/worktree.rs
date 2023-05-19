@@ -1641,7 +1641,9 @@ impl Snapshot {
 
     /// Get the repository whose work directory contains the given path.
     pub fn repository_for_work_directory(&self, path: &Path) -> Option<RepositoryEntry> {
-        self.repository_entries.get(&RepositoryWorkDirectory(path.into())).cloned()
+        self.repository_entries
+            .get(&RepositoryWorkDirectory(path.into()))
+            .cloned()
     }
 
     /// Get the repository whose work directory contains the given path.
@@ -4850,7 +4852,9 @@ mod tests {
                     Some(Path::new("dir1").to_owned())
                 );
 
-                let entry = tree.repository_for_path("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
+                let entry = tree
+                    .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
+                    .unwrap();
                 assert_eq!(
                     entry
                         .work_directory(tree)
@@ -4914,7 +4918,9 @@ mod tests {
             tree.read_with(cx, |tree, _cx| {
                 let tree = tree.as_local().unwrap();
 
-                assert!(tree.repository_for_path("dir1/src/b.txt".as_ref()).is_none());
+                assert!(tree
+                    .repository_for_path("dir1/src/b.txt".as_ref())
+                    .is_none());
             });
         }
 
