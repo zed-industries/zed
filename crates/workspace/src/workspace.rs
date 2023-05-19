@@ -539,7 +539,9 @@ impl Workspace {
 
                 project::Event::DeletedEntry(entry_id) => {
                     for pane in this.panes.iter() {
-                        pane.update(cx, |pane, cx| pane.delete_item(*entry_id, cx));
+                        pane.update(cx, |pane, cx| {
+                            pane.handle_deleted_project_item(*entry_id, cx)
+                        });
                     }
                 }
 

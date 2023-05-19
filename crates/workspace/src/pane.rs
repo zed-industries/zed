@@ -1305,7 +1305,7 @@ impl Pane {
         &self.toolbar
     }
 
-    pub fn delete_item(
+    pub fn handle_deleted_project_item(
         &mut self,
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Pane>,
