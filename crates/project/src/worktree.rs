@@ -120,25 +120,6 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
-impl Snapshot {
-    pub fn repo_for(&self, path: &Path) -> Option<RepositoryEntry> {
-        let mut max_len = 0;
-        let mut current_candidate = None;
-        for (work_directory, repo) in (&self.repository_entries).iter() {
-            if path.starts_with(&work_directory.0) {
-                if work_directory.0.as_os_str().len() >= max_len {
-                    current_candidate = Some(repo);
-                    max_len = work_directory.0.as_os_str().len();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        current_candidate.map(|entry| entry.to_owned())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
@@ -246,7 +227,7 @@ impl RepositoryEntry {
             work_directory_id: self.work_directory_id().to_proto(),
             branch: self.branch.as_ref().map(|str| str.to_string()),
             removed_repo_paths: removed_statuses,
-            updated_statuses: updated_statuses,
+            updated_statuses,
         }
     }
 }
@@ -326,13 +307,22 @@ impl<'a> From<ProjectEntryId> for WorkDirectoryEntry {
 
 #[derive(Debug, Clone)]
 pub struct LocalSnapshot {
-    ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>, // (gitignore, needs_update)
-    // The ProjectEntryId corresponds to the entry for the .git dir
-    // work_directory_id
-    git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    removed_entry_ids: HashMap<u64, ProjectEntryId>,
-    next_entry_id: Arc<AtomicUsize>,
     snapshot: Snapshot,
+    /// All of the gitignore files in the worktree, indexed by their relative path.
+    /// The boolean indicates whether the gitignore needs to be updated.
+    ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    /// All of the git repositories in the worktree, indexed by the project entry
+    /// id of their parent directory.
+    git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
+}
+
+pub struct LocalMutableSnapshot {
+    snapshot: LocalSnapshot,
+    /// The ids of all of the entries that were removed from the snapshot
+    /// as part of the current update. These entry ids may be re-used
+    /// if the same inode is discovered at a new path, or if the given
+    /// path is re-created after being deleted.
+    removed_entry_ids: HashMap<u64, ProjectEntryId>,
 }
 
 #[derive(Debug, Clone)]
@@ -361,6 +351,20 @@ impl Deref for LocalSnapshot {
 }
 
 impl DerefMut for LocalSnapshot {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.snapshot
+    }
+}
+
+impl Deref for LocalMutableSnapshot {
+    type Target = LocalSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl DerefMut for LocalMutableSnapshot {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.snapshot
     }
@@ -416,9 +420,7 @@ impl Worktree {
 
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
-                removed_entry_ids: Default::default(),
                 git_repositories: Default::default(),
-                next_entry_id,
                 snapshot: Snapshot {
                     id: WorktreeId::from_usize(cx.model_id()),
                     abs_path: abs_path.clone(),
@@ -437,7 +439,7 @@ impl Worktree {
                     Entry::new(
                         Arc::from(Path::new("")),
                         &metadata,
-                        &snapshot.next_entry_id,
+                        &next_entry_id,
                         snapshot.root_char_bag,
                     ),
                     fs.as_ref(),
@@ -481,6 +483,7 @@ impl Worktree {
                     let events = fs.watch(&abs_path, Duration::from_millis(100)).await;
                     BackgroundScanner::new(
                         snapshot,
+                        next_entry_id,
                         fs,
                         scan_states_tx,
                         background,
@@ -901,7 +904,7 @@ impl LocalWorktree {
 
         let mut index_task = None;
 
-        if let Some(repo) = snapshot.repo_for(&path) {
+        if let Some(repo) = snapshot.repository_for_path(&path) {
             let repo_path = repo.work_directory.relativize(self, &path).unwrap();
             if let Some(repo) = self.git_repositories.get(&*repo.work_directory) {
                 let repo = repo.repo_ptr.to_owned();
@@ -1228,8 +1231,6 @@ impl LocalWorktree {
                     let mut share_tx = Some(share_tx);
                     let mut prev_snapshot = LocalSnapshot {
                         ignores_by_parent_abs_path: Default::default(),
-                        removed_entry_ids: Default::default(),
-                        next_entry_id: Default::default(),
                         git_repositories: Default::default(),
                         snapshot: Snapshot {
                             id: WorktreeId(worktree_id as usize),
@@ -1637,9 +1638,27 @@ impl Snapshot {
             .map(|(path, entry)| (&path.0, entry))
     }
 
+    /// Get the repository whose work directory contains the given path.
+    pub fn repository_for_path(&self, path: &Path) -> Option<RepositoryEntry> {
+        let mut max_len = 0;
+        let mut current_candidate = None;
+        for (work_directory, repo) in (&self.repository_entries).iter() {
+            if path.starts_with(&work_directory.0) {
+                if work_directory.0.as_os_str().len() >= max_len {
+                    current_candidate = Some(repo);
+                    max_len = work_directory.0.as_os_str().len();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        current_candidate.map(|entry| entry.to_owned())
+    }
+
     /// Given an ordered iterator of entries, returns an iterator of those entries,
     /// along with their containing git repository.
-    pub fn entries_with_repos<'a>(
+    pub fn entries_with_repositories<'a>(
         &'a self,
         entries: impl 'a + Iterator<Item = &'a Entry>,
     ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
@@ -1913,8 +1932,6 @@ impl LocalSnapshot {
             }
         }
 
-        self.reuse_entry_id(&mut entry);
-
         if entry.kind == EntryKind::PendingDir {
             if let Some(existing_entry) =
                 self.entries_by_path.get(&PathKey(entry.path.clone()), &())
@@ -1941,60 +1958,6 @@ impl LocalSnapshot {
         );
 
         entry
-    }
-
-    fn populate_dir(
-        &mut self,
-        parent_path: Arc<Path>,
-        entries: impl IntoIterator<Item = Entry>,
-        ignore: Option<Arc<Gitignore>>,
-        fs: &dyn Fs,
-    ) {
-        let mut parent_entry = if let Some(parent_entry) =
-            self.entries_by_path.get(&PathKey(parent_path.clone()), &())
-        {
-            parent_entry.clone()
-        } else {
-            log::warn!(
-                "populating a directory {:?} that has been removed",
-                parent_path
-            );
-            return;
-        };
-
-        match parent_entry.kind {
-            EntryKind::PendingDir => {
-                parent_entry.kind = EntryKind::Dir;
-            }
-            EntryKind::Dir => {}
-            _ => return,
-        }
-
-        if let Some(ignore) = ignore {
-            self.ignores_by_parent_abs_path
-                .insert(self.abs_path.join(&parent_path).into(), (ignore, false));
-        }
-
-        if parent_path.file_name() == Some(&DOT_GIT) {
-            self.build_repo(parent_path, fs);
-        }
-
-        let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
-        let mut entries_by_id_edits = Vec::new();
-
-        for mut entry in entries {
-            self.reuse_entry_id(&mut entry);
-            entries_by_id_edits.push(Edit::Insert(PathEntry {
-                id: entry.id,
-                path: entry.path.clone(),
-                is_ignored: entry.is_ignored,
-                scan_id: self.scan_id,
-            }));
-            entries_by_path_edits.push(Edit::Insert(entry));
-        }
-
-        self.entries_by_path.edit(entries_by_path_edits, &());
-        self.entries_by_id.edit(entries_by_id_edits, &());
     }
 
     fn build_repo(&mut self, parent_path: Arc<Path>, fs: &dyn Fs) -> Option<()> {
@@ -2044,46 +2007,6 @@ impl LocalSnapshot {
 
         Some(())
     }
-    fn reuse_entry_id(&mut self, entry: &mut Entry) {
-        if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
-            entry.id = removed_entry_id;
-        } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
-            entry.id = existing_entry.id;
-        }
-    }
-
-    fn remove_path(&mut self, path: &Path) {
-        let mut new_entries;
-        let removed_entries;
-        {
-            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
-            new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
-            removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
-            new_entries.push_tree(cursor.suffix(&()), &());
-        }
-        self.entries_by_path = new_entries;
-
-        let mut entries_by_id_edits = Vec::new();
-        for entry in removed_entries.cursor::<()>() {
-            let removed_entry_id = self
-                .removed_entry_ids
-                .entry(entry.inode)
-                .or_insert(entry.id);
-            *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
-            entries_by_id_edits.push(Edit::Remove(entry.id));
-        }
-        self.entries_by_id.edit(entries_by_id_edits, &());
-
-        if path.file_name() == Some(&GITIGNORE) {
-            let abs_parent_path = self.abs_path.join(path.parent().unwrap());
-            if let Some((_, needs_update)) = self
-                .ignores_by_parent_abs_path
-                .get_mut(abs_parent_path.as_path())
-            {
-                *needs_update = true;
-            }
-        }
-    }
 
     fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
         let mut inodes = TreeSet::default();
@@ -2120,6 +2043,109 @@ impl LocalSnapshot {
         }
 
         ignore_stack
+    }
+}
+
+impl LocalMutableSnapshot {
+    fn reuse_entry_id(&mut self, entry: &mut Entry) {
+        if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
+            entry.id = removed_entry_id;
+        } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
+            entry.id = existing_entry.id;
+        }
+    }
+
+    fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
+        self.reuse_entry_id(&mut entry);
+        self.snapshot.insert_entry(entry, fs)
+    }
+
+    fn populate_dir(
+        &mut self,
+        parent_path: Arc<Path>,
+        entries: impl IntoIterator<Item = Entry>,
+        ignore: Option<Arc<Gitignore>>,
+        fs: &dyn Fs,
+    ) {
+        let mut parent_entry = if let Some(parent_entry) =
+            self.entries_by_path.get(&PathKey(parent_path.clone()), &())
+        {
+            parent_entry.clone()
+        } else {
+            log::warn!(
+                "populating a directory {:?} that has been removed",
+                parent_path
+            );
+            return;
+        };
+
+        match parent_entry.kind {
+            EntryKind::PendingDir => {
+                parent_entry.kind = EntryKind::Dir;
+            }
+            EntryKind::Dir => {}
+            _ => return,
+        }
+
+        if let Some(ignore) = ignore {
+            let abs_parent_path = self.abs_path.join(&parent_path).into();
+            self.ignores_by_parent_abs_path
+                .insert(abs_parent_path, (ignore, false));
+        }
+
+        if parent_path.file_name() == Some(&DOT_GIT) {
+            self.build_repo(parent_path, fs);
+        }
+
+        let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
+        let mut entries_by_id_edits = Vec::new();
+
+        for mut entry in entries {
+            self.reuse_entry_id(&mut entry);
+            entries_by_id_edits.push(Edit::Insert(PathEntry {
+                id: entry.id,
+                path: entry.path.clone(),
+                is_ignored: entry.is_ignored,
+                scan_id: self.scan_id,
+            }));
+            entries_by_path_edits.push(Edit::Insert(entry));
+        }
+
+        self.entries_by_path.edit(entries_by_path_edits, &());
+        self.entries_by_id.edit(entries_by_id_edits, &());
+    }
+
+    fn remove_path(&mut self, path: &Path) {
+        let mut new_entries;
+        let removed_entries;
+        {
+            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
+            new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
+            removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
+            new_entries.push_tree(cursor.suffix(&()), &());
+        }
+        self.entries_by_path = new_entries;
+
+        let mut entries_by_id_edits = Vec::new();
+        for entry in removed_entries.cursor::<()>() {
+            let removed_entry_id = self
+                .removed_entry_ids
+                .entry(entry.inode)
+                .or_insert(entry.id);
+            *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
+            entries_by_id_edits.push(Edit::Remove(entry.id));
+        }
+        self.entries_by_id.edit(entries_by_id_edits, &());
+
+        if path.file_name() == Some(&GITIGNORE) {
+            let abs_parent_path = self.abs_path.join(path.parent().unwrap());
+            if let Some((_, needs_update)) = self
+                .ignores_by_parent_abs_path
+                .get_mut(abs_parent_path.as_path())
+            {
+                *needs_update = true;
+            }
+        }
     }
 }
 
@@ -2565,12 +2591,13 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 }
 
 struct BackgroundScanner {
-    snapshot: Mutex<LocalSnapshot>,
+    snapshot: Mutex<LocalMutableSnapshot>,
     fs: Arc<dyn Fs>,
     status_updates_tx: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
     refresh_requests_rx: channel::Receiver<(Vec<PathBuf>, barrier::Sender)>,
     prev_state: Mutex<BackgroundScannerState>,
+    next_entry_id: Arc<AtomicUsize>,
     finished_initial_scan: bool,
 }
 
@@ -2582,6 +2609,7 @@ struct BackgroundScannerState {
 impl BackgroundScanner {
     fn new(
         snapshot: LocalSnapshot,
+        next_entry_id: Arc<AtomicUsize>,
         fs: Arc<dyn Fs>,
         status_updates_tx: UnboundedSender<ScanState>,
         executor: Arc<executor::Background>,
@@ -2592,11 +2620,15 @@ impl BackgroundScanner {
             status_updates_tx,
             executor,
             refresh_requests_rx,
+            next_entry_id,
             prev_state: Mutex::new(BackgroundScannerState {
                 snapshot: snapshot.snapshot.clone(),
                 event_paths: Default::default(),
             }),
-            snapshot: Mutex::new(snapshot),
+            snapshot: Mutex::new(LocalMutableSnapshot {
+                snapshot,
+                removed_entry_ids: Default::default(),
+            }),
             finished_initial_scan: false,
         }
     }
@@ -2750,10 +2782,7 @@ impl BackgroundScanner {
                 .is_some()
         });
         snapshot.snapshot.repository_entries = git_repository_entries;
-
-        snapshot.removed_entry_ids.clear();
         snapshot.completed_scan_id = snapshot.scan_id;
-
         drop(snapshot);
 
         self.send_status_update(false, None);
@@ -2864,7 +2893,7 @@ impl BackgroundScanner {
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
-                snapshot.next_entry_id.clone(),
+                self.next_entry_id.clone(),
             )
         };
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
@@ -3036,7 +3065,7 @@ impl BackgroundScanner {
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
-                        snapshot.next_entry_id.as_ref(),
+                        self.next_entry_id.as_ref(),
                         snapshot.root_char_bag,
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
@@ -3076,7 +3105,7 @@ impl BackgroundScanner {
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
             let scan_id = snapshot.scan_id;
-            let repo = snapshot.repo_for(&path)?;
+            let repo = snapshot.repository_for_path(&path)?;
 
             let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
 
@@ -3152,7 +3181,7 @@ impl BackgroundScanner {
                 return None;
             }
 
-            let repo = snapshot.repo_for(&path)?;
+            let repo = snapshot.repository_for_path(&path)?;
 
             let work_dir = repo.work_directory(snapshot)?;
             let work_dir_id = repo.work_directory.clone();
@@ -4063,9 +4092,9 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for("c.txt".as_ref()).is_none());
+            assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
 
-            let entry = tree.repo_for("dir1/src/b.txt".as_ref()).unwrap();
+            let entry = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
             assert_eq!(
                 entry
                     .work_directory(tree)
@@ -4073,7 +4102,9 @@ mod tests {
                 Some(Path::new("dir1").to_owned())
             );
 
-            let entry = tree.repo_for("dir1/deps/dep1/src/a.txt".as_ref()).unwrap();
+            let entry = tree
+                .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
+                .unwrap();
             assert_eq!(
                 entry
                     .work_directory(tree)
@@ -4084,7 +4115,7 @@ mod tests {
             let entries = tree.files(false, 0);
 
             let paths_with_repos = tree
-                .entries_with_repos(entries)
+                .entries_with_repositories(entries)
                 .map(|(entry, repo)| {
                     (
                         entry.path.as_ref(),
@@ -4137,7 +4168,9 @@ mod tests {
         tree.read_with(cx, |tree, _cx| {
             let tree = tree.as_local().unwrap();
 
-            assert!(tree.repo_for("dir1/src/b.txt".as_ref()).is_none());
+            assert!(tree
+                .repository_for_path("dir1/src/b.txt".as_ref())
+                .is_none());
         });
     }
 
