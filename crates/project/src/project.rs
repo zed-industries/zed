@@ -1,6 +1,5 @@
 mod ignore;
 mod lsp_command;
-mod lsp_glob_set;
 mod project_settings;
 pub mod search;
 pub mod terminals;
@@ -19,6 +18,7 @@ use futures::{
     future::{try_join_all, Shared},
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
     ModelHandle, Task, WeakModelHandle,
@@ -41,7 +41,6 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerId,
 };
 use lsp_command::*;
-use lsp_glob_set::LspGlobSet;
 use postage::watch;
 use project_settings::ProjectSettings;
 use rand::prelude::*;
@@ -226,7 +225,7 @@ pub enum LanguageServerState {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
-        watched_paths: HashMap<WorktreeId, LspGlobSet>,
+        watched_paths: HashMap<WorktreeId, GlobSet>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
     },
 }
@@ -2867,8 +2866,10 @@ impl Project {
         if let Some(LanguageServerState::Running { watched_paths, .. }) =
             self.language_servers.get_mut(&language_server_id)
         {
-            watched_paths.clear();
+            eprintln!("change watch");
+            let mut builders = HashMap::default();
             for watcher in params.watchers {
+                eprintln!("  {}", watcher.glob_pattern);
                 for worktree in &self.worktrees {
                     if let Some(worktree) = worktree.upgrade(cx) {
                         let worktree = worktree.read(cx);
@@ -2878,17 +2879,26 @@ impl Project {
                                 .strip_prefix(abs_path)
                                 .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
                             {
-                                watched_paths
-                                    .entry(worktree.id())
-                                    .or_default()
-                                    .add_pattern(suffix)
-                                    .log_err();
+                                if let Some(glob) = Glob::new(suffix).log_err() {
+                                    builders
+                                        .entry(worktree.id())
+                                        .or_insert_with(|| GlobSetBuilder::new())
+                                        .add(glob);
+                                }
                                 break;
                             }
                         }
                     }
                 }
             }
+
+            watched_paths.clear();
+            for (worktree_id, builder) in builders {
+                if let Ok(globset) = builder.build() {
+                    watched_paths.insert(worktree_id, globset);
+                }
+            }
+
             cx.notify();
         }
     }
@@ -4725,6 +4735,10 @@ impl Project {
         changes: &HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
         cx: &mut ModelContext<Self>,
     ) {
+        if changes.is_empty() {
+            return;
+        }
+
         let worktree_id = worktree_handle.read(cx).id();
         let mut language_server_ids = self
             .language_server_ids
@@ -4750,7 +4764,7 @@ impl Project {
                             changes: changes
                                 .iter()
                                 .filter_map(|((path, _), change)| {
-                                    if watched_paths.matches(&path) {
+                                    if watched_paths.is_match(&path) {
                                         Some(lsp::FileEvent {
                                             uri: lsp::Url::from_file_path(abs_path.join(path))
                                                 .unwrap(),
