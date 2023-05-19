@@ -2,7 +2,7 @@ use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, Location, LocationLink, Project,
     ProjectTransaction,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use fs::LineEnding;
@@ -107,6 +107,12 @@ pub(crate) struct GetCompletions {
 
 pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
+}
+
+pub(crate) struct OnTypeFormatting {
+    pub position: PointUtf16,
+    pub new_char: char,
+    // TODO kb formatting options?
 }
 
 #[async_trait(?Send)]
@@ -1593,6 +1599,101 @@ impl LspCommand for GetCodeActions {
     }
 
     fn buffer_id_from_proto(message: &proto::GetCodeActions) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for OnTypeFormatting {
+    type Response = Vec<(Range<Anchor>, String)>;
+    type LspRequest = lsp::request::OnTypeFormatting;
+    type ProtoRequest = proto::PerformRename;
+
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &server_capabilities.document_on_type_formatting_provider else { return false };
+        on_type_formatting_options
+            .first_trigger_character
+            .contains(self.new_char)
+            || on_type_formatting_options
+                .more_trigger_character
+                .iter()
+                .flatten()
+                .any(|chars| chars.contains(self.new_char))
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::DocumentOnTypeFormattingParams {
+        lsp::DocumentOnTypeFormattingParams {
+            text_document_position: lsp::TextDocumentPositionParams::new(
+                lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
+                point_to_lsp(self.position),
+            ),
+            ch: self.new_char.to_string(),
+            // TODO kb pass current editor ones
+            options: lsp::FormattingOptions::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::TextEdit>>,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        cx.update(|cx| {
+            project.update(cx, |project, cx| {
+                project.edits_from_lsp(&buffer, message.into_iter().flatten(), server_id, None, cx)
+            })
+        })
+        .await
+        .context("LSP edits conversion")
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::PerformRename {
+        todo!("TODO kb")
+    }
+
+    async fn from_proto(
+        message: proto::PerformRename,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        todo!("TODO kb")
+    }
+
+    fn response_to_proto(
+        response: Vec<(Range<Anchor>, String)>,
+        project: &mut Project,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut AppContext,
+    ) -> proto::PerformRenameResponse {
+        // let transaction = project.serialize_project_transaction_for_peer(response, peer_id, cx);
+        // proto::PerformRenameResponse {
+        //     transaction: Some(transaction),
+        // }
+        todo!("TODO kb")
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::PerformRenameResponse,
+        project: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        todo!("TODO kb")
+    }
+
+    fn buffer_id_from_proto(message: &proto::PerformRename) -> u64 {
         message.buffer_id
     }
 }

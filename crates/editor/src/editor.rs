@@ -2122,6 +2122,13 @@ impl Editor {
             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
+            if text.len() == 1 {
+                let input_char = text.chars().next().expect("single char input");
+                if let Some(on_type_format_task) = this.trigger_on_type_format(input_char, cx) {
+                    on_type_format_task.detach_and_log_err(cx);
+                }
+            }
+
             if had_active_copilot_suggestion {
                 this.refresh_copilot_suggestions(true, cx);
                 if !this.has_active_copilot_suggestion(cx) {
@@ -2498,6 +2505,23 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    fn trigger_on_type_format(
+        &self,
+        input: char,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = self.project.as_ref()?;
+        let position = self.selections.newest_anchor().head();
+        let (buffer, buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)?;
+
+        Some(project.update(cx, |project, cx| {
+            project.on_type_format(buffer.clone(), buffer_position, input, cx)
+        }))
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {

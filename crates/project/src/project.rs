@@ -4209,6 +4209,40 @@ impl Project {
         )
     }
 
+    pub fn on_type_format<T: ToPointUtf16>(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: T,
+        input: char,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let edits_task = self.request_lsp(
+            buffer.clone(),
+            OnTypeFormatting {
+                position,
+                new_char: input,
+            },
+            cx,
+        );
+
+        cx.spawn(|_project, mut cx| async move {
+            let edits = edits_task
+                .await
+                .context("requesting OnTypeFormatting edits for char '{new_char}'")?;
+
+            if !edits.is_empty() {
+                cx.update(|cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(edits, None, cx);
+                    });
+                });
+            }
+
+            Ok(())
+        })
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn search(
         &self,
@@ -6349,7 +6383,7 @@ impl Project {
     }
 
     #[allow(clippy::type_complexity)]
-    fn edits_from_lsp(
+    pub fn edits_from_lsp(
         &mut self,
         buffer: &ModelHandle<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
