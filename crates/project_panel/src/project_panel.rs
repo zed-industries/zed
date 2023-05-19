@@ -1012,7 +1012,7 @@ impl ProjectPanel {
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 for (entry, repo) in
-                    snapshot.entries_with_repos(visible_worktree_entries[entry_range].iter())
+                    snapshot.entries_with_repositories(visible_worktree_entries[entry_range].iter())
                 {
                     let status = (entry.path.parent().is_some() && !entry.is_ignored)
                         .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
