@@ -58,7 +58,7 @@ use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
 use util::{paths::HOME, ResultExt, TakeUntilExt, TryFutureExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub struct WorktreeId(pub usize);
+pub struct WorktreeId(usize);
 
 pub enum Worktree {
     Local(LocalWorktree),

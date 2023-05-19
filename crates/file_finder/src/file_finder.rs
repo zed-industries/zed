@@ -265,7 +265,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .map(|(i, history_item)| PathMatch {
                     score: i as f64,
                     positions: Vec::new(),
-                    worktree_id: history_item.worktree_id.0,
+                    worktree_id: history_item.worktree_id.to_usize(),
                     path: Arc::clone(&history_item.path),
                     path_prefix: "".into(),
                     distance_to_relative_ancestor: usize::MAX,
@@ -870,7 +870,7 @@ mod tests {
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId(worktrees[0].id())
+            WorktreeId::from_usize(worktrees[0].id())
         });
 
         // When workspace has an active item, sort items which are closer to that item
@@ -975,7 +975,7 @@ mod tests {
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
             assert_eq!(worktrees.len(), 1);
-            WorktreeId(worktrees[0].id())
+            WorktreeId::from_usize(worktrees[0].id())
         });
 
         // Open and close panels, getting their history items afterwards.
