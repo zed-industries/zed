@@ -1,4 +1,3 @@
-
 use std::ops::Range;
 
 use git::diff::{DiffHunk, DiffHunkStatus};
@@ -78,10 +77,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     } else {
         let start = hunk_start_point.to_display_point(snapshot).row();
 
-        let hunk_end_row_inclusive = hunk
-            .buffer_range
-            .end
-            .max(hunk.buffer_range.start);
+        let hunk_end_row_inclusive = hunk.buffer_range.end.max(hunk.buffer_range.start);
         let hunk_end_point = Point::new(hunk_end_row_inclusive, 0);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
