@@ -1,4 +1,4 @@
-use std::{cell::RefCell, iter, ops::Range};
+use std::{iter, ops::Range};
 use sum_tree::SumTree;
 use text::{Anchor, BufferSnapshot, Point};
 
@@ -94,9 +94,6 @@ impl BufferDiff {
             !before_start && !after_end
         });
 
-        use std::rc::Rc;
-        let cell = Rc::new(RefCell::new(None));
-
         let anchor_iter = std::iter::from_fn(move || {
             if reversed {
                 cursor.prev(buffer);
@@ -106,25 +103,28 @@ impl BufferDiff {
 
             cursor.item()
         })
-        .flat_map({
-            let cell = cell.clone();
-            move |hunk| {
-                *cell.borrow_mut() = Some(hunk.diff_base_byte_range.clone());
-                iter::once(&hunk.buffer_range.start).chain(iter::once(&hunk.buffer_range.end))
-            }
+        .flat_map(move |hunk| {
+            [
+                (&hunk.buffer_range.start, hunk.diff_base_byte_range.start),
+                (&hunk.buffer_range.end, hunk.diff_base_byte_range.end),
+            ]
+            .into_iter()
         });
 
-        let mut summaries = buffer.summaries_for_anchors::<Point, _>(anchor_iter);
+        let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || {
-            let start = summaries.next()?;
-            let end = summaries.next()?;
-            let base = (cell.borrow_mut()).clone()?;
+            let (start_point, start_base) = summaries.next()?;
+            let (end_point, end_base) = summaries.next()?;
 
-            let end_row = if end.column > 0 { end.row + 1 } else { end.row };
+            let end_row = if end_point.column > 0 {
+                end_point.row + 1
+            } else {
+                end_point.row
+            };
 
             Some(DiffHunk {
-                buffer_range: start.row..end_row,
-                diff_base_byte_range: base,
+                buffer_range: start_point.row..end_row,
+                diff_base_byte_range: start_base..end_base,
             })
         })
     }
