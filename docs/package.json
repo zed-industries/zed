@@ -1,0 +1,51 @@
+{
+  "name": "zed-internal-docs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "browserslist": "defaults, not ie <= 11",
+  "dependencies": {
+    "@algolia/autocomplete-core": "^1.7.3",
+    "@headlessui/react": "^1.7.13",
+    "@mdx-js/loader": "^2.1.5",
+    "@mdx-js/react": "^2.1.5",
+    "@next/mdx": "^13.0.3",
+    "@sindresorhus/slugify": "^2.1.1",
+    "@tailwindcss/typography": "^0.5.8",
+    "acorn": "^8.8.1",
+    "autoprefixer": "^10.4.7",
+    "clsx": "^1.2.0",
+    "fast-glob": "^3.2.12",
+    "focus-visible": "^5.2.0",
+    "framer-motion": "7.8.1",
+    "mdast-util-to-string": "^3.2.0",
+    "mdx-annotations": "^0.1.1",
+    "next": "13.4.2",
+    "postcss-focus-visible": "^6.0.4",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-highlight-words": "^0.20.0",
+    "recma-nextjs-static-props": "^1.0.0",
+    "rehype-mdx-title": "^2.0.0",
+    "remark": "^14.0.2",
+    "remark-gfm": "^3.0.1",
+    "remark-mdx": "^2.3.0",
+    "shiki": "^0.11.1",
+    "simple-functional-loader": "^1.2.1",
+    "tailwindcss": "^3.3.0",
+    "unist-util-filter": "^4.0.1",
+    "unist-util-visit": "^4.1.1",
+    "zustand": "^4.3.2"
+  },
+  "devDependencies": {
+    "eslint": "8.26.0",
+    "eslint-config-next": "13.0.2",
+    "prettier": "^2.8.7",
+    "prettier-plugin-tailwindcss": "^0.2.6"
+  }
+}
