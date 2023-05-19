@@ -27,7 +27,7 @@ serde.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-glob.workspace = true
+globset.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
