@@ -1,6 +1,6 @@
-use std::ops::Range;
+use std::{cell::RefCell, iter, ops::Range};
 use sum_tree::SumTree;
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point};
+use text::{Anchor, BufferSnapshot, Point};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
@@ -94,25 +94,37 @@ impl BufferDiff {
             !before_start && !after_end
         });
 
-        std::iter::from_fn(move || {
+        use std::rc::Rc;
+        let cell = Rc::new(RefCell::new(None));
+
+        let anchor_iter = std::iter::from_fn(move || {
             if reversed {
                 cursor.prev(buffer);
             } else {
                 cursor.next(buffer);
             }
 
-            let hunk = cursor.item()?;
+            cursor.item()
+        })
+        .flat_map({
+            let cell = cell.clone();
+            move |hunk| {
+                *cell.borrow_mut() = Some(hunk.diff_base_byte_range.clone());
+                iter::once(&hunk.buffer_range.start).chain(iter::once(&hunk.buffer_range.end))
+            }
+        });
 
-            let range = hunk.buffer_range.to_point(buffer);
-            let end_row = if range.end.column > 0 {
-                range.end.row + 1
-            } else {
-                range.end.row
-            };
+        let mut summaries = buffer.summaries_for_anchors::<Point, _>(anchor_iter);
+        iter::from_fn(move || {
+            let start = summaries.next()?;
+            let end = summaries.next()?;
+            let base = (cell.borrow_mut()).clone()?;
+
+            let end_row = if end.column > 0 { end.row + 1 } else { end.row };
 
             Some(DiffHunk {
-                buffer_range: range.start.row..end_row,
-                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                buffer_range: start.row..end_row,
+                diff_base_byte_range: base,
             })
         })
     }
@@ -279,6 +291,8 @@ pub fn assert_hunks<Iter>(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_eq;
+
     use super::*;
     use text::Buffer;
     use unindent::Unindent as _;
