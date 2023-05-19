@@ -212,6 +212,7 @@ pub enum Event {
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
     Closed,
+    DeletedEntry(ProjectEntryId),
     CollaboratorUpdated {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
@@ -976,6 +977,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
+
+        cx.emit(Event::DeletedEntry(entry_id));
+
         if self.is_local() {
             worktree.update(cx, |worktree, cx| {
                 worktree.as_local_mut().unwrap().delete_entry(entry_id, cx)
@@ -5188,6 +5192,9 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+
+        this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)));
+
         let worktree = this.read_with(&cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
                 .ok_or_else(|| anyhow!("worktree not found"))

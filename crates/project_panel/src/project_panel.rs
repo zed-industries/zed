@@ -1375,6 +1375,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{collections::HashSet, path::Path};
+    use workspace::{pane, AppState};
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
@@ -1850,6 +1851,95 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(window_id, &workspace, "test/first.rs", cx);
+
+        submit_deletion(window_id, &panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "Project panel should have no deleted file, no other file is selected in it"
+        );
+        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+
+        select_path(&panel, "src/test/second.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          second.rs  <== selected",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(window_id, &workspace, "test/second.rs", cx);
+
+        cx.update_window(window_id, |cx| {
+            let active_items = workspace
+                .read(cx)
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item())
+                .collect::<Vec<_>>();
+            assert_eq!(active_items.len(), 1);
+            let open_editor = active_items
+                .into_iter()
+                .next()
+                .unwrap()
+                .downcast::<Editor>()
+                .expect("Open item should be an editor");
+            open_editor.update(cx, |editor, cx| editor.set_text("Another text!", cx));
+        });
+        submit_deletion(window_id, &panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    v test", "          third.rs"],
+            "Project panel should have no deleted file, with one last file remaining"
+        );
+        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+    }
+
     fn toggle_expand_dir(
         panel: &ViewHandle<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -1951,6 +2041,96 @@ mod tests {
             language::init(cx);
             editor::init_settings(cx);
             workspace::init_settings(cx);
+        });
+    }
+
+    fn init_test_with_editor(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme::init((), cx);
+            language::init(cx);
+            editor::init(cx);
+            pane::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+    }
+
+    fn ensure_single_file_is_opened(
+        window_id: usize,
+        workspace: &ViewHandle<Workspace>,
+        expected_path: &str,
+        cx: &mut TestAppContext,
+    ) {
+        cx.read_window(window_id, |cx| {
+            let workspace = workspace.read(cx);
+            let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            let worktree_id = WorktreeId::from_usize(worktrees[0].id());
+
+            let open_project_paths = workspace
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                open_project_paths,
+                vec![ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new(expected_path))
+                }],
+                "Should have opened file, selected in project panel"
+            );
+        });
+    }
+
+    fn submit_deletion(
+        window_id: usize,
+        panel: &ViewHandle<ProjectPanel>,
+        cx: &mut TestAppContext,
+    ) {
+        assert!(
+            !cx.has_pending_prompt(window_id),
+            "Should have no prompts before the deletion"
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .delete(&Delete, cx)
+                .expect("Deletion start")
+                .detach_and_log_err(cx);
+        });
+        assert!(
+            cx.has_pending_prompt(window_id),
+            "Should have a prompt after the deletion"
+        );
+        cx.simulate_prompt_answer(window_id, 0);
+        assert!(
+            !cx.has_pending_prompt(window_id),
+            "Should have no prompts after prompt was replied to"
+        );
+        cx.foreground().run_until_parked();
+    }
+
+    fn ensure_no_open_items_and_panes(
+        window_id: usize,
+        workspace: &ViewHandle<Workspace>,
+        cx: &mut TestAppContext,
+    ) {
+        assert!(
+            !cx.has_pending_prompt(window_id),
+            "Should have no prompts after deletion operation closes the file"
+        );
+        cx.read_window(window_id, |cx| {
+            let open_project_paths = workspace
+                .read(cx)
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert!(
+                open_project_paths.is_empty(),
+                "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
+            );
         });
     }
 }
