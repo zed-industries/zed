@@ -24,6 +24,7 @@ pub trait Panel: View {
     fn should_zoom_out_on_event(_: &Self::Event) -> bool;
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>);
+    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>);
     fn should_activate_on_event(_: &Self::Event) -> bool;
     fn should_close_on_event(_: &Self::Event) -> bool;
     fn has_focus(&self, cx: &WindowContext) -> bool;
@@ -37,6 +38,7 @@ pub trait PanelHandle {
     fn set_position(&self, position: DockPosition, cx: &mut WindowContext);
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
+    fn set_active(&self, active: bool, cx: &mut WindowContext);
     fn default_size(&self, cx: &WindowContext) -> f32;
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
     fn icon_tooltip(&self, cx: &WindowContext) -> String;
@@ -75,6 +77,10 @@ where
 
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.set_zoomed(zoomed, cx))
+    }
+
+    fn set_active(&self, active: bool, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_active(active, cx))
     }
 
     fn icon_path(&self, cx: &WindowContext) -> &'static str {
@@ -202,12 +208,16 @@ impl Dock {
     pub fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
         if open != self.is_open {
             self.is_open = open;
+            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+                active_panel.panel.set_active(open, cx);
+            }
+
             cx.notify();
         }
     }
 
     pub fn toggle_open(&mut self, cx: &mut ViewContext<Self>) {
-        self.is_open = !self.is_open;
+        self.set_open(!self.is_open, cx);
         cx.notify();
     }
 
@@ -297,17 +307,18 @@ impl Dock {
     }
 
     pub fn activate_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
-        self.active_panel_index = panel_ix;
-        cx.notify();
-    }
+        if panel_ix != self.active_panel_index {
+            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+                active_panel.panel.set_active(false, cx);
+            }
 
-    pub fn toggle_panel(&mut self, panel_ix: usize, cx: &mut ViewContext<Self>) {
-        if self.active_panel_index == panel_ix {
-            self.is_open = false;
-        } else {
             self.active_panel_index = panel_ix;
+            if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
+                active_panel.panel.set_active(true, cx);
+            }
+
+            cx.notify();
         }
-        cx.notify();
     }
 
     pub fn active_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
@@ -612,6 +623,10 @@ pub(crate) mod test {
         }
 
         fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {
+            unimplemented!()
+        }
+
+        fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {
             unimplemented!()
         }
 

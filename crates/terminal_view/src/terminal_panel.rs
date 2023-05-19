@@ -1,9 +1,8 @@
 use crate::TerminalView;
 use gpui::{
-    actions, elements::*, AppContext, Entity, ModelHandle, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext,
+    actions, anyhow, elements::*, AppContext, Entity, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowContext,
 };
-use project::Project;
 use settings::{settings_file::SettingsFile, Settings, TerminalDockPosition, WorkingDirectory};
 use util::ResultExt;
 use workspace::{
@@ -26,7 +25,6 @@ pub enum Event {
 }
 
 pub struct TerminalPanel {
-    project: ModelHandle<Project>,
     pane: ViewHandle<Pane>,
     workspace: WeakViewHandle<Workspace>,
     _subscriptions: Vec<Subscription>,
@@ -86,7 +84,6 @@ impl TerminalPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
         ];
         Self {
-            project: workspace.project().clone(),
             pane,
             workspace: workspace.weak_handle(),
             _subscriptions: subscriptions,
@@ -109,30 +106,34 @@ impl TerminalPanel {
     }
 
     fn add_terminal(&mut self, _: &workspace::NewTerminal, cx: &mut ViewContext<Self>) {
-        if let Some(workspace) = self.workspace.upgrade(cx) {
-            let working_directory_strategy = cx
-                .global::<Settings>()
-                .terminal_overrides
-                .working_directory
-                .clone()
-                .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-            let working_directory =
-                crate::get_working_directory(workspace.read(cx), cx, working_directory_strategy);
-            let window_id = cx.window_id();
-            if let Some(terminal) = self.project.update(cx, |project, cx| {
-                project
-                    .create_terminal(working_directory, window_id, cx)
-                    .log_err()
-            }) {
-                workspace.update(cx, |workspace, cx| {
+        let workspace = self.workspace.clone();
+        cx.spawn(|this, mut cx| async move {
+            let pane = this.read_with(&cx, |this, _| this.pane.clone())?;
+            workspace.update(&mut cx, |workspace, cx| {
+                let working_directory_strategy = cx
+                    .global::<Settings>()
+                    .terminal_overrides
+                    .working_directory
+                    .clone()
+                    .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+                let working_directory =
+                    crate::get_working_directory(workspace, cx, working_directory_strategy);
+                let window_id = cx.window_id();
+                if let Some(terminal) = workspace.project().update(cx, |project, cx| {
+                    project
+                        .create_terminal(working_directory, window_id, cx)
+                        .log_err()
+                }) {
                     let terminal =
                         Box::new(cx.add_view(|cx| {
                             TerminalView::new(terminal, workspace.database_id(), cx)
                         }));
-                    Pane::add_item(workspace, &self.pane, terminal, true, true, None, cx);
-                });
-            }
-        }
+                    Pane::add_item(workspace, &pane, terminal, true, true, None, cx);
+                }
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -150,10 +151,6 @@ impl View for TerminalPanel {
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
-        if self.pane.read(cx).items_len() == 0 {
-            self.add_terminal(&Default::default(), cx)
-        }
-
         if cx.is_self_focused() {
             cx.focus(&self.pane);
         }
@@ -213,6 +210,12 @@ impl Panel for TerminalPanel {
 
     fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
         self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
+    }
+
+    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if active && self.pane.read(cx).items_len() == 0 {
+            self.add_terminal(&Default::default(), cx)
+        }
     }
 
     fn icon_path(&self) -> &'static str {
