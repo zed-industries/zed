@@ -42,6 +42,7 @@ use language::{
 };
 use project::ProjectPath;
 use smallvec::SmallVec;
+use text::Point;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -1058,11 +1059,13 @@ impl EditorElement {
                 .buffer_snapshot
                 .git_diff_hunks_in_range(0..(max_row.floor() as u32), false)
             {
-                let start_y = y_for_row(hunk.buffer_range.start as f32);
+                let start_display = Point::new(hunk.buffer_range.start, 0).to_display_point(&layout.position_map.snapshot.display_snapshot);
+                let end_display = Point::new(hunk.buffer_range.end, 0).to_display_point(&layout.position_map.snapshot.display_snapshot);
+                let start_y = y_for_row(start_display.row() as f32);
                 let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
-                    y_for_row((hunk.buffer_range.end + 1) as f32)
+                    y_for_row((end_display.row() + 1) as f32)
                 } else {
-                    y_for_row((hunk.buffer_range.end) as f32)
+                    y_for_row((end_display.row()) as f32)
                 };
 
                 if end_y - start_y < 1. {
