@@ -50,6 +50,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
+use text::Point;
 use workspace::{item::Item, GitGutterSetting, WorkspaceSettings};
 
 enum FoldMarkers {}
@@ -651,7 +652,7 @@ impl EditorElement {
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
-                    let row = *display_row_range.start();
+                    let row = display_row_range.start;
 
                     let offset = line_height / 2.;
                     let start_y = row as f32 * line_height - offset - scroll_top;
@@ -673,11 +674,11 @@ impl EditorElement {
                 }
             };
 
-            let start_row = *display_row_range.start();
-            let end_row = *display_row_range.end();
+            let start_row = display_row_range.start;
+            let end_row = display_row_range.end;
 
             let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = end_row as f32 * line_height - scroll_top + line_height;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
             let width = diff_style.width_em * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
@@ -1056,13 +1057,17 @@ impl EditorElement {
                 .position_map
                 .snapshot
                 .buffer_snapshot
-                .git_diff_hunks_in_range(0..(max_row.floor() as u32), false)
+                .git_diff_hunks_in_range(0..(max_row.floor() as u32))
             {
-                let start_y = y_for_row(hunk.buffer_range.start as f32);
+                let start_display = Point::new(hunk.buffer_range.start, 0)
+                    .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                let end_display = Point::new(hunk.buffer_range.end, 0)
+                    .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                let start_y = y_for_row(start_display.row() as f32);
                 let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
-                    y_for_row((hunk.buffer_range.end + 1) as f32)
+                    y_for_row((end_display.row() + 1) as f32)
                 } else {
-                    y_for_row((hunk.buffer_range.end) as f32)
+                    y_for_row((end_display.row()) as f32)
                 };
 
                 if end_y - start_y < 1. {
@@ -1269,7 +1274,7 @@ impl EditorElement {
             .row;
 
         buffer_snapshot
-            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row, false)
+            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
             .dedup()
             .collect()
