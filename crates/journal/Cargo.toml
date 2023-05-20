@@ -22,3 +22,6 @@ serde.workspace = true
 schemars.workspace = true
 log.workspace = true
 shellexpand = "2.1.0"
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }

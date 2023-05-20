@@ -18,3 +18,6 @@ workspace = { path = "../workspace" }
 postage.workspace = true
 theme = { path = "../theme" }
 util = { path = "../util" }
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }

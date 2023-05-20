@@ -20,6 +20,7 @@ workspace = { path = "../workspace" }
 parking_lot.workspace = true
 
 [dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 serde_json.workspace = true
 workspace = { path = "../workspace", features = ["test-support"] }
