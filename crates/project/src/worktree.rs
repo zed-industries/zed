@@ -4779,7 +4779,7 @@ mod tests {
                     Some(GitFileStatus::Added)
                 );
             });
-            dbg!("RENAMING");
+
             std::fs::rename(
                 root_path.join("projects/project1"),
                 root_path.join("projects/project2"),

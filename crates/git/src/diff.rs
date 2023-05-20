@@ -1,6 +1,6 @@
 use std::{iter, ops::Range};
 use sum_tree::SumTree;
-use text::{Anchor, BufferSnapshot, Point};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
@@ -75,18 +75,17 @@ impl BufferDiff {
         &'a self,
         range: Range<u32>,
         buffer: &'a BufferSnapshot,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let start = buffer.anchor_before(Point::new(range.start, 0));
         let end = buffer.anchor_after(Point::new(range.end, 0));
-        self.hunks_intersecting_range(start..end, buffer, reversed)
+
+        self.hunks_intersecting_range(start..end, buffer)
     }
 
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
             let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
@@ -95,12 +94,7 @@ impl BufferDiff {
         });
 
         let anchor_iter = std::iter::from_fn(move || {
-            if reversed {
-                cursor.prev(buffer);
-            } else {
-                cursor.next(buffer);
-            }
-
+            cursor.next(buffer);
             cursor.item()
         })
         .flat_map(move |hunk| {
@@ -125,6 +119,35 @@ impl BufferDiff {
             Some(DiffHunk {
                 buffer_range: start_point.row..end_row,
                 diff_base_byte_range: start_base..end_base,
+            })
+        })
+    }
+
+    pub fn hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<Anchor>,
+        buffer: &'a BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
+            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+            !before_start && !after_end
+        });
+
+        std::iter::from_fn(move || {
+            cursor.prev(buffer);
+
+            let hunk = cursor.item()?;
+            let range = hunk.buffer_range.to_point(buffer);
+            let end_row = if range.end.column > 0 {
+                range.end.row + 1
+            } else {
+                range.end.row
+            };
+
+            Some(DiffHunk {
+                buffer_range: range.start.row..end_row,
+                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
             })
         })
     }
@@ -163,7 +186,7 @@ impl BufferDiff {
     fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let start = text.anchor_before(Point::new(0, 0));
         let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
-        self.hunks_intersecting_range(start..end, text, false)
+        self.hunks_intersecting_range(start..end, text)
     }
 
     fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
@@ -379,7 +402,7 @@ mod tests {
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(
-            diff.hunks_in_row_range(7..12, &buffer, false),
+            diff.hunks_in_row_range(7..12, &buffer),
             &buffer,
             &diff_base,
             &[

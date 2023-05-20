@@ -1785,10 +1785,14 @@ impl BufferSnapshot {
         A: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let anchors = anchors.into_iter();
-        self.summaries_for_anchors_with_payload::<D, _, ()>(anchors.map(|a| (a, ()))).map(|d| d.0)
+        self.summaries_for_anchors_with_payload::<D, _, ()>(anchors.map(|a| (a, ())))
+            .map(|d| d.0)
     }
 
-    pub fn summaries_for_anchors_with_payload<'a, D, A, T>(&'a self, anchors: A) -> impl 'a + Iterator<Item = (D, T)>
+    pub fn summaries_for_anchors_with_payload<'a, D, A, T>(
+        &'a self,
+        anchors: A,
+    ) -> impl 'a + Iterator<Item = (D, T)>
     where
         D: 'a + TextDimension,
         A: 'a + IntoIterator<Item = (&'a Anchor, T)>,

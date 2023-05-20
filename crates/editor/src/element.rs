@@ -1057,7 +1057,7 @@ impl EditorElement {
                 .position_map
                 .snapshot
                 .buffer_snapshot
-                .git_diff_hunks_in_range(0..(max_row.floor() as u32), false)
+                .git_diff_hunks_in_range(0..(max_row.floor() as u32))
             {
                 let start_display = Point::new(hunk.buffer_range.start, 0)
                     .to_display_point(&layout.position_map.snapshot.display_snapshot);
@@ -1274,7 +1274,7 @@ impl EditorElement {
             .row;
 
         buffer_snapshot
-            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row, false)
+            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
             .dedup()
             .collect()
