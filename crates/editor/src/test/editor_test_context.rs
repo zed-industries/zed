@@ -212,6 +212,7 @@ impl<'a> EditorTestContext<'a> {
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
+    #[track_caller]
     pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, cx| {
@@ -228,6 +229,7 @@ impl<'a> EditorTestContext<'a> {
         assert_set_eq!(actual_ranges, expected_ranges);
     }
 
+    #[track_caller]
     pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
@@ -241,12 +243,14 @@ impl<'a> EditorTestContext<'a> {
         assert_set_eq!(actual_ranges, expected_ranges);
     }
 
+    #[track_caller]
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
         let expected_marked_text =
             generate_marked_text(&self.buffer_text(), &expected_selections, true);
         self.assert_selections(expected_selections, expected_marked_text)
     }
 
+    #[track_caller]
     fn assert_selections(
         &mut self,
         expected_selections: Vec<Range<usize>>,

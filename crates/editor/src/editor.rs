@@ -19,6 +19,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
@@ -519,7 +520,7 @@ pub struct EditorSnapshot {
 impl EditorSnapshot {
     fn has_scrollbar_info(&self) -> bool {
         self.buffer_snapshot
-            .git_diff_hunks_in_range(0..self.max_point().row(), false)
+            .git_diff_hunks_in_range(0..self.max_point().row())
             .next()
             .is_some()
     }
@@ -5574,68 +5575,91 @@ impl Editor {
     }
 
     fn go_to_hunk(&mut self, _: &GoToHunk, cx: &mut ViewContext<Self>) {
-        self.go_to_hunk_impl(Direction::Next, cx)
-    }
-
-    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
-        self.go_to_hunk_impl(Direction::Prev, cx)
-    }
-
-    pub fn go_to_hunk_impl(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let snapshot = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let selection = self.selections.newest::<Point>(cx);
 
-        fn seek_in_direction(
-            this: &mut Editor,
-            snapshot: &DisplaySnapshot,
-            initial_point: Point,
-            is_wrapped: bool,
-            direction: Direction,
-            cx: &mut ViewContext<Editor>,
-        ) -> bool {
-            let hunks = if direction == Direction::Next {
+        if !self.seek_in_direction(
+            &snapshot,
+            selection.head(),
+            false,
+            snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range((selection.head().row + 1)..u32::MAX),
+            cx,
+        ) {
+            let wrapped_point = Point::zero();
+            self.seek_in_direction(
+                &snapshot,
+                wrapped_point,
+                true,
                 snapshot
                     .buffer_snapshot
-                    .git_diff_hunks_in_range(initial_point.row..u32::MAX, false)
-            } else {
-                snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range(0..initial_point.row, true)
-            };
-
-            let display_point = initial_point.to_display_point(snapshot);
-            let mut hunks = hunks
-                .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
-                .skip_while(|hunk| {
-                    if is_wrapped {
-                        false
-                    } else {
-                        hunk.contains_display_row(display_point.row())
-                    }
-                })
-                .dedup();
-
-            if let Some(hunk) = hunks.next() {
-                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    let row = hunk.start_display_row();
-                    let point = DisplayPoint::new(row, 0);
-                    s.select_display_ranges([point..point]);
-                });
-
-                true
-            } else {
-                false
-            }
+                    .git_diff_hunks_in_range((wrapped_point.row + 1)..u32::MAX),
+                cx,
+            );
         }
+    }
 
-        if !seek_in_direction(self, &snapshot, selection.head(), false, direction, cx) {
-            let wrapped_point = match direction {
-                Direction::Next => Point::zero(),
-                Direction::Prev => snapshot.buffer_snapshot.max_point(),
-            };
-            seek_in_direction(self, &snapshot, wrapped_point, true, direction, cx);
+    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let selection = self.selections.newest::<Point>(cx);
+
+        if !self.seek_in_direction(
+            &snapshot,
+            selection.head(),
+            false,
+            snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range_rev(0..selection.head().row),
+            cx,
+        ) {
+            let wrapped_point = snapshot.buffer_snapshot.max_point();
+            self.seek_in_direction(
+                &snapshot,
+                wrapped_point,
+                true,
+                snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range_rev(0..wrapped_point.row),
+                cx,
+            );
+        }
+    }
+
+    fn seek_in_direction(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        initial_point: Point,
+        is_wrapped: bool,
+        hunks: impl Iterator<Item = DiffHunk<u32>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let display_point = initial_point.to_display_point(snapshot);
+        let mut hunks = hunks
+            .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
+            .skip_while(|hunk| {
+                if is_wrapped {
+                    false
+                } else {
+                    hunk.contains_display_row(display_point.row())
+                }
+            })
+            .dedup();
+
+        if let Some(hunk) = hunks.next() {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let row = hunk.start_display_row();
+                let point = DisplayPoint::new(row, 0);
+                s.select_display_ranges([point..point]);
+            });
+
+            true
+        } else {
+            false
         }
     }
 

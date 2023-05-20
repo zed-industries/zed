@@ -2858,10 +2858,8 @@ impl Project {
         if let Some(LanguageServerState::Running { watched_paths, .. }) =
             self.language_servers.get_mut(&language_server_id)
         {
-            eprintln!("change watch");
             let mut builders = HashMap::default();
             for watcher in params.watchers {
-                eprintln!("  {}", watcher.glob_pattern);
                 for worktree in &self.worktrees {
                     if let Some(worktree) = worktree.upgrade(cx) {
                         let worktree = worktree.read(cx);
