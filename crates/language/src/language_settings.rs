@@ -49,7 +49,7 @@ pub struct CopilotSettings {
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
