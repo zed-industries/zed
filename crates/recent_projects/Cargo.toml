@@ -24,3 +24,6 @@ workspace = { path = "../workspace" }
 ordered-float.workspace = true
 postage.workspace = true
 smol.workspace = true
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
