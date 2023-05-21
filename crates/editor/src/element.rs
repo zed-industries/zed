@@ -1021,6 +1021,7 @@ impl EditorElement {
         let bottom = bounds.max_y();
         let right = bounds.max_x();
         let left = right - style.width;
+        let middle = left + style.width / 2.;
         let row_range = &layout.scrollbar_row_range;
         let max_row = layout.max_row as f32 + (row_range.end - row_range.start);
 
@@ -1073,12 +1074,66 @@ impl EditorElement {
                 if end_y - start_y < 1. {
                     end_y = start_y + 1.;
                 }
-                let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
+                let bounds = RectF::from_points(vec2f(left, start_y), vec2f(middle, end_y));
 
                 let color = match hunk.status() {
                     DiffHunkStatus::Added => diff_style.inserted,
                     DiffHunkStatus::Modified => diff_style.modified,
                     DiffHunkStatus::Removed => diff_style.deleted,
+                };
+
+                let border = Border {
+                    width: 1.,
+                    color: style.thumb.border.color,
+                    overlay: false,
+                    top: false,
+                    right: true,
+                    bottom: false,
+                    left: true,
+                };
+
+                scene.push_quad(Quad {
+                    bounds,
+                    background: Some(color),
+                    border,
+                    corner_radius: style.thumb.corner_radius,
+                })
+            }
+
+            let max_point = layout
+                .position_map
+                .snapshot
+                .display_snapshot
+                .buffer_snapshot.max_point();
+
+            let theme = theme::current(cx);
+            for diagnostic in layout
+                .position_map
+                .snapshot
+                .display_snapshot
+                .buffer_snapshot
+                .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
+            {
+                let start_display = diagnostic.range.start.to_display_point(&layout.position_map.snapshot.display_snapshot);
+                let end_display = diagnostic.range.end.to_display_point(&layout.position_map.snapshot.display_snapshot);
+                let start_y = y_for_row(start_display.row() as f32);
+                let mut end_y = if diagnostic.range.start == diagnostic.range.end {
+                    y_for_row((end_display.row() + 1) as f32)
+                } else {
+                    y_for_row((end_display.row()) as f32)
+                };
+
+                if end_y - start_y < 1. {
+                    end_y = start_y + 1.;
+                }
+                let bounds = RectF::from_points(vec2f(middle, start_y), vec2f(right, end_y));
+
+                let color = match diagnostic.diagnostic.severity {
+                    DiagnosticSeverity::ERROR => theme.editor.error_diagnostic.message.text.color,
+                    DiagnosticSeverity::WARNING => theme.editor.warning_diagnostic.message.text.color,
+                    DiagnosticSeverity::INFORMATION => theme.editor.information_diagnostic.message.text.color,
+                    DiagnosticSeverity::HINT => theme.editor.hint_diagnostic.message.text.color,
+                    _ => continue
                 };
 
                 let border = Border {
