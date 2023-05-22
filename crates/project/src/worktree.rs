@@ -329,7 +329,7 @@ pub struct LocalMutableSnapshot {
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
     pub(crate) scan_id: usize,
-    pub(crate) full_scan_id: usize,
+    pub(crate) git_dir_scan_id: usize,
     pub(crate) repo_ptr: Arc<Mutex<dyn GitRepository>>,
     /// Path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
@@ -830,7 +830,7 @@ impl LocalWorktree {
                             old_repos.next();
                         }
                         Ordering::Equal => {
-                            if old_repo.scan_id != new_repo.scan_id {
+                            if old_repo.git_dir_scan_id != new_repo.git_dir_scan_id {
                                 if let Some(entry) = self.entry_for_id(**new_entry_id) {
                                     diff.insert(entry.path.clone(), (*new_repo).clone());
                                 }
@@ -2006,7 +2006,7 @@ impl LocalSnapshot {
                 work_dir_id,
                 LocalRepositoryEntry {
                     scan_id,
-                    full_scan_id: scan_id,
+                    git_dir_scan_id: scan_id,
                     repo_ptr: repo,
                     git_dir_path: parent_path.clone(),
                 },
@@ -3166,7 +3166,7 @@ impl BackgroundScanner {
                     snapshot.build_repo(dot_git_dir.into(), fs);
                     return None;
                 };
-                if repo.full_scan_id == scan_id {
+                if repo.git_dir_scan_id == scan_id {
                     return None;
                 }
                 (*entry_id, repo.repo_ptr.to_owned())
@@ -3183,7 +3183,7 @@ impl BackgroundScanner {
 
             snapshot.git_repositories.update(&entry_id, |entry| {
                 entry.scan_id = scan_id;
-                entry.full_scan_id = scan_id;
+                entry.git_dir_scan_id = scan_id;
             });
 
             snapshot.repository_entries.update(&work_dir, |entry| {
@@ -3212,7 +3212,7 @@ impl BackgroundScanner {
             let local_repo = snapshot.get_local_repo(&repo)?.to_owned();
 
             // Short circuit if we've already scanned everything
-            if local_repo.full_scan_id == scan_id {
+            if local_repo.git_dir_scan_id == scan_id {
                 return None;
             }
 
