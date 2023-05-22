@@ -446,6 +446,18 @@ pub struct ProjectPanelEntry {
     pub icon_color: Color,
     pub icon_size: f32,
     pub icon_spacing: f32,
+    pub status: EntryStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct EntryStatus {
+    pub git: GitProjectStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct GitProjectStatus {
+    pub modified: Color,
+    pub inserted: Color,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
