@@ -69,9 +69,12 @@ async function main() {
     let releaseNotes = (pullRequest.body || "").split("Release Notes:")[1];
 
     if (releaseNotes) {
-      releaseNotes = releaseNotes.trim();
+      releaseNotes = releaseNotes.trim().split("\n")
       console.log("  Release Notes:");
-      console.log(`    ${releaseNotes}`);
+
+      for (const line of releaseNotes) {
+        console.log(`    ${line}`);
+      }
     }
 
     console.log()

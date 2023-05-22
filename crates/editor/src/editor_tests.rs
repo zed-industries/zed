@@ -1244,6 +1244,118 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx);
+
+    let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+    cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
+
+    cx.set_state(
+        &r#"ˇone
+        two
+
+        three
+        fourˇ
+        five
+
+        six"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+        ˇ
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+
+        three
+        four
+        five
+        ˇ
+        sixˇ"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
+
+        three
+        four
+        five
+
+        sixˇ"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
+        ˇ
+        three
+        four
+        five
+
+        six"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"ˇone
+        two
+
+        three
+        four
+        five
+
+        sixˇ"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+
+        three
+        four
+        five
+        ˇ
+        sixˇ"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
+        two
+        ˇ
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx);
