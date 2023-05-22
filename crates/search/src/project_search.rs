@@ -49,7 +49,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
-    cx.add_action(ProjectSearchBar::toggle_focus);
+    cx.add_action(ProjectSearchBar::move_focus_to_results);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOption::CaseSensitive, cx);
@@ -795,18 +795,16 @@ impl ProjectSearchBar {
         }
     }
 
-    fn toggle_focus(pane: &mut Pane, _: &ToggleFocus, cx: &mut ViewContext<Pane>) {
+    fn move_focus_to_results(pane: &mut Pane, _: &ToggleFocus, cx: &mut ViewContext<Pane>) {
         if let Some(search_view) = pane
             .active_item()
             .and_then(|item| item.downcast::<ProjectSearchView>())
         {
             search_view.update(cx, |search_view, cx| {
-                if search_view.query_editor.is_focused(cx) {
-                    if !search_view.model.read(cx).match_ranges.is_empty() {
-                        search_view.focus_results_editor(cx);
-                    }
-                } else {
-                    search_view.focus_query_editor(cx);
+                if search_view.query_editor.is_focused(cx)
+                    && !search_view.model.read(cx).match_ranges.is_empty()
+                {
+                    search_view.focus_results_editor(cx);
                 }
             });
         } else {
