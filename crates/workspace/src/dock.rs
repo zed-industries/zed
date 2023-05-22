@@ -615,8 +615,9 @@ pub(crate) mod test {
             Empty::new().into_any()
         }
 
-        fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+        fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
             self.has_focus = true;
+            cx.emit(TestPanelEvent::Focus);
         }
 
         fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {

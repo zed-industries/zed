@@ -579,7 +579,7 @@ mod tests {
             docks: Default::default(),
         };
 
-        let mut workspace_2 = SerializedWorkspace {
+        let workspace_2 = SerializedWorkspace {
             id: 2,
             location: (["/tmp"]).into(),
             center_group: Default::default(),

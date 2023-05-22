@@ -2325,7 +2325,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remove_item_ordering(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_remove_item_ordering(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2372,7 +2372,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_inactive_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_close_inactive_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2392,7 +2392,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_clean_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_close_clean_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2461,7 +2461,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_all_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_close_all_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
