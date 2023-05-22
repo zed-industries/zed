@@ -2415,10 +2415,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_items_to_the_left(
-        deterministic: Arc<Deterministic>,
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_close_items_to_the_left(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2438,10 +2435,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_items_to_the_right(
-        deterministic: Arc<Deterministic>,
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_close_items_to_the_right(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
