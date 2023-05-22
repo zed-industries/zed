@@ -518,11 +518,8 @@ pub struct EditorSnapshot {
 }
 
 impl EditorSnapshot {
-    fn has_scrollbar_info(&self) -> bool {
-        self.buffer_snapshot
-            .git_diff_hunks_in_range(0..self.max_point().row())
-            .next()
-            .is_some()
+    fn has_scrollbar_info(&self, is_singleton: bool) -> bool {
+        is_singleton && self.buffer_snapshot.has_git_diffs()
     }
 }
 

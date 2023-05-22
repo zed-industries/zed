@@ -2820,6 +2820,15 @@ impl MultiBufferSnapshot {
             })
     }
 
+    pub fn has_git_diffs(&self) -> bool {
+        for excerpt in self.excerpts.iter() {
+            if !excerpt.buffer.git_diff.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn git_diff_hunks_in_range_rev<'a>(
         &'a self,
         row_range: Range<u32>,
