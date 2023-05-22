@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
-    editor_settings::ShowScrollbars,
+    editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
@@ -1052,7 +1052,7 @@ impl EditorElement {
                 ..Default::default()
             });
 
-            if layout.is_singleton {
+            if layout.is_singleton && settings::get::<EditorSettings>(cx).scrollbar.git_diff {
                 let diff_style = theme::current(cx).editor.diff.clone();
                 for hunk in layout
                     .position_map
@@ -2067,14 +2067,17 @@ impl Element<Editor> for EditorElement {
             ));
         }
 
-        let show_scrollbars = match settings::get::<EditorSettings>(cx).show_scrollbars {
-            ShowScrollbars::Auto => {
-                snapshot.has_scrollbar_info(is_singleton)
-                    || editor.scroll_manager.scrollbars_visible()
+        let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
+        let show_scrollbars = match scrollbar_settings.when_to_show {
+            ShowScrollbar::Auto => {
+                // Git
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                // Scrollmanager
+                || editor.scroll_manager.scrollbars_visible()
             }
-            ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
-            ShowScrollbars::Always => true,
-            ShowScrollbars::Never => false,
+            ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
         };
 
         let include_root = editor
