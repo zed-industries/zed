@@ -71,6 +71,10 @@ impl BufferDiff {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.tree.is_empty()
+    }
+
     pub fn hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
