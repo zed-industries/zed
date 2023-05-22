@@ -66,7 +66,7 @@
       //    "always"
       // 4. Never show the scrollbar:
       //    "never"
-      "when_to_show": "auto",
+      "show": "auto",
       // Whether to show git diff indicators in the scrollbar.
       "git_diff": true
   },

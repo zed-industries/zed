@@ -2068,7 +2068,7 @@ impl Element<Editor> for EditorElement {
         }
 
         let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
-        let show_scrollbars = match scrollbar_settings.when_to_show {
+        let show_scrollbars = match scrollbar_settings.show {
             ShowScrollbar::Auto => {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())

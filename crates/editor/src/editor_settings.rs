@@ -12,7 +12,7 @@ pub struct EditorSettings {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Scrollbar {
-    pub when_to_show: ShowScrollbar,
+    pub show: ShowScrollbar,
     pub git_diff: bool,
 }
 
@@ -35,7 +35,7 @@ pub struct EditorSettingsContent {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarContent {
-    pub when_to_show: Option<ShowScrollbar>,
+    pub show: Option<ShowScrollbar>,
     pub git_diff: Option<bool>,
 }
 
