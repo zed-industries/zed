@@ -737,6 +737,45 @@ impl LocalWorktree {
         self.diagnostics.get(path).cloned().unwrap_or_default()
     }
 
+    pub fn clear_diagnostics_for_language_server(
+        &mut self,
+        server_id: LanguageServerId,
+        _: &mut ModelContext<Worktree>,
+    ) {
+        let worktree_id = self.id().to_proto();
+        self.diagnostic_summaries
+            .retain(|path, summaries_by_server_id| {
+                if summaries_by_server_id.remove(&server_id).is_some() {
+                    if let Some(share) = self.share.as_ref() {
+                        self.client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id: share.project_id,
+                                worktree_id,
+                                summary: Some(proto::DiagnosticSummary {
+                                    path: path.to_string_lossy().to_string(),
+                                    language_server_id: server_id.0 as u64,
+                                    error_count: 0,
+                                    warning_count: 0,
+                                }),
+                            })
+                            .log_err();
+                    }
+                    !summaries_by_server_id.is_empty()
+                } else {
+                    true
+                }
+            });
+
+        self.diagnostics.retain(|_, diagnostics_by_server_id| {
+            if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                diagnostics_by_server_id.remove(ix);
+                !diagnostics_by_server_id.is_empty()
+            } else {
+                true
+            }
+        });
+    }
+
     pub fn update_diagnostics(
         &mut self,
         server_id: LanguageServerId,

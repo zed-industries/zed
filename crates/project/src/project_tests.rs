@@ -927,6 +927,95 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree("/dir", json!({ "a.rs": "x" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Publish diagnostics
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "the message".to_string(),
+            ..Default::default()
+        }],
+    });
+
+    cx.foreground().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..1, false)
+                .map(|entry| entry.diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            ["the message".to_string()]
+        );
+    });
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+    });
+
+    // The diagnostics are cleared.
+    cx.foreground().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..1, false)
+                .map(|entry| entry.diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        );
+    });
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 0,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
