@@ -527,8 +527,7 @@ pub struct EditorSnapshot {
 
 impl EditorSnapshot {
     fn has_scrollbar_info(&self, is_singleton: bool) -> bool {
-        is_singleton && self.buffer_snapshot
-            .has_git_diffs()
+        is_singleton && self.buffer_snapshot.has_git_diffs()
     }
 }
 
