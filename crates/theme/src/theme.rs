@@ -458,6 +458,7 @@ pub struct EntryStatus {
 pub struct GitProjectStatus {
     pub modified: Color,
     pub inserted: Color,
+    pub conflict: Color,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

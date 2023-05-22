@@ -21,6 +21,9 @@ export default function projectPanel(colorScheme: ColorScheme) {
             inserted: isLight
                 ? colorScheme.ramps.green(0.4).hex()
                 : colorScheme.ramps.green(0.5).hex(),
+            conflict: isLight
+                    ? colorScheme.ramps.red(0.4).hex()
+                    : colorScheme.ramps.red(0.5).hex(),
         }
     }
 
