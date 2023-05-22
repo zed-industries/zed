@@ -33,7 +33,7 @@ use theme::ThemeSettings;
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
-    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
+    ItemNavHistory, Pane, ToolbarItemLocation, Workspace, PaneBackdrop,
 };
 
 actions!(diagnostics, [Deploy]);
@@ -90,11 +90,12 @@ impl View for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if self.path_states.is_empty() {
             let theme = &theme::current(cx).project_diagnostics;
-            Label::new("No problems in workspace", theme.empty_message.clone())
+            PaneBackdrop::new(cx.view_id(), Label::new("No problems in workspace", theme.empty_message.clone())
                 .aligned()
                 .contained()
                 .with_style(theme.container)
-                .into_any()
+                .into_any()).into_any()
+
         } else {
             ChildView::new(&self.editor, cx).into_any()
         }
