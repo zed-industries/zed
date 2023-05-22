@@ -6,8 +6,8 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, MouseEventHandler,
-        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState, Label,
+        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
