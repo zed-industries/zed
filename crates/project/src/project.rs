@@ -2565,6 +2565,23 @@ impl Project {
                 }
             }
 
+            for buffer in self.opened_buffers.values() {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.update_diagnostics(server_id, Default::default(), cx);
+                    });
+                }
+            }
+            for worktree in &self.worktrees {
+                if let Some(worktree) = worktree.upgrade(cx) {
+                    worktree.update(cx, |worktree, cx| {
+                        if let Some(worktree) = worktree.as_local_mut() {
+                            worktree.clear_diagnostics_for_language_server(server_id, cx);
+                        }
+                    });
+                }
+            }
+
             self.language_server_statuses.remove(&server_id);
             cx.notify();
 
