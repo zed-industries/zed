@@ -1,5 +1,4 @@
-use std::sync::Arc;
-
+use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions,
@@ -7,7 +6,9 @@ use gpui::{
     AppContext, Task, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::{settings_file::SettingsFile, BaseKeymap, Settings};
+use project::Fs;
+use settings::update_settings_file;
+use std::sync::Arc;
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -23,8 +24,9 @@ pub fn toggle(
     _: &ToggleBaseKeymapSelector,
     cx: &mut ViewContext<Workspace>,
 ) {
-    workspace.toggle_modal(cx, |_, cx| {
-        cx.add_view(|cx| BaseKeymapSelector::new(BaseKeymapSelectorDelegate::new(cx), cx))
+    workspace.toggle_modal(cx, |workspace, cx| {
+        let fs = workspace.app_state().fs.clone();
+        cx.add_view(|cx| BaseKeymapSelector::new(BaseKeymapSelectorDelegate::new(fs, cx), cx))
     });
 }
 
@@ -33,18 +35,20 @@ pub type BaseKeymapSelector = Picker<BaseKeymapSelectorDelegate>;
 pub struct BaseKeymapSelectorDelegate {
     matches: Vec<StringMatch>,
     selected_index: usize,
+    fs: Arc<dyn Fs>,
 }
 
 impl BaseKeymapSelectorDelegate {
-    fn new(cx: &mut ViewContext<BaseKeymapSelector>) -> Self {
-        let base = cx.global::<Settings>().base_keymap;
+    fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<BaseKeymapSelector>) -> Self {
+        let base = settings::get::<BaseKeymap>(cx);
         let selected_index = BaseKeymap::OPTIONS
             .iter()
-            .position(|(_, value)| *value == base)
+            .position(|(_, value)| value == base)
             .unwrap_or(0);
         Self {
             matches: Vec::new(),
             selected_index,
+            fs,
         }
     }
 }
@@ -119,7 +123,9 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<BaseKeymapSelector>) {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
-            SettingsFile::update(cx, move |settings| settings.base_keymap = Some(base_keymap));
+            update_settings_file::<BaseKeymap>(self.fs.clone(), cx, move |setting| {
+                *setting = Some(base_keymap)
+            });
         }
         cx.emit(PickerEvent::Dismiss);
     }
@@ -133,7 +139,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         selected: bool,
         cx: &gpui::AppContext,
     ) -> gpui::AnyElement<Picker<Self>> {
-        let theme = &cx.global::<Settings>().theme;
+        let theme = &theme::current(cx);
         let keymap_match = &self.matches[ix];
         let style = theme.picker.item.style_for(mouse_state, selected);
 

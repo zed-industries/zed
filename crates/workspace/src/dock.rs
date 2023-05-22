@@ -6,8 +6,8 @@ use gpui::{
     WindowContext,
 };
 use serde::Deserialize;
-use settings::Settings;
 use std::rc::Rc;
+use theme::ThemeSettings;
 
 pub trait Panel: View {
     fn position(&self, cx: &WindowContext) -> DockPosition;
@@ -379,7 +379,7 @@ impl Dock {
 
     pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
         if let Some(active_entry) = self.active_entry() {
-            let style = &cx.global::<Settings>().theme.workspace.dock;
+            let style = &settings::get::<ThemeSettings>(cx).theme.workspace.dock;
             Empty::new()
                 .into_any()
                 .contained()
@@ -407,7 +407,7 @@ impl View for Dock {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_entry) = self.active_entry() {
-            let style = &cx.global::<Settings>().theme.workspace.dock;
+            let style = &settings::get::<ThemeSettings>(cx).theme.workspace.dock;
             ChildView::new(active_entry.panel.as_any(), cx)
                 .contained()
                 .with_style(style.container)
@@ -444,7 +444,7 @@ impl View for PanelButtons {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme;
+        let theme = &settings::get::<ThemeSettings>(cx).theme;
         let tooltip_style = theme.tooltip.clone();
         let theme = &theme.workspace.status_bar.panel_buttons;
         let button_style = theme.button.clone();
@@ -578,7 +578,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    use gpui::Entity;
+    use gpui::{ViewContext, WindowContext};
 
     pub enum TestPanelEvent {
         PositionChanged,

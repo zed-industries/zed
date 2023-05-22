@@ -1,10 +1,8 @@
-use std::ops::Range;
-
 use crate::{Anchor, DisplayPoint, Editor, EditorSnapshot, SelectPhase};
 use gpui::{Task, ViewContext};
 use language::{Bias, ToOffset};
 use project::LocationLink;
-use settings::Settings;
+use std::ops::Range;
 use util::TryFutureExt;
 
 #[derive(Debug, Default)]
@@ -211,7 +209,7 @@ pub fn show_link_definition(
                         });
 
                         // Highlight symbol using theme link definition highlight style
-                        let style = cx.global::<Settings>().theme.editor.link_definition;
+                        let style = theme::current(cx).editor.link_definition;
                         this.highlight_text::<LinkGoToDefinitionState>(
                             vec![highlight_range],
                             style,
@@ -297,6 +295,8 @@ fn go_to_fetched_definition_of_kind(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use futures::StreamExt;
     use gpui::{
         platform::{self, Modifiers, ModifiersChangedEvent},
@@ -305,12 +305,10 @@ mod tests {
     use indoc::indoc;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
 
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
-
-    use super::*;
-
     #[gpui::test]
     async fn test_link_go_to_type_definition(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
@@ -417,6 +415,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_link_go_to_definition(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),

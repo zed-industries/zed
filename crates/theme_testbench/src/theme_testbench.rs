@@ -10,8 +10,7 @@ use gpui::{
     WeakViewHandle,
 };
 use project::Project;
-use settings::Settings;
-use theme::{ColorScheme, Layer, Style, StyleSet};
+use theme::{ColorScheme, Layer, Style, StyleSet, ThemeSettings};
 use workspace::{item::Item, register_deserializable_item, Pane, Workspace};
 
 actions!(theme, [DeployThemeTestbench]);
@@ -220,10 +219,10 @@ impl ThemeTestbench {
     }
 
     fn render_label(text: String, style: &Style, cx: &mut ViewContext<Self>) -> Label {
-        let settings = cx.global::<Settings>();
+        let settings = settings::get::<ThemeSettings>(cx);
         let font_cache = cx.font_cache();
         let family_id = settings.buffer_font_family;
-        let font_size = settings.buffer_font_size;
+        let font_size = settings.buffer_font_size(cx);
         let font_id = font_cache
             .select_font(family_id, &Default::default())
             .unwrap();
@@ -252,7 +251,7 @@ impl View for ThemeTestbench {
     }
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> AnyElement<Self> {
-        let color_scheme = &cx.global::<Settings>().theme.clone().color_scheme;
+        let color_scheme = &theme::current(cx).clone().color_scheme;
 
         Flex::row()
             .with_child(

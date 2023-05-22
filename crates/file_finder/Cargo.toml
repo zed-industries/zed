@@ -16,14 +16,19 @@ menu = { path = "../menu" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
+text = { path = "../text" }
 util = { path = "../util" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 postage.workspace = true
 
 [dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-serde_json.workspace = true
+language = { path = "../language", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
+theme = { path = "../theme", features = ["test-support"] }
+
+serde_json.workspace = true
 ctor.workspace = true
 env_logger.workspace = true

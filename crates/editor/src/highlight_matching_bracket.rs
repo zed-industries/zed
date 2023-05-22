@@ -33,12 +33,14 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
+    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use indoc::indoc;
     use language::{BracketPair, BracketPairConfig, Language, LanguageConfig};
 
     #[gpui::test]
     async fn test_matching_bracket_highlights(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new(
             Language::new(
                 LanguageConfig {

@@ -58,6 +58,7 @@ parking_lot.workspace = true
 postage.workspace = true
 pulldown-cmark = { version = "0.9.2", default-features = false }
 rand = { workspace = true, optional = true }
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 smallvec.workspace = true
@@ -80,7 +81,6 @@ workspace = { path = "../workspace", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true
-glob.workspace = true
 rand.workspace = true
 unindent.workspace = true
 tree-sitter = "0.20"

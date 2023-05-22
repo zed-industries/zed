@@ -5,7 +5,7 @@ use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use std::marker::PhantomData;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
-pub use tree_map::{TreeMap, TreeSet};
+pub use tree_map::{MapSeekTarget, TreeMap, TreeSet};
 
 #[cfg(test)]
 const TREE_BASE: usize = 2;

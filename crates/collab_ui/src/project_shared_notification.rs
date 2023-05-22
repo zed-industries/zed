@@ -7,7 +7,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton, WindowBounds, WindowKind, WindowOptions},
     AppContext, Entity, View, ViewContext,
 };
-use settings::Settings;
 use std::sync::{Arc, Weak};
 use workspace::AppState;
 
@@ -22,7 +21,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             worktree_root_names,
         } => {
             const PADDING: f32 = 16.;
-            let theme = &cx.global::<Settings>().theme.project_shared_notification;
+            let theme = &theme::current(cx).project_shared_notification;
             let window_size = vec2f(theme.window_width, theme.window_height);
 
             for screen in cx.platform().screens() {
@@ -110,7 +109,7 @@ impl ProjectSharedNotification {
     }
 
     fn render_owner(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme.project_shared_notification;
+        let theme = &theme::current(cx).project_shared_notification;
         Flex::row()
             .with_children(self.owner.avatar.clone().map(|avatar| {
                 Image::from_data(avatar)
@@ -168,10 +167,11 @@ impl ProjectSharedNotification {
         enum Open {}
         enum Dismiss {}
 
+        let theme = theme::current(cx);
         Flex::column()
             .with_child(
-                MouseEventHandler::<Open, Self>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.project_shared_notification;
+                MouseEventHandler::<Open, Self>::new(0, cx, |_, _| {
+                    let theme = &theme.project_shared_notification;
                     Label::new("Open", theme.open_button.text.clone())
                         .aligned()
                         .contained()
@@ -182,8 +182,8 @@ impl ProjectSharedNotification {
                 .flex(1., true),
             )
             .with_child(
-                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, cx| {
-                    let theme = &cx.global::<Settings>().theme.project_shared_notification;
+                MouseEventHandler::<Dismiss, Self>::new(0, cx, |_, _| {
+                    let theme = &theme.project_shared_notification;
                     Label::new("Dismiss", theme.dismiss_button.text.clone())
                         .aligned()
                         .contained()
@@ -196,12 +196,7 @@ impl ProjectSharedNotification {
                 .flex(1., true),
             )
             .constrained()
-            .with_width(
-                cx.global::<Settings>()
-                    .theme
-                    .project_shared_notification
-                    .button_width,
-            )
+            .with_width(theme.project_shared_notification.button_width)
             .into_any()
     }
 }
@@ -216,11 +211,7 @@ impl View for ProjectSharedNotification {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> gpui::AnyElement<Self> {
-        let background = cx
-            .global::<Settings>()
-            .theme
-            .project_shared_notification
-            .background;
+        let background = theme::current(cx).project_shared_notification.background;
         Flex::row()
             .with_child(self.render_owner(cx))
             .with_child(self.render_buttons(cx))

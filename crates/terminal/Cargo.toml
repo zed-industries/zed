@@ -15,6 +15,7 @@ settings = { path = "../settings" }
 db = { path = "../db" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "a51dbe25d67e84d6ed4261e640d3954fbdd9be45" }
 procinfo = { git = "https://github.com/zed-industries/wezterm", rev = "5cd757e5f2eb039ed0c6bb6512223e69d5efc64d", default-features = false }
 smallvec.workspace = true
@@ -27,6 +28,7 @@ dirs = "4.0.0"
 shellexpand = "2.1.0"
 libc = "0.2"
 anyhow.workspace = true
+schemars.workspace = true
 thiserror.workspace = true
 lazy_static.workspace = true
 serde.workspace = true

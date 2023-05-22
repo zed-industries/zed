@@ -42,6 +42,7 @@ jobs:
     runs-on:
       - self-hosted
       - test
+    needs: rustfmt
     env:
       RUSTFLAGS: -D warnings
     steps:
@@ -61,6 +62,9 @@ jobs:
         with:
           clean: false
           submodules: 'recursive'
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 70
 
       - name: Run check
         run: cargo check --workspace
@@ -82,7 +86,7 @@ jobs:
     runs-on:
       - self-hosted
       - bundle
-    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
     needs: tests
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -109,6 +113,9 @@ jobs:
         with:
           clean: false
           submodules: 'recursive'
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 70
 
       - name: Determine version and release channel
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -141,11 +148,11 @@ jobs:
       - name: Create app bundle
         run: script/bundle
 
-      - name: Upload app bundle to workflow run if main branch
+      - name: Upload app bundle to workflow run if main branch or specifi label
         uses: actions/upload-artifact@v2
-        if: ${{ github.ref == 'refs/heads/main' }}
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-build-dmg') }}
         with:
-          name: Zed.dmg
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
 
       - uses: softprops/action-gh-release@v1

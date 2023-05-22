@@ -1,11 +1,15 @@
+use std::sync::Arc;
+
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, anyhow::Result, elements::*, serde_json, AppContext, AsyncAppContext, Entity,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
+use project::Fs;
 use serde::{Deserialize, Serialize};
-use settings::{settings_file::SettingsFile, Settings, TerminalDockPosition, WorkingDirectory};
+use settings::SettingsStore;
+use terminal::{TerminalDockPosition, TerminalSettings};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -31,6 +35,7 @@ pub enum Event {
 
 pub struct TerminalPanel {
     pane: ViewHandle<Pane>,
+    fs: Arc<dyn Fs>,
     workspace: WeakViewHandle<Workspace>,
     pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
@@ -38,22 +43,13 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let mut old_dock_position = cx.global::<Settings>().terminal_overrides.dock;
-        cx.observe_global::<Settings, _>(move |_, cx| {
-            let new_dock_position = cx.global::<Settings>().terminal_overrides.dock;
-            if new_dock_position != old_dock_position {
-                old_dock_position = new_dock_position;
-                cx.emit(Event::DockPositionChanged);
-            }
-        })
-        .detach();
-
-        let this = cx.weak_handle();
+        let weak_self = cx.weak_handle();
         let pane = cx.add_view(|cx| {
             let window_id = cx.window_id();
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.app_state().background_actions,
+                Default::default(),
                 cx,
             );
             pane.set_can_split(false, cx);
@@ -65,7 +61,7 @@ impl TerminalPanel {
                     })
             });
             pane.set_render_tab_bar_buttons(cx, move |_, cx| {
-                let this = this.clone();
+                let this = weak_self.clone();
                 Pane::render_tab_bar_button(
                     0,
                     "icons/plus_12.svg",
@@ -89,12 +85,23 @@ impl TerminalPanel {
             cx.observe(&pane, |_, _, cx| cx.notify()),
             cx.subscribe(&pane, Self::handle_pane_event),
         ];
-        Self {
+        let this = Self {
             pane,
+            fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
             _subscriptions: subscriptions,
-        }
+        };
+        let mut old_dock_position = this.position(cx);
+        cx.observe_global::<SettingsStore, _>(move |this, cx| {
+            let new_dock_position = this.position(cx);
+            if new_dock_position != old_dock_position {
+                old_dock_position = new_dock_position;
+                cx.emit(Event::DockPositionChanged);
+            }
+        })
+        .detach();
+        this
     }
 
     pub fn load(
@@ -187,12 +194,9 @@ impl TerminalPanel {
         cx.spawn(|this, mut cx| async move {
             let pane = this.read_with(&cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
-                let working_directory_strategy = cx
-                    .global::<Settings>()
-                    .terminal_overrides
+                let working_directory_strategy = settings::get::<TerminalSettings>(cx)
                     .working_directory
-                    .clone()
-                    .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
+                    .clone();
                 let working_directory =
                     crate::get_working_directory(workspace, cx, working_directory_strategy);
                 let window_id = cx.window_id();
@@ -262,17 +266,10 @@ impl View for TerminalPanel {
 
 impl Panel for TerminalPanel {
     fn position(&self, cx: &WindowContext) -> DockPosition {
-        let settings = cx.global::<Settings>();
-        let dock = settings
-            .terminal_overrides
-            .dock
-            .or(settings.terminal_defaults.dock)
-            .unwrap()
-            .into();
-        match dock {
-            settings::TerminalDockPosition::Left => DockPosition::Left,
-            settings::TerminalDockPosition::Bottom => DockPosition::Bottom,
-            settings::TerminalDockPosition::Right => DockPosition::Right,
+        match settings::get::<TerminalSettings>(cx).dock {
+            TerminalDockPosition::Left => DockPosition::Left,
+            TerminalDockPosition::Bottom => DockPosition::Bottom,
+            TerminalDockPosition::Right => DockPosition::Right,
         }
     }
 
@@ -281,21 +278,21 @@ impl Panel for TerminalPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        SettingsFile::update(cx, move |settings| {
+        settings::update_settings_file::<TerminalSettings>(self.fs.clone(), cx, move |settings| {
             let dock = match position {
                 DockPosition::Left => TerminalDockPosition::Left,
                 DockPosition::Bottom => TerminalDockPosition::Bottom,
                 DockPosition::Right => TerminalDockPosition::Right,
             };
-            settings.terminal.dock = Some(dock);
+            settings.dock = Some(dock);
         });
     }
 
     fn default_size(&self, cx: &WindowContext) -> f32 {
-        let settings = &cx.global::<Settings>().terminal_overrides;
+        let settings = settings::get::<TerminalSettings>(cx);
         match self.position(cx) {
-            DockPosition::Left | DockPosition::Right => settings.default_width.unwrap_or(640.),
-            DockPosition::Bottom => settings.default_height.unwrap_or(320.),
+            DockPosition::Left | DockPosition::Right => settings.default_width,
+            DockPosition::Bottom => settings.default_height,
         }
     }
 

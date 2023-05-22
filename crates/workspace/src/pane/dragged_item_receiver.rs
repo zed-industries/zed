@@ -1,3 +1,5 @@
+use super::DraggedItem;
+use crate::{Pane, SplitDirection, Workspace};
 use drag_and_drop::DragAndDrop;
 use gpui::{
     color::Color,
@@ -8,11 +10,6 @@ use gpui::{
     AppContext, Element, EventContext, MouseState, Quad, View, ViewContext, WeakViewHandle,
 };
 use project::ProjectEntryId;
-use settings::Settings;
-
-use crate::{Pane, SplitDirection, Workspace};
-
-use super::DraggedItem;
 
 pub fn dragged_item_receiver<Tag, D, F>(
     pane: &Pane,
@@ -234,8 +231,5 @@ fn drop_split_direction(
 }
 
 fn overlay_color(cx: &AppContext) -> Color {
-    cx.global::<Settings>()
-        .theme
-        .workspace
-        .drop_target_overlay_color
+    theme::current(cx).workspace.drop_target_overlay_color
 }

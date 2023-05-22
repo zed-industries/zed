@@ -3,7 +3,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, Element, Entity, View, ViewContext, ViewHandle,
 };
-use settings::Settings;
 use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
 
 use crate::{feedback_editor::FeedbackEditor, open_zed_community_repo, OpenZedCommunityRepo};
@@ -30,7 +29,7 @@ impl View for FeedbackInfoText {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
 
         Flex::row()
             .with_child(

@@ -5,6 +5,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    language_settings::{language_settings, LanguageSettings},
     outline::OutlineItem,
     syntax_map::{
         SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot, ToTreeSitterPoint,
@@ -18,7 +19,6 @@ use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use settings::Settings;
 use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -1827,11 +1827,11 @@ impl BufferSnapshot {
 
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
         let language_name = self.language_at(position).map(|language| language.name());
-        let settings = cx.global::<Settings>();
-        if settings.hard_tabs(language_name.as_deref()) {
+        let settings = language_settings(language_name.as_deref(), cx);
+        if settings.hard_tabs {
             IndentSize::tab()
         } else {
-            IndentSize::spaces(settings.tab_size(language_name.as_deref()).get())
+            IndentSize::spaces(settings.tab_size.get())
         }
     }
 
@@ -2144,6 +2144,15 @@ impl BufferSnapshot {
             .last()
             .map(|info| info.language)
             .or(self.language.as_ref())
+    }
+
+    pub fn settings_at<'a, D: ToOffset>(
+        &self,
+        position: D,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        let language = self.language_at(position);
+        language_settings(language.map(|l| l.name()).as_deref(), cx)
     }
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
@@ -2500,18 +2509,22 @@ impl BufferSnapshot {
     pub fn git_diff_hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
-        self.git_diff.hunks_in_row_range(range, self, reversed)
+        self.git_diff.hunks_in_row_range(range, self)
     }
 
     pub fn git_diff_hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
-        self.git_diff
-            .hunks_intersecting_range(range, self, reversed)
+        self.git_diff.hunks_intersecting_range(range, self)
+    }
+
+    pub fn git_diff_hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+        self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(

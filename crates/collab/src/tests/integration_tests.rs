@@ -10,7 +10,7 @@ use editor::{
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions,
     Undo,
 };
-use fs::{FakeFs, Fs as _, LineEnding, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
@@ -18,6 +18,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
+    language_settings::{AllLanguageSettings, Formatter},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
     LanguageConfig, OffsetRangeExt, Point, Rope,
 };
@@ -26,7 +27,7 @@ use lsp::LanguageServerId;
 use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
 use rand::prelude::*;
 use serde_json::json;
-use settings::{Formatter, Settings};
+use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -1438,7 +1439,6 @@ async fn test_host_disconnect(
     cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
-    cx_b.update(editor::init);
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1447,6 +1447,8 @@ async fn test_host_disconnect(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
         .await;
+
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -1545,7 +1547,6 @@ async fn test_project_reconnect(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_b.update(editor::init);
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1553,6 +1554,8 @@ async fn test_project_reconnect(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -2434,7 +2437,7 @@ async fn test_git_diff_base_change(
     buffer_local_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2454,7 +2457,7 @@ async fn test_git_diff_base_change(
     buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2478,7 +2481,7 @@ async fn test_git_diff_base_change(
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
 
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2489,7 +2492,7 @@ async fn test_git_diff_base_change(
     buffer_remote_a.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2532,7 +2535,7 @@ async fn test_git_diff_base_change(
     buffer_local_b.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2552,7 +2555,7 @@ async fn test_git_diff_base_change(
     buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(1..2, "", "two\n")],
@@ -2580,12 +2583,12 @@ async fn test_git_diff_base_change(
             "{:?}",
             buffer
                 .snapshot()
-                .git_diff_hunks_in_row_range(0..4, false)
+                .git_diff_hunks_in_row_range(0..4)
                 .collect::<Vec<_>>()
         );
 
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2596,7 +2599,7 @@ async fn test_git_diff_base_change(
     buffer_remote_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
         git::diff::assert_hunks(
-            buffer.snapshot().git_diff_hunks_in_row_range(0..4, false),
+            buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
             &diff_base,
             &[(2..3, "", "three\n")],
@@ -2687,6 +2690,154 @@ async fn test_git_branch_name(
     let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
     project_remote_c.read_with(cx_c, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
+    });
+}
+
+#[gpui::test]
+async fn test_git_status_sync(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs
+        .insert_tree(
+            "/dir",
+            json!({
+            ".git": {},
+            "a.txt": "a",
+            "b.txt": "b",
+            }),
+        )
+        .await;
+
+    const A_TXT: &'static str = "a.txt";
+    const B_TXT: &'static str = "b.txt";
+
+    client_a
+        .fs
+        .as_fake()
+        .set_status_for_repo(
+            Path::new("/dir/.git"),
+            &[
+                (&Path::new(A_TXT), GitFileStatus::Added),
+                (&Path::new(B_TXT), GitFileStatus::Added),
+            ],
+        )
+        .await;
+
+    let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_local.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_remote = client_b.build_remote_project(project_id, cx_b).await;
+
+    // Wait for it to catch up to the new status
+    deterministic.run_until_parked();
+
+    #[track_caller]
+    fn assert_status(
+        file: &impl AsRef<Path>,
+        status: Option<GitFileStatus>,
+        project: &Project,
+        cx: &AppContext,
+    ) {
+        let file = file.as_ref();
+        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        let worktree = worktrees[0].clone();
+        let snapshot = worktree.read(cx).snapshot();
+        let root_entry = snapshot.root_git_entry().unwrap();
+        assert_eq!(root_entry.status_for_file(&snapshot, file), status);
+    }
+
+    // Smoke test status reading
+    project_local.read_with(cx_a, |project, cx| {
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
+    });
+    project_remote.read_with(cx_b, |project, cx| {
+        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
+    });
+
+    client_a
+        .fs
+        .as_fake()
+        .set_status_for_repo(
+            Path::new("/dir/.git"),
+            &[
+                (&Path::new(A_TXT), GitFileStatus::Modified),
+                (&Path::new(B_TXT), GitFileStatus::Modified),
+            ],
+        )
+        .await;
+
+    // Wait for buffer_local_a to receive it
+    deterministic.run_until_parked();
+
+    // Smoke test status reading
+    project_local.read_with(cx_a, |project, cx| {
+        assert_status(
+            &Path::new(A_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+        assert_status(
+            &Path::new(B_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+    });
+    project_remote.read_with(cx_b, |project, cx| {
+        assert_status(
+            &Path::new(A_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+        assert_status(
+            &Path::new(B_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+    });
+
+    // And synchronization while joining
+    let project_remote_c = client_c.build_remote_project(project_id, cx_c).await;
+    deterministic.run_until_parked();
+
+    project_remote_c.read_with(cx_c, |project, cx| {
+        assert_status(
+            &Path::new(A_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
+        assert_status(
+            &Path::new(B_TXT),
+            Some(GitFileStatus::Modified),
+            project,
+            cx,
+        );
     });
 }
 
@@ -4219,10 +4370,12 @@ async fn test_formatting_buffer(
     // Ensure buffer can be formatted using an external command. Notice how the
     // host's configuration is honored as opposed to using the guest's settings.
     cx_a.update(|cx| {
-        cx.update_global(|settings: &mut Settings, _| {
-            settings.editor_defaults.formatter = Some(Formatter::External {
-                command: "awk".to_string(),
-                arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()],
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
+                file.defaults.formatter = Some(Formatter::External {
+                    command: "awk".into(),
+                    arguments: vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                });
             });
         });
     });
@@ -4989,7 +5142,6 @@ async fn test_collaborating_with_code_actions(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_b.update(editor::init);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -4997,6 +5149,8 @@ async fn test_collaborating_with_code_actions(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -5202,7 +5356,6 @@ async fn test_collaborating_with_renames(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_b.update(editor::init);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -5210,6 +5363,8 @@ async fn test_collaborating_with_renames(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -5392,8 +5547,6 @@ async fn test_language_server_statuses(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-
-    cx_b.update(editor::init);
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -5401,6 +5554,8 @@ async fn test_language_server_statuses(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_b.update(editor::init);
 
     // Set up a fake language server.
     let mut language = Language::new(
@@ -6109,8 +6264,6 @@ async fn test_basic_following(
     cx_d: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -6127,6 +6280,9 @@ async fn test_basic_following(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -6706,9 +6862,6 @@ async fn test_following_tab_order(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
-
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6717,6 +6870,9 @@ async fn test_following_tab_order(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     client_a
         .fs
@@ -6828,9 +6984,6 @@ async fn test_peers_following_each_other(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
-
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -6839,6 +6992,9 @@ async fn test_peers_following_each_other(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     // Client A shares a project.
     client_a
@@ -6999,8 +7155,6 @@ async fn test_auto_unfollowing(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     // 2 clients connect to a server.
     let mut server = TestServer::start(&deterministic).await;
@@ -7011,6 +7165,9 @@ async fn test_auto_unfollowing(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     // Client A shares a project.
     client_a
@@ -7166,8 +7323,6 @@ async fn test_peers_simultaneously_following_each_other(
     cx_b: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
-    cx_a.update(editor::init);
-    cx_b.update(editor::init);
 
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -7176,6 +7331,9 @@ async fn test_peers_simultaneously_following_each_other(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
 
     client_a.fs.insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;

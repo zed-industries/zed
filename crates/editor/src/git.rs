@@ -1,4 +1,4 @@
-use std::ops::RangeInclusive;
+use std::ops::Range;
 
 use git::diff::{DiffHunk, DiffHunkStatus};
 use language::Point;
@@ -15,7 +15,7 @@ pub enum DisplayDiffHunk {
     },
 
     Unfolded {
-        display_row_range: RangeInclusive<u32>,
+        display_row_range: Range<u32>,
         status: DiffHunkStatus,
     },
 }
@@ -26,7 +26,7 @@ impl DisplayDiffHunk {
             &DisplayDiffHunk::Folded { display_row } => display_row,
             DisplayDiffHunk::Unfolded {
                 display_row_range, ..
-            } => *display_row_range.start(),
+            } => display_row_range.start,
         }
     }
 
@@ -36,7 +36,7 @@ impl DisplayDiffHunk {
 
             DisplayDiffHunk::Unfolded {
                 display_row_range, ..
-            } => display_row_range.clone(),
+            } => display_row_range.start..=display_row_range.end - 1,
         };
 
         range.contains(&display_row)
@@ -77,16 +77,12 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
     } else {
         let start = hunk_start_point.to_display_point(snapshot).row();
 
-        let hunk_end_row_inclusive = hunk
-            .buffer_range
-            .end
-            .saturating_sub(1)
-            .max(hunk.buffer_range.start);
+        let hunk_end_row_inclusive = hunk.buffer_range.end.max(hunk.buffer_range.start);
         let hunk_end_point = Point::new(hunk_end_row_inclusive, 0);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {
-            display_row_range: start..=end,
+            display_row_range: start..end,
             status: hunk.status(),
         }
     }

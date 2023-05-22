@@ -38,6 +38,7 @@ theme = { path = "../theme" }
 util = { path = "../util" }
 
 async-recursion = "1.0.0"
+itertools = "0.10"
 bincode = "1.2.1"
 anyhow.workspace = true
 futures.workspace = true
@@ -45,6 +46,7 @@ lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

@@ -51,7 +51,7 @@ use std::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
@@ -397,10 +397,16 @@ impl Server {
                         "message received"
                     );
                 });
+                let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
-                    if let Err(error) = future.await {
-                        tracing::error!(%error, "error handling message");
+                    let result = future.await;
+                    let duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
+                    match result {
+                        Err(error) => {
+                            tracing::error!(%error, ?duration_ms, "error handling message")
+                        }
+                        Ok(()) => tracing::info!(?duration_ms, "finished handling message"),
                     }
                 }
                 .instrument(span)
@@ -1385,7 +1391,7 @@ async fn join_project(
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
             is_last_update: worktree.scan_id == worktree.completed_scan_id,
-            updated_repositories: worktree.repository_entries,
+            updated_repositories: worktree.repository_entries.into_values().collect(),
             removed_repositories: Default::default(),
         };
         for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {

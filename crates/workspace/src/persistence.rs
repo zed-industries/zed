@@ -497,10 +497,8 @@ impl WorkspaceDb {
 
 #[cfg(test)]
 mod tests {
-
-    use db::open_test_db;
-
     use super::*;
+    use db::open_test_db;
 
     #[gpui::test]
     async fn test_next_id_stability() {

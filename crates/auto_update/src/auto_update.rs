@@ -1,7 +1,7 @@
 mod update_notification;
 
 use anyhow::{anyhow, Context, Result};
-use client::{Client, ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{Client, TelemetrySettings, ZED_APP_PATH, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     actions, platform::AppVersion, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
@@ -10,7 +10,7 @@ use gpui::{
 use isahc::AsyncBody;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::Settings;
+use settings::{Setting, SettingsStore};
 use smol::{fs::File, io::AsyncReadExt, process::Command};
 use std::{ffi::OsString, sync::Arc, time::Duration};
 use update_notification::UpdateNotification;
@@ -58,18 +58,37 @@ impl Entity for AutoUpdater {
     type Event = ();
 }
 
+struct AutoUpdateSetting(bool);
+
+impl Setting for AutoUpdateSetting {
+    const KEY: Option<&'static str> = Some("auto_update");
+
+    type FileContent = Option<bool>;
+
+    fn load(
+        default_value: &Option<bool>,
+        user_values: &[&Option<bool>],
+        _: &AppContext,
+    ) -> Result<Self> {
+        Ok(Self(
+            Self::json_merge(default_value, user_values)?.ok_or_else(Self::missing_default)?,
+        ))
+    }
+}
+
 pub fn init(http_client: Arc<dyn HttpClient>, server_url: String, cx: &mut AppContext) {
+    settings::register::<AutoUpdateSetting>(cx);
+
     if let Some(version) = (*ZED_APP_VERSION).or_else(|| cx.platform().app_version().ok()) {
         let auto_updater = cx.add_model(|cx| {
             let updater = AutoUpdater::new(version, http_client, server_url);
 
-            let mut update_subscription = cx
-                .global::<Settings>()
-                .auto_update
+            let mut update_subscription = settings::get::<AutoUpdateSetting>(cx)
+                .0
                 .then(|| updater.start_polling(cx));
 
-            cx.observe_global::<Settings, _>(move |updater, cx| {
-                if cx.global::<Settings>().auto_update {
+            cx.observe_global::<SettingsStore, _>(move |updater, cx| {
+                if settings::get::<AutoUpdateSetting>(cx).0 {
                     if update_subscription.is_none() {
                         update_subscription = Some(updater.start_polling(cx))
                     }
@@ -102,7 +121,7 @@ fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
         {
             format!("{server_url}/releases/preview/latest")
         } else {
-            format!("{server_url}/releases/latest")
+            format!("{server_url}/releases/stable/latest")
         };
         cx.platform().open_url(&latest_release_url);
     }
@@ -262,7 +281,7 @@ impl AutoUpdater {
             let release_channel = cx
                 .has_global::<ReleaseChannel>()
                 .then(|| cx.global::<ReleaseChannel>().display_name());
-            let telemetry = cx.global::<Settings>().telemetry().metrics();
+            let telemetry = settings::get::<TelemetrySettings>(cx).metrics;
 
             (installation_id, release_channel, telemetry)
         });

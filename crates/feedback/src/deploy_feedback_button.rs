@@ -3,7 +3,6 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     Entity, View, ViewContext, WeakViewHandle,
 };
-use settings::Settings;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::feedback_editor::{FeedbackEditor, GiveFeedback};
@@ -33,7 +32,7 @@ impl View for DeployFeedbackButton {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let active = self.active;
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         Stack::new()
             .with_child(
                 MouseEventHandler::<Self, Self>::new(0, cx, |state, _| {

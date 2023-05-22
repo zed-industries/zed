@@ -1785,16 +1785,29 @@ impl BufferSnapshot {
         A: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let anchors = anchors.into_iter();
+        self.summaries_for_anchors_with_payload::<D, _, ()>(anchors.map(|a| (a, ())))
+            .map(|d| d.0)
+    }
+
+    pub fn summaries_for_anchors_with_payload<'a, D, A, T>(
+        &'a self,
+        anchors: A,
+    ) -> impl 'a + Iterator<Item = (D, T)>
+    where
+        D: 'a + TextDimension,
+        A: 'a + IntoIterator<Item = (&'a Anchor, T)>,
+    {
+        let anchors = anchors.into_iter();
         let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
         let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
         let mut text_cursor = self.visible_text.cursor(0);
         let mut position = D::default();
 
-        anchors.map(move |anchor| {
+        anchors.map(move |(anchor, payload)| {
             if *anchor == Anchor::MIN {
-                return D::default();
+                return (D::default(), payload);
             } else if *anchor == Anchor::MAX {
-                return D::from_text_summary(&self.visible_text.summary());
+                return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
             let anchor_key = InsertionFragmentKey {
@@ -1825,7 +1838,7 @@ impl BufferSnapshot {
             }
 
             position.add_assign(&text_cursor.summary(fragment_offset));
-            position.clone()
+            (position.clone(), payload)
         })
     }
 

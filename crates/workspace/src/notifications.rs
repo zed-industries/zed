@@ -149,6 +149,8 @@ impl Workspace {
 }
 
 pub mod simple_message_notification {
+    use super::Notification;
+    use crate::Workspace;
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
@@ -158,12 +160,7 @@ pub mod simple_message_notification {
     };
     use menu::Cancel;
     use serde::Deserialize;
-    use settings::Settings;
     use std::{borrow::Cow, sync::Arc};
-
-    use crate::Workspace;
-
-    use super::Notification;
 
     actions!(message_notifications, [CancelMessageNotification]);
 
@@ -240,7 +237,7 @@ pub mod simple_message_notification {
         }
 
         fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
-            let theme = cx.global::<Settings>().theme.clone();
+            let theme = theme::current(cx).clone();
             let theme = &theme.simple_message_notification;
 
             enum MessageNotificationTag {}

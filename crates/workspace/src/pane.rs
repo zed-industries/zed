@@ -2,8 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, Item, NewFile, NewSearch, NewTerminal, ToggleZoom,
-    Workspace,
+    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
+    ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -27,9 +27,18 @@ use gpui::{
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::{Autosave, Settings};
-use std::{any::Any, cell::RefCell, cmp, mem, path::Path, rc::Rc};
-use theme::Theme;
+use std::{
+    any::Any,
+    cell::RefCell,
+    cmp, mem,
+    path::Path,
+    rc::Rc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
+use theme::{Theme, ThemeSettings};
 use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -163,6 +172,8 @@ pub struct ItemNavHistory {
     item: Rc<dyn WeakItemHandle>,
 }
 
+pub struct PaneNavHistory(Rc<RefCell<NavHistory>>);
+
 struct NavHistory {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
@@ -170,6 +181,7 @@ struct NavHistory {
     closed_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
     pane: WeakViewHandle<Pane>,
+    next_timestamp: Arc<AtomicUsize>,
 }
 
 #[derive(Copy, Clone)]
@@ -191,6 +203,7 @@ impl Default for NavigationMode {
 pub struct NavigationEntry {
     pub item: Rc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any>>,
+    pub timestamp: usize,
 }
 
 pub struct DraggedItem {
@@ -228,6 +241,7 @@ impl Pane {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
         background_actions: BackgroundActions,
+        next_timestamp: Arc<AtomicUsize>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let pane_view_id = cx.view_id();
@@ -252,6 +266,7 @@ impl Pane {
                 closed_stack: Default::default(),
                 paths_by_item: Default::default(),
                 pane: handle.clone(),
+                next_timestamp,
             })),
             toolbar: cx.add_view(|_| Toolbar::new(handle)),
             tab_bar_context_menu: TabBarContextMenu {
@@ -330,6 +345,10 @@ impl Pane {
             history: self.nav_history.clone(),
             item: Rc::new(item.downgrade()),
         }
+    }
+
+    pub fn nav_history(&self) -> PaneNavHistory {
+        PaneNavHistory(self.nav_history.clone())
     }
 
     pub fn go_back(
@@ -756,6 +775,10 @@ impl Pane {
         _: &CloseInactiveItems,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
+
         let active_item_id = self.items[self.active_item_index].id();
         Some(self.close_items(cx, move |item_id| item_id != active_item_id))
     }
@@ -778,6 +801,9 @@ impl Pane {
         _: &CloseItemsToTheLeft,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
         let active_item_id = self.items[self.active_item_index].id();
         Some(self.close_items_to_the_left_by_id(active_item_id, cx))
     }
@@ -800,6 +826,9 @@ impl Pane {
         _: &CloseItemsToTheRight,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
         let active_item_id = self.items[self.active_item_index].id();
         Some(self.close_items_to_the_right_by_id(active_item_id, cx))
     }
@@ -995,8 +1024,8 @@ impl Pane {
         } else if is_dirty && (can_save || is_singleton) {
             let will_autosave = cx.read(|cx| {
                 matches!(
-                    cx.global::<Settings>().autosave,
-                    Autosave::OnFocusChange | Autosave::OnWindowChange
+                    settings::get::<WorkspaceSettings>(cx).autosave,
+                    AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
                 ) && Self::can_autosave_item(&*item, cx)
             });
             let should_save = if should_prompt_for_save && !will_autosave {
@@ -1220,6 +1249,25 @@ impl Pane {
         &self.toolbar
     }
 
+    pub fn handle_deleted_project_item(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Option<()> {
+        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some((i, item.id()))
+            } else {
+                None
+            }
+        })?;
+
+        self.remove_item(item_index_to_delete, false, cx);
+        self.nav_history.borrow_mut().remove_item(item_id);
+
+        Some(())
+    }
+
     fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
         let active_item = self
             .items
@@ -1231,7 +1279,7 @@ impl Pane {
     }
 
     fn render_tabs(&mut self, cx: &mut ViewContext<Self>) -> impl Element<Self> {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
 
         let pane = cx.handle().downgrade();
         let autoscroll = if mem::take(&mut self.autoscroll) {
@@ -1262,7 +1310,7 @@ impl Pane {
                         let pane = pane.clone();
                         let detail = detail.clone();
 
-                        let theme = cx.global::<Settings>().theme.clone();
+                        let theme = theme::current(cx).clone();
                         let mut tooltip_theme = theme.tooltip.clone();
                         tooltip_theme.max_text_width = None;
                         let tab_tooltip_text = item.tab_tooltip_text(cx).map(|a| a.to_string());
@@ -1327,7 +1375,7 @@ impl Pane {
                         pane: pane.clone(),
                     },
                     {
-                        let theme = cx.global::<Settings>().theme.clone();
+                        let theme = theme::current(cx).clone();
 
                         let detail = detail.clone();
                         move |dragged_item: &DraggedItem, cx: &mut ViewContext<Workspace>| {
@@ -1532,7 +1580,7 @@ impl Pane {
         Stack::new()
             .with_child(
                 MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
-                    let theme = &cx.global::<Settings>().theme.workspace.tab_bar;
+                    let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
                     let style = theme.pane_button.style_for(mouse_state, false);
                     Svg::new(icon)
                         .with_color(style.color)
@@ -1589,7 +1637,7 @@ impl View for Pane {
             if let Some(active_item) = self.active_item() {
                 Flex::column()
                     .with_child({
-                        let theme = cx.global::<Settings>().theme.clone();
+                        let theme = theme::current(cx).clone();
 
                         let mut stack = Stack::new();
 
@@ -1659,7 +1707,7 @@ impl View for Pane {
                     .into_any()
             } else {
                 enum EmptyPane {}
-                let theme = cx.global::<Settings>().theme.clone();
+                let theme = theme::current(cx).clone();
 
                 dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
                     self.render_blank_pane(&theme, cx)
@@ -1803,6 +1851,7 @@ impl NavHistory {
                 self.backward_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
                 self.forward_stack.clear();
             }
@@ -1813,6 +1862,7 @@ impl NavHistory {
                 self.forward_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
             NavigationMode::GoingForward => {
@@ -1822,6 +1872,7 @@ impl NavHistory {
                 self.backward_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
             NavigationMode::ClosingItem => {
@@ -1831,6 +1882,7 @@ impl NavHistory {
                 self.closed_stack.push_back(NavigationEntry {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
                 });
             }
         }
@@ -1843,6 +1895,40 @@ impl NavHistory {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+
+    fn remove_item(&mut self, item_id: usize) {
+        self.paths_by_item.remove(&item_id);
+        self.backward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        self.forward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        self.closed_stack.retain(|entry| entry.item.id() != item_id);
+    }
+}
+
+impl PaneNavHistory {
+    pub fn for_each_entry(
+        &self,
+        cx: &AppContext,
+        mut f: impl FnMut(&NavigationEntry, ProjectPath),
+    ) {
+        let borrowed_history = self.0.borrow();
+        borrowed_history
+            .forward_stack
+            .iter()
+            .chain(borrowed_history.backward_stack.iter())
+            .chain(borrowed_history.closed_stack.iter())
+            .for_each(|entry| {
+                if let Some(path) = borrowed_history.paths_by_item.get(&entry.item.id()) {
+                    f(entry, path.clone());
+                } else if let Some(item) = entry.item.upgrade(cx) {
+                    let path = item.project_path(cx);
+                    if let Some(path) = path {
+                        f(entry, path);
+                    }
+                }
+            })
     }
 }
 
@@ -1884,7 +1970,7 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        let background = cx.global::<Settings>().theme.editor.background;
+        let background = theme::current(cx).editor.background;
 
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -1948,10 +2034,11 @@ mod tests {
     use crate::item::test::{TestItem, TestProjectItem};
     use gpui::{executor::Deterministic, TestAppContext};
     use project::FakeFs;
+    use settings::SettingsStore;
 
     #[gpui::test]
     async fn test_remove_active_empty(cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -1966,7 +2053,7 @@ mod tests {
     #[gpui::test]
     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2054,7 +2141,7 @@ mod tests {
     #[gpui::test]
     async fn test_add_item_with_existing_item(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2130,7 +2217,7 @@ mod tests {
     #[gpui::test]
     async fn test_add_item_with_same_project_entries(cx: &mut TestAppContext) {
         cx.foreground().forbid_parking();
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2239,7 +2326,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_item_ordering(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2278,7 +2365,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_inactive_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2297,7 +2384,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_clean_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2322,7 +2409,7 @@ mod tests {
         deterministic: Arc<Deterministic>,
         cx: &mut TestAppContext,
     ) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2344,7 +2431,7 @@ mod tests {
         deterministic: Arc<Deterministic>,
         cx: &mut TestAppContext,
     ) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2363,7 +2450,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_close_all_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        Settings::test_async(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, None, cx).await;
@@ -2379,6 +2466,14 @@ mod tests {
 
         deterministic.run_until_parked();
         assert_item_labels(&pane, [], cx);
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+            crate::init_settings(cx);
+        });
     }
 
     fn add_labeled_item(

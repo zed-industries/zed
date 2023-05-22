@@ -17,14 +17,17 @@ pub struct VimTestContext<'a> {
 impl<'a> VimTestContext<'a> {
     pub async fn new(cx: &'a mut gpui::TestAppContext, enabled: bool) -> VimTestContext<'a> {
         let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+
         cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = enabled;
-            });
             search::init(cx);
             crate::init(cx);
+        });
 
-            settings::KeymapFileContent::load("keymaps/vim.json", cx).unwrap();
+        cx.update(|cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
+            });
+            settings::KeymapFileContent::load_asset("keymaps/vim.json", cx).unwrap();
         });
 
         // Setup search toolbars and keypress hook
@@ -52,16 +55,16 @@ impl<'a> VimTestContext<'a> {
 
     pub fn enable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = true;
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
         })
     }
 
     pub fn disable_vim(&mut self) {
         self.cx.update(|cx| {
-            cx.update_global(|settings: &mut Settings, _| {
-                settings.vim_mode = false;
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
         })
     }

@@ -1174,12 +1174,21 @@ impl AppContext {
             this.notify_global(type_id);
             result
         } else {
-            panic!("No global added for {}", std::any::type_name::<T>());
+            panic!("no global added for {}", std::any::type_name::<T>());
         }
     }
 
     pub fn clear_globals(&mut self) {
         self.globals.clear();
+    }
+
+    pub fn remove_global<T: 'static>(&mut self) -> T {
+        *self
+            .globals
+            .remove(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("no global added for {}", std::any::type_name::<T>()))
+            .downcast()
+            .unwrap()
     }
 
     pub fn add_model<T, F>(&mut self, build_model: F) -> ModelHandle<T>

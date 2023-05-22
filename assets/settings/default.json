@@ -1,6 +1,15 @@
 {
   // The name of the Zed theme to use for the UI
   "theme": "One Dark",
+  // The name of a base set of key bindings to use.
+  // This setting can take four values, each named after another
+  // text editor:
+  //
+  // 1. "VSCode"
+  // 2. "JetBrains"
+  // 3. "SublimeText"
+  // 4. "Atom"
+  "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
   "features": {
     // Show Copilot icon in status bar
@@ -43,6 +52,19 @@
   // 3. Draw all invisible symbols:
   //   "all"
   "show_whitespaces": "selection",
+  // Whether to show the scrollbar in the editor.
+  // This setting can take four values:
+  //
+  // 1. Show the scrollbar if there's important information or
+  //    follow the system's configured behavior (default):
+  //   "auto"
+  // 2. Match the system's configured behavior:
+  //    "system"
+  // 3. Always show the scrollbar:
+  //    "always"
+  // 4. Never show the scrollbar:
+  //    "never"
+  "show_scrollbars": "auto",
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
@@ -106,11 +128,14 @@
   },
   // Automatically update Zed
   "auto_update": true,
-  // Git gutter behavior configuration.
+  // Settings specific to the project panel
   "project_panel": {
-      "dock": "left",
-      "default_width": 240
+    // Where to dock project panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the project panel.
+    "default_width": 240
   },
+  // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
     // 1. Show the gutter
@@ -155,6 +180,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
     "dock": "bottom",
+    // Default width when the terminal is docked to the left or right.
+    "default_width": 640,
+    // Default height when the terminal is docked to the bottom.
+    "default_height": 320,
     // What working directory to use when launching the terminal.
     // May take 4 values:
     // 1. Use the current file's project directory.  Will Fallback to the

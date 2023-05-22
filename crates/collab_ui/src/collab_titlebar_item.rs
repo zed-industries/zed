@@ -18,7 +18,6 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use project::Project;
-use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use theme::{AvatarStyle, Theme};
 use util::ResultExt;
@@ -70,7 +69,7 @@ impl View for CollabTitlebarItem {
         };
 
         let project = self.project.read(cx);
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let mut left_container = Flex::row();
         let mut right_container = Flex::row().align_children_center();
 
@@ -298,7 +297,7 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let avatar_style = theme.workspace.titlebar.leader_avatar.clone();
         let item_style = theme.context_menu.item.disabled_style().clone();
         self.user_menu.update(cx, |user_menu, cx| {
@@ -866,7 +865,7 @@ impl CollabTitlebarItem {
     ) -> Option<AnyElement<Self>> {
         enum ConnectionStatusButton {}
 
-        let theme = &cx.global::<Settings>().theme.clone();
+        let theme = &theme::current(cx).clone();
         match status {
             client::Status::ConnectionError
             | client::Status::ConnectionLost

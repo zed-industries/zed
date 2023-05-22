@@ -1,19 +1,16 @@
+use crate::{
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+};
+use futures::Future;
+use gpui::{
+    keymap_matcher::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle,
+};
+use indoc::indoc;
+use language::{Buffer, BufferSnapshot};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
 };
-
-use futures::Future;
-use indoc::indoc;
-
-use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
-};
-use gpui::{
-    keymap_matcher::Keystroke, AppContext, ContextHandle, ModelContext, ViewContext, ViewHandle,
-};
-use language::{Buffer, BufferSnapshot};
-use settings::Settings;
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},
@@ -30,15 +27,10 @@ pub struct EditorTestContext<'a> {
 impl<'a> EditorTestContext<'a> {
     pub fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
         let (window_id, editor) = cx.update(|cx| {
-            cx.set_global(Settings::test(cx));
-            crate::init(cx);
-
-            let (window_id, editor) = cx.add_window(Default::default(), |cx| {
+            cx.add_window(Default::default(), |cx| {
                 cx.focus_self();
                 build_editor(MultiBuffer::build_simple("", cx), cx)
-            });
-
-            (window_id, editor)
+            })
         });
 
         Self {
@@ -212,6 +204,7 @@ impl<'a> EditorTestContext<'a> {
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
+    #[track_caller]
     pub fn assert_editor_background_highlights<Tag: 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let actual_ranges: Vec<Range<usize>> = self.update_editor(|editor, cx| {
@@ -228,6 +221,7 @@ impl<'a> EditorTestContext<'a> {
         assert_set_eq!(actual_ranges, expected_ranges);
     }
 
+    #[track_caller]
     pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
@@ -241,12 +235,14 @@ impl<'a> EditorTestContext<'a> {
         assert_set_eq!(actual_ranges, expected_ranges);
     }
 
+    #[track_caller]
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
         let expected_marked_text =
             generate_marked_text(&self.buffer_text(), &expected_selections, true);
         self.assert_selections(expected_selections, expected_marked_text)
     }
 
+    #[track_caller]
     fn assert_selections(
         &mut self,
         expected_selections: Vec<Range<usize>>,

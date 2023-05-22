@@ -1,10 +1,10 @@
 use crate::{worktree::WorktreeHandle, Event, *};
-use fs::LineEnding;
-use fs::{FakeFs, RealFs};
+use fs::{FakeFs, LineEnding, RealFs};
 use futures::{future, StreamExt};
-use gpui::AppContext;
-use gpui::{executor::Deterministic, test::subscribe};
+use globset::Glob;
+use gpui::{executor::Deterministic, test::subscribe, AppContext};
 use language::{
+    language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
     OffsetRangeExt, Point, ToPoint,
 };
@@ -26,6 +26,9 @@ fn init_logger() {
 
 #[gpui::test]
 async fn test_symlinks(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.foreground().allow_parking();
+
     let dir = temp_tree(json!({
         "root": {
             "apple": "",
@@ -65,7 +68,7 @@ async fn test_managing_language_servers(
     deterministic: Arc<Deterministic>,
     cx: &mut gpui::TestAppContext,
 ) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let mut rust_language = Language::new(
         LanguageConfig {
@@ -451,7 +454,7 @@ async fn test_managing_language_servers(
 
 #[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -503,7 +506,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 register_options: serde_json::to_value(
                     lsp::DidChangeWatchedFilesRegistrationOptions {
                         watchers: vec![lsp::FileSystemWatcher {
-                            glob_pattern: "*.{rs,c}".to_string(),
+                            glob_pattern: "/the-root/*.{rs,c}".to_string(),
                             kind: None,
                         }],
                     },
@@ -556,7 +559,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
 #[gpui::test]
 async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -648,7 +651,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -719,7 +722,7 @@ async fn test_hidden_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let progress_token = "the-progress-token";
     let mut language = Language::new(
@@ -847,7 +850,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let progress_token = "the-progress-token";
     let mut language = Language::new(
@@ -925,7 +928,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
 #[gpui::test]
 async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -973,11 +976,8 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 }
 
 #[gpui::test]
-async fn test_toggling_enable_language_server(
-    deterministic: Arc<Deterministic>,
-    cx: &mut gpui::TestAppContext,
-) {
-    deterministic.forbid_parking();
+async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
 
     let mut rust = Language::new(
         LanguageConfig {
@@ -1051,14 +1051,16 @@ async fn test_toggling_enable_language_server(
 
     // Disable Rust language server, ensuring only that server gets stopped.
     cx.update(|cx| {
-        cx.update_global(|settings: &mut Settings, _| {
-            settings.language_overrides.insert(
-                Arc::from("Rust"),
-                settings::EditorSettings {
-                    enable_language_server: Some(false),
-                    ..Default::default()
-                },
-            );
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.languages.insert(
+                    Arc::from("Rust"),
+                    LanguageSettingsContent {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            });
         })
     });
     fake_rust_server_1
@@ -1068,21 +1070,23 @@ async fn test_toggling_enable_language_server(
     // Enable Rust and disable JavaScript language servers, ensuring that the
     // former gets started again and that the latter stops.
     cx.update(|cx| {
-        cx.update_global(|settings: &mut Settings, _| {
-            settings.language_overrides.insert(
-                Arc::from("Rust"),
-                settings::EditorSettings {
-                    enable_language_server: Some(true),
-                    ..Default::default()
-                },
-            );
-            settings.language_overrides.insert(
-                Arc::from("JavaScript"),
-                settings::EditorSettings {
-                    enable_language_server: Some(false),
-                    ..Default::default()
-                },
-            );
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.languages.insert(
+                    Arc::from("Rust"),
+                    LanguageSettingsContent {
+                        enable_language_server: Some(true),
+                        ..Default::default()
+                    },
+                );
+                settings.languages.insert(
+                    Arc::from("JavaScript"),
+                    LanguageSettingsContent {
+                        enable_language_server: Some(false),
+                        ..Default::default()
+                    },
+                );
+            });
         })
     });
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
@@ -1102,7 +1106,7 @@ async fn test_toggling_enable_language_server(
 
 #[gpui::test]
 async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -1388,7 +1392,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let text = concat!(
         "let one = ;\n", //
@@ -1457,9 +1461,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppContext) {
-    println!("hello from stdout");
-    eprintln!("hello from stderr");
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree("/dir", json!({ "a.rs": "one two three" }))
@@ -1515,7 +1517,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
 
 #[gpui::test]
 async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -1673,7 +1675,7 @@ async fn test_edits_from_lsp_with_past_version(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let text = "
         use a::b;
@@ -1781,7 +1783,7 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(cx: &mut gpui::TestApp
 
 #[gpui::test]
 async fn test_invalid_edits_from_lsp(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let text = "
         use a::b;
@@ -1902,6 +1904,8 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 
 #[gpui::test(iterations = 10)]
 async fn test_definition(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let mut language = Language::new(
         LanguageConfig {
             name: "Rust".into(),
@@ -2001,6 +2005,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let mut language = Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
@@ -2085,6 +2091,8 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let mut language = Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
@@ -2138,6 +2146,8 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test(iterations = 10)]
 async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let mut language = Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
@@ -2254,6 +2264,8 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test(iterations = 10)]
 async fn test_save_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -2284,6 +2296,8 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -2313,6 +2327,8 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_save_as(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree("/dir", json!({})).await;
 
@@ -2373,6 +2389,9 @@ async fn test_rescan_and_remote_updates(
     deterministic: Arc<Deterministic>,
     cx: &mut gpui::TestAppContext,
 ) {
+    init_test(cx);
+    cx.foreground().allow_parking();
+
     let dir = temp_tree(json!({
         "a": {
             "file1": "",
@@ -2529,6 +2548,8 @@ async fn test_buffer_identity_across_renames(
     deterministic: Arc<Deterministic>,
     cx: &mut gpui::TestAppContext,
 ) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -2577,6 +2598,8 @@ async fn test_buffer_identity_across_renames(
 
 #[gpui::test]
 async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -2621,6 +2644,8 @@ async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -2765,6 +2790,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let initial_contents = "aaa\nbbbbb\nc\n";
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -2844,6 +2871,8 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -2904,7 +2933,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -3146,7 +3175,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
-    cx.foreground().forbid_parking();
+    init_test(cx);
 
     let mut language = Language::new(
         LanguageConfig {
@@ -3284,6 +3313,8 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
         "/dir",
@@ -3339,6 +3370,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let search_query = "file";
 
     let fs = FakeFs::new(cx.background());
@@ -3361,7 +3394,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
                 Vec::new()
             ),
             cx
@@ -3379,7 +3412,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.rs").unwrap()],
+                vec![Glob::new("*.rs").unwrap().compile_matcher()],
                 Vec::new()
             ),
             cx
@@ -3401,8 +3434,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
                 Vec::new()
             ),
@@ -3425,9 +3458,9 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.rs").unwrap(),
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.rs").unwrap().compile_matcher(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
                 Vec::new()
             ),
@@ -3447,6 +3480,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let search_query = "file";
 
     let fs = FakeFs::new(cx.background());
@@ -3470,7 +3505,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Vec::new(),
-                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3493,7 +3528,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Vec::new(),
-                vec![glob::Pattern::new("*.rs").unwrap()],
+                vec![Glob::new("*.rs").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3515,8 +3550,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 Vec::new(),
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
             ),
             cx
@@ -3539,9 +3574,9 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 Vec::new(),
                 vec![
-                    glob::Pattern::new("*.rs").unwrap(),
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.rs").unwrap().compile_matcher(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
             ),
             cx
@@ -3554,6 +3589,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
     let search_query = "file";
 
     let fs = FakeFs::new(cx.background());
@@ -3576,8 +3613,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.odd").unwrap()],
-                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3594,8 +3631,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.ts").unwrap()],
-                vec![glob::Pattern::new("*.ts").unwrap()],
+                vec![Glob::new("*.ts").unwrap().compile_matcher()],
+                vec![Glob::new("*.ts").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3613,12 +3650,12 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
             ),
             cx
@@ -3637,12 +3674,12 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
                 vec![
-                    glob::Pattern::new("*.rs").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.rs").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
             ),
             cx
@@ -3679,4 +3716,14 @@ async fn search(
             })
         })
         .collect())
+}
+
+fn init_test(cx: &mut gpui::TestAppContext) {
+    cx.foreground().forbid_parking();
+
+    cx.update(|cx| {
+        cx.set_global(SettingsStore::test(cx));
+        language::init(cx);
+        Project::init_settings(cx);
+    });
 }

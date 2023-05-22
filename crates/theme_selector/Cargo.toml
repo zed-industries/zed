@@ -11,6 +11,7 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }
+fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 theme = { path = "../theme" }
@@ -22,3 +23,6 @@ log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 smol.workspace = true
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }

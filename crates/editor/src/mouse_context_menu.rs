@@ -57,13 +57,14 @@ pub fn deploy_context_menu(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::editor_lsp_test_context::EditorLspTestContext;
-
     use super::*;
+    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
     use indoc::indoc;
 
     #[gpui::test]
     async fn test_mouse_context_menu(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),

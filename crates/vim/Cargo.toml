@@ -12,6 +12,7 @@ doctest = false
 neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
 
 [dependencies]
+anyhow.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 itertools = "0.10"

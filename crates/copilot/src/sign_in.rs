@@ -6,7 +6,6 @@ use gpui::{
     AnyElement, AnyViewHandle, AppContext, ClipboardItem, Element, Entity, View, ViewContext,
     ViewHandle,
 };
-use settings::Settings;
 use theme::ui::modal;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -68,7 +67,7 @@ fn create_copilot_auth_window(
     cx: &mut AppContext,
     status: &Status,
 ) -> ViewHandle<CopilotCodeVerification> {
-    let window_size = cx.global::<Settings>().theme.copilot.modal.dimensions();
+    let window_size = theme::current(cx).copilot.modal.dimensions();
     let window_options = WindowOptions {
         bounds: WindowBounds::Fixed(RectF::new(Default::default(), window_size)),
         titlebar: None,
@@ -339,7 +338,7 @@ impl View for CopilotCodeVerification {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         enum ConnectModal {}
 
-        let style = cx.global::<Settings>().theme.clone();
+        let style = theme::current(cx).clone();
 
         modal::<ConnectModal, _, _, _, _>(
             "Connect Copilot to Zed",

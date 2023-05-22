@@ -34,12 +34,16 @@ impl<'a> EditorLspTestContext<'a> {
     ) -> EditorLspTestContext<'a> {
         use json::json;
 
+        let app_state = cx.update(AppState::test);
+
         cx.update(|cx| {
+            theme::init((), cx);
+            language::init(cx);
             crate::init(cx);
             pane::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
         });
-
-        let app_state = cx.update(AppState::test);
 
         let file_name = format!(
             "file.{}",

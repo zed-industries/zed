@@ -4,7 +4,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use search::ProjectSearchView;
-use settings::Settings;
 use workspace::{
     item::{ItemEvent, ItemHandle},
     ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -50,7 +49,7 @@ impl View for Breadcrumbs {
         };
         let not_editor = active_item.downcast::<editor::Editor>().is_none();
 
-        let theme = cx.global::<Settings>().theme.clone();
+        let theme = theme::current(cx).clone();
         let style = &theme.workspace.breadcrumbs;
 
         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {

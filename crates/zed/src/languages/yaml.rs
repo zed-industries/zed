@@ -2,10 +2,11 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::AppContext;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use language::{
+    language_settings::language_settings, LanguageServerBinary, LanguageServerName, LspAdapter,
+};
 use node_runtime::NodeRuntime;
 use serde_json::Value;
-use settings::Settings;
 use smol::fs;
 use std::{
     any::Any,
@@ -100,14 +101,13 @@ impl LspAdapter for YamlLspAdapter {
     }
 
     fn workspace_configuration(&self, cx: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
-        let settings = cx.global::<Settings>();
         Some(
             future::ready(serde_json::json!({
                 "yaml": {
                     "keyOrdering": false
                 },
                 "[yaml]": {
-                    "editor.tabSize": settings.tab_size(Some("YAML"))
+                    "editor.tabSize": language_settings(Some("YAML"), cx).tab_size,
                 }
             }))
             .boxed(),

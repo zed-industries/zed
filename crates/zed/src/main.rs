@@ -6,55 +6,61 @@ use assets::Assets;
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
-    CliRequest, CliResponse, IpcHandshake,
+    CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client::{self, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, SinkExt, StreamExt,
 };
 use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task, ViewContext};
 use isahc::{config::Configurable, Request};
-use language::LanguageRegistry;
+use language::{LanguageRegistry, Point};
 use log::LevelFilter;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::Fs;
 use serde::{Deserialize, Serialize};
-use settings::{
-    self, settings_file::SettingsFile, KeymapFileContent, Settings, SettingsFileContent,
-    WorkingDirectory,
-};
+use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{
+    collections::HashMap,
     env,
     ffi::OsStr,
     fs::OpenOptions,
     io::Write as _,
     os::unix::prelude::OsStrExt,
     panic,
-    path::PathBuf,
-    sync::{Arc, Weak},
+    path::{Path, PathBuf},
+    str,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Weak,
+    },
     thread,
     time::Duration,
 };
-use terminal_view::{get_working_directory, TerminalView};
-use util::http::{self, HttpClient};
+use sum_tree::Bias;
+use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
+use util::{
+    http::{self, HttpClient},
+    paths::PathLikeWithPosition,
+};
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
-use settings::watched_json::WatchedJsonFile;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
-use theme::ThemeRegistry;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
     item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings, Workspace,
 };
-use zed::{self, build_window_options, initialize_workspace, languages, menus};
+use zed::{
+    self, build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
+};
 
 fn main() {
     let http = http::client();
@@ -74,10 +80,10 @@ fn main() {
     load_embedded_fonts(&app);
 
     let fs = Arc::new(RealFs);
-
-    let themes = ThemeRegistry::new(Assets, app.font_cache());
-    let default_settings = Settings::defaults(Assets, &app.font_cache(), &themes);
-    let config_files = load_config_files(&app, fs.clone());
+    let user_settings_file_rx =
+        watch_config_file(app.background(), fs.clone(), paths::SETTINGS.clone());
+    let user_keymap_file_rx =
+        watch_config_file(app.background(), fs.clone(), paths::KEYMAP.clone());
 
     let login_shell_env_loaded = if stdout_is_a_pty() {
         Task::ready(())
@@ -88,29 +94,17 @@ fn main() {
     };
 
     let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
+    let cli_connections_tx = Arc::new(cli_connections_tx);
     let (open_paths_tx, mut open_paths_rx) = mpsc::unbounded();
+    let open_paths_tx = Arc::new(open_paths_tx);
+    let urls_callback_triggered = Arc::new(AtomicBool::new(false));
+
+    let callback_cli_connections_tx = Arc::clone(&cli_connections_tx);
+    let callback_open_paths_tx = Arc::clone(&open_paths_tx);
+    let callback_urls_callback_triggered = Arc::clone(&urls_callback_triggered);
     app.on_open_urls(move |urls, _| {
-        if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
-            if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
-                cli_connections_tx
-                    .unbounded_send(cli_connection)
-                    .map_err(|_| anyhow!("no listener for cli connections"))
-                    .log_err();
-            };
-        } else {
-            let paths: Vec<_> = urls
-                .iter()
-                .flat_map(|url| url.strip_prefix("file://"))
-                .map(|url| {
-                    let decoded = urlencoding::decode_binary(url.as_bytes());
-                    PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
-                })
-                .collect();
-            open_paths_tx
-                .unbounded_send(paths)
-                .map_err(|_| anyhow!("no listener for open urls requests"))
-                .log_err();
-        }
+        callback_urls_callback_triggered.store(true, Ordering::Release);
+        open_urls(urls, &callback_cli_connections_tx, &callback_open_paths_tx);
     })
     .on_reopen(move |cx| {
         if cx.has_global::<Weak<AppState>>() {
@@ -129,26 +123,13 @@ fn main() {
         #[cfg(debug_assertions)]
         cx.set_global(StaffMode(true));
 
-        let (settings_file_content, keymap_file) = cx.background().block(config_files).unwrap();
-
-        //Setup settings global before binding actions
-        cx.set_global(SettingsFile::new(
-            &paths::SETTINGS,
-            settings_file_content.clone(),
-            fs.clone(),
-        ));
-
-        settings::watch_files(
-            default_settings,
-            settings_file_content,
-            themes.clone(),
-            keymap_file,
-            cx,
-        );
-
-        if !stdout_is_a_pty() {
-            upload_previous_panics(http.clone(), cx);
-        }
+        let mut store = SettingsStore::default();
+        store
+            .set_default_settings(default_settings().as_ref(), cx)
+            .unwrap();
+        cx.set_global(store);
+        handle_settings_file_changes(user_settings_file_rx, cx);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
@@ -157,15 +138,17 @@ fn main() {
         let languages = Arc::new(languages);
         let node_runtime = NodeRuntime::new(http.clone(), cx.background().to_owned());
 
-        languages::init(languages.clone(), themes.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
 
         cx.set_global(client.clone());
 
+        theme::init(Assets, cx);
         context_menu::init(cx);
-        project::Project::init(&client);
-        client::init(client.clone(), cx);
+        project::Project::init(&client, cx);
+        client::init(&client, cx);
         command_palette::init(cx);
+        language::init(cx);
         editor::init(cx);
         go_to_line::init(cx);
         file_finder::init(cx);
@@ -179,13 +162,12 @@ fn main() {
         theme_testbench::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
 
-        cx.spawn(|cx| watch_themes(fs.clone(), themes.clone(), cx))
-            .detach();
+        cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
 
-        languages.set_theme(cx.global::<Settings>().theme.clone());
-        cx.observe_global::<Settings, _>({
+        languages.set_theme(theme::current(cx).clone());
+        cx.observe_global::<SettingsStore, _>({
             let languages = languages.clone();
-            move |cx| languages.set_theme(cx.global::<Settings>().theme.clone())
+            move |cx| languages.set_theme(theme::current(cx).clone())
         })
         .detach();
 
@@ -193,12 +175,11 @@ fn main() {
         client.telemetry().report_mixpanel_event(
             "start app",
             Default::default(),
-            cx.global::<Settings>().telemetry(),
+            *settings::get::<TelemetrySettings>(cx),
         );
 
         let app_state = Arc::new(AppState {
             languages,
-            themes,
             client: client.clone(),
             user_store,
             fs,
@@ -207,7 +188,7 @@ fn main() {
             background_actions,
         });
         cx.set_global(Arc::downgrade(&app_state));
-        auto_update::init(http, client::ZED_SERVER_URL.clone(), cx);
+        auto_update::init(http.clone(), client::ZED_SERVER_URL.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
@@ -215,10 +196,13 @@ fn main() {
         journal::init(app_state.clone(), cx);
         language_selector::init(cx);
         theme_selector::init(cx);
-        zed::init(&app_state, cx);
+        activity_indicator::init(cx);
+        lsp_log::init(cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         feedback::init(cx);
         welcome::init(cx);
+        zed::init(&app_state, cx);
 
         cx.set_menus(menus::menus());
 
@@ -232,6 +216,16 @@ fn main() {
                 workspace::open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx);
             }
         } else {
+            upload_previous_panics(http.clone(), cx);
+
+            // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
+            // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
+            if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
+                && !urls_callback_triggered.load(Ordering::Acquire)
+            {
+                open_urls(collect_url_args(), &cli_connections_tx, &open_paths_tx)
+            }
+
             if let Ok(Some(connection)) = cli_connections_rx.try_next() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
@@ -280,6 +274,37 @@ fn main() {
         })
         .detach_and_log_err(cx);
     });
+}
+
+fn open_urls(
+    urls: Vec<String>,
+    cli_connections_tx: &mpsc::UnboundedSender<(
+        mpsc::Receiver<CliRequest>,
+        IpcSender<CliResponse>,
+    )>,
+    open_paths_tx: &mpsc::UnboundedSender<Vec<PathBuf>>,
+) {
+    if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
+        if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
+            cli_connections_tx
+                .unbounded_send(cli_connection)
+                .map_err(|_| anyhow!("no listener for cli connections"))
+                .log_err();
+        };
+    } else {
+        let paths: Vec<_> = urls
+            .iter()
+            .flat_map(|url| url.strip_prefix("file://"))
+            .map(|url| {
+                let decoded = urlencoding::decode_binary(url.as_bytes());
+                PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
+            })
+            .collect();
+        open_paths_tx
+            .unbounded_send(paths)
+            .map_err(|_| anyhow!("no listener for open urls requests"))
+            .log_err();
+    }
 }
 
 async fn restore_or_create_workspace(app_state: &Arc<AppState>, mut cx: AsyncAppContext) {
@@ -412,7 +437,7 @@ fn init_panic_hook(app_version: String) {
 }
 
 fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let diagnostics_telemetry = cx.global::<Settings>().telemetry_diagnostics();
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
 
     cx.background()
         .spawn({
@@ -442,7 +467,7 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                         continue;
                     };
 
-                    if diagnostics_telemetry {
+                    if telemetry_settings.diagnostics {
                         let panic_data_text = smol::fs::read_to_string(&child_path)
                             .await
                             .context("error reading panic file")?;
@@ -512,7 +537,8 @@ async fn load_login_shell_environment() -> Result<()> {
 }
 
 fn stdout_is_a_pty() -> bool {
-    unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none()
+        && unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
 }
 
 fn collect_path_args() -> Vec<PathBuf> {
@@ -525,7 +551,11 @@ fn collect_path_args() -> Vec<PathBuf> {
                 None
             }
         })
-        .collect::<Vec<_>>()
+        .collect()
+}
+
+fn collect_url_args() -> Vec<String> {
+    env::args().skip(1).collect()
 }
 
 fn load_embedded_fonts(app: &App) {
@@ -547,11 +577,7 @@ fn load_embedded_fonts(app: &App) {
 }
 
 #[cfg(debug_assertions)]
-async fn watch_themes(
-    fs: Arc<dyn Fs>,
-    themes: Arc<ThemeRegistry>,
-    mut cx: AsyncAppContext,
-) -> Option<()> {
+async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
     let mut events = fs
         .watch("styles/src".as_ref(), Duration::from_millis(100))
         .await;
@@ -563,7 +589,7 @@ async fn watch_themes(
             .await
             .log_err()?;
         if output.status.success() {
-            cx.update(|cx| theme_selector::reload(themes.clone(), cx))
+            cx.update(|cx| theme_selector::reload(cx))
         } else {
             eprintln!(
                 "build script failed {}",
@@ -575,33 +601,8 @@ async fn watch_themes(
 }
 
 #[cfg(not(debug_assertions))]
-async fn watch_themes(
-    _fs: Arc<dyn Fs>,
-    _themes: Arc<ThemeRegistry>,
-    _cx: AsyncAppContext,
-) -> Option<()> {
+async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
     None
-}
-
-fn load_config_files(
-    app: &App,
-    fs: Arc<dyn Fs>,
-) -> oneshot::Receiver<(
-    WatchedJsonFile<SettingsFileContent>,
-    WatchedJsonFile<KeymapFileContent>,
-)> {
-    let executor = app.background();
-    let (tx, rx) = oneshot::channel();
-    executor
-        .clone()
-        .spawn(async move {
-            let settings_file =
-                WatchedJsonFile::new(fs.clone(), &executor, paths::SETTINGS.clone()).await;
-            let keymap_file = WatchedJsonFile::new(fs, &executor, paths::KEYMAP.clone()).await;
-            tx.send((settings_file, keymap_file)).ok()
-        })
-        .detach();
-    rx
 }
 
 fn connect_to_cli(
@@ -641,13 +642,38 @@ async fn handle_cli_connection(
     if let Some(request) = requests.next().await {
         match request {
             CliRequest::Open { paths, wait } => {
+                let mut caret_positions = HashMap::new();
+
                 let paths = if paths.is_empty() {
                     workspace::last_opened_workspace_paths()
                         .await
                         .map(|location| location.paths().to_vec())
-                        .unwrap_or(paths)
+                        .unwrap_or_default()
                 } else {
                     paths
+                        .into_iter()
+                        .filter_map(|path_with_position_string| {
+                            let path_with_position = PathLikeWithPosition::parse_str(
+                                &path_with_position_string,
+                                |path_str| {
+                                    Ok::<_, std::convert::Infallible>(
+                                        Path::new(path_str).to_path_buf(),
+                                    )
+                                },
+                            )
+                            .expect("Infallible");
+                            let path = path_with_position.path_like;
+                            if let Some(row) = path_with_position.row {
+                                if path.is_file() {
+                                    let row = row.saturating_sub(1);
+                                    let col =
+                                        path_with_position.column.unwrap_or(0).saturating_sub(1);
+                                    caret_positions.insert(path.clone(), Point::new(row, col));
+                                }
+                            }
+                            Some(path)
+                        })
+                        .collect()
                 };
 
                 let mut errored = false;
@@ -657,11 +683,32 @@ async fn handle_cli_connection(
                 {
                     Ok((workspace, items)) => {
                         let mut item_release_futures = Vec::new();
-                        cx.update(|cx| {
-                            for (item, path) in items.into_iter().zip(&paths) {
-                                match item {
-                                    Some(Ok(item)) => {
-                                        let released = oneshot::channel();
+
+                        for (item, path) in items.into_iter().zip(&paths) {
+                            match item {
+                                Some(Ok(item)) => {
+                                    if let Some(point) = caret_positions.remove(path) {
+                                        if let Some(active_editor) = item.downcast::<Editor>() {
+                                            active_editor
+                                                .downgrade()
+                                                .update(&mut cx, |editor, cx| {
+                                                    let snapshot =
+                                                        editor.snapshot(cx).display_snapshot;
+                                                    let point = snapshot
+                                                        .buffer_snapshot
+                                                        .clip_point(point, Bias::Left);
+                                                    editor.change_selections(
+                                                        Some(Autoscroll::center()),
+                                                        cx,
+                                                        |s| s.select_ranges([point..point]),
+                                                    );
+                                                })
+                                                .log_err();
+                                        }
+                                    }
+
+                                    let released = oneshot::channel();
+                                    cx.update(|cx| {
                                         item.on_release(
                                             cx,
                                             Box::new(move |_| {
@@ -669,23 +716,20 @@ async fn handle_cli_connection(
                                             }),
                                         )
                                         .detach();
-                                        item_release_futures.push(released.1);
-                                    }
-                                    Some(Err(err)) => {
-                                        responses
-                                            .send(CliResponse::Stderr {
-                                                message: format!(
-                                                    "error opening {:?}: {}",
-                                                    path, err
-                                                ),
-                                            })
-                                            .log_err();
-                                        errored = true;
-                                    }
-                                    None => {}
+                                    });
+                                    item_release_futures.push(released.1);
                                 }
+                                Some(Err(err)) => {
+                                    responses
+                                        .send(CliResponse::Stderr {
+                                            message: format!("error opening {:?}: {}", path, err),
+                                        })
+                                        .log_err();
+                                    errored = true;
+                                }
+                                None => {}
                             }
-                        });
+                        }
 
                         if wait {
                             let background = cx.background();
@@ -748,13 +792,9 @@ pub fn dock_default_item_factory(
     workspace: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
 ) -> Option<Box<dyn ItemHandle>> {
-    let strategy = cx
-        .global::<Settings>()
-        .terminal_overrides
+    let strategy = settings::get::<TerminalSettings>(cx)
         .working_directory
-        .clone()
-        .unwrap_or(WorkingDirectory::CurrentProjectDirectory);
-
+        .clone();
     let working_directory = get_working_directory(workspace, cx, strategy);
 
     let window_id = cx.window_id();

@@ -1,5 +1,6 @@
 mod blink_manager;
 pub mod display_map;
+mod editor_settings;
 mod element;
 
 mod git;
@@ -19,15 +20,17 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
-use client::ClickhouseEvent;
+use client::{ClickhouseEvent, TelemetrySettings};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
+pub use editor_settings::EditorSettings;
 pub use element::*;
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -51,6 +54,7 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
+    language_settings::{self, all_language_settings},
     AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion, CursorShape,
     Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language, OffsetRangeExt,
     OffsetUtf16, Point, Selection, SelectionGoal, TransactionId,
@@ -70,7 +74,7 @@ use scroll::{
 };
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::SettingsStore;
 use smallvec::SmallVec;
 use snippet::Snippet;
 use std::{
@@ -85,7 +89,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
-use theme::{DiagnosticStyle, Theme};
+use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
 
@@ -286,7 +290,12 @@ pub enum Direction {
     Next,
 }
 
+pub fn init_settings(cx: &mut AppContext) {
+    settings::register::<EditorSettings>(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.add_action(Editor::new_file);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
@@ -436,7 +445,7 @@ pub enum EditorMode {
     Full,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SoftWrap {
     None,
     EditorWidth,
@@ -471,7 +480,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
-    soft_wrap_mode_override: Option<settings::SoftWrap>,
+    soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
@@ -514,6 +523,15 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
+}
+
+impl EditorSnapshot {
+    fn has_scrollbar_info(&self) -> bool {
+        self.buffer_snapshot
+            .git_diff_hunks_in_range(0..self.max_point().row())
+            .next()
+            .is_some()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1229,8 +1247,8 @@ impl Editor {
     ) -> Self {
         let editor_view_id = cx.view_id();
         let display_map = cx.add_model(|cx| {
-            let settings = cx.global::<Settings>();
-            let style = build_style(&*settings, get_field_editor_theme.as_deref(), None, cx);
+            let settings = settings::get::<ThemeSettings>(cx);
+            let style = build_style(settings, get_field_editor_theme.as_deref(), None, cx);
             DisplayMap::new(
                 buffer.clone(),
                 style.text.font_id,
@@ -1247,7 +1265,17 @@ impl Editor {
         let blink_manager = cx.add_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let soft_wrap_mode_override =
-            (mode == EditorMode::SingleLine).then(|| settings::SoftWrap::None);
+            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
+
+        let mut project_subscription = None;
+        if mode == EditorMode::Full && buffer.read(cx).is_singleton() {
+            if let Some(project) = project.as_ref() {
+                project_subscription = Some(cx.observe(project, |_, _, cx| {
+                    cx.emit(Event::TitleChanged);
+                }))
+            }
+        }
+
         let mut this = Self {
             handle: cx.weak_handle(),
             buffer: buffer.clone(),
@@ -1301,9 +1329,14 @@ impl Editor {
                 cx.subscribe(&buffer, Self::on_buffer_event),
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-                cx.observe_global::<Settings, _>(Self::settings_changed),
+                cx.observe_global::<SettingsStore, _>(Self::settings_changed),
             ],
         };
+
+        if let Some(project_subscription) = project_subscription {
+            this._subscriptions.push(project_subscription);
+        }
+
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
 
@@ -1315,7 +1348,7 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
         }
 
-        this.report_editor_event("open", cx);
+        this.report_editor_event("open", None, cx);
         this
     }
 
@@ -1395,7 +1428,7 @@ impl Editor {
 
     fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
-            cx.global::<Settings>(),
+            settings::get::<ThemeSettings>(cx),
             self.get_field_editor_theme.as_deref(),
             self.override_text_style.as_deref(),
             cx,
@@ -2353,7 +2386,7 @@ impl Editor {
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        if !cx.global::<Settings>().show_completions_on_input {
+        if !settings::get::<EditorSettings>(cx).show_completions_on_input {
             return;
         }
 
@@ -3082,6 +3115,8 @@ impl Editor {
                 copilot
                     .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
@@ -3099,6 +3134,8 @@ impl Editor {
                         copilot.discard_completions(&self.copilot_state.completions, cx)
                     })
                     .detach_and_log_err(cx);
+
+                self.report_copilot_event(None, false, cx)
             }
 
             self.display_map
@@ -3116,17 +3153,12 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        let settings = cx.global::<Settings>();
-
-        let path = snapshot.file_at(location).map(|file| file.path());
+        let path = snapshot.file_at(location).map(|file| file.path().as_ref());
         let language_name = snapshot
             .language_at(location)
             .map(|language| language.name());
-        if !settings.show_copilot_suggestions(language_name.as_deref(), path.map(|p| p.as_ref())) {
-            return false;
-        }
-
-        true
+        let settings = all_language_settings(cx);
+        settings.copilot_enabled(language_name.as_deref(), path)
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
@@ -3427,12 +3459,9 @@ impl Editor {
                         {
                             let indent_size =
                                 buffer.indent_size_for_line(line_buffer_range.start.row);
-                            let language_name = buffer
-                                .language_at(line_buffer_range.start)
-                                .map(|language| language.name());
                             let indent_len = match indent_size.kind {
                                 IndentKind::Space => {
-                                    cx.global::<Settings>().tab_size(language_name.as_deref())
+                                    buffer.settings_at(line_buffer_range.start, cx).tab_size
                                 }
                                 IndentKind::Tab => NonZeroU32::new(1).unwrap(),
                             };
@@ -3544,12 +3573,11 @@ impl Editor {
             }
 
             // Otherwise, insert a hard or soft tab.
-            let settings = cx.global::<Settings>();
-            let language_name = buffer.language_at(cursor, cx).map(|l| l.name());
-            let tab_size = if settings.hard_tabs(language_name.as_deref()) {
+            let settings = buffer.settings_at(cursor, cx);
+            let tab_size = if settings.hard_tabs {
                 IndentSize::tab()
             } else {
-                let tab_size = settings.tab_size(language_name.as_deref()).get();
+                let tab_size = settings.tab_size.get();
                 let char_column = snapshot
                     .text_for_range(Point::new(cursor.row, 0)..cursor)
                     .flat_map(str::chars)
@@ -3602,10 +3630,9 @@ impl Editor {
         delta_for_start_row: u32,
         cx: &AppContext,
     ) -> u32 {
-        let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-        let settings = cx.global::<Settings>();
-        let tab_size = settings.tab_size(language_name.as_deref()).get();
-        let indent_kind = if settings.hard_tabs(language_name.as_deref()) {
+        let settings = buffer.settings_at(selection.start, cx);
+        let tab_size = settings.tab_size.get();
+        let indent_kind = if settings.hard_tabs {
             IndentKind::Tab
         } else {
             IndentKind::Space
@@ -3674,11 +3701,8 @@ impl Editor {
             let buffer = self.buffer.read(cx);
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
-                let language_name = buffer.language_at(selection.start, cx).map(|l| l.name());
-                let tab_size = cx
-                    .global::<Settings>()
-                    .tab_size(language_name.as_deref())
-                    .get();
+                let settings = buffer.settings_at(selection.start, cx);
+                let tab_size = settings.tab_size.get();
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -5546,68 +5570,91 @@ impl Editor {
     }
 
     fn go_to_hunk(&mut self, _: &GoToHunk, cx: &mut ViewContext<Self>) {
-        self.go_to_hunk_impl(Direction::Next, cx)
-    }
-
-    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
-        self.go_to_hunk_impl(Direction::Prev, cx)
-    }
-
-    pub fn go_to_hunk_impl(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let snapshot = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let selection = self.selections.newest::<Point>(cx);
 
-        fn seek_in_direction(
-            this: &mut Editor,
-            snapshot: &DisplaySnapshot,
-            initial_point: Point,
-            is_wrapped: bool,
-            direction: Direction,
-            cx: &mut ViewContext<Editor>,
-        ) -> bool {
-            let hunks = if direction == Direction::Next {
+        if !self.seek_in_direction(
+            &snapshot,
+            selection.head(),
+            false,
+            snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range((selection.head().row + 1)..u32::MAX),
+            cx,
+        ) {
+            let wrapped_point = Point::zero();
+            self.seek_in_direction(
+                &snapshot,
+                wrapped_point,
+                true,
                 snapshot
                     .buffer_snapshot
-                    .git_diff_hunks_in_range(initial_point.row..u32::MAX, false)
-            } else {
-                snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range(0..initial_point.row, true)
-            };
-
-            let display_point = initial_point.to_display_point(snapshot);
-            let mut hunks = hunks
-                .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
-                .skip_while(|hunk| {
-                    if is_wrapped {
-                        false
-                    } else {
-                        hunk.contains_display_row(display_point.row())
-                    }
-                })
-                .dedup();
-
-            if let Some(hunk) = hunks.next() {
-                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    let row = hunk.start_display_row();
-                    let point = DisplayPoint::new(row, 0);
-                    s.select_display_ranges([point..point]);
-                });
-
-                true
-            } else {
-                false
-            }
+                    .git_diff_hunks_in_range((wrapped_point.row + 1)..u32::MAX),
+                cx,
+            );
         }
+    }
 
-        if !seek_in_direction(self, &snapshot, selection.head(), false, direction, cx) {
-            let wrapped_point = match direction {
-                Direction::Next => Point::zero(),
-                Direction::Prev => snapshot.buffer_snapshot.max_point(),
-            };
-            seek_in_direction(self, &snapshot, wrapped_point, true, direction, cx);
+    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let selection = self.selections.newest::<Point>(cx);
+
+        if !self.seek_in_direction(
+            &snapshot,
+            selection.head(),
+            false,
+            snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range_rev(0..selection.head().row),
+            cx,
+        ) {
+            let wrapped_point = snapshot.buffer_snapshot.max_point();
+            self.seek_in_direction(
+                &snapshot,
+                wrapped_point,
+                true,
+                snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range_rev(0..wrapped_point.row),
+                cx,
+            );
+        }
+    }
+
+    fn seek_in_direction(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        initial_point: Point,
+        is_wrapped: bool,
+        hunks: impl Iterator<Item = DiffHunk<u32>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let display_point = initial_point.to_display_point(snapshot);
+        let mut hunks = hunks
+            .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
+            .skip_while(|hunk| {
+                if is_wrapped {
+                    false
+                } else {
+                    hunk.contains_display_row(display_point.row())
+                }
+            })
+            .dedup();
+
+        if let Some(hunk) = hunks.next() {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let row = hunk.start_display_row();
+                let point = DisplayPoint::new(row, 0);
+                s.select_display_ranges([point..point]);
+            });
+
+            true
+        } else {
+            false
         }
     }
 
@@ -6439,27 +6486,24 @@ impl Editor {
     }
 
     pub fn soft_wrap_mode(&self, cx: &AppContext) -> SoftWrap {
-        let language_name = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|singleton_buffer| singleton_buffer.read(cx).language())
-            .map(|l| l.name());
-
-        let settings = cx.global::<Settings>();
+        let settings = self.buffer.read(cx).settings_at(0, cx);
         let mode = self
             .soft_wrap_mode_override
-            .unwrap_or_else(|| settings.soft_wrap(language_name.as_deref()));
+            .unwrap_or_else(|| settings.soft_wrap);
         match mode {
-            settings::SoftWrap::None => SoftWrap::None,
-            settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
-            settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length(language_name.as_deref()))
+            language_settings::SoftWrap::None => SoftWrap::None,
+            language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            language_settings::SoftWrap::PreferredLineLength => {
+                SoftWrap::Column(settings.preferred_line_length)
             }
         }
     }
 
-    pub fn set_soft_wrap_mode(&mut self, mode: settings::SoftWrap, cx: &mut ViewContext<Self>) {
+    pub fn set_soft_wrap_mode(
+        &mut self,
+        mode: language_settings::SoftWrap,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.soft_wrap_mode_override = Some(mode);
         cx.notify();
     }
@@ -6474,8 +6518,8 @@ impl Editor {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
-                SoftWrap::None => settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) => settings::SoftWrap::None,
+                SoftWrap::None => language_settings::SoftWrap::EditorWidth,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) => language_settings::SoftWrap::None,
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
@@ -6550,8 +6594,8 @@ impl Editor {
         let buffer = &snapshot.buffer_snapshot;
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
-        let theme = cx.global::<Settings>().theme.as_ref();
-        self.background_highlights_in_range(start..end, &snapshot, theme)
+        let theme = theme::current(cx);
+        self.background_highlights_in_range(start..end, &snapshot, theme.as_ref())
     }
 
     fn document_highlights_for_position<'a>(
@@ -6861,44 +6905,88 @@ impl Editor {
             .collect()
     }
 
-    fn report_editor_event(&self, name: &'static str, cx: &AppContext) {
-        if let Some((project, file)) = self.project.as_ref().zip(
-            self.buffer
-                .read(cx)
-                .as_singleton()
-                .and_then(|b| b.read(cx).file()),
-        ) {
-            let settings = cx.global::<Settings>();
+    fn report_copilot_event(
+        &self,
+        suggestion_id: Option<String>,
+        suggestion_accepted: bool,
+        cx: &AppContext,
+    ) {
+        let Some(project) = &self.project else {
+            return
+        };
 
-            let extension = Path::new(file.file_name(cx))
-                .extension()
-                .and_then(|e| e.to_str());
-            let telemetry = project.read(cx).client().telemetry().clone();
-            telemetry.report_mixpanel_event(
-                match name {
-                    "open" => "open editor",
-                    "save" => "save editor",
-                    _ => name,
-                },
-                json!({ "File Extension": extension, "Vim Mode": settings.vim_mode, "In Clickhouse": true  }),
-                settings.telemetry(),
-            );
-            let event = ClickhouseEvent::Editor {
-                file_extension: extension.map(ToString::to_string),
-                vim_mode: settings.vim_mode,
-                operation: name,
-                copilot_enabled: settings.features.copilot,
-                copilot_enabled_for_language: settings.show_copilot_suggestions(
-                    self.language_at(0, cx)
-                        .map(|language| language.name())
-                        .as_deref(),
-                    self.file_at(0, cx)
-                        .map(|file| file.path().clone())
-                        .as_deref(),
-                ),
-            };
-            telemetry.report_clickhouse_event(event, settings.telemetry())
-        }
+        // If None, we are either getting suggestions in a new, unsaved file, or in a file without an extension
+        let file_extension = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string());
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+
+        let event = ClickhouseEvent::Copilot {
+            suggestion_id,
+            suggestion_accepted,
+            file_extension,
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings);
+    }
+
+    fn report_editor_event(
+        &self,
+        name: &'static str,
+        file_extension: Option<String>,
+        cx: &AppContext,
+    ) {
+        let Some(project) = &self.project else {
+            return
+        };
+
+        // If None, we are in a file without an extension
+        let file_extension = file_extension.or(self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| b.read(cx).file())
+            .and_then(|file| Path::new(file.file_name(cx)).extension())
+            .and_then(|e| e.to_str())
+            .map(|a| a.to_string()));
+
+        let vim_mode = cx
+            .global::<SettingsStore>()
+            .untyped_user_settings()
+            .get("vim_mode")
+            == Some(&serde_json::Value::Bool(true));
+        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        let copilot_enabled = all_language_settings(cx).copilot_enabled(None, None);
+        let copilot_enabled_for_language = self
+            .buffer
+            .read(cx)
+            .settings_at(0, cx)
+            .show_copilot_suggestions;
+
+        let telemetry = project.read(cx).client().telemetry().clone();
+        telemetry.report_mixpanel_event(
+            match name {
+                "open" => "open editor",
+                "save" => "save editor",
+                _ => name,
+            },
+            json!({ "File Extension": file_extension, "Vim Mode": vim_mode, "In Clickhouse": true  }),
+            telemetry_settings,
+        );
+        let event = ClickhouseEvent::Editor {
+            file_extension,
+            vim_mode,
+            operation: name,
+            copilot_enabled,
+            copilot_enabled_for_language,
+        };
+        telemetry.report_clickhouse_event(event, telemetry_settings)
     }
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
@@ -6930,7 +7018,7 @@ impl Editor {
         let mut lines = Vec::new();
         let mut line: VecDeque<Chunk> = VecDeque::new();
 
-        let theme = &cx.global::<Settings>().theme.editor.syntax;
+        let theme = &theme::current(cx).editor.syntax;
 
         for chunk in chunks {
             let highlight = chunk.syntax_highlight_id.and_then(|id| id.name(theme));
@@ -7352,7 +7440,7 @@ impl View for Editor {
 }
 
 fn build_style(
-    settings: &Settings,
+    settings: &ThemeSettings,
     get_field_editor_theme: Option<&GetFieldEditorTheme>,
     override_text_style: Option<&OverrideTextStyle>,
     cx: &AppContext,
@@ -7382,7 +7470,7 @@ fn build_style(
         let font_id = font_cache
             .select_font(font_family_id, &font_properties)
             .unwrap();
-        let font_size = settings.buffer_font_size;
+        let font_size = settings.buffer_font_size(cx);
         EditorStyle {
             text: TextStyle {
                 color: settings.theme.editor.text_color,
@@ -7552,10 +7640,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
     }
 
     Arc::new(move |cx: &mut BlockContext| {
-        let settings = cx.global::<Settings>();
+        let settings = settings::get::<ThemeSettings>(cx);
         let theme = &settings.theme.editor;
         let style = diagnostic_style(diagnostic.severity, is_valid, theme);
-        let font_size = (style.text_scale_factor * settings.buffer_font_size).round();
+        let font_size = (style.text_scale_factor * settings.buffer_font_size(cx)).round();
         Flex::column()
             .with_children(highlighted_lines.iter().map(|(line, highlights)| {
                 Label::new(

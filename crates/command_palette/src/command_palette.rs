@@ -5,7 +5,6 @@ use gpui::{
     ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::Settings;
 use std::cmp;
 use util::ResultExt;
 use workspace::Workspace;
@@ -185,8 +184,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> AnyElement<Picker<Self>> {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
-        let settings = cx.global::<Settings>();
-        let theme = &settings.theme;
+        let theme = theme::current(cx);
         let style = theme.picker.item.style_for(mouse_state, selected);
         let key_style = &theme.command_palette.key.style_for(mouse_state, selected);
         let keystroke_spacing = theme.command_palette.keystroke_spacing;
@@ -294,14 +292,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_command_palette(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        deterministic.forbid_parking();
-        let app_state = cx.update(AppState::test);
-
-        cx.update(|cx| {
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-            init(cx);
-        });
+        let app_state = init_test(cx);
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
@@ -368,5 +359,17 @@ mod tests {
         palette.update(cx, |palette, _| {
             assert!(palette.delegate().matches.is_empty())
         });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme::init((), cx);
+            language::init(cx);
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+            init(cx);
+            app_state
+        })
     }
 }

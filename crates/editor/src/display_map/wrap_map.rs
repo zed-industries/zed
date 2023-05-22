@@ -1043,16 +1043,16 @@ mod tests {
     };
     use gpui::test::observe;
     use rand::prelude::*;
-    use settings::Settings;
+    use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
-        cx.update(|cx| cx.set_global(Settings::test(cx)));
+        init_test(cx);
+
         cx.foreground().set_block_on_ticks(0..=50);
-        cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -1285,6 +1285,14 @@ mod tests {
             }
         }
         wrap_map.read_with(cx, |map, _| assert!(map.pending_edits.is_empty()));
+    }
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+        });
     }
 
     fn wrap_text(

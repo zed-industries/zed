@@ -253,10 +253,13 @@ impl LspAdapter for RustLspAdapter {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use super::*;
     use crate::languages::language;
     use gpui::{color::Color, TestAppContext};
-    use settings::Settings;
+    use language::language_settings::AllLanguageSettings;
+    use settings::SettingsStore;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -435,9 +438,13 @@ mod tests {
     async fn test_rust_autoindent(cx: &mut TestAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.update(|cx| {
-            let mut settings = Settings::test(cx);
-            settings.editor_overrides.tab_size = Some(2.try_into().unwrap());
-            cx.set_global(settings);
+            cx.set_global(SettingsStore::test(cx));
+            language::init(cx);
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
+                    s.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
         });
 
         let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;

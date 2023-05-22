@@ -36,16 +36,19 @@ sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 theme = { path = "../theme" }
 util = { path = "../util" }
+
 anyhow.workspace = true
 async-broadcast = "0.4"
 async-trait.workspace = true
 futures.workspace = true
+globset.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

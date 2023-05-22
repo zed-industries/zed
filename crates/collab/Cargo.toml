@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.12.0"
+version = "0.12.4"
 publish = false
 
 [[bin]]
@@ -51,7 +51,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
 tonic = "0.6"
 tower = "0.4"
-toml = "0.5.8"
+toml.workspace = true
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }

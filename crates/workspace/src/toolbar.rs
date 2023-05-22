@@ -3,7 +3,6 @@ use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyElement, AnyViewHandle,
     AppContext, Entity, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use settings::Settings;
 
 pub trait ToolbarItemView: View {
     fn set_active_pane_item(
@@ -68,7 +67,7 @@ impl View for Toolbar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let theme = &cx.global::<Settings>().theme.workspace.toolbar;
+        let theme = &theme::current(cx).workspace.toolbar;
 
         let mut primary_left_items = Vec::new();
         let mut primary_right_items = Vec::new();
@@ -131,7 +130,7 @@ impl View for Toolbar {
         let height = theme.height * primary_items_row_count as f32;
         let nav_button_height = theme.height;
         let button_style = theme.nav_button;
-        let tooltip_style = cx.global::<Settings>().theme.tooltip.clone();
+        let tooltip_style = theme::current(cx).tooltip.clone();
 
         Flex::column()
             .with_child(

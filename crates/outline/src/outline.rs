@@ -10,7 +10,6 @@ use gpui::{
 use language::Outline;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::Settings;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
@@ -34,7 +33,7 @@ pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Worksp
             .buffer()
             .read(cx)
             .snapshot(cx)
-            .outline(Some(cx.global::<Settings>().theme.editor.syntax.as_ref()));
+            .outline(Some(theme::current(cx).editor.syntax.as_ref()));
         if let Some(outline) = outline {
             workspace.toggle_modal(cx, |_, cx| {
                 cx.add_view(|cx| {
@@ -204,9 +203,9 @@ impl PickerDelegate for OutlineViewDelegate {
         selected: bool,
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let settings = cx.global::<Settings>();
+        let theme = theme::current(cx);
+        let style = theme.picker.item.style_for(mouse_state, selected);
         let string_match = &self.matches[ix];
-        let style = settings.theme.picker.item.style_for(mouse_state, selected);
         let outline_item = &self.outline.items[string_match.candidate_id];
 
         Text::new(outline_item.text.clone(), style.label.text.clone())

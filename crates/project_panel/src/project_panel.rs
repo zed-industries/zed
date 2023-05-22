@@ -6,7 +6,7 @@ use gpui::{
     actions,
     anyhow::{anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
+        AnchorCorner, ChildView, ComponentHost, ContainerStyle, Empty, Flex, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
@@ -16,8 +16,13 @@ use gpui::{
     ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
-use settings::{settings_file::SettingsFile, Settings};
+use project::{
+    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
+    Worktree, WorktreeId,
+};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use std::{
     cmp::Ordering,
     collections::{hash_map, HashMap},
@@ -26,7 +31,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use theme::ProjectPanelEntry;
+use theme::{ui::FileName, ProjectPanelEntry};
 use unicase::UniCase;
 use workspace::{
     dock::{DockPosition, Panel},
@@ -35,8 +40,41 @@ use workspace::{
 
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
+#[derive(Deserialize)]
+pub struct ProjectPanelSettings {
+    dock: ProjectPanelDockPosition,
+    default_width: f32,
+}
+
+impl settings::Setting for ProjectPanelSettings {
+    const KEY: Option<&'static str> = Some("project_panel");
+
+    type FileContent = ProjectPanelSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &AppContext,
+    ) -> Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectPanelSettingsContent {
+    dock: Option<ProjectPanelDockPosition>,
+    default_width: Option<f32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub enum ProjectPanelDockPosition {
+    Left,
+    Right,
+}
+
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
+    fs: Arc<dyn Fs>,
     list: UniformListState,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
@@ -90,6 +128,7 @@ pub struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
+    git_status: Option<GitFileStatus>,
 }
 
 actions!(
@@ -112,6 +151,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    settings::register::<ProjectPanelSettings>(cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::select_prev);
@@ -205,6 +245,7 @@ impl ProjectPanel {
             let view_id = cx.view_id();
             let mut this = Self {
                 project: project.clone(),
+                fs: workspace.app_state().fs.clone(),
                 list: Default::default(),
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
@@ -222,7 +263,7 @@ impl ProjectPanel {
 
             // Update the dock position when the setting changes.
             let mut old_dock_position = this.position(cx);
-            cx.observe_global::<Settings, _>(move |this, cx| {
+            cx.observe_global::<SettingsStore, _>(move |this, cx| {
                 let new_dock_position = this.position(cx);
                 if new_dock_position != old_dock_position {
                     old_dock_position = new_dock_position;
@@ -1027,7 +1068,13 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                for entry in &visible_worktree_entries[entry_range] {
+                for (entry, repo) in
+                    snapshot.entries_with_repositories(visible_worktree_entries[entry_range].iter())
+                {
+                    let status = (entry.path.parent().is_some() && !entry.is_ignored)
+                        .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
+                        .flatten();
+
                     let mut details = EntryDetails {
                         filename: entry
                             .path
@@ -1048,6 +1095,7 @@ impl ProjectPanel {
                         is_cut: self
                             .clipboard_entry
                             .map_or(false, |e| e.is_cut() && e.entry_id() == entry.id),
+                        git_status: status,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -1116,12 +1164,16 @@ impl ProjectPanel {
                     .flex(1.0, true)
                     .into_any()
             } else {
-                Label::new(details.filename.clone(), style.text.clone())
-                    .contained()
-                    .with_margin_left(style.icon_spacing)
-                    .aligned()
-                    .left()
-                    .into_any()
+                ComponentHost::new(FileName::new(
+                    details.filename.clone(),
+                    details.git_status,
+                    FileName::style(style.text.clone(), &theme::current(cx)),
+                ))
+                .contained()
+                .with_margin_left(style.icon_spacing)
+                .aligned()
+                .left()
+                .into_any()
             })
             .constrained()
             .with_height(style.height)
@@ -1225,7 +1277,7 @@ impl ProjectPanel {
             let row_container_style = theme.dragged_entry.container;
 
             move |_, cx: &mut ViewContext<Workspace>| {
-                let theme = cx.global::<Settings>().theme.clone();
+                let theme = theme::current(cx).clone();
                 Self::render_entry_visual_element(
                     &details,
                     None,
@@ -1248,7 +1300,7 @@ impl View for ProjectPanel {
 
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> gpui::AnyElement<Self> {
         enum ProjectPanel {}
-        let theme = &cx.global::<Settings>().theme.project_panel;
+        let theme = &theme::current(cx).project_panel;
         let mut container_style = theme.container;
         let padding = std::mem::take(&mut container_style.padding);
         let last_worktree_root_id = self.last_worktree_root_id;
@@ -1267,7 +1319,7 @@ impl View for ProjectPanel {
                                 .sum(),
                             cx,
                             move |this, range, items, cx| {
-                                let theme = cx.global::<Settings>().theme.clone();
+                                let theme = theme::current(cx).clone();
                                 let mut dragged_entry_destination =
                                     this.dragged_entry_destination.clone();
                                 this.for_each_visible_entry(range, cx, |id, details, cx| {
@@ -1304,8 +1356,7 @@ impl View for ProjectPanel {
                 .with_child(
                     MouseEventHandler::<Self, _>::new(2, cx, {
                         let button_style = theme.open_project_button.clone();
-                        let context_menu_item_style =
-                            cx.global::<Settings>().theme.context_menu.item.clone();
+                        let context_menu_item_style = theme::current(cx).context_menu.item.clone();
                         move |state, cx| {
                             let button_style = button_style.style_for(state, false).clone();
                             let context_menu_item =
@@ -1360,10 +1411,9 @@ impl Entity for ProjectPanel {
 
 impl workspace::dock::Panel for ProjectPanel {
     fn position(&self, cx: &WindowContext) -> DockPosition {
-        let settings = cx.global::<Settings>();
-        match settings.project_panel.dock {
-            settings::ProjectPanelDockPosition::Left => DockPosition::Left,
-            settings::ProjectPanelDockPosition::Right => DockPosition::Right,
+        match settings::get::<ProjectPanelSettings>(cx).dock {
+            ProjectPanelDockPosition::Left => DockPosition::Left,
+            ProjectPanelDockPosition::Right => DockPosition::Right,
         }
     }
 
@@ -1372,19 +1422,21 @@ impl workspace::dock::Panel for ProjectPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        SettingsFile::update(cx, move |settings| {
-            let dock = match position {
-                DockPosition::Left | DockPosition::Bottom => {
-                    settings::ProjectPanelDockPosition::Left
-                }
-                DockPosition::Right => settings::ProjectPanelDockPosition::Right,
-            };
-            settings.project_panel.dock = Some(dock);
-        })
+        settings::update_settings_file::<ProjectPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings| {
+                let dock = match position {
+                    DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
+                    DockPosition::Right => ProjectPanelDockPosition::Right,
+                };
+                settings.dock = Some(dock);
+            },
+        );
     }
 
     fn default_size(&self, cx: &WindowContext) -> f32 {
-        cx.global::<Settings>().project_panel.default_width
+        settings::get::<ProjectPanelSettings>(cx).default_width
     }
 
     fn should_zoom_in_on_event(_: &Self::Event) -> bool {
@@ -1459,15 +1511,13 @@ mod tests {
     use gpui::{TestAppContext, ViewHandle};
     use project::FakeFs;
     use serde_json::json;
+    use settings::SettingsStore;
     use std::{collections::HashSet, path::Path};
+    use workspace::{pane, AppState};
 
     #[gpui::test]
     async fn test_visible_list(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1555,11 +1605,7 @@ mod tests {
 
     #[gpui::test(iterations = 30)]
     async fn test_editing_files(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1875,11 +1921,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-        cx.update(|cx| {
-            let settings = Settings::test(cx);
-            cx.set_global(settings);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.background());
         fs.insert_tree(
@@ -1945,6 +1987,95 @@ mod tests {
                 "      one.txt",
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(window_id, &workspace, "test/first.rs", cx);
+
+        submit_deletion(window_id, &panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "Project panel should have no deleted file, no other file is selected in it"
+        );
+        ensure_no_open_items_and_panes(window_id, &workspace, cx);
+
+        select_path(&panel, "src/test/second.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          second.rs  <== selected",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(window_id, &workspace, "test/second.rs", cx);
+
+        cx.update_window(window_id, |cx| {
+            let active_items = workspace
+                .read(cx)
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item())
+                .collect::<Vec<_>>();
+            assert_eq!(active_items.len(), 1);
+            let open_editor = active_items
+                .into_iter()
+                .next()
+                .unwrap()
+                .downcast::<Editor>()
+                .expect("Open item should be an editor");
+            open_editor.update(cx, |editor, cx| editor.set_text("Another text!", cx));
+        });
+        submit_deletion(window_id, &panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    v test", "          third.rs"],
+            "Project panel should have no deleted file, with one last file remaining"
+        );
+        ensure_no_open_items_and_panes(window_id, &workspace, cx);
     }
 
     fn toggle_expand_dir(
@@ -2038,5 +2169,106 @@ mod tests {
         });
 
         result
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+            language::init(cx);
+            editor::init_settings(cx);
+            workspace::init_settings(cx);
+        });
+    }
+
+    fn init_test_with_editor(cx: &mut TestAppContext) {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme::init((), cx);
+            language::init(cx);
+            editor::init(cx);
+            pane::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+    }
+
+    fn ensure_single_file_is_opened(
+        window_id: usize,
+        workspace: &ViewHandle<Workspace>,
+        expected_path: &str,
+        cx: &mut TestAppContext,
+    ) {
+        cx.read_window(window_id, |cx| {
+            let workspace = workspace.read(cx);
+            let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            let worktree_id = WorktreeId::from_usize(worktrees[0].id());
+
+            let open_project_paths = workspace
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                open_project_paths,
+                vec![ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new(expected_path))
+                }],
+                "Should have opened file, selected in project panel"
+            );
+        });
+    }
+
+    fn submit_deletion(
+        window_id: usize,
+        panel: &ViewHandle<ProjectPanel>,
+        cx: &mut TestAppContext,
+    ) {
+        assert!(
+            !cx.has_pending_prompt(window_id),
+            "Should have no prompts before the deletion"
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .delete(&Delete, cx)
+                .expect("Deletion start")
+                .detach_and_log_err(cx);
+        });
+        assert!(
+            cx.has_pending_prompt(window_id),
+            "Should have a prompt after the deletion"
+        );
+        cx.simulate_prompt_answer(window_id, 0);
+        assert!(
+            !cx.has_pending_prompt(window_id),
+            "Should have no prompts after prompt was replied to"
+        );
+        cx.foreground().run_until_parked();
+    }
+
+    fn ensure_no_open_items_and_panes(
+        window_id: usize,
+        workspace: &ViewHandle<Workspace>,
+        cx: &mut TestAppContext,
+    ) {
+        assert!(
+            !cx.has_pending_prompt(window_id),
+            "Should have no prompts after deletion operation closes the file"
+        );
+        cx.read_window(window_id, |cx| {
+            let open_project_paths = workspace
+                .read(cx)
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert!(
+                open_project_paths.is_empty(),
+                "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
+            );
+        });
     }
 }

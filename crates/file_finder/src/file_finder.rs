@@ -1,10 +1,10 @@
+use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
 use fuzzy::PathMatch;
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
-use settings::Settings;
 use std::{
     path::Path,
     sync::{
@@ -12,7 +12,8 @@ use std::{
         Arc,
     },
 };
-use util::{post_inc, ResultExt};
+use text::Point;
+use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
 use workspace::Workspace;
 
 pub type FileFinder = Picker<FileFinderDelegate>;
@@ -23,11 +24,12 @@ pub struct FileFinderDelegate {
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
-    latest_search_query: String,
-    relative_to: Option<Arc<Path>>,
+    latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
+    currently_opened_path: Option<ProjectPath>,
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
     cancel_flag: Arc<AtomicBool>,
+    history_items: Vec<ProjectPath>,
 }
 
 actions!(file_finder, [Toggle]);
@@ -37,17 +39,26 @@ pub fn init(cx: &mut AppContext) {
     FileFinder::init(cx);
 }
 
+const MAX_RECENT_SELECTIONS: usize = 20;
+
 fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
-        let relative_to = workspace
+        let history_items = workspace.recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx);
+        let currently_opened_path = workspace
             .active_item(cx)
-            .and_then(|item| item.project_path(cx))
-            .map(|project_path| project_path.path.clone());
+            .and_then(|item| item.project_path(cx));
+
         let project = workspace.project().clone();
         let workspace = cx.handle().downgrade();
         let finder = cx.add_view(|cx| {
             Picker::new(
-                FileFinderDelegate::new(workspace, project, relative_to, cx),
+                FileFinderDelegate::new(
+                    workspace,
+                    project,
+                    currently_opened_path,
+                    history_items,
+                    cx,
+                ),
                 cx,
             )
         });
@@ -58,6 +69,21 @@ fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContex
 pub enum Event {
     Selected(ProjectPath),
     Dismissed,
+}
+
+#[derive(Debug, Clone)]
+struct FileSearchQuery {
+    raw_query: String,
+    file_query_end: Option<usize>,
+}
+
+impl FileSearchQuery {
+    fn path_query(&self) -> &str {
+        match self.file_query_end {
+            Some(file_path_end) => &self.raw_query[..file_path_end],
+            None => &self.raw_query,
+        }
+    }
 }
 
 impl FileFinderDelegate {
@@ -90,7 +116,8 @@ impl FileFinderDelegate {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
         project: ModelHandle<Project>,
-        relative_to: Option<Arc<Path>>,
+        currently_opened_path: Option<ProjectPath>,
+        history_items: Vec<ProjectPath>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
         cx.observe(&project, |picker, _, cx| {
@@ -103,16 +130,24 @@ impl FileFinderDelegate {
             search_count: 0,
             latest_search_id: 0,
             latest_search_did_cancel: false,
-            latest_search_query: String::new(),
-            relative_to,
+            latest_search_query: None,
+            currently_opened_path,
             matches: Vec::new(),
             selected: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            history_items,
         }
     }
 
-    fn spawn_search(&mut self, query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
-        let relative_to = self.relative_to.clone();
+    fn spawn_search(
+        &mut self,
+        query: PathLikeWithPosition<FileSearchQuery>,
+        cx: &mut ViewContext<FileFinder>,
+    ) -> Task<()> {
+        let relative_to = self
+            .currently_opened_path
+            .as_ref()
+            .map(|project_path| Arc::clone(&project_path.path));
         let worktrees = self
             .project
             .read(cx)
@@ -140,7 +175,7 @@ impl FileFinderDelegate {
         cx.spawn(|picker, mut cx| async move {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
-                &query,
+                query.path_like.path_query(),
                 relative_to,
                 false,
                 100,
@@ -163,18 +198,24 @@ impl FileFinderDelegate {
         &mut self,
         search_id: usize,
         did_cancel: bool,
-        query: String,
+        query: PathLikeWithPosition<FileSearchQuery>,
         matches: Vec<PathMatch>,
         cx: &mut ViewContext<FileFinder>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            if self.latest_search_did_cancel && query == self.latest_search_query {
+            if self.latest_search_did_cancel
+                && Some(query.path_like.path_query())
+                    == self
+                        .latest_search_query
+                        .as_ref()
+                        .map(|query| query.path_like.path_query())
+            {
                 util::extend_sorted(&mut self.matches, matches.into_iter(), 100, |a, b| b.cmp(a));
             } else {
                 self.matches = matches;
             }
-            self.latest_search_query = query;
+            self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
             cx.notify();
         }
@@ -209,13 +250,42 @@ impl PickerDelegate for FileFinderDelegate {
         cx.notify();
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
-        if query.is_empty() {
+    fn update_matches(&mut self, raw_query: String, cx: &mut ViewContext<FileFinder>) -> Task<()> {
+        if raw_query.is_empty() {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.matches.clear();
+
+            self.matches = self
+                .currently_opened_path
+                .iter() // if exists, bubble the currently opened path to the top
+                .chain(self.history_items.iter().filter(|history_item| {
+                    Some(*history_item) != self.currently_opened_path.as_ref()
+                }))
+                .enumerate()
+                .map(|(i, history_item)| PathMatch {
+                    score: i as f64,
+                    positions: Vec::new(),
+                    worktree_id: history_item.worktree_id.to_usize(),
+                    path: Arc::clone(&history_item.path),
+                    path_prefix: "".into(),
+                    distance_to_relative_ancestor: usize::MAX,
+                })
+                .collect();
             cx.notify();
             Task::ready(())
         } else {
+            let raw_query = &raw_query;
+            let query = PathLikeWithPosition::parse_str(raw_query, |path_like_str| {
+                Ok::<_, std::convert::Infallible>(FileSearchQuery {
+                    raw_query: raw_query.to_owned(),
+                    file_query_end: if path_like_str == raw_query {
+                        None
+                    } else {
+                        Some(path_like_str.len())
+                    },
+                })
+            })
+            .expect("infallible");
             self.spawn_search(query, cx)
         }
     }
@@ -227,13 +297,48 @@ impl PickerDelegate for FileFinderDelegate {
                     worktree_id: WorktreeId::from_usize(m.worktree_id),
                     path: m.path.clone(),
                 };
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    workspace.open_path(project_path.clone(), None, true, cx)
+                });
 
-                workspace.update(cx, |workspace, cx| {
+                let workspace = workspace.downgrade();
+
+                let row = self
+                    .latest_search_query
+                    .as_ref()
+                    .and_then(|query| query.row)
+                    .map(|row| row.saturating_sub(1));
+                let col = self
+                    .latest_search_query
+                    .as_ref()
+                    .and_then(|query| query.column)
+                    .unwrap_or(0)
+                    .saturating_sub(1);
+                cx.spawn(|_, mut cx| async move {
+                    let item = open_task.await.log_err()?;
+                    if let Some(row) = row {
+                        if let Some(active_editor) = item.downcast::<Editor>() {
+                            active_editor
+                                .downgrade()
+                                .update(&mut cx, |editor, cx| {
+                                    let snapshot = editor.snapshot(cx).display_snapshot;
+                                    let point = snapshot
+                                        .buffer_snapshot
+                                        .clip_point(Point::new(row, col), Bias::Left);
+                                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+                                        s.select_ranges([point..point])
+                                    });
+                                })
+                                .log_err();
+                        }
+                    }
                     workspace
-                        .open_path(project_path.clone(), None, true, cx)
-                        .detach_and_log_err(cx);
-                    workspace.dismiss_modal(cx);
+                        .update(&mut cx, |workspace, cx| workspace.dismiss_modal(cx))
+                        .log_err();
+
+                    Some(())
                 })
+                .detach();
             }
         }
     }
@@ -248,8 +353,8 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
         let path_match = &self.matches[ix];
-        let settings = cx.global::<Settings>();
-        let style = settings.theme.picker.item.style_for(mouse_state, selected);
+        let theme = theme::current(cx);
+        let style = theme.picker.item.style_for(mouse_state, selected);
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match);
         Flex::column()
@@ -268,8 +373,11 @@ impl PickerDelegate for FileFinderDelegate {
 
 #[cfg(test)]
 mod tests {
+    use std::{assert_eq, collections::HashMap, time::Duration};
+
     use super::*;
     use editor::Editor;
+    use gpui::{TestAppContext, ViewHandle};
     use menu::{Confirm, SelectNext};
     use serde_json::json;
     use workspace::{AppState, Workspace};
@@ -282,13 +390,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_matching_paths(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(|cx| {
-            super::init(cx);
-            editor::init(cx);
-            AppState::test(cx)
-        });
-
+    async fn test_matching_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -338,8 +441,174 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_matching_cancellation(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let first_file_name = "first.rs";
+        let first_file_contents = "// First Rust file";
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        first_file_name: first_file_contents,
+                        "second.rs": "// Second Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let file_query = &first_file_name[..3];
+        let file_row = 1;
+        let file_column = 3;
+        assert!(file_column <= first_file_contents.len());
+        let query_inside_file = format!("{file_query}:{file_row}:{file_column}");
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(query_inside_file.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let finder = finder.delegate();
+            assert_eq!(finder.matches.len(), 1);
+            let latest_search_query = finder
+                .latest_search_query
+                .as_ref()
+                .expect("Finder should have a query after the update_matches call");
+            assert_eq!(latest_search_query.path_like.raw_query, query_inside_file);
+            assert_eq!(
+                latest_search_query.path_like.file_query_end,
+                Some(file_query.len())
+            );
+            assert_eq!(latest_search_query.row, Some(file_row));
+            assert_eq!(latest_search_query.column, Some(file_column as u32));
+        });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+        active_pane
+            .condition(cx, |pane, _| pane.active_item().is_some())
+            .await;
+        let editor = cx.update(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            active_item.downcast::<Editor>().unwrap()
+        });
+        cx.foreground().advance_clock(Duration::from_secs(2));
+        cx.foreground().start_waiting();
+        cx.foreground().finish_waiting();
+        editor.update(cx, |editor, cx| {
+            let all_selections = editor.selections.all_adjusted(cx);
+            assert_eq!(
+                all_selections.len(),
+                1,
+                "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+            );
+            let caret_selection = all_selections.into_iter().next().unwrap();
+            assert_eq!(caret_selection.start, caret_selection.end,
+                "Caret selection should have its start and end at the same position");
+            assert_eq!(file_row, caret_selection.start.row + 1,
+                "Query inside file should get caret with the same focus row");
+            assert_eq!(file_column, caret_selection.start.column as usize + 1,
+                "Query inside file should get caret with the same focus column");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        let first_file_name = "first.rs";
+        let first_file_contents = "// First Rust file";
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        first_file_name: first_file_contents,
+                        "second.rs": "// Second Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+
+        let file_query = &first_file_name[..3];
+        let file_row = 200;
+        let file_column = 300;
+        assert!(file_column > first_file_contents.len());
+        let query_outside_file = format!("{file_query}:{file_row}:{file_column}");
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(query_outside_file.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let finder = finder.delegate();
+            assert_eq!(finder.matches.len(), 1);
+            let latest_search_query = finder
+                .latest_search_query
+                .as_ref()
+                .expect("Finder should have a query after the update_matches call");
+            assert_eq!(latest_search_query.path_like.raw_query, query_outside_file);
+            assert_eq!(
+                latest_search_query.path_like.file_query_end,
+                Some(file_query.len())
+            );
+            assert_eq!(latest_search_query.row, Some(file_row));
+            assert_eq!(latest_search_query.column, Some(file_column as u32));
+        });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+        active_pane
+            .condition(cx, |pane, _| pane.active_item().is_some())
+            .await;
+        let editor = cx.update(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            active_item.downcast::<Editor>().unwrap()
+        });
+        cx.foreground().advance_clock(Duration::from_secs(2));
+        cx.foreground().start_waiting();
+        cx.foreground().finish_waiting();
+        editor.update(cx, |editor, cx| {
+            let all_selections = editor.selections.all_adjusted(cx);
+            assert_eq!(
+                all_selections.len(),
+                1,
+                "Expected to have 1 selection (caret) after file finder confirm, but got: {all_selections:?}"
+            );
+            let caret_selection = all_selections.into_iter().next().unwrap();
+            assert_eq!(caret_selection.start, caret_selection.end,
+                "Caret selection should have its start and end at the same position");
+            assert_eq!(0, caret_selection.start.row,
+                "Excessive rows (as in query outside file borders) should get trimmed to last file row");
+            assert_eq!(first_file_contents.len(), caret_selection.start.column as usize,
+                "Excessive columns (as in query outside file borders) should get trimmed to selected row's last column");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_matching_cancellation(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -365,13 +634,14 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
             )
         });
 
-        let query = "hi".to_string();
+        let query = test_path_like("hi");
         finder
             .update(cx, |f, cx| f.delegate_mut().spawn_search(query.clone(), cx))
             .await;
@@ -407,8 +677,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_ignored_files(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_ignored_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -449,20 +719,23 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
             )
         });
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("hi".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut().spawn_search(test_path_like("hi"), cx)
+            })
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 7));
     }
 
     #[gpui::test]
-    async fn test_single_file_worktrees(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_single_file_worktrees(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -482,6 +755,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -491,7 +765,9 @@ mod tests {
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("thf".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut().spawn_search(test_path_like("thf"), cx)
+            })
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
@@ -509,16 +785,16 @@ mod tests {
         // Since the worktree root is a file, searching for its name followed by a slash does
         // not match anything.
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("thf/".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut().spawn_search(test_path_like("thf/"), cx)
+            })
             .await;
         finder.read_with(cx, |f, _| assert_eq!(f.delegate().matches.len(), 0));
     }
 
     #[gpui::test]
-    async fn test_multiple_matches_with_same_relative_path(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
+    async fn test_multiple_matches_with_same_relative_path(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -545,6 +821,7 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -553,7 +830,9 @@ mod tests {
 
         // Run a search that matches two files with the same relative path.
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("a.t".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut().spawn_search(test_path_like("a.t"), cx)
+            })
             .await;
 
         // Can switch between different matches with the same relative path.
@@ -569,10 +848,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_path_distance_ordering(cx: &mut gpui::TestAppContext) {
-        cx.foreground().forbid_parking();
-
-        let app_state = cx.update(AppState::test);
+    async fn test_path_distance_ordering(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -590,17 +867,26 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            WorktreeId::from_usize(worktrees[0].id())
+        });
 
         // When workspace has an active item, sort items which are closer to that item
         // first when they have the same name. In this case, b.txt is closer to dir2's a.txt
         // so that one should be sorted earlier
-        let b_path = Some(Arc::from(Path::new("/root/dir2/b.txt")));
+        let b_path = Some(ProjectPath {
+            worktree_id,
+            path: Arc::from(Path::new("/root/dir2/b.txt")),
+        });
         let (_, finder) = cx.add_window(|cx| {
             Picker::new(
                 FileFinderDelegate::new(
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     b_path,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
@@ -609,7 +895,7 @@ mod tests {
 
         finder
             .update(cx, |f, cx| {
-                f.delegate_mut().spawn_search("a.txt".into(), cx)
+                f.delegate_mut().spawn_search(test_path_like("a.txt"), cx)
             })
             .await;
 
@@ -621,8 +907,8 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_worktree_without_files(cx: &mut gpui::TestAppContext) {
-        let app_state = cx.update(AppState::test);
+    async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
         app_state
             .fs
             .as_fake()
@@ -645,17 +931,288 @@ mod tests {
                     workspace.downgrade(),
                     workspace.read(cx).project().clone(),
                     None,
+                    Vec::new(),
                     cx,
                 ),
                 cx,
             )
         });
         finder
-            .update(cx, |f, cx| f.delegate_mut().spawn_search("dir".into(), cx))
+            .update(cx, |f, cx| {
+                f.delegate_mut().spawn_search(test_path_like("dir"), cx)
+            })
             .await;
         cx.read(|cx| {
             let finder = finder.read(cx);
             assert_eq!(finder.delegate().matches.len(), 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_query_history(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1);
+            WorktreeId::from_usize(worktrees[0].id())
+        });
+
+        // Open and close panels, getting their history items afterwards.
+        // Ensure history items get populated with opened items, and items are kept in a certain order.
+        // The history lags one opened buffer behind, since it's updated in the search panel only on its reopen.
+        //
+        // TODO: without closing, the opened items do not propagate their history changes for some reason
+        // it does work in real app though, only tests do not propagate.
+
+        let initial_history = open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert!(
+            initial_history.is_empty(),
+            "Should have no history before opening any files"
+        );
+
+        let history_after_first = open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_first,
+            vec![ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("test/first.rs")),
+            }],
+            "Should show 1st opened item in the history when opening the 2nd item"
+        );
+
+        let history_after_second = open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_second,
+            vec![
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+            ],
+            "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
+2nd item should be the first in the history, as the last opened."
+        );
+
+        let history_after_third = open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_third,
+            vec![
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+            ],
+            "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
+3rd item should be the first in the history, as the last opened."
+        );
+
+        let history_after_second_again = open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            history_after_second_again,
+            vec![
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+            ],
+            "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
+2nd item, as the last opened, 3rd item should go next as it was opened right before."
+        );
+    }
+
+    async fn open_close_queried_buffer(
+        input: &str,
+        expected_matches: usize,
+        expected_editor_title: &str,
+        window_id: usize,
+        workspace: &ViewHandle<Workspace>,
+        deterministic: &gpui::executor::Deterministic,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<ProjectPath> {
+        cx.dispatch_action(window_id, Toggle);
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches(input.to_string(), cx)
+            })
+            .await;
+        let history_items = finder.read_with(cx, |finder, _| {
+            assert_eq!(
+                finder.delegate().matches.len(),
+                expected_matches,
+                "Unexpected number of matches found for query {input}"
+            );
+            finder.delegate().history_items.clone()
+        });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
+        cx.dispatch_action(window_id, SelectNext);
+        cx.dispatch_action(window_id, Confirm);
+        deterministic.run_until_parked();
+        active_pane
+            .condition(cx, |pane, _| pane.active_item().is_some())
+            .await;
+        cx.read(|cx| {
+            let active_item = active_pane.read(cx).active_item().unwrap();
+            let active_editor_title = active_item
+                .as_any()
+                .downcast_ref::<Editor>()
+                .unwrap()
+                .read(cx)
+                .title(cx);
+            assert_eq!(
+                expected_editor_title, active_editor_title,
+                "Unexpected editor title for query {input}"
+            );
+        });
+
+        let mut original_items = HashMap::new();
+        cx.read(|cx| {
+            for pane in workspace.read(cx).panes() {
+                let pane_id = pane.id();
+                let pane = pane.read(cx);
+                let insertion_result = original_items.insert(pane_id, pane.items().count());
+                assert!(insertion_result.is_none(), "Pane id {pane_id} collision");
+            }
+        });
+        active_pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(&workspace::CloseActiveItem, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+        deterministic.run_until_parked();
+        cx.read(|cx| {
+            for pane in workspace.read(cx).panes() {
+                let pane_id = pane.id();
+                let pane = pane.read(cx);
+                match original_items.remove(&pane_id) {
+                    Some(original_items) => {
+                        assert_eq!(
+                            pane.items().count(),
+                            original_items.saturating_sub(1),
+                            "Pane id {pane_id} should have item closed"
+                        );
+                    }
+                    None => panic!("Pane id {pane_id} not found in original items"),
+                }
+            }
+        });
+
+        history_items
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.foreground().forbid_parking();
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme::init((), cx);
+            language::init(cx);
+            super::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            state
+        })
+    }
+
+    fn test_path_like(test_str: &str) -> PathLikeWithPosition<FileSearchQuery> {
+        PathLikeWithPosition::parse_str(test_str, |path_like_str| {
+            Ok::<_, std::convert::Infallible>(FileSearchQuery {
+                raw_query: test_str.to_owned(),
+                file_query_end: if path_like_str == test_str {
+                    None
+                } else {
+                    Some(path_like_str.len())
+                },
+            })
+        })
+        .unwrap()
     }
 }

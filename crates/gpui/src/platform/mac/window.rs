@@ -755,7 +755,7 @@ impl platform::Window for Window {
                     let _ = postage::sink::Sink::try_send(&mut done_tx, answer.try_into().unwrap());
                 }
             });
-
+            let block = block.copy();
             let native_window = self.0.borrow().native_window;
             self.0
                 .borrow()

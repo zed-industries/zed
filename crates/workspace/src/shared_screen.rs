@@ -12,7 +12,6 @@ use gpui::{
     platform::MouseButton,
     AppContext, Entity, Task, View, ViewContext,
 };
-use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -88,7 +87,7 @@ impl View for SharedScreen {
                 }
             })
             .contained()
-            .with_style(cx.global::<Settings>().theme.shared_screen)
+            .with_style(theme::current(cx).shared_screen)
         })
         .on_down(MouseButton::Left, |_, _, cx| cx.focus_parent())
         .into_any()

@@ -9,7 +9,9 @@ use git::diff::DiffHunk;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
-    char_kind, AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
+    char_kind,
+    language_settings::{language_settings, LanguageSettings},
+    AutoindentMode, Buffer, BufferChunks, BufferSnapshot, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
@@ -1165,6 +1167,9 @@ impl MultiBuffer {
     ) {
         self.sync(cx);
         let ids = excerpt_ids.into_iter().collect::<Vec<_>>();
+        if ids.is_empty() {
+            return;
+        }
 
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
@@ -1370,6 +1375,15 @@ impl MultiBuffer {
     ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
+    }
+
+    pub fn settings_at<'a, T: ToOffset>(
+        &self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        let language = self.language_at(point, cx);
+        language_settings(language.map(|l| l.name()).as_deref(), cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
@@ -2764,6 +2778,16 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
+    pub fn settings_at<'a, T: ToOffset>(
+        &'a self,
+        point: T,
+        cx: &'a AppContext,
+    ) -> &'a LanguageSettings {
+        self.point_to_buffer_offset(point)
+            .map(|(buffer, offset)| buffer.settings_at(offset, cx))
+            .unwrap_or_else(|| language_settings(None, cx))
+    }
+
     pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
@@ -2817,20 +2841,15 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn git_diff_hunks_in_range<'a>(
+    pub fn git_diff_hunks_in_range_rev<'a>(
         &'a self,
         row_range: Range<u32>,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let mut cursor = self.excerpts.cursor::<Point>();
 
-        if reversed {
-            cursor.seek(&Point::new(row_range.end, 0), Bias::Left, &());
-            if cursor.item().is_none() {
-                cursor.prev(&());
-            }
-        } else {
-            cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+        cursor.seek(&Point::new(row_range.end, 0), Bias::Left, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
         }
 
         std::iter::from_fn(move || {
@@ -2860,7 +2879,7 @@ impl MultiBufferSnapshot {
 
             let buffer_hunks = excerpt
                 .buffer
-                .git_diff_hunks_intersecting_range(buffer_start..buffer_end, reversed)
+                .git_diff_hunks_intersecting_range_rev(buffer_start..buffer_end)
                 .filter_map(move |hunk| {
                     let start = multibuffer_start.row
                         + hunk
@@ -2880,11 +2899,69 @@ impl MultiBufferSnapshot {
                     })
                 });
 
-            if reversed {
-                cursor.prev(&());
-            } else {
-                cursor.next(&());
+            cursor.prev(&());
+
+            Some(buffer_hunks)
+        })
+        .flatten()
+    }
+
+    pub fn git_diff_hunks_in_range<'a>(
+        &'a self,
+        row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        let mut cursor = self.excerpts.cursor::<Point>();
+
+        cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+
+        std::iter::from_fn(move || {
+            let excerpt = cursor.item()?;
+            let multibuffer_start = *cursor.start();
+            let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
+            if multibuffer_start.row >= row_range.end {
+                return None;
             }
+
+            let mut buffer_start = excerpt.range.context.start;
+            let mut buffer_end = excerpt.range.context.end;
+            let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
+            let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
+
+            if row_range.start > multibuffer_start.row {
+                let buffer_start_point =
+                    excerpt_start_point + Point::new(row_range.start - multibuffer_start.row, 0);
+                buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
+            }
+
+            if row_range.end < multibuffer_end.row {
+                let buffer_end_point =
+                    excerpt_start_point + Point::new(row_range.end - multibuffer_start.row, 0);
+                buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
+            }
+
+            let buffer_hunks = excerpt
+                .buffer
+                .git_diff_hunks_intersecting_range(buffer_start..buffer_end)
+                .filter_map(move |hunk| {
+                    let start = multibuffer_start.row
+                        + hunk
+                            .buffer_range
+                            .start
+                            .saturating_sub(excerpt_start_point.row);
+                    let end = multibuffer_start.row
+                        + hunk
+                            .buffer_range
+                            .end
+                            .min(excerpt_end_point.row + 1)
+                            .saturating_sub(excerpt_start_point.row);
+
+                    Some(DiffHunk {
+                        buffer_range: start..end,
+                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                    })
+                });
+
+            cursor.next(&());
 
             Some(buffer_hunks)
         })
@@ -3785,10 +3862,9 @@ mod tests {
     use gpui::{AppContext, TestAppContext};
     use language::{Buffer, Rope};
     use rand::prelude::*;
-    use settings::Settings;
+    use settings::SettingsStore;
     use std::{env, rc::Rc};
     use unindent::Unindent;
-
     use util::test::sample_text;
 
     #[gpui::test]
@@ -4080,19 +4156,25 @@ mod tests {
 
         let leader_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let follower_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let follower_edit_event_count = Rc::new(RefCell::new(0));
 
         follower_multibuffer.update(cx, |_, cx| {
-            cx.subscribe(&leader_multibuffer, |follower, _, event, cx| {
-                match event.clone() {
+            let follower_edit_event_count = follower_edit_event_count.clone();
+            cx.subscribe(
+                &leader_multibuffer,
+                move |follower, _, event, cx| match event.clone() {
                     Event::ExcerptsAdded {
                         buffer,
                         predecessor,
                         excerpts,
                     } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
                     Event::ExcerptsRemoved { ids } => follower.remove_excerpts(ids, cx),
+                    Event::Edited => {
+                        *follower_edit_event_count.borrow_mut() += 1;
+                    }
                     _ => {}
-                }
-            })
+                },
+            )
             .detach();
         });
 
@@ -4131,6 +4213,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
+        assert_eq!(*follower_edit_event_count.borrow(), 2);
 
         leader_multibuffer.update(cx, |leader, cx| {
             let excerpt_ids = leader.excerpt_ids();
@@ -4140,6 +4223,27 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
+        assert_eq!(*follower_edit_event_count.borrow(), 3);
+
+        // Removing an empty set of excerpts is a noop.
+        leader_multibuffer.update(cx, |leader, cx| {
+            leader.remove_excerpts([], cx);
+        });
+        assert_eq!(
+            leader_multibuffer.read(cx).snapshot(cx).text(),
+            follower_multibuffer.read(cx).snapshot(cx).text(),
+        );
+        assert_eq!(*follower_edit_event_count.borrow(), 3);
+
+        // Adding an empty set of excerpts is a noop.
+        leader_multibuffer.update(cx, |leader, cx| {
+            leader.push_excerpts::<usize>(buffer_2.clone(), [], cx);
+        });
+        assert_eq!(
+            leader_multibuffer.read(cx).snapshot(cx).text(),
+            follower_multibuffer.read(cx).snapshot(cx).text(),
+        );
+        assert_eq!(*follower_edit_event_count.borrow(), 3);
 
         leader_multibuffer.update(cx, |leader, cx| {
             leader.clear(cx);
@@ -4148,6 +4252,7 @@ mod tests {
             leader_multibuffer.read(cx).snapshot(cx).text(),
             follower_multibuffer.read(cx).snapshot(cx).text(),
         );
+        assert_eq!(*follower_edit_event_count.borrow(), 4);
     }
 
     #[gpui::test]
@@ -4595,7 +4700,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(0..12, false)
+                .git_diff_hunks_in_range(0..12)
                 .map(|hunk| (hunk.status(), hunk.buffer_range))
                 .collect::<Vec<_>>(),
             &expected,
@@ -4603,7 +4708,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(0..12, true)
+                .git_diff_hunks_in_range_rev(0..12)
                 .map(|hunk| (hunk.status(), hunk.buffer_range))
                 .collect::<Vec<_>>(),
             expected
@@ -5034,7 +5139,8 @@ mod tests {
 
     #[gpui::test]
     fn test_history(cx: &mut AppContext) {
-        cx.set_global(Settings::test(cx));
+        cx.set_global(SettingsStore::test(cx));
+
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));

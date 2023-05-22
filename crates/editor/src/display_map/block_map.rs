@@ -993,7 +993,7 @@ mod tests {
     use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
     use rand::prelude::*;
-    use settings::Settings;
+    use settings::SettingsStore;
     use std::env;
     use util::RandomCharIter;
 
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_blocks(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
 
         let family_id = cx
             .font_cache()
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::AppContext) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
 
         let family_id = cx
             .font_cache()
@@ -1239,7 +1239,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::AppContext, mut rng: StdRng) {
-        cx.set_global(Settings::test(cx));
+        init_test(cx);
 
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1645,6 +1645,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn init_test(cx: &mut gpui::AppContext) {
+        cx.set_global(SettingsStore::test(cx));
+        theme::init((), cx);
     }
 
     impl TransformBlock {

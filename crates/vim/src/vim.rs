@@ -10,8 +10,7 @@ mod state;
 mod utils;
 mod visual;
 
-use std::sync::Arc;
-
+use anyhow::Result;
 use collections::CommandPaletteFilter;
 use editor::{Bias, Cancel, Editor, EditorMode, Event};
 use gpui::{
@@ -22,10 +21,13 @@ use language::CursorShape;
 use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Setting, SettingsStore};
 use state::{Mode, Operator, VimState};
+use std::sync::Arc;
 use visual::visual_replace;
 use workspace::{self, Workspace};
+
+struct VimModeSetting(bool);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwitchMode(pub Mode);
@@ -40,6 +42,8 @@ actions!(vim, [Tab, Enter]);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 pub fn init(cx: &mut AppContext) {
+    settings::register::<VimModeSetting>(cx);
+
     editor_events::init(cx);
     normal::init(cx);
     visual::init(cx);
@@ -91,11 +95,11 @@ pub fn init(cx: &mut AppContext) {
         filter.filtered_namespaces.insert("vim");
     });
     cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
-        vim.set_enabled(cx.global::<Settings>().vim_mode, cx)
+        vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
     });
-    cx.observe_global::<Settings, _>(|cx| {
+    cx.observe_global::<SettingsStore, _>(|cx| {
         cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
-            vim.set_enabled(cx.global::<Settings>().vim_mode, cx)
+            vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
         });
     })
     .detach();
@@ -327,6 +331,22 @@ impl Vim {
         editor.set_input_enabled(true);
         editor.selections.line_mode = false;
         editor.remove_keymap_context_layer::<Self>(cx);
+    }
+}
+
+impl Setting for VimModeSetting {
+    const KEY: Option<&'static str> = Some("vim_mode");
+
+    type FileContent = Option<bool>;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &AppContext,
+    ) -> Result<Self> {
+        Ok(Self(user_values.iter().rev().find_map(|v| **v).unwrap_or(
+            default_value.ok_or_else(Self::missing_default)?,
+        )))
     }
 }
 

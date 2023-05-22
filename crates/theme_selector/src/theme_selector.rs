@@ -1,10 +1,11 @@
+use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{actions, elements::*, AnyElement, AppContext, Element, MouseState, ViewContext};
 use picker::{Picker, PickerDelegate, PickerEvent};
-use settings::{settings_file::SettingsFile, Settings};
+use settings::{update_settings_file, SettingsStore};
 use staff_mode::StaffMode;
 use std::sync::Arc;
-use theme::{Theme, ThemeMeta, ThemeRegistry};
+use theme::{Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -17,16 +18,17 @@ pub fn init(cx: &mut AppContext) {
 
 pub fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
-        let themes = workspace.app_state().themes.clone();
-        cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(themes, cx), cx))
+        let fs = workspace.app_state().fs.clone();
+        cx.add_view(|cx| ThemeSelector::new(ThemeSelectorDelegate::new(fs, cx), cx))
     });
 }
 
 #[cfg(debug_assertions)]
-pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut AppContext) {
-    let current_theme_name = cx.global::<Settings>().theme.meta.name.clone();
-    themes.clear();
-    match themes.get(&current_theme_name) {
+pub fn reload(cx: &mut AppContext) {
+    let current_theme_name = theme::current(cx).meta.name.clone();
+    let registry = cx.global::<Arc<ThemeRegistry>>();
+    registry.clear();
+    match registry.get(&current_theme_name) {
         Ok(theme) => {
             ThemeSelectorDelegate::set_theme(theme, cx);
             log::info!("reloaded theme {}", current_theme_name);
@@ -40,7 +42,7 @@ pub fn reload(themes: Arc<ThemeRegistry>, cx: &mut AppContext) {
 pub type ThemeSelector = Picker<ThemeSelectorDelegate>;
 
 pub struct ThemeSelectorDelegate {
-    registry: Arc<ThemeRegistry>,
+    fs: Arc<dyn Fs>,
     theme_data: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
     original_theme: Arc<Theme>,
@@ -49,14 +51,12 @@ pub struct ThemeSelectorDelegate {
 }
 
 impl ThemeSelectorDelegate {
-    fn new(registry: Arc<ThemeRegistry>, cx: &mut ViewContext<ThemeSelector>) -> Self {
-        let settings = cx.global::<Settings>();
+    fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<ThemeSelector>) -> Self {
+        let original_theme = theme::current(cx).clone();
 
-        let original_theme = settings.theme.clone();
-
-        let mut theme_names = registry
-            .list(**cx.default_global::<StaffMode>())
-            .collect::<Vec<_>>();
+        let staff_mode = **cx.default_global::<StaffMode>();
+        let registry = cx.global::<Arc<ThemeRegistry>>();
+        let mut theme_names = registry.list(staff_mode).collect::<Vec<_>>();
         theme_names.sort_unstable_by(|a, b| a.is_light.cmp(&b.is_light).then(a.name.cmp(&b.name)));
         let matches = theme_names
             .iter()
@@ -68,7 +68,7 @@ impl ThemeSelectorDelegate {
             })
             .collect();
         let mut this = Self {
-            registry,
+            fs,
             theme_data: theme_names,
             matches,
             original_theme: original_theme.clone(),
@@ -81,7 +81,8 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<ThemeSelector>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            match self.registry.get(&mat.string) {
+            let registry = cx.global::<Arc<ThemeRegistry>>();
+            match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);
                 }
@@ -101,8 +102,10 @@ impl ThemeSelectorDelegate {
     }
 
     fn set_theme(theme: Arc<Theme>, cx: &mut AppContext) {
-        cx.update_global::<Settings, _, _>(|settings, cx| {
-            settings.theme = theme;
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            let mut theme_settings = store.get::<ThemeSettings>(None).clone();
+            theme_settings.theme = theme;
+            store.override_global(theme_settings);
             cx.refresh_windows();
         });
     }
@@ -120,9 +123,9 @@ impl PickerDelegate for ThemeSelectorDelegate {
     fn confirm(&mut self, cx: &mut ViewContext<ThemeSelector>) {
         self.selection_completed = true;
 
-        let theme_name = cx.global::<Settings>().theme.meta.name.clone();
-        SettingsFile::update(cx, |settings_content| {
-            settings_content.theme = Some(theme_name);
+        let theme_name = theme::current(cx).meta.name.clone();
+        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, |settings| {
+            settings.theme = Some(theme_name);
         });
 
         cx.emit(PickerEvent::Dismiss);
@@ -204,11 +207,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
         selected: bool,
         cx: &AppContext,
     ) -> AnyElement<Picker<Self>> {
-        let settings = cx.global::<Settings>();
-        let theme = &settings.theme;
-        let theme_match = &self.matches[ix];
+        let theme = theme::current(cx);
         let style = theme.picker.item.style_for(mouse_state, selected);
 
+        let theme_match = &self.matches[ix];
         Label::new(theme_match.string.clone(), style.label.clone())
             .with_highlights(theme_match.positions.clone())
             .contained()
