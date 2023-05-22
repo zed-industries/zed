@@ -37,12 +37,14 @@ pub struct TerminalPanel {
     pane: ViewHandle<Pane>,
     fs: Arc<dyn Fs>,
     workspace: WeakViewHandle<Workspace>,
+    width: Option<f32>,
+    height: Option<f32>,
     pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl TerminalPanel {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
+    fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let weak_self = cx.weak_handle();
         let pane = cx.add_view(|cx| {
             let window_id = cx.window_id();
@@ -90,6 +92,8 @@ impl TerminalPanel {
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
+            width: None,
+            height: None,
             _subscriptions: subscriptions,
         };
         let mut old_dock_position = this.position(cx);
@@ -112,7 +116,9 @@ impl TerminalPanel {
             let serialized_panel = if let Some(panel) = cx
                 .background()
                 .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
-                .await?
+                .await
+                .log_err()
+                .flatten()
             {
                 Some(serde_json::from_str::<SerializedTerminalPanel>(&panel)?)
             } else {
@@ -122,6 +128,9 @@ impl TerminalPanel {
                 let panel = cx.add_view(|cx| TerminalPanel::new(workspace, cx));
                 let items = if let Some(serialized_panel) = serialized_panel.as_ref() {
                     panel.update(cx, |panel, cx| {
+                        cx.notify();
+                        panel.height = serialized_panel.height;
+                        panel.width = serialized_panel.width;
                         panel.pane.update(cx, |_, cx| {
                             serialized_panel
                                 .items
@@ -226,6 +235,8 @@ impl TerminalPanel {
             .map(|item| item.id())
             .collect::<Vec<_>>();
         let active_item_id = self.pane.read(cx).active_item().map(|item| item.id());
+        let height = self.height;
+        let width = self.width;
         self.pending_serialization = cx.background().spawn(
             async move {
                 KEY_VALUE_STORE
@@ -234,6 +245,8 @@ impl TerminalPanel {
                         serde_json::to_string(&SerializedTerminalPanel {
                             items,
                             active_item_id,
+                            height,
+                            width,
                         })?,
                     )
                     .await?;
@@ -288,12 +301,23 @@ impl Panel for TerminalPanel {
         });
     }
 
-    fn default_size(&self, cx: &WindowContext) -> f32 {
+    fn size(&self, cx: &WindowContext) -> f32 {
         let settings = settings::get::<TerminalSettings>(cx);
         match self.position(cx) {
-            DockPosition::Left | DockPosition::Right => settings.default_width,
-            DockPosition::Bottom => settings.default_height,
+            DockPosition::Left | DockPosition::Right => {
+                self.width.unwrap_or_else(|| settings.default_width)
+            }
+            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
         }
+    }
+
+    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+        match self.position(cx) {
+            DockPosition::Left | DockPosition::Right => self.width = Some(size),
+            DockPosition::Bottom => self.height = Some(size),
+        }
+        self.serialize(cx);
+        cx.notify();
     }
 
     fn should_zoom_in_on_event(event: &Event) -> bool {
@@ -360,4 +384,6 @@ impl Panel for TerminalPanel {
 struct SerializedTerminalPanel {
     items: Vec<usize>,
     active_item_id: Option<usize>,
+    width: Option<f32>,
+    height: Option<f32>,
 }

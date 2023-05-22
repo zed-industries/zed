@@ -13,7 +13,8 @@ pub trait Panel: View {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
-    fn default_size(&self, cx: &WindowContext) -> f32;
+    fn size(&self, cx: &WindowContext) -> f32;
+    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>);
     fn icon_path(&self) -> &'static str;
     fn icon_tooltip(&self) -> String;
     fn icon_label(&self, _: &WindowContext) -> Option<String> {
@@ -39,7 +40,8 @@ pub trait PanelHandle {
     fn is_zoomed(&self, cx: &WindowContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, cx: &mut WindowContext);
     fn set_active(&self, active: bool, cx: &mut WindowContext);
-    fn default_size(&self, cx: &WindowContext) -> f32;
+    fn size(&self, cx: &WindowContext) -> f32;
+    fn set_size(&self, size: f32, cx: &mut WindowContext);
     fn icon_path(&self, cx: &WindowContext) -> &'static str;
     fn icon_tooltip(&self, cx: &WindowContext) -> String;
     fn icon_label(&self, cx: &WindowContext) -> Option<String>;
@@ -67,8 +69,12 @@ where
         self.update(cx, |this, cx| this.set_position(position, cx))
     }
 
-    fn default_size(&self, cx: &WindowContext) -> f32 {
-        self.read(cx).default_size(cx)
+    fn size(&self, cx: &WindowContext) -> f32 {
+        self.read(cx).size(cx)
+    }
+
+    fn set_size(&self, size: f32, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_size(size, cx))
     }
 
     fn is_zoomed(&self, cx: &WindowContext) -> bool {
@@ -151,7 +157,6 @@ impl DockPosition {
 
 struct PanelEntry {
     panel: Rc<dyn PanelHandle>,
-    size: f32,
     context_menu: ViewHandle<ContextMenu>,
     _subscriptions: [Subscription; 2],
 }
@@ -271,10 +276,8 @@ impl Dock {
         ];
 
         let dock_view_id = cx.view_id();
-        let size = panel.default_size(cx);
         self.panel_entries.push(PanelEntry {
             panel: Rc::new(panel),
-            size,
             context_menu: cx.add_view(|cx| {
                 let mut menu = ContextMenu::new(dock_view_id, cx);
                 menu.set_position_mode(OverlayPositionMode::Local);
@@ -343,28 +346,18 @@ impl Dock {
         }
     }
 
-    pub fn panel_size(&self, panel: &dyn PanelHandle) -> Option<f32> {
+    pub fn panel_size(&self, panel: &dyn PanelHandle, cx: &WindowContext) -> Option<f32> {
         self.panel_entries
             .iter()
             .find(|entry| entry.panel.id() == panel.id())
-            .map(|entry| entry.size)
+            .map(|entry| entry.panel.size(cx))
     }
 
-    pub fn resize_panel(&mut self, panel: &dyn PanelHandle, size: f32) {
-        let entry = self
-            .panel_entries
-            .iter_mut()
-            .find(|entry| entry.panel.id() == panel.id());
-        if let Some(entry) = entry {
-            entry.size = size;
-        }
-    }
-
-    pub fn active_panel_size(&self) -> Option<f32> {
+    pub fn active_panel_size(&self, cx: &WindowContext) -> Option<f32> {
         if self.is_open {
             self.panel_entries
                 .get(self.active_panel_index)
-                .map(|entry| entry.size)
+                .map(|entry| entry.panel.size(cx))
         } else {
             None
         }
@@ -372,7 +365,7 @@ impl Dock {
 
     pub fn resize_active_panel(&mut self, size: f32, cx: &mut ViewContext<Self>) {
         if let Some(entry) = self.panel_entries.get_mut(self.active_panel_index) {
-            entry.size = size;
+            entry.panel.set_size(size, cx);
             cx.notify();
         }
     }
@@ -386,7 +379,7 @@ impl Dock {
                 .with_style(style.container)
                 .resizable(
                     self.position.to_resize_handle_side(),
-                    active_entry.size,
+                    active_entry.panel.size(cx),
                     |_, _, _| {},
                 )
                 .into_any()
@@ -413,7 +406,7 @@ impl View for Dock {
                 .with_style(style.container)
                 .resizable(
                     self.position.to_resize_handle_side(),
-                    active_entry.size,
+                    active_entry.panel.size(cx),
                     |dock: &mut Self, size, cx| dock.resize_active_panel(size, cx),
                 )
                 .into_any()
@@ -630,11 +623,15 @@ pub(crate) mod test {
             unimplemented!()
         }
 
-        fn default_size(&self, _: &WindowContext) -> f32 {
+        fn size(&self, _: &WindowContext) -> f32 {
             match self.position.axis() {
                 Axis::Horizontal => 300.,
                 Axis::Vertical => 200.,
             }
+        }
+
+        fn set_size(&mut self, _: f32, _: &mut ViewContext<Self>) {
+            unimplemented!()
         }
 
         fn icon_path(&self) -> &'static str {

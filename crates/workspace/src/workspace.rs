@@ -853,11 +853,7 @@ impl Workspace {
                 if T::should_change_position_on_event(event) {
                     let new_position = panel.read(cx).position(cx);
                     let mut was_visible = false;
-                    let mut size = None;
                     dock.update(cx, |dock, cx| {
-                        if new_position.axis() == prev_position.axis() {
-                            size = dock.panel_size(&panel);
-                        }
                         prev_position = new_position;
 
                         was_visible = dock.is_open()
@@ -874,10 +870,6 @@ impl Workspace {
                     .clone();
                     dock.update(cx, |dock, cx| {
                         dock.add_panel(panel.clone(), cx);
-                        if let Some(size) = size {
-                            dock.resize_panel(&panel, size);
-                        }
-
                         if was_visible {
                             dock.set_open(true, cx);
                             dock.activate_panel(dock.panels_len() - 1, cx);
@@ -3961,8 +3953,8 @@ mod tests {
                 panel_1.id()
             );
             assert_eq!(
-                left_dock.read(cx).active_panel_size().unwrap(),
-                panel_1.default_size(cx)
+                left_dock.read(cx).active_panel_size(cx).unwrap(),
+                panel_1.size(cx)
             );
 
             left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
@@ -3989,7 +3981,7 @@ mod tests {
                 right_dock.read(cx).active_panel().unwrap().id(),
                 panel_1.id()
             );
-            assert_eq!(right_dock.read(cx).active_panel_size().unwrap(), 1337.);
+            assert_eq!(right_dock.read(cx).active_panel_size(cx).unwrap(), 1337.);
 
             // Now we move panel_2 to the left
             panel_2.set_position(DockPosition::Left, cx);
@@ -4019,7 +4011,7 @@ mod tests {
                 left_dock.read(cx).active_panel().unwrap().id(),
                 panel_1.id()
             );
-            assert_eq!(left_dock.read(cx).active_panel_size().unwrap(), 1337.);
+            assert_eq!(left_dock.read(cx).active_panel_size(cx).unwrap(), 1337.);
             // And right the dock should be closed as it no longer has any panels.
             assert!(!workspace.right_dock().read(cx).is_open());
 
@@ -4034,8 +4026,8 @@ mod tests {
             // since the panel orientation changed from vertical to horizontal.
             let bottom_dock = workspace.bottom_dock();
             assert_eq!(
-                bottom_dock.read(cx).active_panel_size().unwrap(),
-                panel_1.default_size(cx),
+                bottom_dock.read(cx).active_panel_size(cx).unwrap(),
+                panel_1.size(cx),
             );
             // Close bottom dock and move panel_1 back to the left.
             bottom_dock.update(cx, |bottom_dock, cx| bottom_dock.set_open(false, cx));

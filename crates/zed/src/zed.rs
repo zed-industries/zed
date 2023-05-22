@@ -335,8 +335,12 @@ pub fn initialize_workspace(
                 }
                 false
             });
+        })?;
 
-            let project_panel = ProjectPanel::new(workspace, cx);
+        let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+        let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel) = futures::try_join!(project_panel, terminal_panel)?;
+        workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel(project_panel, cx);
             if !was_deserialized
@@ -352,10 +356,7 @@ pub fn initialize_workspace(
             {
                 workspace.toggle_dock(project_panel_position, cx);
             }
-        })?;
 
-        let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone()).await?;
-        workspace_handle.update(&mut cx, |workspace, cx| {
             workspace.add_panel(terminal_panel, cx)
         })?;
         Ok(())

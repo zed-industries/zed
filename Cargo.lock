@@ -4888,6 +4888,7 @@ version = "0.1.0"
 dependencies = [
  "client",
  "context_menu",
+ "db",
  "drag_and_drop",
  "editor",
  "futures 0.3.28",

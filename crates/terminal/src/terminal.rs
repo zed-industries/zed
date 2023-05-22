@@ -120,6 +120,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum TerminalDockPosition {
     Left,
     Bottom,

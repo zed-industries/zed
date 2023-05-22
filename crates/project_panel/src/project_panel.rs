@@ -1,10 +1,11 @@
 use context_menu::{ContextMenu, ContextMenuItem};
+use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
     actions,
-    anyhow::{anyhow, Result},
+    anyhow::{self, anyhow, Result},
     elements::{
         AnchorCorner, ChildView, ComponentHost, ContainerStyle, Empty, Flex, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
@@ -12,8 +13,8 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext,
+    AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelHandle, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -33,11 +34,13 @@ use std::{
 };
 use theme::{ui::FileName, ProjectPanelEntry};
 use unicase::UniCase;
+use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     Workspace,
 };
 
+const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 #[derive(Deserialize)]
@@ -67,6 +70,7 @@ pub struct ProjectPanelSettingsContent {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum ProjectPanelDockPosition {
     Left,
     Right,
@@ -87,6 +91,8 @@ pub struct ProjectPanel {
     dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
+    width: Option<f32>,
+    pending_serialization: Task<Option<()>>,
 }
 
 #[derive(Copy, Clone)]
@@ -183,8 +189,13 @@ pub enum Event {
     Focus,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SerializedProjectPanel {
+    width: Option<f32>,
+}
+
 impl ProjectPanel {
-    pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
+    fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
             cx.observe(&project, |this, _, cx| {
@@ -258,6 +269,8 @@ impl ProjectPanel {
                 dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
                 has_focus: false,
+                width: None,
+                pending_serialization: Task::ready(None),
             };
             this.update_visible_entries(None, cx);
 
@@ -309,6 +322,51 @@ impl ProjectPanel {
         .detach();
 
         project_panel
+    }
+
+    pub fn load(
+        workspace: WeakViewHandle<Workspace>,
+        cx: AsyncAppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let serialized_panel = if let Some(panel) = cx
+                .background()
+                .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+                .await
+                .log_err()
+                .flatten()
+            {
+                Some(serde_json::from_str::<SerializedProjectPanel>(&panel)?)
+            } else {
+                None
+            };
+            workspace.update(&mut cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                if let Some(serialized_panel) = serialized_panel {
+                    panel.update(cx, |panel, cx| {
+                        panel.width = serialized_panel.width;
+                        cx.notify();
+                    });
+                }
+                panel
+            })
+        })
+    }
+
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        self.pending_serialization = cx.background().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        PROJECT_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedProjectPanel { width })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 
     fn deploy_context_menu(
@@ -1435,8 +1493,15 @@ impl workspace::dock::Panel for ProjectPanel {
         );
     }
 
-    fn default_size(&self, cx: &WindowContext) -> f32 {
-        settings::get::<ProjectPanelSettings>(cx).default_width
+    fn size(&self, cx: &WindowContext) -> f32 {
+        self.width
+            .unwrap_or_else(|| settings::get::<ProjectPanelSettings>(cx).default_width)
+    }
+
+    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+        self.width = Some(size);
+        self.serialize(cx);
+        cx.notify();
     }
 
     fn should_zoom_in_on_event(_: &Self::Event) -> bool {
