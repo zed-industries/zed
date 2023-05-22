@@ -34,16 +34,16 @@ async function main() {
   }
 
   // Get the PRs merged between those two tags.
-  const pullRequestNumbers = getPullRequestNumbers(oldTag, newTag)
+  const pullRequestNumbers = getPullRequestNumbers(oldTag, newTag);
 
   // Get the PRs that were cherry-picked between main and the old tag.
-  const existingPullRequestNumbers = new Set(getPullRequestNumbers("main", oldTag))
+  const existingPullRequestNumbers = new Set(getPullRequestNumbers("main", oldTag));
 
   // Filter out those existing PRs from the set of new PRs.
   const newPullRequestNumbers = pullRequestNumbers.filter(number => !existingPullRequestNumbers.has(number));
 
   // Fetch the pull requests from the GitHub API.
-  console.log("Merged Pull requests:")
+  console.log("Merged Pull requests:");
   for (const pullRequestNumber of newPullRequestNumbers) {
     const webURL = `https://github.com/zed-industries/zed/pull/${pullRequestNumber}`;
     const apiURL = `https://api.github.com/repos/zed-industries/zed/pulls/${pullRequestNumber}`;
@@ -57,22 +57,24 @@ async function main() {
     // Print the pull request title and URL.
     const pullRequest = await response.json();
     console.log("*", pullRequest.title);
-    console.log("  URL:    ", webURL);
+    console.log("  PR URL:    ", webURL);
 
     // If the pull request contains a 'closes' line, print the closed issue.
     const fixesMatch = (pullRequest.body || "").match(FIXES_REGEX);
     if (fixesMatch) {
       const fixedIssueURL = fixesMatch[2];
-      console.log("  Issue: ", fixedIssueURL);
+      console.log("  Issue URL:    ", fixedIssueURL);
     }
 
     let releaseNotes = (pullRequest.body || "").split("Release Notes:")[1];
 
     if (releaseNotes) {
-      releaseNotes = releaseNotes.trim()
+      releaseNotes = releaseNotes.trim();
       console.log("  Release Notes:");
       console.log(`    ${releaseNotes}`);
     }
+
+    console.log()
   }
 }
 
@@ -92,7 +94,7 @@ function getPullRequestNumbers(oldTag, newTag) {
       const match = line.match(/#(\d+)/);
       return match ? match[1] : null;
     })
-    .filter(line => line)
+    .filter(line => line);
 
-  return pullRequestNumbers
+  return pullRequestNumbers;
 }
