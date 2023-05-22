@@ -1086,7 +1086,7 @@ impl ProjectPanel {
             .map(|status| match status {
                 GitFileStatus::Added => style.status.git.inserted,
                 GitFileStatus::Modified => style.status.git.modified,
-                GitFileStatus::Conflict => style.text.color,
+                GitFileStatus::Conflict => style.status.git.conflict,
             })
             .unwrap_or(style.text.color);
 
