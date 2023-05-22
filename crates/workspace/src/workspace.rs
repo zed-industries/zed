@@ -3931,16 +3931,12 @@ mod tests {
 
         let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
             // Add panel_1 on the left, panel_2 on the right.
-            let panel_1 = cx.add_view(|_| TestPanel {
-                position: DockPosition::Left,
-            });
+            let panel_1 = cx.add_view(|_| TestPanel::new(DockPosition::Left));
             workspace.add_panel(panel_1.clone(), cx);
             workspace
                 .left_dock()
                 .update(cx, |left_dock, cx| left_dock.set_open(true, cx));
-            let panel_2 = cx.add_view(|_| TestPanel {
-                position: DockPosition::Right,
-            });
+            let panel_2 = cx.add_view(|_| TestPanel::new(DockPosition::Right));
             workspace.add_panel(panel_2.clone(), cx);
             workspace
                 .right_dock()
@@ -4058,6 +4054,30 @@ mod tests {
                 left_dock.read(cx).active_panel().unwrap().id(),
                 panel_1.id()
             );
+        });
+
+        // Emitting a ZoomIn event shows the panel as zoomed.
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomIn));
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), Some(panel_1.clone().into_any()));
+        });
+
+        // If focus is transferred elsewhere in the workspace, the panel is no longer zoomed.
+        workspace.update(cx, |_, cx| cx.focus_self());
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), None);
+        });
+
+        // When focus is transferred back to the panel, it is zoomed again.
+        panel_1.update(cx, |_, cx| cx.focus_self());
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), Some(panel_1.clone().into_any()));
+        });
+
+        // Emitting a ZoomOut event unzooms the panel.
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomOut));
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), None);
         });
 
         // Emit closed event on panel 1, which is active

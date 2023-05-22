@@ -577,10 +577,29 @@ pub(crate) mod test {
         PositionChanged,
         Activated,
         Closed,
+        ZoomIn,
+        ZoomOut,
+        Focus,
     }
 
     pub struct TestPanel {
         pub position: DockPosition,
+        pub zoomed: bool,
+        pub active: bool,
+        pub has_focus: bool,
+        pub size: f32,
+    }
+
+    impl TestPanel {
+        pub fn new(position: DockPosition) -> Self {
+            Self {
+                position,
+                zoomed: false,
+                active: false,
+                has_focus: false,
+                size: 300.,
+            }
+        }
     }
 
     impl Entity for TestPanel {
@@ -594,6 +613,14 @@ pub(crate) mod test {
 
         fn render(&mut self, _: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self> {
             Empty::new().into_any()
+        }
+
+        fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+            self.has_focus = true;
+        }
+
+        fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+            self.has_focus = false;
         }
     }
 
@@ -612,26 +639,23 @@ pub(crate) mod test {
         }
 
         fn is_zoomed(&self, _: &WindowContext) -> bool {
-            unimplemented!()
+            self.zoomed
         }
 
-        fn set_zoomed(&mut self, _zoomed: bool, _cx: &mut ViewContext<Self>) {
-            unimplemented!()
+        fn set_zoomed(&mut self, zoomed: bool, _cx: &mut ViewContext<Self>) {
+            self.zoomed = zoomed;
         }
 
-        fn set_active(&mut self, _active: bool, _cx: &mut ViewContext<Self>) {
-            unimplemented!()
+        fn set_active(&mut self, active: bool, _cx: &mut ViewContext<Self>) {
+            self.active = active;
         }
 
         fn size(&self, _: &WindowContext) -> f32 {
-            match self.position.axis() {
-                Axis::Horizontal => 300.,
-                Axis::Vertical => 200.,
-            }
+            self.size
         }
 
-        fn set_size(&mut self, _: f32, _: &mut ViewContext<Self>) {
-            unimplemented!()
+        fn set_size(&mut self, size: f32, _: &mut ViewContext<Self>) {
+            self.size = size;
         }
 
         fn icon_path(&self) -> &'static str {
@@ -646,12 +670,12 @@ pub(crate) mod test {
             matches!(event, TestPanelEvent::PositionChanged)
         }
 
-        fn should_zoom_in_on_event(_: &Self::Event) -> bool {
-            false
+        fn should_zoom_in_on_event(event: &Self::Event) -> bool {
+            matches!(event, TestPanelEvent::ZoomIn)
         }
 
-        fn should_zoom_out_on_event(_: &Self::Event) -> bool {
-            false
+        fn should_zoom_out_on_event(event: &Self::Event) -> bool {
+            matches!(event, TestPanelEvent::ZoomOut)
         }
 
         fn should_activate_on_event(event: &Self::Event) -> bool {
@@ -663,11 +687,11 @@ pub(crate) mod test {
         }
 
         fn has_focus(&self, _cx: &WindowContext) -> bool {
-            unimplemented!()
+            self.has_focus
         }
 
-        fn is_focus_event(_: &Self::Event) -> bool {
-            unimplemented!()
+        fn is_focus_event(event: &Self::Event) -> bool {
+            matches!(event, TestPanelEvent::Focus)
         }
     }
 }
