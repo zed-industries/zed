@@ -3,6 +3,8 @@ import { withOpacity } from "../utils/color"
 import { background, border, foreground, text } from "./components"
 
 export default function projectPanel(colorScheme: ColorScheme) {
+    const { isLight } = colorScheme
+
     let layer = colorScheme.middle
 
     let baseEntry = {
@@ -10,6 +12,20 @@ export default function projectPanel(colorScheme: ColorScheme) {
         iconColor: foreground(layer, "variant"),
         iconSize: 8,
         iconSpacing: 8,
+    }
+
+    let status = {
+        git: {
+            modified: isLight
+                ? colorScheme.ramps.yellow(0.6).hex()
+                : colorScheme.ramps.yellow(0.5).hex(),
+            inserted: isLight
+                ? colorScheme.ramps.green(0.45).hex()
+                : colorScheme.ramps.green(0.5).hex(),
+            conflict: isLight
+                ? colorScheme.ramps.red(0.6).hex()
+                : colorScheme.ramps.red(0.5).hex()
+        }
     }
 
     let entry = {
@@ -28,6 +44,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
             background: background(layer, "active"),
             text: text(layer, "mono", "active", { size: "sm" }),
         },
+        status
     }
 
     return {
@@ -62,6 +79,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
             text: text(layer, "mono", "on", { size: "sm" }),
             background: withOpacity(background(layer, "on"), 0.9),
             border: border(layer),
+            status
         },
         ignoredEntry: {
             ...entry,
