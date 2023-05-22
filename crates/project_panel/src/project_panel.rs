@@ -2243,6 +2243,7 @@ mod tests {
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
+            crate::init(cx);
             workspace::init_settings(cx);
         });
     }
@@ -2255,6 +2256,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
+            crate::init(cx);
             workspace::init(app_state.clone(), cx);
         });
     }
