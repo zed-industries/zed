@@ -7128,6 +7128,7 @@ pub enum Event {
     BufferEdited,
     Edited,
     Reparsed,
+    Focused,
     Blurred,
     DirtyChanged,
     Saved,
@@ -7181,6 +7182,7 @@ impl View for Editor {
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
+            cx.emit(Event::Focused);
             cx.emit_global(focused_event);
         }
         if let Some(rename) = self.pending_rename.as_ref() {
