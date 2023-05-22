@@ -579,7 +579,7 @@ mod tests {
             docks: Default::default(),
         };
 
-        let mut _workspace_2 = SerializedWorkspace {
+        let mut workspace_2 = SerializedWorkspace {
             id: 2,
             location: (["/tmp"]).into(),
             center_group: Default::default(),
@@ -597,7 +597,7 @@ mod tests {
         })
         .await;
 
-        db.save_workspace(_workspace_2.clone()).await;
+        db.save_workspace(workspace_2.clone()).await;
 
         db.write(|conn| {
             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
@@ -609,28 +609,21 @@ mod tests {
         workspace_1.location = (["/tmp", "/tmp3"]).into();
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
+        db.save_workspace(workspace_2).await;
 
-        todo!();
-        // workspace_2.dock_pane.children.push(SerializedItem {
-        //     kind: Arc::from("Test"),
-        //     item_id: 10,
-        //     active: true,
-        // });
-        // db.save_workspace(workspace_2).await;
+        let test_text_2 = db
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+            .unwrap()(2)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_2, "test-text-2");
 
-        // let test_text_2 = db
-        //     .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-        //     .unwrap()(2)
-        // .unwrap()
-        // .unwrap();
-        // assert_eq!(test_text_2, "test-text-2");
-
-        // let test_text_1 = db
-        //     .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
-        //     .unwrap()(1)
-        // .unwrap()
-        // .unwrap();
-        // assert_eq!(test_text_1, "test-text-1");
+        let test_text_1 = db
+            .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
+            .unwrap()(1)
+        .unwrap()
+        .unwrap();
+        assert_eq!(test_text_1, "test-text-1");
     }
 
     #[gpui::test]
