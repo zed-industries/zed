@@ -3,10 +3,9 @@ import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import { buildSyntax } from "../themes/common/syntax"
+import { SyntaxHighlightStyle, buildSyntax } from "../themes/common/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
-    const { isLight } = colorScheme
     let layer = colorScheme.highest
 
     const autocompleteItem = {
@@ -98,18 +97,12 @@ export default function editor(colorScheme: ColorScheme) {
             foldBackground: foreground(layer, "variant"),
         },
         diff: {
-            deleted: isLight
-                ? colorScheme.ramps.red(0.5).hex()
-                : colorScheme.ramps.red(0.4).hex(),
-            modified: isLight
-                ? colorScheme.ramps.yellow(0.3).hex()
-                : colorScheme.ramps.yellow(0.5).hex(),
-            inserted: isLight
-                ? colorScheme.ramps.green(0.4).hex()
-                : colorScheme.ramps.green(0.5).hex(),
+            deleted: foreground(layer, "negative"),
+            modified: foreground(layer, "warning"),
+            inserted: foreground(layer, "positive"),
             removedWidthEm: 0.275,
-            widthEm: 0.15,
-            cornerRadius: 0.05,
+            widthEm: 0.22,
+            cornerRadius: 0.2,
         },
         /** Highlights matching occurences of what is under the cursor
          * as well as matched brackets
@@ -241,27 +234,12 @@ export default function editor(colorScheme: ColorScheme) {
                 border: border(layer, "variant", { left: true }),
             },
             thumb: {
-                background: withOpacity(background(layer, "inverted"), 0.3),
+                background: withOpacity(background(layer, "inverted"), 0.4),
                 border: {
                     width: 1,
                     color: borderColor(layer, "variant"),
-                    top: false,
-                    right: true,
-                    left: true,
-                    bottom: false,
                 },
             },
-            git: {
-                deleted: isLight
-                    ? withOpacity(colorScheme.ramps.red(0.5).hex(), 0.8)
-                    : withOpacity(colorScheme.ramps.red(0.4).hex(), 0.8),
-                modified: isLight
-                    ? withOpacity(colorScheme.ramps.yellow(0.5).hex(), 0.8)
-                    : withOpacity(colorScheme.ramps.yellow(0.4).hex(), 0.8),
-                inserted: isLight
-                    ? withOpacity(colorScheme.ramps.green(0.5).hex(), 0.8)
-                    : withOpacity(colorScheme.ramps.green(0.4).hex(), 0.8),
-            }
         },
         compositionMark: {
             underline: {
