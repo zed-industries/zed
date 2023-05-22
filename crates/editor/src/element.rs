@@ -1052,7 +1052,6 @@ impl EditorElement {
                 ..Default::default()
             });
 
-
             if layout.is_singleton && settings::get::<EditorSettings>(cx).scrollbar.git_diff {
                 let diff_style = theme::current(cx).editor.diff.clone();
                 for hunk in layout
