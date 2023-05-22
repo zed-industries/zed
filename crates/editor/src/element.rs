@@ -1052,7 +1052,7 @@ impl EditorElement {
                 ..Default::default()
             });
 
-            let diff_style = theme::current(cx).editor.diff.clone();
+            let diff_style = &theme::current(cx).editor.scrollbar.git;
             for hunk in layout
                 .position_map
                 .snapshot

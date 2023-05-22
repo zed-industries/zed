@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use gpui::{
     color::Color,
     elements::{
-        ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label, LabelStyle,
+        ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label,
         MouseEventHandler, ParentElement, Stack, Svg,
     },
     fonts::TextStyle,
