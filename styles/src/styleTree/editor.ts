@@ -245,6 +245,10 @@ export default function editor(colorScheme: ColorScheme) {
                 border: {
                     width: 1,
                     color: borderColor(layer, "variant"),
+                    top: false,
+                    right: true,
+                    left: true,
+                    bottom: false,
                 },
             },
             git: {
