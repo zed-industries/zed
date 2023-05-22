@@ -108,8 +108,8 @@ export default function editor(colorScheme: ColorScheme) {
                 ? colorScheme.ramps.green(0.4).hex()
                 : colorScheme.ramps.green(0.5).hex(),
             removedWidthEm: 0.275,
-            widthEm: 0.22,
-            cornerRadius: 0.2,
+            widthEm: 0.15,
+            cornerRadius: 0.05,
         },
         /** Highlights matching occurences of what is under the cursor
          * as well as matched brackets
@@ -241,22 +241,22 @@ export default function editor(colorScheme: ColorScheme) {
                 border: border(layer, "variant", { left: true }),
             },
             thumb: {
-                background: withOpacity(background(layer, "inverted"), 0.4),
+                background: withOpacity(background(layer, "inverted"), 0.3),
                 border: {
                     width: 1,
                     color: borderColor(layer, "variant"),
                 },
             },
             git: {
-                  deleted: isLight
-                      ? colorScheme.ramps.red(0.5).hex()
-                      : colorScheme.ramps.red(0.4).hex(),
-                  modified: isLight
-                      ? colorScheme.ramps.yellow(0.3).hex()
-                      : colorScheme.ramps.yellow(0.5).hex(),
-                  inserted: isLight
-                      ? colorScheme.ramps.green(0.4).hex()
-                      : colorScheme.ramps.green(0.5).hex(),
+                deleted: isLight
+                    ? withOpacity(colorScheme.ramps.red(0.5).hex(), 0.8)
+                    : withOpacity(colorScheme.ramps.red(0.4).hex(), 0.8),
+                modified: isLight
+                    ? withOpacity(colorScheme.ramps.yellow(0.5).hex(), 0.8)
+                    : withOpacity(colorScheme.ramps.yellow(0.4).hex(), 0.8),
+                inserted: isLight
+                    ? withOpacity(colorScheme.ramps.green(0.5).hex(), 0.8)
+                    : withOpacity(colorScheme.ramps.green(0.4).hex(), 0.8),
             }
         },
         compositionMark: {
