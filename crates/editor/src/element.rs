@@ -1047,7 +1047,7 @@ impl EditorElement {
                 ..Default::default()
             });
 
-            if layout.is_singleton {
+            if layout.is_singleton && cx.global::<Settings>().scrollbar.git_diff.unwrap_or(true) {
                 let diff_style = cx.global::<Settings>().theme.editor.diff.clone();
                 for hunk in layout
                     .position_map
@@ -2065,14 +2065,17 @@ impl Element<Editor> for EditorElement {
             ));
         }
 
-        let show_scrollbars = match cx.global::<Settings>().show_scrollbars {
-            settings::ShowScrollbars::Auto => {
-                snapshot.has_scrollbar_info(is_singleton)
-                    || editor.scroll_manager.scrollbars_visible()
+        let scrollbar_settings = cx.global::<Settings>().scrollbar;
+        let show_scrollbars = match scrollbar_settings.show.unwrap_or_default() {
+            settings::ShowScrollbar::Auto => {
+                // Git
+                (is_singleton && scrollbar_settings.git_diff.unwrap_or(true) && snapshot.buffer_snapshot.has_git_diffs())
+                // Scrollmanager
+                || editor.scroll_manager.scrollbars_visible()
             }
-            settings::ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
-            settings::ShowScrollbars::Always => true,
-            settings::ShowScrollbars::Never => false,
+            settings::ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
+            settings::ShowScrollbar::Always => true,
+            settings::ShowScrollbar::Never => false,
         };
 
         let include_root = editor
