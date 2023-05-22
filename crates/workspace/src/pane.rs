@@ -2028,11 +2028,9 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{executor::Deterministic, TestAppContext};
+    use gpui::TestAppContext;
     use project::FakeFs;
     use settings::SettingsStore;
 
