@@ -2343,23 +2343,31 @@ mod tests {
         add_labeled_item(&workspace, &pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A", "C*"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx));
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
     }
 
@@ -2376,9 +2384,10 @@ mod tests {
 
         pane.update(cx, |pane, cx| {
             pane.close_inactive_items(&CloseInactiveItems, cx)
-        });
-
-        deterministic.run_until_parked();
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["C*"], cx);
     }
 
@@ -2398,9 +2407,10 @@ mod tests {
         add_labeled_item(&workspace, &pane, "E", false, cx);
         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx));
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A^", "C*^"], cx);
     }
 
@@ -2420,9 +2430,10 @@ mod tests {
 
         pane.update(cx, |pane, cx| {
             pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
-        });
-
-        deterministic.run_until_parked();
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["C*", "D", "E"], cx);
     }
 
@@ -2442,9 +2453,10 @@ mod tests {
 
         pane.update(cx, |pane, cx| {
             pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
-        });
-
-        deterministic.run_until_parked();
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
     }
 
@@ -2462,9 +2474,10 @@ mod tests {
         add_labeled_item(&workspace, &pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx));
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, [], cx);
     }
 
