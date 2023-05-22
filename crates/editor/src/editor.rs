@@ -517,12 +517,6 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
-impl EditorSnapshot {
-    fn has_scrollbar_info(&self, is_singleton: bool) -> bool {
-        is_singleton && self.buffer_snapshot.has_git_diffs()
-    }
-}
-
 #[derive(Clone, Debug)]
 struct SelectionHistoryEntry {
     selections: Arc<[Selection<Anchor>]>,
