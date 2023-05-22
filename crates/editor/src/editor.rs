@@ -7253,6 +7253,7 @@ impl View for Editor {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        dbg!("Editor Focus in");
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
             cx.emit(Event::Focused);
