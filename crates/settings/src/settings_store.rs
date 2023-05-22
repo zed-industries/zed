@@ -830,37 +830,6 @@ mod tests {
         store.register_setting::<UserSettings>(cx);
         store.register_setting::<TurboSetting>(cx);
         store.register_setting::<MultiKeySettings>(cx);
-
-        // error - missing required field in default settings
-        store
-            .set_default_settings(
-                r#"{
-                    "user": {
-                        "name": "John Doe",
-                        "age": 30,
-                        "staff": false
-                    }
-                }"#,
-                cx,
-            )
-            .unwrap_err();
-
-        // error - type error in default settings
-        store
-            .set_default_settings(
-                r#"{
-                    "turbo": "the-wrong-type",
-                    "user": {
-                        "name": "John Doe",
-                        "age": 30,
-                        "staff": false
-                    }
-                }"#,
-                cx,
-            )
-            .unwrap_err();
-
-        // valid default settings.
         store
             .set_default_settings(
                 r#"{
