@@ -3,9 +3,10 @@ import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import { SyntaxHighlightStyle, buildSyntax } from "../themes/common/syntax"
+import { buildSyntax } from "../themes/common/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
+    const { isLight } = colorScheme
     let layer = colorScheme.highest
 
     const autocompleteItem = {
@@ -97,9 +98,15 @@ export default function editor(colorScheme: ColorScheme) {
             foldBackground: foreground(layer, "variant"),
         },
         diff: {
-            deleted: foreground(layer, "negative"),
-            modified: foreground(layer, "warning"),
-            inserted: foreground(layer, "positive"),
+            deleted: isLight
+                ? colorScheme.ramps.red(0.5).hex()
+                : colorScheme.ramps.red(0.4).hex(),
+            modified: isLight
+                ? colorScheme.ramps.yellow(0.3).hex()
+                : colorScheme.ramps.yellow(0.5).hex(),
+            inserted: isLight
+                ? colorScheme.ramps.green(0.4).hex()
+                : colorScheme.ramps.green(0.5).hex(),
             removedWidthEm: 0.275,
             widthEm: 0.22,
             cornerRadius: 0.2,
