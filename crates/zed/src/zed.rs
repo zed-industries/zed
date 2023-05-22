@@ -1396,7 +1396,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
-            assert_eq!(workspace.panes().len(), 2); //Center pane + Dock pane
+            assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
@@ -1406,7 +1406,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.panes().len(), 2);
+            assert_eq!(workspace.panes().len(), 1);
             assert!(workspace.active_item(cx).is_none());
         });
 
@@ -2088,6 +2088,8 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
+            project_panel::init(cx);
+            terminal_view::init(cx);
             app_state
         })
     }
