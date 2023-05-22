@@ -1749,11 +1749,11 @@ impl AppContext {
                                             }
                                         }
 
-                                        // When the previously-focused view isn't rendered and
+                                        // When the previously-focused view has been dropped and
                                         // there isn't any pending focus, focus the root view.
                                         let root_view_id = cx.window.root_view().id();
                                         if focused_view_id != root_view_id
-                                            && !cx.window.parents.contains_key(&focused_view_id)
+                                            && !cx.views.contains_key(&(window_id, focused_view_id))
                                             && !focus_effects.contains_key(&window_id)
                                         {
                                             focus_effects.insert(
@@ -1942,12 +1942,12 @@ impl AppContext {
     fn handle_focus_effect(&mut self, effect: FocusEffect) {
         let window_id = effect.window_id();
         self.update_window(window_id, |cx| {
-            // Ensure the newly-focused view has been rendered, otherwise focus
+            // Ensure the newly-focused view still exists, otherwise focus
             // the root view instead.
             let focused_id = match effect {
                 FocusEffect::View { view_id, .. } => {
                     if let Some(view_id) = view_id {
-                        if cx.window.parents.contains_key(&view_id) {
+                        if cx.views.contains_key(&(window_id, view_id)) {
                             Some(view_id)
                         } else {
                             Some(cx.root_view().id())
