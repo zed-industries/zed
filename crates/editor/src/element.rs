@@ -48,7 +48,7 @@ use std::{
     sync::Arc,
 };
 use text::Point;
-use workspace::{item::Item, GitGutterSetting, WorkspaceSettings};
+use workspace::item::Item;
 
 enum FoldMarkers {}
 
@@ -1048,7 +1048,7 @@ impl EditorElement {
             });
 
             if layout.is_singleton {
-                let diff_style = theme::current(cx).editor.diff.clone();
+                let diff_style = cx.global::<Settings>().theme.editor.diff.clone();
                 for hunk in layout
                     .position_map
                     .snapshot
@@ -2065,8 +2065,8 @@ impl Element<Editor> for EditorElement {
             ));
         }
 
-        let show_scrollbars = match settings::get::<EditorSettings>(cx).show_scrollbars {
-            ShowScrollbars::Auto => {
+        let show_scrollbars = match cx.global::<Settings>().show_scrollbars {
+            settings::ShowScrollbars::Auto => {
                 snapshot.has_scrollbar_info(is_singleton)
                     || editor.scroll_manager.scrollbars_visible()
             }
