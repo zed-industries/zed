@@ -477,7 +477,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
-    _subscriptions: Vec<Subscription>,
+    subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
@@ -683,7 +683,7 @@ impl Workspace {
             _observe_current_user,
             _apply_leader_updates,
             leader_updates_tx,
-            _subscriptions: subscriptions,
+            subscriptions,
             pane_history_timestamp,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
@@ -846,7 +846,7 @@ impl Workspace {
             DockPosition::Right => &self.right_dock,
         };
 
-        cx.subscribe(&panel, {
+        self.subscriptions.push(cx.subscribe(&panel, {
             let mut dock = dock.clone();
             let mut prev_position = panel.position(cx);
             move |this, panel, event, cx| {
@@ -884,8 +884,7 @@ impl Workspace {
                     cx.notify();
                 }
             }
-        })
-        .detach();
+        }));
 
         dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     }
