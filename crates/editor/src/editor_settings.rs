@@ -7,12 +7,18 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
-    pub show_scrollbars: ShowScrollbars,
+    pub scrollbar: Scrollbar,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct Scrollbar {
+    pub show: ShowScrollbar,
+    pub git_diff: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ShowScrollbars {
+pub enum ShowScrollbar {
     Auto,
     System,
     Always,
@@ -24,7 +30,13 @@ pub struct EditorSettingsContent {
     pub cursor_blink: Option<bool>,
     pub hover_popover_enabled: Option<bool>,
     pub show_completions_on_input: Option<bool>,
-    pub show_scrollbars: Option<ShowScrollbars>,
+    pub scrollbar: Option<ScrollbarContent>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ScrollbarContent {
+    pub show: Option<ShowScrollbar>,
+    pub git_diff: Option<bool>,
 }
 
 impl Setting for EditorSettings {
