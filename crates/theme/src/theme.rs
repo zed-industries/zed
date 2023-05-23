@@ -402,9 +402,9 @@ pub struct StatusBarLspStatus {
 
 #[derive(Deserialize, Default)]
 pub struct Dock {
-    pub initial_size: f32,
-    #[serde(flatten)]
-    pub container: ContainerStyle,
+    pub left: ContainerStyle,
+    pub bottom: ContainerStyle,
+    pub right: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

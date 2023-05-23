@@ -128,8 +128,15 @@ export default function workspace(colorScheme: ColorScheme) {
             border: border(colorScheme.highest, { overlay: true }),
         },
         dock: {
-            initialSize: 240,
-            border: border(layer, { left: true, right: true }),
+            left: {
+                border: border(layer, { right: true }),
+            },
+            bottom: {
+                border: border(layer, { top: true }),
+            },
+            right: {
+                border: border(layer, { left: true }),
+            }
         },
         paneDivider: {
             color: borderColor(layer),

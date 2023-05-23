@@ -372,11 +372,10 @@ impl Dock {
 
     pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
         if let Some(active_entry) = self.active_entry() {
-            let style = &settings::get::<ThemeSettings>(cx).theme.workspace.dock;
             Empty::new()
                 .into_any()
                 .contained()
-                .with_style(style.container)
+                .with_style(self.style(cx))
                 .resizable(
                     self.position.to_resize_handle_side(),
                     active_entry.panel.size(cx),
@@ -386,6 +385,16 @@ impl Dock {
         } else {
             Empty::new().into_any()
         }
+    }
+
+    fn style(&self, cx: &WindowContext) -> ContainerStyle {
+        let theme = &settings::get::<ThemeSettings>(cx).theme;
+        let style = match self.position {
+            DockPosition::Left => theme.workspace.dock.left,
+            DockPosition::Bottom => theme.workspace.dock.bottom,
+            DockPosition::Right => theme.workspace.dock.right,
+        };
+        style
     }
 }
 
@@ -400,10 +409,10 @@ impl View for Dock {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(active_entry) = self.active_entry() {
-            let style = &settings::get::<ThemeSettings>(cx).theme.workspace.dock;
+            let style = self.style(cx);
             ChildView::new(active_entry.panel.as_any(), cx)
                 .contained()
-                .with_style(style.container)
+                .with_style(style)
                 .resizable(
                     self.position.to_resize_handle_side(),
                     active_entry.panel.size(cx),
