@@ -429,6 +429,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_model_request_handler(Self::handle_lsp_command::<OnTypeFormatting>);
         client.add_model_request_handler(Self::handle_search_project);
         client.add_model_request_handler(Self::handle_get_project_symbols);
         client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
