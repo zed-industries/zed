@@ -3476,12 +3476,7 @@ impl Project {
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
-                    options: lsp::FormattingOptions {
-                        tab_size: tab_size.into(),
-                        insert_spaces: true,
-                        insert_final_newline: Some(true),
-                        ..Default::default()
-                    },
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
                 .await?
@@ -3497,12 +3492,7 @@ impl Project {
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                     text_document,
                     range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp::FormattingOptions {
-                        tab_size: tab_size.into(),
-                        insert_spaces: true,
-                        insert_final_newline: Some(true),
-                        ..Default::default()
-                    },
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
                 .await?
@@ -4216,12 +4206,17 @@ impl Project {
         input: char,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        let tab_size = buffer.read_with(cx, |buffer, cx| {
+            let language_name = buffer.language().map(|language| language.name());
+            language_settings(language_name.as_deref(), cx).tab_size
+        });
         let position = position.to_point_utf16(buffer.read(cx));
         let edits_task = self.request_lsp(
             buffer.clone(),
             OnTypeFormatting {
                 position,
                 trigger: input.to_string(),
+                options: lsp_command::lsp_formatting_options(tab_size.get()).into(),
             },
             cx,
         );

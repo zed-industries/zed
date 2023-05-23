@@ -16,6 +16,15 @@ use language::{
 use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 
+pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
+    lsp::FormattingOptions {
+        tab_size,
+        insert_spaces: true,
+        insert_final_newline: Some(true),
+        ..lsp::FormattingOptions::default()
+    }
+}
+
 #[async_trait(?Send)]
 pub(crate) trait LspCommand: 'static + Sized {
     type Response: 'static + Default + Send;
@@ -112,7 +121,19 @@ pub(crate) struct GetCodeActions {
 pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
     pub trigger: String,
-    // TODO kb formatting options?
+    pub options: FormattingOptions,
+}
+
+pub(crate) struct FormattingOptions {
+    tab_size: u32,
+}
+
+impl From<lsp::FormattingOptions> for FormattingOptions {
+    fn from(value: lsp::FormattingOptions) -> Self {
+        Self {
+            tab_size: value.tab_size,
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -1634,8 +1655,7 @@ impl LspCommand for OnTypeFormatting {
                 point_to_lsp(self.position),
             ),
             ch: self.trigger.clone(),
-            // TODO kb pass current editor ones
-            options: lsp::FormattingOptions::default(),
+            options: lsp_formatting_options(self.options.tab_size),
         }
     }
 
@@ -1660,6 +1680,9 @@ impl LspCommand for OnTypeFormatting {
         proto::OnTypeFormatting {
             project_id,
             buffer_id: buffer.remote_id(),
+            options: Some(proto::FormattingOptions {
+                tab_size: self.options.tab_size,
+            }),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -1687,6 +1710,12 @@ impl LspCommand for OnTypeFormatting {
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             trigger: message.trigger.clone(),
+            options: message
+                .options
+                .map(|options| options.tab_size)
+                .map(lsp_formatting_options)
+                .unwrap_or_default()
+                .into(),
         })
     }
 
