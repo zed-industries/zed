@@ -29,6 +29,7 @@ use sqlez::{
 };
 use std::{
     any::TypeId,
+    mem,
     ops::{Deref, DerefMut, Range},
 };
 use util::ResultExt;
@@ -890,7 +891,7 @@ impl<'a> WindowContext<'a> {
         Ok(element)
     }
 
-    pub(crate) fn layout(&mut self, refreshing: bool) -> Result<()> {
+    pub(crate) fn layout(&mut self, refreshing: bool) -> Result<HashMap<usize, usize>> {
         let window_size = self.window.platform_window.content_size();
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
@@ -923,11 +924,11 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        self.window.parents = new_parents;
+        let old_parents = mem::replace(&mut self.window.parents, new_parents);
         self.window
             .rendered_views
             .insert(root_view_id, rendered_root);
-        Ok(())
+        Ok(old_parents)
     }
 
     pub(crate) fn paint(&mut self) -> Result<Scene> {
