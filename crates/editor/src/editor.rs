@@ -7247,7 +7247,6 @@ impl View for Editor {
             Some(ContextMenu::CodeActions(_)) => keymap.add_identifier("showing_code_actions"),
             None => {}
         }
-
         for layer in self.keymap_context_layers.values() {
             keymap.extend(layer);
         }

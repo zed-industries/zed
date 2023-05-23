@@ -98,12 +98,18 @@ fn assist(
         The user's currently selected text is indicated via ->->selected text<-<- surrounding selected text.
         In this sentence, the word ->->example<-<- is selected.
         Respond to any selected model mention.
+
         Wrap your responses in > < as follows.
+        / What do you think?
+        > I think that's a great idea. <
+
+        For lines that are likely to wrap, or multiline responses, start and end the > and < on their own lines.
         >
-        I think that's a great idea.
+        I think that's a great idea
         <
-        If you're responding to a distant mention or multiple mentions, provide context.
-        > Key ideas of generative programming.
+
+        If the selected mention is not at the end of the document, briefly summarize the context.
+        > Key ideas of generative programming:
         * Managing context
             * Managing length
             * Context distillation
@@ -112,16 +118,6 @@ fn assist(
             * Portals to other contexts
                 * Distillation policies
                 * Budgets
-        <
-
-        > Expand on the idea of context distillation.
-        It's important to stay below the model's context size when generative programming.
-        A key technique in doing so is called context distillation... [up to 1 paragraph].
-
-        Questions to consider:
-        -
-        -
-        - [Up to 3 questions]
         <
     "#};
 

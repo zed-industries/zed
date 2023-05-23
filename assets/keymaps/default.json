@@ -164,7 +164,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "editor::NewlineBelow",
+      "cmd-enter": "ai::Assist",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": [
         "buffer_search::Deploy",
