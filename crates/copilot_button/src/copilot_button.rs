@@ -66,8 +66,8 @@ impl View for CopilotButton {
                         let style = theme
                             .workspace
                             .status_bar
-                            .sidebar_buttons
-                            .item
+                            .panel_buttons
+                            .button
                             .style_for(state, active);
 
                         Flex::row()

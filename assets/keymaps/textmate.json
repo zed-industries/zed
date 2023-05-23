@@ -68,7 +68,7 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-alt-ctrl-d": "workspace::ToggleLeftSidebar",
+      "cmd-alt-ctrl-d": "workspace::ToggleLeftDock",
       "cmd-t": "file_finder::Toggle",
       "cmd-shift-t": "project_symbols::Toggle"
     }
@@ -82,10 +82,6 @@
   },
   {
     "context": "ProjectPanel",
-    "bindings": {}
-  },
-  {
-    "context": "Dock",
     "bindings": {}
   }
 ]

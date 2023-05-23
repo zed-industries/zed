@@ -82,19 +82,20 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub leader_border_opacity: f32,
     pub leader_border_width: f32,
-    pub sidebar: Sidebar,
+    pub dock: Dock,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub breadcrumb_height: f32,
     pub breadcrumbs: Interactive<ContainedText>,
     pub disconnected_overlay: ContainedText,
     pub modal: ContainerStyle,
+    pub zoomed_foreground: ContainerStyle,
+    pub zoomed_background: ContainerStyle,
     pub notification: ContainerStyle,
     pub notifications: Notifications,
     pub joining_project_avatar: ImageStyle,
     pub joining_project_message: ContainedText,
     pub external_location_message: ContainedText,
-    pub dock: Dock,
     pub drop_target_overlay_color: Color,
 }
 
@@ -318,15 +319,6 @@ pub struct Toolbar {
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct Dock {
-    pub initial_size_right: f32,
-    pub initial_size_bottom: f32,
-    pub wash_color: Color,
-    pub panel: ContainerStyle,
-    pub maximized: ContainerStyle,
-}
-
-#[derive(Clone, Deserialize, Default)]
 pub struct Notifications {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -369,17 +361,17 @@ pub struct StatusBar {
     pub auto_update_progress_message: TextStyle,
     pub auto_update_done_message: TextStyle,
     pub lsp_status: Interactive<StatusBarLspStatus>,
-    pub sidebar_buttons: StatusBarSidebarButtons,
+    pub panel_buttons: StatusBarPanelButtons,
     pub diagnostic_summary: Interactive<StatusBarDiagnosticSummary>,
     pub diagnostic_message: Interactive<ContainedText>,
 }
 
 #[derive(Deserialize, Default)]
-pub struct StatusBarSidebarButtons {
+pub struct StatusBarPanelButtons {
     pub group_left: ContainerStyle,
+    pub group_bottom: ContainerStyle,
     pub group_right: ContainerStyle,
-    pub item: Interactive<SidebarItem>,
-    pub badge: ContainerStyle,
+    pub button: Interactive<PanelButton>,
 }
 
 #[derive(Deserialize, Default)]
@@ -409,14 +401,14 @@ pub struct StatusBarLspStatus {
 }
 
 #[derive(Deserialize, Default)]
-pub struct Sidebar {
-    pub initial_size: f32,
-    #[serde(flatten)]
-    pub container: ContainerStyle,
+pub struct Dock {
+    pub left: ContainerStyle,
+    pub bottom: ContainerStyle,
+    pub right: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]
-pub struct SidebarItem {
+pub struct PanelButton {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub icon_color: Color,

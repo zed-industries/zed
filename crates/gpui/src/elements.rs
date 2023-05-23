@@ -187,25 +187,23 @@ pub trait Element<V: View>: 'static {
         Tooltip::new::<Tag, V>(id, text, action, style, self.into_any(), cx)
     }
 
-    fn with_resize_handle<Tag: 'static>(
+    fn resizable(
         self,
-        element_id: usize,
-        side: Side,
-        handle_size: f32,
-        initial_size: f32,
-        cx: &mut ViewContext<V>,
+        side: HandleSide,
+        size: f32,
+        on_resize: impl 'static + FnMut(&mut V, f32, &mut ViewContext<V>),
     ) -> Resizable<V>
     where
         Self: 'static + Sized,
     {
-        Resizable::new::<Tag, V>(
-            self.into_any(),
-            element_id,
-            side,
-            handle_size,
-            initial_size,
-            cx,
-        )
+        Resizable::new(self.into_any(), side, size, on_resize)
+    }
+
+    fn mouse<Tag>(self, region_id: usize) -> MouseEventHandler<Tag, V>
+    where
+        Self: Sized,
+    {
+        MouseEventHandler::for_child(self.into_any(), region_id)
     }
 }
 

@@ -18,10 +18,11 @@ use feedback::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions,
+    anyhow::{self, Result},
     geometry::vector::vec2f,
     impl_actions,
     platform::{Platform, PromptLevel, TitlebarOptions, WindowBounds, WindowKind, WindowOptions},
-    AppContext, ViewContext,
+    AppContext, AsyncAppContext, Task, ViewContext, WeakViewHandle,
 };
 pub use lsp;
 pub use project;
@@ -31,13 +32,13 @@ use serde::Deserialize;
 use serde_json::to_string_pretty;
 use settings::{KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH};
 use std::{borrow::Cow, str, sync::Arc};
-use terminal_view::terminal_button::TerminalButton;
+use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{channel::ReleaseChannel, paths, ResultExt};
 use uuid::Uuid;
 use welcome::BaseKeymap;
 pub use workspace;
 use workspace::{
-    create_and_open_local_file, open_new, sidebar::SidebarSide, AppState, NewFile, NewWindow,
+    create_and_open_local_file, dock::PanelHandle, open_new, AppState, NewFile, NewWindow,
     Workspace, WorkspaceSettings,
 };
 
@@ -223,7 +224,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         |workspace: &mut Workspace,
          _: &project_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
-            workspace.toggle_sidebar_item_focus(SidebarSide::Left, 0, cx);
+            workspace.toggle_panel_focus::<ProjectPanel>(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace,
+         _: &terminal_panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<TerminalPanel>(cx);
         },
     );
     cx.add_global_action({
@@ -252,85 +260,107 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
 }
 
 pub fn initialize_workspace(
-    workspace: &mut Workspace,
-    app_state: &Arc<AppState>,
-    cx: &mut ViewContext<Workspace>,
-) {
-    let workspace_handle = cx.handle();
-    cx.subscribe(&workspace_handle, {
-        move |workspace, _, event, cx| {
-            if let workspace::Event::PaneAdded(pane) = event {
-                pane.update(cx, |pane, cx| {
-                    pane.toolbar().update(cx, |toolbar, cx| {
-                        let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
-                        toolbar.add_item(breadcrumbs, cx);
-                        let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                        toolbar.add_item(buffer_search_bar, cx);
-                        let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
-                        toolbar.add_item(project_search_bar, cx);
-                        let submit_feedback_button = cx.add_view(|_| SubmitFeedbackButton::new());
-                        toolbar.add_item(submit_feedback_button, cx);
-                        let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
-                        toolbar.add_item(feedback_info_text, cx);
-                        let lsp_log_item = cx.add_view(|_| {
-                            lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
+    workspace_handle: WeakViewHandle<Workspace>,
+    was_deserialized: bool,
+    app_state: Arc<AppState>,
+    cx: AsyncAppContext,
+) -> Task<Result<()>> {
+    cx.spawn(|mut cx| async move {
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            let workspace_handle = cx.handle();
+            cx.subscribe(&workspace_handle, {
+                move |workspace, _, event, cx| {
+                    if let workspace::Event::PaneAdded(pane) = event {
+                        pane.update(cx, |pane, cx| {
+                            pane.toolbar().update(cx, |toolbar, cx| {
+                                let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
+                                toolbar.add_item(breadcrumbs, cx);
+                                let buffer_search_bar = cx.add_view(BufferSearchBar::new);
+                                toolbar.add_item(buffer_search_bar, cx);
+                                let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
+                                toolbar.add_item(project_search_bar, cx);
+                                let submit_feedback_button =
+                                    cx.add_view(|_| SubmitFeedbackButton::new());
+                                toolbar.add_item(submit_feedback_button, cx);
+                                let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
+                                toolbar.add_item(feedback_info_text, cx);
+                                let lsp_log_item = cx.add_view(|_| {
+                                    lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
+                                });
+                                toolbar.add_item(lsp_log_item, cx);
+                            })
                         });
-                        toolbar.add_item(lsp_log_item, cx);
+                    }
+                }
+            })
+            .detach();
+
+            cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
+
+            let collab_titlebar_item =
+                cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
+            workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
+
+            let copilot =
+                cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
+            let diagnostic_summary =
+                cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            let activity_indicator = activity_indicator::ActivityIndicator::new(
+                workspace,
+                app_state.languages.clone(),
+                cx,
+            );
+            let active_buffer_language =
+                cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            let feedback_button = cx.add_view(|_| {
+                feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace)
+            });
+            let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_left_item(diagnostic_summary, cx);
+                status_bar.add_left_item(activity_indicator, cx);
+                status_bar.add_right_item(feedback_button, cx);
+                status_bar.add_right_item(copilot, cx);
+                status_bar.add_right_item(active_buffer_language, cx);
+                status_bar.add_right_item(cursor_position, cx);
+            });
+
+            auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
+
+            vim::observe_keystrokes(cx);
+
+            cx.on_window_should_close(|workspace, cx| {
+                if let Some(task) = workspace.close(&Default::default(), cx) {
+                    task.detach_and_log_err(cx);
+                }
+                false
+            });
+        })?;
+
+        let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+        let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel) = futures::try_join!(project_panel, terminal_panel)?;
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            let project_panel_position = project_panel.position(cx);
+            workspace.add_panel(project_panel, cx);
+            if !was_deserialized
+                && workspace
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .any(|tree| {
+                        tree.read(cx)
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_dir())
                     })
-                });
+            {
+                workspace.toggle_dock(project_panel_position, cx);
             }
-        }
+
+            workspace.add_panel(terminal_panel, cx)
+        })?;
+        Ok(())
     })
-    .detach();
-
-    cx.emit(workspace::Event::PaneAdded(workspace.active_pane().clone()));
-    cx.emit(workspace::Event::PaneAdded(workspace.dock_pane().clone()));
-
-    let collab_titlebar_item =
-        cx.add_view(|cx| CollabTitlebarItem::new(workspace, &workspace_handle, cx));
-    workspace.set_titlebar_item(collab_titlebar_item.into_any(), cx);
-
-    let project_panel = ProjectPanel::new(workspace, cx);
-    workspace.left_sidebar().update(cx, |sidebar, cx| {
-        sidebar.add_item(
-            "icons/folder_tree_16.svg",
-            "Project Panel".to_string(),
-            project_panel,
-            cx,
-        )
-    });
-
-    let toggle_terminal = cx.add_view(|cx| TerminalButton::new(workspace_handle.clone(), cx));
-    let copilot = cx.add_view(|cx| copilot_button::CopilotButton::new(app_state.fs.clone(), cx));
-    let diagnostic_summary =
-        cx.add_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-    let activity_indicator =
-        activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
-    let active_buffer_language =
-        cx.add_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
-    let feedback_button =
-        cx.add_view(|_| feedback::deploy_feedback_button::DeployFeedbackButton::new(workspace));
-    let cursor_position = cx.add_view(|_| editor::items::CursorPosition::new());
-    workspace.status_bar().update(cx, |status_bar, cx| {
-        status_bar.add_left_item(diagnostic_summary, cx);
-        status_bar.add_left_item(activity_indicator, cx);
-        status_bar.add_right_item(toggle_terminal, cx);
-        status_bar.add_right_item(feedback_button, cx);
-        status_bar.add_right_item(copilot, cx);
-        status_bar.add_right_item(active_buffer_language, cx);
-        status_bar.add_right_item(cursor_position, cx);
-    });
-
-    auto_update::notify_of_any_new_update(cx.weak_handle(), cx);
-
-    vim::observe_keystrokes(cx);
-
-    cx.on_window_should_close(|workspace, cx| {
-        if let Some(task) = workspace.close(&Default::default(), cx) {
-            task.detach_and_log_err(cx);
-        }
-        false
-    });
 }
 
 pub fn build_window_options(
@@ -348,7 +378,8 @@ pub fn build_window_options(
             traffic_light_position: Some(vec2f(8., 8.)),
         }),
         center: false,
-        focus: true,
+        focus: false,
+        show: false,
         kind: WindowKind::Normal,
         is_movable: true,
         bounds,
@@ -687,7 +718,7 @@ mod tests {
             .unwrap();
         workspace_1.update(cx, |workspace, cx| {
             assert_eq!(workspace.worktrees(cx).count(), 2);
-            assert!(workspace.left_sidebar().read(cx).is_open());
+            assert!(workspace.left_dock().read(cx).is_open());
             assert!(workspace.active_pane().is_focused(cx));
         });
 
@@ -730,7 +761,7 @@ mod tests {
                     .collect::<Vec<_>>(),
                 &[Path::new("/root/c").into(), Path::new("/root/d").into()]
             );
-            assert!(workspace.left_sidebar().read(cx).is_open());
+            assert!(workspace.left_dock().read(cx).is_open());
             assert!(workspace.active_pane().is_focused(cx));
         });
     }
@@ -755,6 +786,7 @@ mod tests {
             .unwrap()
             .downcast::<Workspace>()
             .unwrap();
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -777,9 +809,9 @@ mod tests {
         assert!(cx.is_window_edited(workspace.window_id()));
 
         // Closing the item restores the window's edited state.
-        let close = workspace.update(cx, |workspace, cx| {
+        let close = pane.update(cx, |pane, cx| {
             drop(editor);
-            Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
+            pane.close_active_item(&Default::default(), cx).unwrap()
         });
         executor.run_until_parked();
         cx.simulate_prompt_answer(workspace.window_id(), 1);
@@ -1364,7 +1396,7 @@ mod tests {
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
-            assert_eq!(workspace.panes().len(), 2); //Center pane + Dock pane
+            assert_eq!(workspace.panes().len(), 1);
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
@@ -1374,7 +1406,7 @@ mod tests {
         cx.foreground().run_until_parked();
 
         workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.panes().len(), 2);
+            assert_eq!(workspace.panes().len(), 1);
             assert!(workspace.active_item(cx).is_none());
         });
 
@@ -1403,6 +1435,7 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
@@ -1520,14 +1553,13 @@ mod tests {
 
         // Go forward to an item that has been closed, ensuring it gets re-opened at the same
         // location.
-        workspace
-            .update(cx, |workspace, cx| {
-                let editor3_id = editor3.id();
-                drop(editor3);
-                Pane::close_item_by_id(workspace, workspace.active_pane().clone(), editor3_id, cx)
-            })
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            let editor3_id = editor3.id();
+            drop(editor3);
+            pane.close_item_by_id(editor3_id, cx)
+        })
+        .await
+        .unwrap();
         workspace
             .update(cx, |w, cx| Pane::go_forward(w, None, cx))
             .await
@@ -1556,14 +1588,13 @@ mod tests {
         );
 
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
-        workspace
-            .update(cx, |workspace, cx| {
-                let editor2_id = editor2.id();
-                drop(editor2);
-                Pane::close_item_by_id(workspace, workspace.active_pane().clone(), editor2_id, cx)
-            })
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            let editor2_id = editor2.id();
+            drop(editor2);
+            pane.close_item_by_id(editor2_id, cx)
+        })
+        .await
+        .unwrap();
         app_state
             .fs
             .remove_file(Path::new("/root/a/file2"), Default::default())
@@ -1712,34 +1743,22 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         // Close all the pane items in some arbitrary order.
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file1_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file1_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file4_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file4_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file2_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file2_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_item_by_id(workspace, pane.clone(), file3_item_id, cx)
-            })
+        pane.update(cx, |pane, cx| pane.close_item_by_id(file3_item_id, cx))
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), None);
@@ -2070,6 +2089,8 @@ mod tests {
             editor::init(cx);
             project_panel::init_settings(cx);
             pane::init(cx);
+            project_panel::init(cx);
+            terminal_view::init(cx);
             app_state
         })
     }

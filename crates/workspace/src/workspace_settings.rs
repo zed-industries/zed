@@ -1,8 +1,3 @@
-use anyhow::bail;
-use db::sqlez::{
-    bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
-};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Setting;
@@ -13,7 +8,6 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
-    pub default_dock_anchor: DockAnchor,
     pub git: GitSettings,
 }
 
@@ -23,7 +17,6 @@ pub struct WorkspaceSettingsContent {
     pub confirm_quit: Option<bool>,
     pub show_call_status_icon: Option<bool>,
     pub autosave: Option<AutosaveSetting>,
-    pub default_dock_anchor: Option<DockAnchor>,
     pub git: Option<GitSettings>,
 }
 
@@ -34,15 +27,6 @@ pub enum AutosaveSetting {
     AfterDelay { milliseconds: u64 },
     OnFocusChange,
     OnWindowChange,
-}
-
-#[derive(PartialEq, Eq, Debug, Default, Copy, Clone, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DockAnchor {
-    #[default]
-    Bottom,
-    Right,
-    Expanded,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -57,35 +41,6 @@ pub enum GitGutterSetting {
     #[default]
     TrackedFiles,
     Hide,
-}
-
-impl StaticColumnCount for DockAnchor {}
-
-impl Bind for DockAnchor {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        match self {
-            DockAnchor::Bottom => "Bottom",
-            DockAnchor::Right => "Right",
-            DockAnchor::Expanded => "Expanded",
-        }
-        .bind(statement, start_index)
-    }
-}
-
-impl Column for DockAnchor {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        String::column(statement, start_index).and_then(|(anchor_text, next_index)| {
-            Ok((
-                match anchor_text.as_ref() {
-                    "Bottom" => DockAnchor::Bottom,
-                    "Right" => DockAnchor::Right,
-                    "Expanded" => DockAnchor::Expanded,
-                    _ => bail!("Stored dock anchor is incorrect"),
-                },
-                next_index,
-            ))
-        })
-    }
 }
 
 impl Setting for WorkspaceSettings {

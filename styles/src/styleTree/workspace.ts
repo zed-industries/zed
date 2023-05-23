@@ -118,9 +118,25 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             cursor: "Arrow",
         },
-        sidebar: {
-            initialSize: 240,
-            border: border(layer, { left: true, right: true }),
+        zoomedBackground: {
+            padding: 10,
+            cursor: "Arrow",
+            background: withOpacity(background(colorScheme.lowest), 0.5)
+        },
+        zoomedForeground: {
+            shadow: colorScheme.modalShadow,
+            border: border(colorScheme.highest, { overlay: true }),
+        },
+        dock: {
+            left: {
+                border: border(layer, { right: true }),
+            },
+            bottom: {
+                border: border(layer, { top: true }),
+            },
+            right: {
+                border: border(layer, { left: true }),
+            }
         },
         paneDivider: {
             color: borderColor(layer),
@@ -309,19 +325,6 @@ export default function workspace(colorScheme: ColorScheme) {
         notifications: {
             width: 400,
             margin: { right: 10, bottom: 10 },
-        },
-        dock: {
-            initialSizeRight: 640,
-            initialSizeBottom: 304,
-            wash_color: withOpacity(background(colorScheme.highest), 0.5),
-            panel: {
-                border: border(colorScheme.middle),
-            },
-            maximized: {
-                margin: 32,
-                border: border(colorScheme.highest, { overlay: true }),
-                shadow: colorScheme.modalShadow,
-            },
         },
         dropTargetOverlayColor: withOpacity(foreground(layer, "variant"), 0.5),
     }

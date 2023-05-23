@@ -72,7 +72,11 @@
   },
   "project_panel": {
       // Whether to show the git status in the project panel.
-      "git_status": true
+      "git_status": true,
+      // Where to dock project panel. Can be 'left' or 'right'.
+      "dock": "left",
+      // Default width of the project panel.
+      "default_width": 240
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -90,16 +94,6 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
-  // Where to place the dock by default. This setting can take three
-  // values:
-  //
-  // 1. Position the dock attached to the bottom of the workspace
-  //     "default_dock_anchor": "bottom"
-  // 2. Position the dock to the right of the workspace like a side panel
-  //     "default_dock_anchor": "right"
-  // 3. Position the dock full screen over the entire workspace"
-  //     "default_dock_anchor": "expanded"
-  "default_dock_anchor": "bottom",
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
   "remove_trailing_whitespace_on_save": true,
@@ -190,6 +184,12 @@
     //         }
     //     }
     "shell": "system",
+    // Where to dock terminals panel. Can be 'left', 'right', 'bottom'.
+    "dock": "bottom",
+    // Default width when the terminal is docked to the left or right.
+    "default_width": 640,
+    // Default height when the terminal is docked to the bottom.
+    "default_height": 320,
     // What working directory to use when launching the terminal.
     // May take 4 values:
     // 1. Use the current file's project directory.  Will Fallback to the

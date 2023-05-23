@@ -236,7 +236,7 @@ impl<'a> Statement<'a> {
         Ok(str::from_utf8(slice)?)
     }
 
-    pub fn bind<T: Bind>(&self, value: T, index: i32) -> Result<i32> {
+    pub fn bind<T: Bind>(&self, value: &T, index: i32) -> Result<i32> {
         debug_assert!(index > 0);
         Ok(value.bind(self, index)?)
     }
@@ -258,7 +258,7 @@ impl<'a> Statement<'a> {
         }
     }
 
-    pub fn with_bindings(&mut self, bindings: impl Bind) -> Result<&mut Self> {
+    pub fn with_bindings(&mut self, bindings: &impl Bind) -> Result<&mut Self> {
         self.bind(bindings, 1)?;
         Ok(self)
     }
@@ -464,7 +464,7 @@ mod test {
         connection
             .exec(indoc! {"
                 CREATE TABLE texts (
-                    text TEXT 
+                    text TEXT
                 )"})
             .unwrap()()
         .unwrap();

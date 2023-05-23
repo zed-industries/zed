@@ -41,6 +41,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                             titlebar: None,
                             center: false,
                             focus: false,
+                            show: true,
                             kind: WindowKind::PopUp,
                             is_movable: false,
                             screen: Some(screen),

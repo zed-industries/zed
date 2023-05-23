@@ -12,6 +12,7 @@ use gpui::{
 use project::ProjectEntryId;
 
 pub fn dragged_item_receiver<Tag, D, F>(
+    pane: &Pane,
     region_id: usize,
     drop_index: usize,
     allow_same_pane: bool,
@@ -24,22 +25,24 @@ where
     D: Element<Pane>,
     F: FnOnce(&mut MouseState, &mut ViewContext<Pane>) -> D,
 {
-    MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {
+    let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
+    let drag_position = if (pane.can_drop)(drag_and_drop, cx) {
+        drag_and_drop
+            .currently_dragged::<DraggedItem>(cx.window_id())
+            .map(|(drag_position, _)| drag_position)
+            .or_else(|| {
+                drag_and_drop
+                    .currently_dragged::<ProjectEntryId>(cx.window_id())
+                    .map(|(drag_position, _)| drag_position)
+            })
+    } else {
+        None
+    };
+
+    let mut handler = MouseEventHandler::<Tag, _>::above(region_id, cx, |state, cx| {
         // Observing hovered will cause a render when the mouse enters regardless
         // of if mouse position was accessed before
-        let drag_position = if state.hovered() {
-            cx.global::<DragAndDrop<Workspace>>()
-                .currently_dragged::<DraggedItem>(cx.window_id())
-                .map(|(drag_position, _)| drag_position)
-                .or_else(|| {
-                    cx.global::<DragAndDrop<Workspace>>()
-                        .currently_dragged::<ProjectEntryId>(cx.window_id())
-                        .map(|(drag_position, _)| drag_position)
-                })
-        } else {
-            None
-        };
-
+        let drag_position = if state.hovered() { drag_position } else { None };
         Stack::new()
             .with_child(render_child(state, cx))
             .with_children(drag_position.map(|drag_position| {
@@ -64,38 +67,44 @@ where
                     }
                 })
             }))
-    })
-    .on_up(MouseButton::Left, {
-        move |event, pane, cx| {
-            let workspace = pane.workspace.clone();
-            let pane = cx.weak_handle();
-            handle_dropped_item(
-                event,
-                workspace,
-                &pane,
-                drop_index,
-                allow_same_pane,
-                split_margin,
-                cx,
-            );
-            cx.notify();
-        }
-    })
-    .on_move(|_, _, cx| {
-        let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
+    });
 
-        if drag_and_drop
-            .currently_dragged::<DraggedItem>(cx.window_id())
-            .is_some()
-            || drag_and_drop
-                .currently_dragged::<ProjectEntryId>(cx.window_id())
-                .is_some()
-        {
-            cx.notify();
-        } else {
-            cx.propagate_event();
-        }
-    })
+    if drag_position.is_some() {
+        handler = handler
+            .on_up(MouseButton::Left, {
+                move |event, pane, cx| {
+                    let workspace = pane.workspace.clone();
+                    let pane = cx.weak_handle();
+                    handle_dropped_item(
+                        event,
+                        workspace,
+                        &pane,
+                        drop_index,
+                        allow_same_pane,
+                        split_margin,
+                        cx,
+                    );
+                    cx.notify();
+                }
+            })
+            .on_move(|_, _, cx| {
+                let drag_and_drop = cx.global::<DragAndDrop<Workspace>>();
+
+                if drag_and_drop
+                    .currently_dragged::<DraggedItem>(cx.window_id())
+                    .is_some()
+                    || drag_and_drop
+                        .currently_dragged::<ProjectEntryId>(cx.window_id())
+                        .is_some()
+                {
+                    cx.notify();
+                } else {
+                    cx.propagate_event();
+                }
+            })
+    }
+
+    handler
 }
 
 pub fn handle_dropped_item<V: View>(
@@ -115,7 +124,7 @@ pub fn handle_dropped_item<V: View>(
     let action = if let Some((_, dragged_item)) =
         drag_and_drop.currently_dragged::<DraggedItem>(cx.window_id())
     {
-        Action::Move(dragged_item.pane.clone(), dragged_item.item.id())
+        Action::Move(dragged_item.pane.clone(), dragged_item.handle.id())
     } else if let Some((_, project_entry)) =
         drag_and_drop.currently_dragged::<ProjectEntryId>(cx.window_id())
     {

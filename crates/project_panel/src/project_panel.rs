@@ -1,12 +1,13 @@
 mod project_panel_settings;
 
 use context_menu::{ContextMenu, ContextMenuItem};
+use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
 use futures::stream::StreamExt;
 use gpui::{
     actions,
-    anyhow::{anyhow, Result},
+    anyhow::{self, anyhow, Result},
     elements::{
         AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
@@ -14,15 +15,17 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AnyElement, AppContext, ClipboardItem, Element, Entity, ModelHandle, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelHandle, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
-    repository::GitFileStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
-    WorktreeId,
+    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
+    Worktree, WorktreeId,
 };
-use project_panel_settings::ProjectPanelSettings;
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use std::{
     cmp::Ordering,
     collections::{hash_map, HashMap},
@@ -33,12 +36,18 @@ use std::{
 };
 use theme::ProjectPanelEntry;
 use unicase::UniCase;
-use workspace::Workspace;
+use util::{ResultExt, TryFutureExt};
+use workspace::{
+    dock::{DockPosition, Panel},
+    Workspace,
+};
 
+const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
+    fs: Arc<dyn Fs>,
     list: UniformListState,
     visible_entries: Vec<(WorktreeId, Vec<Entry>)>,
     last_worktree_root_id: Option<ProjectEntryId>,
@@ -50,6 +59,9 @@ pub struct ProjectPanel {
     context_menu: ViewHandle<ContextMenu>,
     dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakViewHandle<Workspace>,
+    has_focus: bool,
+    width: Option<f32>,
+    pending_serialization: Task<Option<()>>,
 }
 
 #[derive(Copy, Clone)]
@@ -146,10 +158,17 @@ pub enum Event {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
     },
+    DockPositionChanged,
+    Focus,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SerializedProjectPanel {
+    width: Option<f32>,
 }
 
 impl ProjectPanel {
-    pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
+    fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         let project = workspace.project().clone();
         let project_panel = cx.add_view(|cx: &mut ViewContext<Self>| {
             cx.observe(&project, |this, _, cx| {
@@ -210,6 +229,7 @@ impl ProjectPanel {
             let view_id = cx.view_id();
             let mut this = Self {
                 project: project.clone(),
+                fs: workspace.app_state().fs.clone(),
                 list: Default::default(),
                 visible_entries: Default::default(),
                 last_worktree_root_id: Default::default(),
@@ -221,8 +241,23 @@ impl ProjectPanel {
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
                 dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
+                has_focus: false,
+                width: None,
+                pending_serialization: Task::ready(None),
             };
             this.update_visible_entries(None, cx);
+
+            // Update the dock position when the setting changes.
+            let mut old_dock_position = this.position(cx);
+            cx.observe_global::<SettingsStore, _>(move |this, cx| {
+                let new_dock_position = this.position(cx);
+                if new_dock_position != old_dock_position {
+                    old_dock_position = new_dock_position;
+                    cx.emit(Event::DockPositionChanged);
+                }
+            })
+            .detach();
+
             this
         });
 
@@ -254,11 +289,57 @@ impl ProjectPanel {
                         }
                     }
                 }
+                _ => {}
             }
         })
         .detach();
 
         project_panel
+    }
+
+    pub fn load(
+        workspace: WeakViewHandle<Workspace>,
+        cx: AsyncAppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let serialized_panel = if let Some(panel) = cx
+                .background()
+                .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+                .await
+                .log_err()
+                .flatten()
+            {
+                Some(serde_json::from_str::<SerializedProjectPanel>(&panel)?)
+            } else {
+                None
+            };
+            workspace.update(&mut cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                if let Some(serialized_panel) = serialized_panel {
+                    panel.update(cx, |panel, cx| {
+                        panel.width = serialized_panel.width;
+                        cx.notify();
+                    });
+                }
+                panel
+            })
+        })
+    }
+
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        self.pending_serialization = cx.background().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        PROJECT_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedProjectPanel { width })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 
     fn deploy_context_menu(
@@ -1352,15 +1433,102 @@ impl View for ProjectPanel {
         Self::reset_to_default_keymap_context(keymap);
         keymap.add_identifier("menu");
     }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if !self.has_focus {
+            self.has_focus = true;
+            cx.emit(Event::Focus);
+        }
+    }
+
+    fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
+    }
 }
 
 impl Entity for ProjectPanel {
     type Event = Event;
 }
 
-impl workspace::sidebar::SidebarItem for ProjectPanel {
-    fn should_show_badge(&self, _: &AppContext) -> bool {
+impl workspace::dock::Panel for ProjectPanel {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
+        match settings::get::<ProjectPanelSettings>(cx).dock {
+            ProjectPanelDockPosition::Left => DockPosition::Left,
+            ProjectPanelDockPosition::Right => DockPosition::Right,
+        }
+    }
+
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        matches!(position, DockPosition::Left | DockPosition::Right)
+    }
+
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<ProjectPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings| {
+                let dock = match position {
+                    DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
+                    DockPosition::Right => ProjectPanelDockPosition::Right,
+                };
+                settings.dock = Some(dock);
+            },
+        );
+    }
+
+    fn size(&self, cx: &WindowContext) -> f32 {
+        self.width
+            .unwrap_or_else(|| settings::get::<ProjectPanelSettings>(cx).default_width)
+    }
+
+    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+        self.width = Some(size);
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn should_zoom_in_on_event(_: &Self::Event) -> bool {
         false
+    }
+
+    fn should_zoom_out_on_event(_: &Self::Event) -> bool {
+        false
+    }
+
+    fn is_zoomed(&self, _: &WindowContext) -> bool {
+        false
+    }
+
+    fn set_zoomed(&mut self, _: bool, _: &mut ViewContext<Self>) {}
+
+    fn set_active(&mut self, _: bool, _: &mut ViewContext<Self>) {}
+
+    fn icon_path(&self) -> &'static str {
+        "icons/folder_tree_16.svg"
+    }
+
+    fn icon_tooltip(&self) -> String {
+        "Project Panel".into()
+    }
+
+    fn should_change_position_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::DockPositionChanged)
+    }
+
+    fn should_activate_on_event(_: &Self::Event) -> bool {
+        false
+    }
+
+    fn should_close_on_event(_: &Self::Event) -> bool {
+        false
+    }
+
+    fn has_focus(&self, _: &WindowContext) -> bool {
+        self.has_focus
+    }
+
+    fn is_focus_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Focus)
     }
 }
 
@@ -2059,6 +2227,7 @@ mod tests {
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
+            crate::init(cx);
             workspace::init_settings(cx);
         });
     }
@@ -2072,6 +2241,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
+            crate::init(cx);
             workspace::init(app_state.clone(), cx);
         });
     }

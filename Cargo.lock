@@ -4889,6 +4889,7 @@ dependencies = [
  "anyhow",
  "client",
  "context_menu",
+ "db",
  "drag_and_drop",
  "editor",
  "futures 0.3.28",

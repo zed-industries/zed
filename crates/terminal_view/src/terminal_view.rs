@@ -1,6 +1,6 @@
 mod persistence;
-pub mod terminal_button;
 pub mod terminal_element;
+pub mod terminal_panel;
 
 use crate::{persistence::TERMINAL_DB, terminal_element::TerminalElement};
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -63,6 +63,7 @@ actions!(
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut AppContext) {
+    terminal_panel::init(cx);
     terminal::init(cx);
 
     cx.add_action(TerminalView::deploy);

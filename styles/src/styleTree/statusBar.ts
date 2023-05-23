@@ -93,10 +93,11 @@ export default function statusBar(colorScheme: ColorScheme) {
                 },
             },
         },
-        sidebarButtons: {
+        panelButtons: {
             groupLeft: {},
+            groupBottom: {},
             groupRight: {},
-            item: {
+            button: {
                 ...statusContainer,
                 iconSize: 16,
                 iconColor: foreground(layer, "variant"),
