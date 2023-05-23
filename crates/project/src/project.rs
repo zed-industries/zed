@@ -4847,7 +4847,7 @@ impl Project {
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries(changes) => {
-                    this.update_local_worktree_buffers(&worktree, &changes, cx);
+                    this.update_local_worktree_buffers(&worktree, changes, cx);
                     this.update_local_worktree_language_servers(&worktree, changes, cx);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
@@ -4881,13 +4881,13 @@ impl Project {
     fn update_local_worktree_buffers(
         &mut self,
         worktree_handle: &ModelHandle<Worktree>,
-        changes: &HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
 
         let mut renamed_buffers = Vec::new();
-        for (path, entry_id) in changes.keys() {
+        for (path, entry_id, _) in changes {
             let worktree_id = worktree_handle.read(cx).id();
             let project_path = ProjectPath {
                 worktree_id,
@@ -4993,7 +4993,7 @@ impl Project {
     fn update_local_worktree_language_servers(
         &mut self,
         worktree_handle: &ModelHandle<Worktree>,
-        changes: &HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<Self>,
     ) {
         if changes.is_empty() {
@@ -5024,7 +5024,7 @@ impl Project {
                         let params = lsp::DidChangeWatchedFilesParams {
                             changes: changes
                                 .iter()
-                                .filter_map(|((path, _), change)| {
+                                .filter_map(|(path, _, change)| {
                                     if !watched_paths.is_match(&path) {
                                         return None;
                                     }
