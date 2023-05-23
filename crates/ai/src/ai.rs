@@ -121,31 +121,45 @@ impl Assistant {
 
         let selections = editor.selections.all(cx);
         let (user_message, insertion_site) = editor.buffer().update(cx, |buffer, cx| {
-            // Insert ->-> <-<- around selected text as described in the system prompt above.
+            // Insert markers around selected text as described in the system prompt above.
             let snapshot = buffer.snapshot(cx);
             let mut user_message = String::new();
+            let mut user_message_suffix = String::new();
             let mut buffer_offset = 0;
             for selection in selections {
+                if !selection.is_empty() {
+                    if user_message_suffix.is_empty() {
+                        user_message_suffix.push_str("\n\n");
+                    }
+                    user_message_suffix.push_str("[Selected excerpt from above]\n");
+                    user_message_suffix
+                        .extend(snapshot.text_for_range(selection.start..selection.end));
+                    user_message_suffix.push_str("\n\n");
+                }
+
                 user_message.extend(snapshot.text_for_range(buffer_offset..selection.start));
-                user_message.push_str("->->");
+                user_message.push_str("[SELECTION_START]");
                 user_message.extend(snapshot.text_for_range(selection.start..selection.end));
                 buffer_offset = selection.end;
-                user_message.push_str("<-<-");
+                user_message.push_str("[SELECTION_END]");
             }
             if buffer_offset < snapshot.len() {
                 user_message.extend(snapshot.text_for_range(buffer_offset..snapshot.len()));
             }
+            user_message.push_str(&user_message_suffix);
 
             // Ensure the document ends with 4 trailing newlines.
             let trailing_newline_count = snapshot
                 .reversed_chars_at(snapshot.len())
                 .take_while(|c| *c == '\n')
                 .take(4);
-            let suffix = "\n".repeat(4 - trailing_newline_count.count());
-            buffer.edit([(snapshot.len()..snapshot.len(), suffix)], None, cx);
+            let buffer_suffix = "\n".repeat(4 - trailing_newline_count.count());
+            buffer.edit([(snapshot.len()..snapshot.len(), buffer_suffix)], None, cx);
 
             let snapshot = buffer.snapshot(cx); // Take a new snapshot after editing.
             let insertion_site = snapshot.anchor_after(snapshot.len() - 2);
+
+            println!("{}", user_message);
 
             (user_message, insertion_site)
         });

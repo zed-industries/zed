@@ -2,8 +2,22 @@
 
 One big concept I want to explore for Zed's AI integration is representing conversations between multiple users and the model as more of a shared document called a *context*, to which we apply fine-grained version control.
 
-The assistant pane will contain a set of contexts, each in its own tab. Each context represents input to a language model, so its maximum length will be limited accordingly. Contexts can be freely edited, and to submit a context you hit cmd-enter or click the button in the toolbar. The toolbar also indicates the number of tokens remaining for the model.
+The assistant pane will contain a set of contexts, each in its own tab. Each context represents input to a language model, so its maximum length will be limited accordingly. Contexts can be freely edited, and to submit a context you hit `cmd-enter` or click the button in the toolbar. The toolbar also indicates the number of tokens remaining for the model.
 
-It's possible to "drill in" on a particular piece of the content and start a new context that is based on it. To do this, select any text in Zed and hit `cmd-shift-?`. A portal to the selected code will be created in the most recently active context. Question to self: should we always start a new context? Should there be a binding to start a new one vs appending to the most recently active one? What if we only append to the most recently active one if it's open.
+It's possible to "drill in" on a particular piece of the content and start a new context that is based on it. To do this, select any text in Zed and hit `cmd-shift-?`. A portal to the selected code will be created in the most recently active context.
 
-When you embed content
+/ How does this section relate to the overall idea presented in this document?
+
+You can also hit `cmd-shift-?` when editing a context. This pushes a new context to the stack, which is designed for editing the previous context. You can use this to manage the current context. For example, select text, hit `cmd-shift-?`, and then ask the child context to summarize the parent.
+
+We want it to be possible to use `/` anywhere in the document to communicate with the model as if we were talking at that location. While we will provide the full document to the model as context, we want the model to focus on the section marked with [EDIT_START] and [EDIT_END] and provide a relevant response at the specified location.
+
+Next key problems to solve:
+
+- Indicating to the model what is selected
+- Indicating to the model what we want to be edited
+- Can the model insert somewhere other than the end?
+
+I want to select a subset of text and hit `cmd-shift-?` and have that text marked in a special mode, indicating that I want it to be edited. The text will be appended to the context, along with the selected text (if they're different). The model will assume that its output is destined to replace the text in question.
+
+> In this document, the main idea revolves around enhancing Zed's AI integration by using a shared document-like structure called a *context* for conversations between multiple users and the AI model. The selected section describes a specific feature within this framework where users can "drill in" on a particular piece of content and create a new context based on it. This feature would allow users to easily reference and discuss specific portions of code, making collaboration more efficient and targeted. It contributes to the overall concept by providing a concrete example of how users can interact with the AI and one another within the context-based approach. <
