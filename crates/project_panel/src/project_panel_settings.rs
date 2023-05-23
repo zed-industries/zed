@@ -1,8 +1,7 @@
-use serde_derive::{Deserialize, Serialize};
 use anyhow;
-use settings::Setting;
 use schemars::JsonSchema;
-
+use serde_derive::{Deserialize, Serialize};
+use settings::Setting;
 
 #[derive(Deserialize, Debug)]
 pub struct ProjectPanelSettings {

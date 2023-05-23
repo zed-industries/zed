@@ -1018,7 +1018,9 @@ impl ProjectPanel {
                 for (entry, repo) in
                     snapshot.entries_with_repositories(visible_worktree_entries[entry_range].iter())
                 {
-                    let status = (git_status_setting && entry.path.parent().is_some() && !entry.is_ignored)
+                    let status = (git_status_setting
+                        && entry.path.parent().is_some()
+                        && !entry.is_ignored)
                         .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
                         .flatten();
 
