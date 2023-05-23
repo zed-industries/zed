@@ -676,14 +676,9 @@ message PerformRename {
 message OnTypeFormatting {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    FormattingOptions options = 3;
-    Anchor position = 4;
-    string trigger = 5;
-    repeated VectorClockEntry version = 6;
-}
-
-message FormattingOptions {
-    uint32 tab_size = 1;
+    Anchor position = 3;
+    string trigger = 4;
+    repeated VectorClockEntry version = 5;
 }
 
 message OnTypeFormattingResponse {

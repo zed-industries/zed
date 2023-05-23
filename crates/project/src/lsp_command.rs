@@ -8,6 +8,7 @@ use client::proto::{self, PeerId};
 use fs::LineEnding;
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
+    language_settings::language_settings,
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
@@ -1680,9 +1681,6 @@ impl LspCommand for OnTypeFormatting {
         proto::OnTypeFormatting {
             project_id,
             buffer_id: buffer.remote_id(),
-            options: Some(proto::FormattingOptions {
-                tab_size: self.options.tab_size,
-            }),
             position: Some(language::proto::serialize_anchor(
                 &buffer.anchor_before(self.position),
             )),
@@ -1707,15 +1705,15 @@ impl LspCommand for OnTypeFormatting {
             })
             .await?;
 
+        let tab_size = buffer.read_with(&cx, |buffer, cx| {
+            let language_name = buffer.language().map(|language| language.name());
+            language_settings(language_name.as_deref(), cx).tab_size
+        });
+
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             trigger: message.trigger.clone(),
-            options: message
-                .options
-                .map(|options| options.tab_size)
-                .map(lsp_formatting_options)
-                .unwrap_or_default()
-                .into(),
+            options: lsp_formatting_options(tab_size.get()).into(),
         })
     }
 
