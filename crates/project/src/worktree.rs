@@ -329,7 +329,7 @@ pub struct LocalMutableSnapshot {
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
     pub(crate) scan_id: usize,
-    pub(crate) full_scan_id: usize,
+    pub(crate) git_dir_scan_id: usize,
     pub(crate) repo_ptr: Arc<Mutex<dyn GitRepository>>,
     /// Path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
@@ -737,6 +737,45 @@ impl LocalWorktree {
         self.diagnostics.get(path).cloned().unwrap_or_default()
     }
 
+    pub fn clear_diagnostics_for_language_server(
+        &mut self,
+        server_id: LanguageServerId,
+        _: &mut ModelContext<Worktree>,
+    ) {
+        let worktree_id = self.id().to_proto();
+        self.diagnostic_summaries
+            .retain(|path, summaries_by_server_id| {
+                if summaries_by_server_id.remove(&server_id).is_some() {
+                    if let Some(share) = self.share.as_ref() {
+                        self.client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id: share.project_id,
+                                worktree_id,
+                                summary: Some(proto::DiagnosticSummary {
+                                    path: path.to_string_lossy().to_string(),
+                                    language_server_id: server_id.0 as u64,
+                                    error_count: 0,
+                                    warning_count: 0,
+                                }),
+                            })
+                            .log_err();
+                    }
+                    !summaries_by_server_id.is_empty()
+                } else {
+                    true
+                }
+            });
+
+        self.diagnostics.retain(|_, diagnostics_by_server_id| {
+            if let Ok(ix) = diagnostics_by_server_id.binary_search_by_key(&server_id, |e| e.0) {
+                diagnostics_by_server_id.remove(ix);
+                !diagnostics_by_server_id.is_empty()
+            } else {
+                true
+            }
+        });
+    }
+
     pub fn update_diagnostics(
         &mut self,
         server_id: LanguageServerId,
@@ -800,6 +839,7 @@ impl LocalWorktree {
     fn set_snapshot(&mut self, new_snapshot: LocalSnapshot, cx: &mut ModelContext<Worktree>) {
         let updated_repos =
             self.changed_repos(&self.git_repositories, &new_snapshot.git_repositories);
+
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.share.as_mut() {
@@ -830,7 +870,7 @@ impl LocalWorktree {
                             old_repos.next();
                         }
                         Ordering::Equal => {
-                            if old_repo.scan_id != new_repo.scan_id {
+                            if old_repo.git_dir_scan_id != new_repo.git_dir_scan_id {
                                 if let Some(entry) = self.entry_for_id(**new_entry_id) {
                                     diff.insert(entry.path.clone(), (*new_repo).clone());
                                 }
@@ -2006,7 +2046,7 @@ impl LocalSnapshot {
                 work_dir_id,
                 LocalRepositoryEntry {
                     scan_id,
-                    full_scan_id: scan_id,
+                    git_dir_scan_id: scan_id,
                     repo_ptr: repo,
                     git_dir_path: parent_path.clone(),
                 },
@@ -3166,7 +3206,7 @@ impl BackgroundScanner {
                     snapshot.build_repo(dot_git_dir.into(), fs);
                     return None;
                 };
-                if repo.full_scan_id == scan_id {
+                if repo.git_dir_scan_id == scan_id {
                     return None;
                 }
                 (*entry_id, repo.repo_ptr.to_owned())
@@ -3183,7 +3223,7 @@ impl BackgroundScanner {
 
             snapshot.git_repositories.update(&entry_id, |entry| {
                 entry.scan_id = scan_id;
-                entry.full_scan_id = scan_id;
+                entry.git_dir_scan_id = scan_id;
             });
 
             snapshot.repository_entries.update(&work_dir, |entry| {
@@ -3212,7 +3252,7 @@ impl BackgroundScanner {
             let local_repo = snapshot.get_local_repo(&repo)?.to_owned();
 
             // Short circuit if we've already scanned everything
-            if local_repo.full_scan_id == scan_id {
+            if local_repo.git_dir_scan_id == scan_id {
                 return None;
             }
 

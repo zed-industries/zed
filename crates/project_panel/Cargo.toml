@@ -22,9 +22,11 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 postage.workspace = true
 futures.workspace = true
-schemars.workspace = true
 serde.workspace = true
+serde_derive.workspace = true
 serde_json.workspace = true
+anyhow.workspace = true
+schemars.workspace = true
 unicase = "2.6"
 
 [dev-dependencies]

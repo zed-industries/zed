@@ -11,7 +11,7 @@ pub struct WorkspaceSettings {
     pub git: GitSettings,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
     pub active_pane_magnification: Option<f32>,
     pub confirm_quit: Option<bool>,

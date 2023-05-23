@@ -1,3 +1,5 @@
+mod project_panel_settings;
+
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use drag_and_drop::{DragAndDrop, Draggable};
@@ -7,7 +9,7 @@ use gpui::{
     actions,
     anyhow::{self, anyhow, Result},
     elements::{
-        AnchorCorner, ChildView, ComponentHost, ContainerStyle, Empty, Flex, MouseEventHandler,
+        AnchorCorner, ChildView, ContainerStyle, Empty, Flex, Label, MouseEventHandler,
         ParentElement, ScrollTarget, Stack, Svg, UniformList, UniformListState,
     },
     geometry::vector::Vector2F,
@@ -21,7 +23,7 @@ use project::{
     repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
     Worktree, WorktreeId,
 };
-use schemars::JsonSchema;
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::{
@@ -32,7 +34,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use theme::{ui::FileName, ProjectPanelEntry};
+use theme::ProjectPanelEntry;
 use unicase::UniCase;
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -42,39 +44,6 @@ use workspace::{
 
 const PROJECT_PANEL_KEY: &'static str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
-
-#[derive(Deserialize)]
-pub struct ProjectPanelSettings {
-    dock: ProjectPanelDockPosition,
-    default_width: f32,
-}
-
-impl settings::Setting for ProjectPanelSettings {
-    const KEY: Option<&'static str> = Some("project_panel");
-
-    type FileContent = ProjectPanelSettingsContent;
-
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &AppContext,
-    ) -> Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
-    }
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ProjectPanelSettingsContent {
-    dock: Option<ProjectPanelDockPosition>,
-    default_width: Option<f32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectPanelDockPosition {
-    Left,
-    Right,
-}
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -156,8 +125,12 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut AppContext) {
     settings::register::<ProjectPanelSettings>(cx);
+}
+
+pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::select_prev);
@@ -1116,6 +1089,7 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
+            let git_status_setting = settings::get::<ProjectPanelSettings>(cx).git_status;
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
@@ -1129,7 +1103,9 @@ impl ProjectPanel {
                 for (entry, repo) in
                     snapshot.entries_with_repositories(visible_worktree_entries[entry_range].iter())
                 {
-                    let status = (entry.path.parent().is_some() && !entry.is_ignored)
+                    let status = (git_status_setting
+                        && entry.path.parent().is_some()
+                        && !entry.is_ignored)
                         .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
                         .flatten();
 
@@ -1195,6 +1171,17 @@ impl ProjectPanel {
         let kind = details.kind;
         let show_editor = details.is_editing && !details.is_processing;
 
+        let mut filename_text_style = style.text.clone();
+        filename_text_style.color = details
+            .git_status
+            .as_ref()
+            .map(|status| match status {
+                GitFileStatus::Added => style.status.git.inserted,
+                GitFileStatus::Modified => style.status.git.modified,
+                GitFileStatus::Conflict => style.status.git.conflict,
+            })
+            .unwrap_or(style.text.color);
+
         Flex::row()
             .with_child(
                 if kind == EntryKind::Dir {
@@ -1222,16 +1209,12 @@ impl ProjectPanel {
                     .flex(1.0, true)
                     .into_any()
             } else {
-                ComponentHost::new(FileName::new(
-                    details.filename.clone(),
-                    details.git_status,
-                    FileName::style(style.text.clone(), &theme::current(cx)),
-                ))
-                .contained()
-                .with_margin_left(style.icon_spacing)
-                .aligned()
-                .left()
-                .into_any()
+                Label::new(details.filename.clone(), filename_text_style)
+                    .contained()
+                    .with_margin_left(style.icon_spacing)
+                    .aligned()
+                    .left()
+                    .into_any()
             })
             .constrained()
             .with_height(style.height)
@@ -2240,6 +2223,7 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
+            init_settings(cx);
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
@@ -2253,6 +2237,7 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init((), cx);
+            init_settings(cx);
             language::init(cx);
             editor::init(cx);
             pane::init(cx);

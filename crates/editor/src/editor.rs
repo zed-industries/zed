@@ -216,6 +216,8 @@ actions!(
         MoveToNextSubwordEnd,
         MoveToBeginningOfLine,
         MoveToEndOfLine,
+        MoveToStartOfParagraph,
+        MoveToEndOfParagraph,
         MoveToBeginning,
         MoveToEnd,
         SelectUp,
@@ -226,6 +228,8 @@ actions!(
         SelectToPreviousSubwordStart,
         SelectToNextWordEnd,
         SelectToNextSubwordEnd,
+        SelectToStartOfParagraph,
+        SelectToEndOfParagraph,
         SelectToBeginning,
         SelectToEnd,
         SelectAll,
@@ -337,6 +341,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::move_to_next_subword_end);
     cx.add_action(Editor::move_to_beginning_of_line);
     cx.add_action(Editor::move_to_end_of_line);
+    cx.add_action(Editor::move_to_start_of_paragraph);
+    cx.add_action(Editor::move_to_end_of_paragraph);
     cx.add_action(Editor::move_to_beginning);
     cx.add_action(Editor::move_to_end);
     cx.add_action(Editor::select_up);
@@ -349,6 +355,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::select_to_next_subword_end);
     cx.add_action(Editor::select_to_beginning_of_line);
     cx.add_action(Editor::select_to_end_of_line);
+    cx.add_action(Editor::select_to_start_of_paragraph);
+    cx.add_action(Editor::select_to_end_of_paragraph);
     cx.add_action(Editor::select_to_beginning);
     cx.add_action(Editor::select_to_end);
     cx.add_action(Editor::select_all);
@@ -523,15 +531,6 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
-}
-
-impl EditorSnapshot {
-    fn has_scrollbar_info(&self) -> bool {
-        self.buffer_snapshot
-            .git_diff_hunks_in_range(0..self.max_point().row())
-            .next()
-            .is_some()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -4762,6 +4761,80 @@ impl Editor {
         });
     }
 
+    pub fn move_to_start_of_paragraph(
+        &mut self,
+        _: &MoveToStartOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::start_of_paragraph(map, selection.head()),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_end_of_paragraph(
+        &mut self,
+        _: &MoveToEndOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::end_of_paragraph(map, selection.head()),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn select_to_start_of_paragraph(
+        &mut self,
+        _: &SelectToStartOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (movement::start_of_paragraph(map, head), SelectionGoal::None)
+            });
+        })
+    }
+
+    pub fn select_to_end_of_paragraph(
+        &mut self,
+        _: &SelectToEndOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (movement::end_of_paragraph(map, head), SelectionGoal::None)
+            });
+        })
+    }
+
     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
@@ -7128,6 +7201,7 @@ pub enum Event {
     BufferEdited,
     Edited,
     Reparsed,
+    Focused,
     Blurred,
     DirtyChanged,
     Saved,
@@ -7181,6 +7255,7 @@ impl View for Editor {
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
+            cx.emit(Event::Focused);
             cx.emit_global(focused_event);
         }
         if let Some(rename) = self.pending_rename.as_ref() {

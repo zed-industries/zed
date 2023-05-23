@@ -4886,6 +4886,7 @@ dependencies = [
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "context_menu",
  "db",
@@ -4899,6 +4900,7 @@ dependencies = [
  "project",
  "schemars",
  "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "theme",

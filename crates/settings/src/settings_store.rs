@@ -25,7 +25,7 @@ pub trait Setting: 'static {
     const KEY: Option<&'static str>;
 
     /// The type that is stored in an individual JSON file.
-    type FileContent: Clone + Serialize + DeserializeOwned + JsonSchema;
+    type FileContent: Clone + Default + Serialize + DeserializeOwned + JsonSchema;
 
     /// The logic for combining together values from one or more JSON files into the
     /// final value for this setting.
@@ -460,11 +460,12 @@ impl SettingsStore {
 
                 // If the global settings file changed, reload the global value for the field.
                 if changed_local_path.is_none() {
-                    setting_value.set_global_value(setting_value.load_setting(
-                        &default_settings,
-                        &user_settings_stack,
-                        cx,
-                    )?);
+                    if let Some(value) = setting_value
+                        .load_setting(&default_settings, &user_settings_stack, cx)
+                        .log_err()
+                    {
+                        setting_value.set_global_value(value);
+                    }
                 }
 
                 // Reload the local values for the setting.
@@ -495,14 +496,12 @@ impl SettingsStore {
                             continue;
                         }
 
-                        setting_value.set_local_value(
-                            path.clone(),
-                            setting_value.load_setting(
-                                &default_settings,
-                                &user_settings_stack,
-                                cx,
-                            )?,
-                        );
+                        if let Some(value) = setting_value
+                            .load_setting(&default_settings, &user_settings_stack, cx)
+                            .log_err()
+                        {
+                            setting_value.set_local_value(path.clone(), value);
+                        }
                     }
                 }
             }
@@ -536,7 +535,12 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
 
     fn deserialize_setting(&self, mut json: &serde_json::Value) -> Result<DeserializedSetting> {
         if let Some(key) = T::KEY {
-            json = json.get(key).unwrap_or(&serde_json::Value::Null);
+            if let Some(value) = json.get(key) {
+                json = value;
+            } else {
+                let value = T::FileContent::default();
+                return Ok(DeserializedSetting(Box::new(value)));
+            }
         }
         let value = T::FileContent::deserialize(json)?;
         Ok(DeserializedSetting(Box::new(value)))
@@ -826,37 +830,6 @@ mod tests {
         store.register_setting::<UserSettings>(cx);
         store.register_setting::<TurboSetting>(cx);
         store.register_setting::<MultiKeySettings>(cx);
-
-        // error - missing required field in default settings
-        store
-            .set_default_settings(
-                r#"{
-                    "user": {
-                        "name": "John Doe",
-                        "age": 30,
-                        "staff": false
-                    }
-                }"#,
-                cx,
-            )
-            .unwrap_err();
-
-        // error - type error in default settings
-        store
-            .set_default_settings(
-                r#"{
-                    "turbo": "the-wrong-type",
-                    "user": {
-                        "name": "John Doe",
-                        "age": 30,
-                        "staff": false
-                    }
-                }"#,
-                cx,
-            )
-            .unwrap_err();
-
-        // valid default settings.
         store
             .set_default_settings(
                 r#"{
@@ -1126,7 +1099,7 @@ mod tests {
         staff: bool,
     }
 
-    #[derive(Clone, Serialize, Deserialize, JsonSchema)]
+    #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
     struct UserSettingsJson {
         name: Option<String>,
         age: Option<u32>,
@@ -1170,7 +1143,7 @@ mod tests {
         key2: String,
     }
 
-    #[derive(Clone, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
@@ -1203,7 +1176,7 @@ mod tests {
         Hour24,
     }
 
-    #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
@@ -1223,7 +1196,7 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
     struct LanguageSettings {
         #[serde(default)]
         languages: HashMap<String, LanguageSettingEntry>,
