@@ -4886,6 +4886,7 @@ dependencies = [
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "context_menu",
  "drag_and_drop",
@@ -4896,6 +4897,9 @@ dependencies = [
  "menu",
  "postage",
  "project",
+ "schemars",
+ "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "theme",

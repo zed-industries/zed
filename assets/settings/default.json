@@ -70,6 +70,10 @@
       // Whether to show git diff indicators in the scrollbar.
       "git_diff": true
   },
+  "project_panel": {
+      // Whether to show the git status in the project panel.
+      "git_status": true
+  },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
