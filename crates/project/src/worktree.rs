@@ -317,13 +317,15 @@ pub struct LocalSnapshot {
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
 }
 
-pub struct LocalMutableSnapshot {
+pub struct BackgroundScannerState {
     snapshot: LocalSnapshot,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
     /// path is re-created after being deleted.
     removed_entry_ids: HashMap<u64, ProjectEntryId>,
+    changed_paths: Vec<Arc<Path>>,
+    prev_snapshot: Snapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -352,20 +354,6 @@ impl Deref for LocalSnapshot {
 }
 
 impl DerefMut for LocalSnapshot {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.snapshot
-    }
-}
-
-impl Deref for LocalMutableSnapshot {
-    type Target = LocalSnapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.snapshot
-    }
-}
-
-impl DerefMut for LocalMutableSnapshot {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.snapshot
     }
@@ -2090,11 +2078,11 @@ impl LocalSnapshot {
     }
 }
 
-impl LocalMutableSnapshot {
+impl BackgroundScannerState {
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
             entry.id = removed_entry_id;
-        } else if let Some(existing_entry) = self.entry_for_path(&entry.path) {
+        } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
             entry.id = existing_entry.id;
         }
     }
@@ -2111,8 +2099,10 @@ impl LocalMutableSnapshot {
         ignore: Option<Arc<Gitignore>>,
         fs: &dyn Fs,
     ) {
-        let mut parent_entry = if let Some(parent_entry) =
-            self.entries_by_path.get(&PathKey(parent_path.clone()), &())
+        let mut parent_entry = if let Some(parent_entry) = self
+            .snapshot
+            .entries_by_path
+            .get(&PathKey(parent_path.clone()), &())
         {
             parent_entry.clone()
         } else {
@@ -2132,13 +2122,14 @@ impl LocalMutableSnapshot {
         }
 
         if let Some(ignore) = ignore {
-            let abs_parent_path = self.abs_path.join(&parent_path).into();
-            self.ignores_by_parent_abs_path
+            let abs_parent_path = self.snapshot.abs_path.join(&parent_path).into();
+            self.snapshot
+                .ignores_by_parent_abs_path
                 .insert(abs_parent_path, (ignore, false));
         }
 
         if parent_path.file_name() == Some(&DOT_GIT) {
-            self.build_repo(parent_path, fs);
+            self.snapshot.build_repo(parent_path, fs);
         }
 
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
@@ -2150,25 +2141,27 @@ impl LocalMutableSnapshot {
                 id: entry.id,
                 path: entry.path.clone(),
                 is_ignored: entry.is_ignored,
-                scan_id: self.scan_id,
+                scan_id: self.snapshot.scan_id,
             }));
             entries_by_path_edits.push(Edit::Insert(entry));
         }
 
-        self.entries_by_path.edit(entries_by_path_edits, &());
-        self.entries_by_id.edit(entries_by_id_edits, &());
+        self.snapshot
+            .entries_by_path
+            .edit(entries_by_path_edits, &());
+        self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 
     fn remove_path(&mut self, path: &Path) {
         let mut new_entries;
         let removed_entries;
         {
-            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
+            let mut cursor = self.snapshot.entries_by_path.cursor::<TraversalProgress>();
             new_entries = cursor.slice(&TraversalTarget::Path(path), Bias::Left, &());
             removed_entries = cursor.slice(&TraversalTarget::PathSuccessor(path), Bias::Left, &());
             new_entries.push_tree(cursor.suffix(&()), &());
         }
-        self.entries_by_path = new_entries;
+        self.snapshot.entries_by_path = new_entries;
 
         let mut entries_by_id_edits = Vec::new();
         for entry in removed_entries.cursor::<()>() {
@@ -2179,11 +2172,12 @@ impl LocalMutableSnapshot {
             *removed_entry_id = cmp::max(*removed_entry_id, entry.id);
             entries_by_id_edits.push(Edit::Remove(entry.id));
         }
-        self.entries_by_id.edit(entries_by_id_edits, &());
+        self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
         if path.file_name() == Some(&GITIGNORE) {
-            let abs_parent_path = self.abs_path.join(path.parent().unwrap());
+            let abs_parent_path = self.snapshot.abs_path.join(path.parent().unwrap());
             if let Some((_, needs_update)) = self
+                .snapshot
                 .ignores_by_parent_abs_path
                 .get_mut(abs_parent_path.as_path())
             {
@@ -2473,10 +2467,18 @@ pub enum EntryKind {
 
 #[derive(Clone, Copy, Debug)]
 pub enum PathChange {
+    /// A filesystem entry was was created.
     Added,
+    /// A filesystem entry was removed.
     Removed,
+    /// A filesystem entry was updated.
     Updated,
+    /// A filesystem entry was either updated or added. We don't know
+    /// whether or not it already existed, because the path had not
+    /// been loaded before the event.
     AddedOrUpdated,
+    /// A filesystem entry was found during the initial scan of the worktree.
+    Loaded,
 }
 
 impl Entry {
@@ -2635,19 +2637,20 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 }
 
 struct BackgroundScanner {
-    snapshot: Mutex<LocalMutableSnapshot>,
+    state: Mutex<BackgroundScannerState>,
     fs: Arc<dyn Fs>,
     status_updates_tx: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
     refresh_requests_rx: channel::Receiver<(Vec<PathBuf>, barrier::Sender)>,
-    prev_state: Mutex<BackgroundScannerState>,
     next_entry_id: Arc<AtomicUsize>,
-    finished_initial_scan: bool,
+    phase: BackgroundScannerPhase,
 }
 
-struct BackgroundScannerState {
-    snapshot: Snapshot,
-    event_paths: Vec<Arc<Path>>,
+#[derive(PartialEq)]
+enum BackgroundScannerPhase {
+    InitialScan,
+    EventsReceivedDuringInitialScan,
+    Events,
 }
 
 impl BackgroundScanner {
@@ -2665,15 +2668,13 @@ impl BackgroundScanner {
             executor,
             refresh_requests_rx,
             next_entry_id,
-            prev_state: Mutex::new(BackgroundScannerState {
-                snapshot: snapshot.snapshot.clone(),
-                event_paths: Default::default(),
-            }),
-            snapshot: Mutex::new(LocalMutableSnapshot {
+            state: Mutex::new(BackgroundScannerState {
+                prev_snapshot: snapshot.snapshot.clone(),
                 snapshot,
                 removed_entry_ids: Default::default(),
+                changed_paths: Default::default(),
             }),
-            finished_initial_scan: false,
+            phase: BackgroundScannerPhase::InitialScan,
         }
     }
 
@@ -2684,7 +2685,7 @@ impl BackgroundScanner {
         use futures::FutureExt as _;
 
         let (root_abs_path, root_inode) = {
-            let snapshot = self.snapshot.lock();
+            let snapshot = &self.state.lock().snapshot;
             (
                 snapshot.abs_path.clone(),
                 snapshot.root_entry().map(|e| e.inode),
@@ -2696,20 +2697,23 @@ impl BackgroundScanner {
         for ancestor in root_abs_path.ancestors().skip(1) {
             if let Ok(ignore) = build_gitignore(&ancestor.join(&*GITIGNORE), self.fs.as_ref()).await
             {
-                self.snapshot
+                self.state
                     .lock()
+                    .snapshot
                     .ignores_by_parent_abs_path
                     .insert(ancestor.into(), (ignore.into(), false));
             }
         }
         {
-            let mut snapshot = self.snapshot.lock();
-            snapshot.scan_id += 1;
-            ignore_stack = snapshot.ignore_stack_for_abs_path(&root_abs_path, true);
+            let mut state = self.state.lock();
+            state.snapshot.scan_id += 1;
+            ignore_stack = state
+                .snapshot
+                .ignore_stack_for_abs_path(&root_abs_path, true);
             if ignore_stack.is_all() {
-                if let Some(mut root_entry) = snapshot.root_entry().cloned() {
+                if let Some(mut root_entry) = state.snapshot.root_entry().cloned() {
                     root_entry.is_ignored = true;
-                    snapshot.insert_entry(root_entry, self.fs.as_ref());
+                    state.insert_entry(root_entry, self.fs.as_ref());
                 }
             }
         };
@@ -2727,14 +2731,15 @@ impl BackgroundScanner {
         drop(scan_job_tx);
         self.scan_dirs(true, scan_job_rx).await;
         {
-            let mut snapshot = self.snapshot.lock();
-            snapshot.completed_scan_id = snapshot.scan_id;
+            let mut state = self.state.lock();
+            state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
         self.send_status_update(false, None);
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
         // have the previous state loaded yet.
+        self.phase = BackgroundScannerPhase::EventsReceivedDuringInitialScan;
         if let Poll::Ready(Some(events)) = futures::poll!(events_rx.next()) {
             let mut paths = events.into_iter().map(|e| e.path).collect::<Vec<_>>();
             while let Poll::Ready(Some(more_events)) = futures::poll!(events_rx.next()) {
@@ -2743,9 +2748,8 @@ impl BackgroundScanner {
             self.process_events(paths).await;
         }
 
-        self.finished_initial_scan = true;
-
         // Continue processing events until the worktree is dropped.
+        self.phase = BackgroundScannerPhase::Events;
         loop {
             select_biased! {
                 // Process any path refresh requests from the worktree. Prioritize
@@ -2770,15 +2774,7 @@ impl BackgroundScanner {
     }
 
     async fn process_refresh_request(&self, paths: Vec<PathBuf>, barrier: barrier::Sender) -> bool {
-        if let Some(mut paths) = self.reload_entries_for_paths(paths, None).await {
-            paths.sort_unstable();
-            util::extend_sorted(
-                &mut self.prev_state.lock().event_paths,
-                paths,
-                usize::MAX,
-                Ord::cmp,
-            );
-        }
+        self.reload_entries_for_paths(paths, None).await;
         self.send_status_update(false, Some(barrier))
     }
 
@@ -2787,50 +2783,42 @@ impl BackgroundScanner {
         let paths = self
             .reload_entries_for_paths(paths, Some(scan_job_tx.clone()))
             .await;
-        if let Some(paths) = &paths {
-            util::extend_sorted(
-                &mut self.prev_state.lock().event_paths,
-                paths.iter().cloned(),
-                usize::MAX,
-                Ord::cmp,
-            );
-        }
         drop(scan_job_tx);
         self.scan_dirs(false, scan_job_rx).await;
 
         self.update_ignore_statuses().await;
 
-        let mut snapshot = self.snapshot.lock();
+        {
+            let mut snapshot = &mut self.state.lock().snapshot;
 
-        if let Some(paths) = paths {
-            for path in paths {
-                self.reload_repo_for_file_path(&path, &mut *snapshot, self.fs.as_ref());
+            if let Some(paths) = paths {
+                for path in paths {
+                    self.reload_repo_for_file_path(&path, &mut *snapshot, self.fs.as_ref());
+                }
             }
+
+            let mut git_repositories = mem::take(&mut snapshot.git_repositories);
+            git_repositories.retain(|work_directory_id, _| {
+                snapshot
+                    .entry_for_id(*work_directory_id)
+                    .map_or(false, |entry| {
+                        snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
+                    })
+            });
+            snapshot.git_repositories = git_repositories;
+
+            let mut git_repository_entries = mem::take(&mut snapshot.snapshot.repository_entries);
+            git_repository_entries.retain(|_, entry| {
+                snapshot
+                    .git_repositories
+                    .get(&entry.work_directory.0)
+                    .is_some()
+            });
+            snapshot.snapshot.repository_entries = git_repository_entries;
+            snapshot.completed_scan_id = snapshot.scan_id;
         }
 
-        let mut git_repositories = mem::take(&mut snapshot.git_repositories);
-        git_repositories.retain(|work_directory_id, _| {
-            snapshot
-                .entry_for_id(*work_directory_id)
-                .map_or(false, |entry| {
-                    snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
-                })
-        });
-        snapshot.git_repositories = git_repositories;
-
-        let mut git_repository_entries = mem::take(&mut snapshot.snapshot.repository_entries);
-        git_repository_entries.retain(|_, entry| {
-            snapshot
-                .git_repositories
-                .get(&entry.work_directory.0)
-                .is_some()
-        });
-        snapshot.snapshot.repository_entries = git_repository_entries;
-        snapshot.completed_scan_id = snapshot.scan_id;
-        drop(snapshot);
-
         self.send_status_update(false, None);
-        self.prev_state.lock().event_paths.clear();
     }
 
     async fn scan_dirs(
@@ -2907,15 +2895,13 @@ impl BackgroundScanner {
     }
 
     fn send_status_update(&self, scanning: bool, barrier: Option<barrier::Sender>) -> bool {
-        let mut prev_state = self.prev_state.lock();
-        let new_snapshot = self.snapshot.lock().clone();
-        let old_snapshot = mem::replace(&mut prev_state.snapshot, new_snapshot.snapshot.clone());
+        let mut state = self.state.lock();
+        let new_snapshot = state.snapshot.clone();
+        let old_snapshot = mem::replace(&mut state.prev_snapshot, new_snapshot.snapshot.clone());
 
-        let changes = self.build_change_set(
-            &old_snapshot,
-            &new_snapshot.snapshot,
-            &prev_state.event_paths,
-        );
+        let changes =
+            self.build_change_set(&old_snapshot, &new_snapshot.snapshot, &state.changed_paths);
+        state.changed_paths.clear();
 
         self.status_updates_tx
             .unbounded_send(ScanState::Updated {
@@ -2933,7 +2919,7 @@ impl BackgroundScanner {
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
         let (root_abs_path, root_char_bag, next_entry_id) = {
-            let snapshot = self.snapshot.lock();
+            let snapshot = &self.state.lock().snapshot;
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
@@ -3037,12 +3023,13 @@ impl BackgroundScanner {
             new_entries.push(child_entry);
         }
 
-        self.snapshot.lock().populate_dir(
-            job.path.clone(),
-            new_entries,
-            new_ignore,
-            self.fs.as_ref(),
-        );
+        {
+            let mut state = self.state.lock();
+            state.populate_dir(job.path.clone(), new_entries, new_ignore, self.fs.as_ref());
+            if let Err(ix) = state.changed_paths.binary_search(&job.path) {
+                state.changed_paths.insert(ix, job.path.clone());
+            }
+        }
 
         for new_job in new_jobs {
             if let Some(new_job) = new_job {
@@ -3063,7 +3050,7 @@ impl BackgroundScanner {
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(&b));
 
-        let root_abs_path = self.snapshot.lock().abs_path.clone();
+        let root_abs_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(&root_abs_path).await.log_err()?;
         let metadata = futures::future::join_all(
             abs_paths
@@ -3073,7 +3060,8 @@ impl BackgroundScanner {
         )
         .await;
 
-        let mut snapshot = self.snapshot.lock();
+        let mut state = self.state.lock();
+        let snapshot = &mut state.snapshot;
         let is_idle = snapshot.completed_scan_id == snapshot.scan_id;
         snapshot.scan_id += 1;
         if is_idle && !doing_recursive_update {
@@ -3087,7 +3075,7 @@ impl BackgroundScanner {
         for (abs_path, metadata) in abs_paths.iter().zip(metadata.iter()) {
             if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                 if matches!(metadata, Ok(None)) || doing_recursive_update {
-                    snapshot.remove_path(path);
+                    state.remove_path(path);
                 }
                 event_paths.push(path.into());
             } else {
@@ -3104,19 +3092,20 @@ impl BackgroundScanner {
 
             match metadata {
                 Ok(Some(metadata)) => {
-                    let ignore_stack =
-                        snapshot.ignore_stack_for_abs_path(&abs_path, metadata.is_dir);
+                    let ignore_stack = state
+                        .snapshot
+                        .ignore_stack_for_abs_path(&abs_path, metadata.is_dir);
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
                         self.next_entry_id.as_ref(),
-                        snapshot.root_char_bag,
+                        state.snapshot.root_char_bag,
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
-                    snapshot.insert_entry(fs_entry, self.fs.as_ref());
+                    state.insert_entry(fs_entry, self.fs.as_ref());
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
-                        let mut ancestor_inodes = snapshot.ancestor_inodes_for_path(&path);
+                        let mut ancestor_inodes = state.snapshot.ancestor_inodes_for_path(&path);
                         if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
                             ancestor_inodes.insert(metadata.inode);
                             smol::block_on(scan_queue_tx.send(ScanJob {
@@ -3131,7 +3120,7 @@ impl BackgroundScanner {
                     }
                 }
                 Ok(None) => {
-                    self.remove_repo_path(&path, &mut snapshot);
+                    self.remove_repo_path(&path, &mut state.snapshot);
                 }
                 Err(err) => {
                     // TODO - create a special 'error' entry in the entries tree to mark this
@@ -3139,6 +3128,13 @@ impl BackgroundScanner {
                 }
             }
         }
+
+        util::extend_sorted(
+            &mut state.changed_paths,
+            event_paths.iter().cloned(),
+            usize::MAX,
+            Ord::cmp,
+        );
 
         Some(event_paths)
     }
@@ -3161,9 +3157,7 @@ impl BackgroundScanner {
             }
 
             let repo = snapshot.repository_for_path(&path)?;
-
             let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
-
             let work_dir = repo.work_directory(snapshot)?;
             let work_dir_id = repo.work_directory;
 
@@ -3276,7 +3270,7 @@ impl BackgroundScanner {
     async fn update_ignore_statuses(&self) {
         use futures::FutureExt as _;
 
-        let mut snapshot = self.snapshot.lock().clone();
+        let mut snapshot = self.state.lock().snapshot.clone();
         let mut ignores_to_update = Vec::new();
         let mut ignores_to_delete = Vec::new();
         let abs_path = snapshot.abs_path.clone();
@@ -3298,8 +3292,9 @@ impl BackgroundScanner {
 
         for parent_abs_path in ignores_to_delete {
             snapshot.ignores_by_parent_abs_path.remove(&parent_abs_path);
-            self.snapshot
+            self.state
                 .lock()
+                .snapshot
                 .ignores_by_parent_abs_path
                 .remove(&parent_abs_path);
         }
@@ -3391,7 +3386,7 @@ impl BackgroundScanner {
             }
         }
 
-        let mut snapshot = self.snapshot.lock();
+        let snapshot = &mut self.state.lock().snapshot;
         snapshot.entries_by_path.edit(entries_by_path_edits, &());
         snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
@@ -3402,12 +3397,12 @@ impl BackgroundScanner {
         new_snapshot: &Snapshot,
         event_paths: &[Arc<Path>],
     ) -> HashMap<(Arc<Path>, ProjectEntryId), PathChange> {
-        use PathChange::{Added, AddedOrUpdated, Removed, Updated};
+        use BackgroundScannerPhase::*;
+        use PathChange::{Added, AddedOrUpdated, Loaded, Removed, Updated};
 
         let mut changes = HashMap::default();
         let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>();
         let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>();
-        let received_before_initialized = !self.finished_initial_scan;
 
         for path in event_paths {
             let path = PathKey(path.clone());
@@ -3431,7 +3426,7 @@ impl BackgroundScanner {
                                 old_paths.next(&());
                             }
                             Ordering::Equal => {
-                                if received_before_initialized {
+                                if self.phase == EventsReceivedDuringInitialScan {
                                     // If the worktree was not fully initialized when this event was generated,
                                     // we can't know whether this entry was added during the scan or whether
                                     // it was merely updated.
@@ -3446,7 +3441,14 @@ impl BackgroundScanner {
                                 new_paths.next(&());
                             }
                             Ordering::Greater => {
-                                changes.insert((new_entry.path.clone(), new_entry.id), Added);
+                                changes.insert(
+                                    (new_entry.path.clone(), new_entry.id),
+                                    if self.phase == InitialScan {
+                                        Loaded
+                                    } else {
+                                        Added
+                                    },
+                                );
                                 new_paths.next(&());
                             }
                         }
@@ -3456,7 +3458,14 @@ impl BackgroundScanner {
                         old_paths.next(&());
                     }
                     (None, Some(new_entry)) => {
-                        changes.insert((new_entry.path.clone(), new_entry.id), Added);
+                        changes.insert(
+                            (new_entry.path.clone(), new_entry.id),
+                            if self.phase == InitialScan {
+                                Loaded
+                            } else {
+                                Added
+                            },
+                        );
                         new_paths.next(&());
                     }
                     (None, None) => break,
@@ -4318,12 +4327,8 @@ mod tests {
         .await
         .unwrap();
 
-        worktree
-            .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
-            .await;
-
-        // After the initial scan is complete, the `UpdatedEntries` event can
-        // be used to follow along with all changes to the worktree's snapshot.
+        // The worktree's `UpdatedEntries` event can be used to follow along with
+        // all changes to the worktree's snapshot.
         worktree.update(cx, |tree, cx| {
             let mut paths = tree
                 .as_local()
@@ -4340,6 +4345,11 @@ mod tests {
                             Ok(ix) | Err(ix) => ix,
                         };
                         match change_type {
+                            PathChange::Loaded => {
+                                assert_ne!(paths.get(ix), Some(&path));
+                                paths.insert(ix, path);
+                            }
+
                             PathChange::Added => {
                                 assert_ne!(paths.get(ix), Some(&path));
                                 paths.insert(ix, path);
@@ -4368,6 +4378,10 @@ mod tests {
             })
             .detach();
         });
+
+        worktree
+            .update(cx, |tree, _| tree.as_local_mut().unwrap().scan_complete())
+            .await;
 
         fs.as_fake().pause_events();
         let mut snapshots = Vec::new();

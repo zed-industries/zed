@@ -5025,22 +5025,20 @@ impl Project {
                             changes: changes
                                 .iter()
                                 .filter_map(|((path, _), change)| {
-                                    if watched_paths.is_match(&path) {
-                                        Some(lsp::FileEvent {
-                                            uri: lsp::Url::from_file_path(abs_path.join(path))
-                                                .unwrap(),
-                                            typ: match change {
-                                                PathChange::Added => lsp::FileChangeType::CREATED,
-                                                PathChange::Removed => lsp::FileChangeType::DELETED,
-                                                PathChange::Updated
-                                                | PathChange::AddedOrUpdated => {
-                                                    lsp::FileChangeType::CHANGED
-                                                }
-                                            },
-                                        })
-                                    } else {
-                                        None
+                                    if !watched_paths.is_match(&path) {
+                                        return None;
                                     }
+                                    let typ = match change {
+                                        PathChange::Loaded => return None,
+                                        PathChange::Added => lsp::FileChangeType::CREATED,
+                                        PathChange::Removed => lsp::FileChangeType::DELETED,
+                                        PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                        PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
+                                    };
+                                    Some(lsp::FileEvent {
+                                        uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                        typ,
+                                    })
                                 })
                                 .collect(),
                         };
