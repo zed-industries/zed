@@ -104,6 +104,7 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
+ "indoc",
  "isahc",
  "pulldown-cmark",
  "serde",

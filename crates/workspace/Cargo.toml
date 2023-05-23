@@ -62,5 +62,5 @@ settings = { path = "../settings", features = ["test-support"] }
 fs = { path = "../fs", features = ["test-support"] }
 db = { path = "../db", features = ["test-support"] }
 
-indoc = "1.0.4"
+indoc.workspace = true
 env_logger.workspace = true

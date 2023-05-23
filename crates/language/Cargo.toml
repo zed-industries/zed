@@ -70,7 +70,7 @@ settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
-indoc = "1.0.4"
+indoc.workspace = true
 rand.workspace = true
 tree-sitter-embedded-template = "*"
 tree-sitter-html = "*"

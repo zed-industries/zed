@@ -76,7 +76,7 @@ workspace = { path = "../workspace", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true
-indoc = "1.0.4"
+indoc.workspace = true
 util = { path = "../util" }
 lazy_static.workspace = true
 sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-sqlite"] }

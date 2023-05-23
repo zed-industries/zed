@@ -35,7 +35,7 @@ settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 
 [dev-dependencies]
-indoc = "1.0.4"
+indoc.workspace = true
 parking_lot.workspace = true
 lazy_static.workspace = true
 
