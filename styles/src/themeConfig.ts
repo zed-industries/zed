@@ -16,6 +16,10 @@ interface ThemeMeta {
   * Example: `John Doe <john@doe.com>`
   */
   author: string;
+  /** SPDX License string
+  *
+  * Example: `MIT`
+  */
   licenseType?: string;
   licenseUrl?: string;
   themeUrl?: string;
