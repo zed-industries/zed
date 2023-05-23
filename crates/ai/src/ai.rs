@@ -98,17 +98,40 @@ fn assist(
         The user's currently selected text is indicated via ->->selected text<-<- surrounding selected text.
         In this sentence, the word ->->example<-<- is selected.
         Respond to any selected model mention.
-        Summarize each mention in a single short sentence like:
-        > The user selected the word \"example\".
-        Then provide your response to that mention below its summary.
+        Wrap your responses in > < as follows.
+        >
+        I think that's a great idea.
+        <
+        If you're responding to a distant mention or multiple mentions, provide context.
+        > Key ideas of generative programming.
+        * Managing context
+            * Managing length
+            * Context distillation
+                - Shrink a context's size without loss of meaning.
+        * Fine-grained version control
+            * Portals to other contexts
+                * Distillation policies
+                * Budgets
+        <
+
+        > Expand on the idea of context distillation.
+        It's important to stay below the model's context size when generative programming.
+        A key technique in doing so is called context distillation... [up to 1 paragraph].
+
+        Questions to consider:
+        -
+        -
+        - [Up to 3 questions]
+        <
     "#};
 
+    let selections = editor.selections.all(cx);
     let (user_message, insertion_site) = editor.buffer().update(cx, |buffer, cx| {
         // Insert ->-> <-<- around selected text as described in the system prompt above.
         let snapshot = buffer.snapshot(cx);
         let mut user_message = String::new();
         let mut buffer_offset = 0;
-        for selection in editor.selections.all(cx) {
+        for selection in selections {
             user_message.extend(snapshot.text_for_range(buffer_offset..selection.start));
             user_message.push_str("->->");
             user_message.extend(snapshot.text_for_range(selection.start..selection.end));
@@ -128,7 +151,7 @@ fn assist(
         buffer.edit([(snapshot.len()..snapshot.len(), suffix)], None, cx);
 
         let snapshot = buffer.snapshot(cx); // Take a new snapshot after editing.
-        let insertion_site = snapshot.len() - 2; // Insert text at end of buffer, with an empty line both above and below.
+        let insertion_site = snapshot.anchor_after(snapshot.len() - 2);
 
         (user_message, insertion_site)
     });
