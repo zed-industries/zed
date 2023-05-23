@@ -119,6 +119,12 @@ fn assist(
                 * Distillation policies
                 * Budgets
         <
+
+        *Only* respond to a mention if either
+        a) The mention is at the end of the document.
+        b) The user's selection intersects the mention.
+
+        If no response is appropriate based on these conditions, respond with ><.
     "#};
 
     let selections = editor.selections.all(cx);
