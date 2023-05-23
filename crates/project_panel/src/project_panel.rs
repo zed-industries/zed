@@ -2068,6 +2068,7 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init((), cx);
+            init_settings(cx);
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
