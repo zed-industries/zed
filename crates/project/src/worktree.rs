@@ -4331,48 +4331,47 @@ mod tests {
         // all changes to the worktree's snapshot.
         worktree.update(cx, |tree, cx| {
             let mut paths = tree
-                .as_local()
-                .unwrap()
-                .paths()
-                .cloned()
+                .entries(true)
+                .map(|e| (e.path.clone(), e.mtime))
                 .collect::<Vec<_>>();
 
             cx.subscribe(&worktree, move |tree, _, event, _| {
                 if let Event::UpdatedEntries(changes) = event {
                     for ((path, _), change_type) in changes.iter() {
+                        let mtime = tree.entry_for_path(&path).map(|e| e.mtime);
                         let path = path.clone();
-                        let ix = match paths.binary_search(&path) {
+                        let ix = match paths.binary_search_by_key(&&path, |e| &e.0) {
                             Ok(ix) | Err(ix) => ix,
                         };
                         match change_type {
                             PathChange::Loaded => {
-                                assert_ne!(paths.get(ix), Some(&path));
-                                paths.insert(ix, path);
+                                paths.insert(ix, (path, mtime.unwrap()));
                             }
-
                             PathChange::Added => {
-                                assert_ne!(paths.get(ix), Some(&path));
-                                paths.insert(ix, path);
+                                paths.insert(ix, (path, mtime.unwrap()));
                             }
-
                             PathChange::Removed => {
-                                assert_eq!(paths.get(ix), Some(&path));
                                 paths.remove(ix);
                             }
-
                             PathChange::Updated => {
-                                assert_eq!(paths.get(ix), Some(&path));
+                                let entry = paths.get_mut(ix).unwrap();
+                                assert_eq!(entry.0, path);
+                                entry.1 = mtime.unwrap();
                             }
-
                             PathChange::AddedOrUpdated => {
-                                if paths[ix] != path {
-                                    paths.insert(ix, path);
+                                if paths.get(ix).map(|e| &e.0) == Some(&path) {
+                                    paths.get_mut(ix).unwrap().1 = mtime.unwrap();
+                                } else {
+                                    paths.insert(ix, (path, mtime.unwrap()));
                                 }
                             }
                         }
                     }
 
-                    let new_paths = tree.paths().cloned().collect::<Vec<_>>();
+                    let new_paths = tree
+                        .entries(true)
+                        .map(|e| (e.path.clone(), e.mtime))
+                        .collect::<Vec<_>>();
                     assert_eq!(paths, new_paths, "incorrect changes: {:?}", changes);
                 }
             })
