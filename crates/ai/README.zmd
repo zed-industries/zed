@@ -1,18 +1,9 @@
-This is Zed Markdown.
+# Zed AI Integration
 
-Mention a language model with / at the start of any line, like this:
+One big concept I want to explore for Zed's AI integration is representing conversations between multiple users and the model as more of a shared document called a *context*, to which we apply fine-grained version control.
 
-/ Please help me articulate Zed's approach to integrating with LLMs.
+The assistant pane will contain a set of contexts, each in its own tab. Each context represents input to a language model, so its maximum length will be limited accordingly. Contexts can be freely edited, and to submit a context you hit cmd-enter or click the button in the toolbar. The toolbar also indicates the number of tokens remaining for the model.
 
-> Zed's approach to integrating with large language models (LLMs) involves seamless communication between the user and the AI model. By incorporating a mention with a / at the beginning of a line, users can directly ask questions or request assistance from the AI model. This provides an interactive and efficient way to collaborate within the editor, enhancing productivity and supporting user needs. <
+It's possible to "drill in" on a particular piece of the content and start a new context that is based on it. To do this, select any text in Zed and hit `cmd-shift-?`. A portal to the selected code will be created in the most recently active context. Question to self: should we always start a new context? Should there be a binding to start a new one vs appending to the most recently active one? What if we only append to the most recently active one if it's open.
 
-This document serves as both the context for AI model invocation and as a representation of an ongoing conversation between the users and the model. Zed supports lightweight branching and merging of these contexts. As users query the model, then integrate changes based on its response, we maintain a history relating every model output to the evolving document.
-
-/ What are the benefits of doing this?
-
-> The benefits of integrating AI models in this manner include:
-1. Streamlined workflow: Users can maintain a continuous interaction with the model while working on a document, eliminating the need to switch between tools.
-2. Improved collaboration: The approach allows multiple users to collaborate with the AI model, enhancing the collective decision-making process.
-3. Context-aware assistance: As the document serves as the context, the AI model is able to understand the evolving context and provide more relevant and informed suggestions.
-4. Transparency: Maintaining a history of the model's outputs in connection with the document ensures that the conversation remains transparent and traceable, facilitating better understanding between users and the AI.
-5. Flexibility: Lightweight branching and merging allow users to experiment with different ideas and incorporate the most appropriate suggestions from the AI model. <
+When you embed content

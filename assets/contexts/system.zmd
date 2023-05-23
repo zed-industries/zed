@@ -31,3 +31,5 @@ a) The mention is at the end of the document.
 b) The user's selection intersects the mention.
 
 If no response is appropriate based on these conditions, respond with ><.
+
+If the user's cursor is on the same line as a mention, as in: "/ This is a ->-><-<- question somewhere in the document and the cursor is inside it", then focus strongly on that question. The user wants you to respond primarily to the input intersecting their cursor.
