@@ -6,8 +6,8 @@
         "repositoryURL": "https://github.com/livekit/client-sdk-swift.git",
         "state": {
           "branch": null,
-          "revision": "f6ca534eb334e99acb8e82cc99b491717df28d8a",
-          "version": null
+          "revision": "7331b813a5ab8a95cfb81fb2b4ed10519428b9ff",
+          "version": "1.0.12"
         }
       },
       {
@@ -15,8 +15,8 @@
         "repositoryURL": "https://github.com/google/promises.git",
         "state": {
           "branch": null,
-          "revision": "3e4e743631e86c8c70dbc6efdc7beaa6e90fd3bb",
-          "version": "2.1.1"
+          "revision": "ec957ccddbcc710ccc64c9dcbd4c7006fcf8b73a",
+          "version": "2.2.0"
         }
       },
       {
@@ -24,8 +24,8 @@
         "repositoryURL": "https://github.com/webrtc-sdk/Specs.git",
         "state": {
           "branch": null,
-          "revision": "38ac06261e62f980652278c69b70284324c769e0",
-          "version": "104.5112.5"
+          "revision": "2f6bab30c8df0fe59ab3e58bc99097f757f85f65",
+          "version": "104.5112.17"
         }
       },
       {
@@ -33,8 +33,8 @@
         "repositoryURL": "https://github.com/apple/swift-log.git",
         "state": {
           "branch": null,
-          "revision": "6fe203dc33195667ce1759bf0182975e4653ba1c",
-          "version": "1.4.4"
+          "revision": "32e8d724467f8fe623624570367e3d50c5638e46",
+          "version": "1.5.2"
         }
       },
       {
@@ -42,8 +42,8 @@
         "repositoryURL": "https://github.com/apple/swift-protobuf.git",
         "state": {
           "branch": null,
-          "revision": "88c7d15e1242fdb6ecbafbc7926426a19be1e98a",
-          "version": "1.20.2"
+          "revision": "0af9125c4eae12a4973fb66574c53a54962a9e1e",
+          "version": "1.21.0"
         }
       }
     ]
