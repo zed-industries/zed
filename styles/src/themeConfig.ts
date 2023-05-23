@@ -2,8 +2,7 @@
 // Work in progress, not all properties are reflected here yet
 
 import chroma from 'chroma-js';
-import { Syntax } from './themes/common/syntax';
-import { SyntaxHighlightStyle } from './themes/common/syntax';
+import { Syntax, SyntaxHighlightStyle } from './themes/common/syntax';
 
 interface ThemeMeta {
   /** The name of the theme */
@@ -17,9 +16,9 @@ interface ThemeMeta {
   * Example: `John Doe <john@doe.com>`
   */
   author: string;
-  licenseType: string;
-  licenseUrl: string;
-  themeUrl: string;
+  licenseType?: string;
+  licenseUrl?: string;
+  themeUrl?: string;
 }
 
 interface ThemeConfigInputColors {
@@ -88,3 +87,44 @@ export type ThemeProperties = ThemeMeta & {
 export type Theme = {
   [K in keyof ThemeProperties]: ThemeProperties[K];
 }
+
+export type ThemeFamilyItem =
+  ThemeConfig | { light: ThemeConfig, dark: ThemeConfig };
+
+type ThemeFamilyProperties = Partial<Omit<ThemeMeta, 'name' | 'appearance'>> & {
+  name: string
+  default: ThemeFamilyItem
+  variants: {
+    [key: string]: ThemeFamilyItem;
+  }
+}
+
+// Idea: A theme family is a collection of themes that share the same name
+// For example, a theme family could be `One Dark` and have a `light` and `dark` variant
+// The Ayu family could have `light`, `mirage`, and `dark` variants
+
+type ThemeFamily = {
+  [K in keyof ThemeFamilyProperties]: ThemeFamilyProperties[K];
+}
+
+/** The collection of all themes
+*
+* Example:
+* ```ts
+* {
+*   one_dark,
+*   one_light,
+*     ayu: {
+*     name: 'Ayu',
+*     default: 'ayu_mirage',
+*     variants: {
+*       light: 'ayu_light',
+*       mirage: 'ayu_mirage',
+*       dark: 'ayu_dark',
+*     },
+*   },
+*  ...
+* }
+* ```
+*/
+export type ThemeIndex = Record<string, ThemeFamily | ThemeConfig>;
