@@ -800,6 +800,7 @@ impl LocalWorktree {
     fn set_snapshot(&mut self, new_snapshot: LocalSnapshot, cx: &mut ModelContext<Worktree>) {
         let updated_repos =
             self.changed_repos(&self.git_repositories, &new_snapshot.git_repositories);
+
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.share.as_mut() {
