@@ -10,6 +10,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
 use std::{
+    env,
     io::Write,
     mem,
     path::PathBuf,
@@ -33,8 +34,9 @@ struct TelemetryState {
     installation_id: Option<Arc<str>>, // Per app installation
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
-    os_version: Option<Arc<str>>,
     os_name: &'static str,
+    os_version: Option<Arc<str>>,
+    architecture: &'static str,
     mixpanel_events_queue: Vec<MixpanelEvent>,
     clickhouse_events_queue: Vec<ClickhouseEventWrapper>,
     next_mixpanel_event_id: usize,
@@ -63,6 +65,7 @@ struct ClickhouseEventRequestBody {
     app_version: Option<Arc<str>>,
     os_name: &'static str,
     os_version: Option<Arc<str>>,
+    architecture: &'static str,
     release_channel: Option<&'static str>,
     events: Vec<ClickhouseEventWrapper>,
 }
@@ -153,12 +156,14 @@ impl Telemetry {
         } else {
             None
         };
+        // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             http_client: client,
             executor: cx.background().clone(),
             state: Mutex::new(TelemetryState {
-                os_version: platform.os_version().ok().map(|v| v.to_string().into()),
                 os_name: platform.os_name().into(),
+                os_version: platform.os_version().ok().map(|v| v.to_string().into()),
+                architecture: env::consts::ARCH,
                 app_version: platform.app_version().ok().map(|v| v.to_string().into()),
                 release_channel,
                 installation_id: None,
@@ -451,6 +456,8 @@ impl Telemetry {
                                 app_version: state.app_version.clone(),
                                 os_name: state.os_name,
                                 os_version: state.os_version.clone(),
+                                architecture: state.architecture,
+
                                 release_channel: state.release_channel,
                                 events,
                             },
