@@ -129,6 +129,9 @@ message Envelope {
         GetPrivateUserInfo get_private_user_info = 105;
         GetPrivateUserInfoResponse get_private_user_info_response = 106;
         UpdateDiffBase update_diff_base = 107;
+
+        OnTypeFormatting on_type_formatting = 111;
+        OnTypeFormattingResponse on_type_formatting_response = 112;
     }
 }
 
@@ -668,6 +671,25 @@ message PerformRename {
     Anchor position = 3;
     string new_name = 4;
     repeated VectorClockEntry version = 5;
+}
+
+message OnTypeFormatting {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    string trigger = 4;
+    repeated VectorClockEntry version = 5;
+}
+
+message OnTypeFormattingResponse {
+    repeated OnTypeFormattingResponseEntry entries = 1;
+    repeated VectorClockEntry version = 2;
+}
+
+message OnTypeFormattingResponseEntry {
+    Anchor start = 1;
+    Anchor end = 2;
+    string new_text = 3;
 }
 
 message PerformRenameResponse {

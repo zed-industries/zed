@@ -111,7 +111,7 @@ pub(crate) struct GetCodeActions {
 
 pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
-    pub new_char: char,
+    pub trigger: String,
     // TODO kb formatting options?
 }
 
@@ -1607,18 +1607,18 @@ impl LspCommand for GetCodeActions {
 impl LspCommand for OnTypeFormatting {
     type Response = Vec<(Range<Anchor>, String)>;
     type LspRequest = lsp::request::OnTypeFormatting;
-    type ProtoRequest = proto::PerformRename;
+    type ProtoRequest = proto::OnTypeFormatting;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(on_type_formatting_options) = &server_capabilities.document_on_type_formatting_provider else { return false };
         on_type_formatting_options
             .first_trigger_character
-            .contains(self.new_char)
+            .contains(&self.trigger)
             || on_type_formatting_options
                 .more_trigger_character
                 .iter()
                 .flatten()
-                .any(|chars| chars.contains(self.new_char))
+                .any(|chars| chars.contains(&self.trigger))
     }
 
     fn to_lsp(
@@ -1633,7 +1633,7 @@ impl LspCommand for OnTypeFormatting {
                 lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
                 point_to_lsp(self.position),
             ),
-            ch: self.new_char.to_string(),
+            ch: self.trigger.clone(),
             // TODO kb pass current editor ones
             options: lsp::FormattingOptions::default(),
         }
@@ -1656,44 +1656,92 @@ impl LspCommand for OnTypeFormatting {
         .context("LSP edits conversion")
     }
 
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::PerformRename {
-        todo!("TODO kb")
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::OnTypeFormatting {
+        proto::OnTypeFormatting {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            trigger: self.trigger.clone(),
+            version: serialize_version(&buffer.version()),
+        }
     }
 
     async fn from_proto(
-        message: proto::PerformRename,
+        message: proto::OnTypeFormatting,
         _: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
-        todo!("TODO kb")
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            trigger: message.trigger.clone(),
+        })
     }
 
     fn response_to_proto(
         response: Vec<(Range<Anchor>, String)>,
-        project: &mut Project,
-        peer_id: PeerId,
-        _: &clock::Global,
-        cx: &mut AppContext,
-    ) -> proto::PerformRenameResponse {
-        // let transaction = project.serialize_project_transaction_for_peer(response, peer_id, cx);
-        // proto::PerformRenameResponse {
-        //     transaction: Some(transaction),
-        // }
-        todo!("TODO kb")
+        _: &mut Project,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::OnTypeFormattingResponse {
+        proto::OnTypeFormattingResponse {
+            entries: response
+                .into_iter()
+                .map(
+                    |(response_range, new_text)| proto::OnTypeFormattingResponseEntry {
+                        start: Some(language::proto::serialize_anchor(&response_range.start)),
+                        end: Some(language::proto::serialize_anchor(&response_range.end)),
+                        new_text,
+                    },
+                )
+                .collect(),
+            version: serialize_version(&buffer_version),
+        }
     }
 
     async fn response_from_proto(
         self,
-        message: proto::PerformRenameResponse,
-        project: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
+        message: proto::OnTypeFormattingResponse,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
-        todo!("TODO kb")
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+        message
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let start = entry
+                    .start
+                    .and_then(language::proto::deserialize_anchor)
+                    .ok_or_else(|| anyhow!("invalid start"))?;
+                let end = entry
+                    .end
+                    .and_then(language::proto::deserialize_anchor)
+                    .ok_or_else(|| anyhow!("invalid end"))?;
+                Ok((start..end, entry.new_text))
+            })
+            .collect()
     }
 
-    fn buffer_id_from_proto(message: &proto::PerformRename) -> u64 {
+    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {
         message.buffer_id
     }
 }

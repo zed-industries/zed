@@ -4221,7 +4221,7 @@ impl Project {
             buffer.clone(),
             OnTypeFormatting {
                 position,
-                new_char: input,
+                trigger: input.to_string(),
             },
             cx,
         );
