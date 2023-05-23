@@ -2068,6 +2068,7 @@ mod tests {
             workspace::init(app_state.clone(), cx);
             language::init(cx);
             editor::init(cx);
+            project_panel::init_settings(cx);
             pane::init(cx);
             app_state
         })

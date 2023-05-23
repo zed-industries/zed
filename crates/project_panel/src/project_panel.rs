@@ -113,8 +113,12 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut AppContext) {
     settings::register::<ProjectPanelSettings>(cx);
+}
+
+pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::select_prev);
@@ -2051,6 +2055,7 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
+            init_settings(cx);
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
