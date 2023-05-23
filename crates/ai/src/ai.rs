@@ -1,13 +1,14 @@
 use anyhow::{anyhow, Result};
+use assets::Assets;
 use editor::Editor;
 use futures::AsyncBufReadExt;
 use futures::{io::BufReader, AsyncReadExt, Stream, StreamExt};
 use gpui::executor::Background;
 use gpui::{actions, AppContext, Task, ViewContext};
-use indoc::indoc;
 use isahc::prelude::*;
 use isahc::{http::StatusCode, Request};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::{io, sync::Arc};
 use util::ResultExt;
 
@@ -91,42 +92,6 @@ fn assist(
 ) -> Option<Task<Result<()>>> {
     let api_key = std::env::var("OPENAI_API_KEY").log_err()?;
 
-    const SYSTEM_MESSAGE: &'static str = indoc! {r#"
-        You an AI language model embedded in a code editor named Zed, authored by Zed Industries.
-        The input you are currently processing was produced by a special \"model mention\" in a document that is open in the editor.
-        A model mention is indicated via a leading / on a line.
-        The user's currently selected text is indicated via ->->selected text<-<- surrounding selected text.
-        In this sentence, the word ->->example<-<- is selected.
-        Respond to any selected model mention.
-
-        Wrap your responses in > < as follows.
-        / What do you think?
-        > I think that's a great idea. <
-
-        For lines that are likely to wrap, or multiline responses, start and end the > and < on their own lines.
-        >
-        I think that's a great idea
-        <
-
-        If the selected mention is not at the end of the document, briefly summarize the context.
-        > Key ideas of generative programming:
-        * Managing context
-            * Managing length
-            * Context distillation
-                - Shrink a context's size without loss of meaning.
-        * Fine-grained version control
-            * Portals to other contexts
-                * Distillation policies
-                * Budgets
-        <
-
-        *Only* respond to a mention if either
-        a) The mention is at the end of the document.
-        b) The user's selection intersects the mention.
-
-        If no response is appropriate based on these conditions, respond with ><.
-    "#};
-
     let selections = editor.selections.all(cx);
     let (user_message, insertion_site) = editor.buffer().update(cx, |buffer, cx| {
         // Insert ->-> <-<- around selected text as described in the system prompt above.
@@ -158,26 +123,47 @@ fn assist(
         (user_message, insertion_site)
     });
 
-    let stream = stream_completion(
-        api_key,
-        cx.background_executor().clone(),
-        OpenAIRequest {
-            model: "gpt-4".to_string(),
-            messages: vec![
-                RequestMessage {
-                    role: Role::System,
-                    content: SYSTEM_MESSAGE.to_string(),
-                },
-                RequestMessage {
-                    role: Role::User,
-                    content: user_message,
-                },
-            ],
-            stream: false,
-        },
-    );
     let buffer = editor.buffer().clone();
+    let executor = cx.background_executor().clone();
     Some(cx.spawn(|_, mut cx| async move {
+        // TODO: We should have a get_string method on assets. This is repateated elsewhere.
+        let content = Assets::get("contexts/system.zmd").unwrap();
+        let mut system_message = std::str::from_utf8(content.data.as_ref())
+            .unwrap()
+            .to_string();
+
+        if let Ok(custom_system_message_path) = std::env::var("ZED_ASSISTANT_SYSTEM_PROMPT_PATH") {
+            system_message
+                .push_str("\n\nAlso consider the following user-defined system prompt:\n\n");
+            // TODO: Replace this with our file system trait object.
+            // What you could bind dependencies on an action when you bind it?.
+            dbg!("reading from {:?}", &custom_system_message_path);
+            system_message.push_str(
+                &cx.background()
+                    .spawn(async move { fs::read_to_string(custom_system_message_path) })
+                    .await?,
+            );
+        }
+
+        let stream = stream_completion(
+            api_key,
+            executor,
+            OpenAIRequest {
+                model: "gpt-4".to_string(),
+                messages: vec![
+                    RequestMessage {
+                        role: Role::System,
+                        content: system_message.to_string(),
+                    },
+                    RequestMessage {
+                        role: Role::User,
+                        content: user_message,
+                    },
+                ],
+                stream: false,
+            },
+        );
+
         let mut messages = stream.await?;
         while let Some(message) = messages.next().await {
             let mut message = message?;
