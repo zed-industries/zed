@@ -79,6 +79,7 @@ ctor = { version = "0.1" }
 env_logger = { version = "0.9" }
 futures = { version = "0.3" }
 glob = { version = "0.3.1" }
+isahc = "1.7.2"
 lazy_static = { version = "1.4.0" }
 log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = { version = "2.1.1" }

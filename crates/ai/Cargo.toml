@@ -11,11 +11,16 @@ doctest = false
 [dependencies]
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+util = { path = "../util" }
 
+serde.workspace = true
+serde_json.workspace = true
 anyhow.workspace = true
-async-openai = "0.10.3"
 pulldown-cmark = "0.9.2"
+futures.workspace = true
+isahc.workspace = true
 unindent.workspace = true
+async-stream = "0.3.5"
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
