@@ -39,6 +39,9 @@
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
+  // Whether to use additional LSP queries to format (and amend) the code after
+  // every "trigger" symbol input, defined by LSP server capabilities.
+  "use_on_type_format": true,
   // Controls whether copilot provides suggestion immediately
   // or waits for a `copilot::Toggle`
   "show_copilot_suggestions": true,

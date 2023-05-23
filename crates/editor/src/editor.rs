@@ -2123,7 +2123,7 @@ impl Editor {
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
             // When buffer contents is updated and caret is moved, try triggering on type formatting.
-            if text.len() == 1 {
+            if settings::get::<EditorSettings>(cx).use_on_type_format && text.len() == 1 {
                 let input_char = text.chars().next().expect("single char input");
                 if let Some(on_type_format_task) = this.trigger_on_type_format(input_char, cx) {
                     on_type_format_task.detach_and_log_err(cx);

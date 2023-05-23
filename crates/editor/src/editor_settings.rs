@@ -7,6 +7,7 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
+    pub use_on_type_format: bool,
     pub scrollbar: Scrollbar,
 }
 
@@ -30,6 +31,7 @@ pub struct EditorSettingsContent {
     pub cursor_blink: Option<bool>,
     pub hover_popover_enabled: Option<bool>,
     pub show_completions_on_input: Option<bool>,
+    pub use_on_type_format: Option<bool>,
     pub scrollbar: Option<ScrollbarContent>,
 }
 
