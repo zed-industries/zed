@@ -1,3 +1,5 @@
+mod project_panel_settings;
+
 use context_menu::{ContextMenu, ContextMenuItem};
 use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
@@ -20,6 +22,7 @@ use project::{
     repository::GitFileStatus, Entry, EntryKind, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
+use project_panel_settings::ProjectPanelSettings;
 use std::{
     cmp::Ordering,
     collections::{hash_map, HashMap},
@@ -110,7 +113,12 @@ actions!(
     ]
 );
 
+pub fn init_settings(cx: &mut AppContext) {
+    settings::register::<ProjectPanelSettings>(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::select_prev);
@@ -1000,6 +1008,7 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
+            let git_status_setting = settings::get::<ProjectPanelSettings>(cx).git_status;
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
@@ -1013,7 +1022,9 @@ impl ProjectPanel {
                 for (entry, repo) in
                     snapshot.entries_with_repositories(visible_worktree_entries[entry_range].iter())
                 {
-                    let status = (entry.path.parent().is_some() && !entry.is_ignored)
+                    let status = (git_status_setting
+                        && entry.path.parent().is_some()
+                        && !entry.is_ignored)
                         .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
                         .flatten();
 
@@ -2044,6 +2055,7 @@ mod tests {
         cx.foreground().forbid_parking();
         cx.update(|cx| {
             cx.set_global(SettingsStore::test(cx));
+            init_settings(cx);
             theme::init((), cx);
             language::init(cx);
             editor::init_settings(cx);
@@ -2056,6 +2068,7 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             theme::init((), cx);
+            init_settings(cx);
             language::init(cx);
             editor::init(cx);
             pane::init(cx);
