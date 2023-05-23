@@ -7377,6 +7377,224 @@ async fn test_peers_simultaneously_following_each_other(
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_on_input_format_from_host_to_guest(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    // Set up a fake language server.
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: ":".to_string(),
+                    more_trigger_character: Some(vec![">".to_string()]),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+    client_a.language_registry.add(Arc::new(language));
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                "main.rs": "fn main() { a }",
+                "other.rs": "// Test file",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+    // Open a file in an editor as the host.
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .await
+        .unwrap();
+    let (window_a, _) = cx_a.add_window(|_| EmptyView);
+    let editor_a = cx_a.add_view(window_a, |cx| {
+        Editor::for_buffer(buffer_a, Some(project_a.clone()), cx)
+    });
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_b.foreground().run_until_parked();
+    // Type a on type formatting trigger character as the guest.
+    editor_a.update(cx_a, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+        editor.handle_input(">", cx);
+        cx.focus(&editor_a);
+    });
+
+    // Receive an OnTypeFormatting request as the host's language server.
+    // Return some formattings from the host's language server.
+    cx_b.foreground().start_waiting();
+    fake_language_server
+        .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 14),
+            );
+
+            Ok(Some(vec![lsp::TextEdit {
+                new_text: "~<".to_string(),
+                range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+            }]))
+        })
+        .next()
+        .await
+        .unwrap();
+    cx_b.foreground().finish_waiting();
+
+    // Open the buffer on the guest and see that the formattings worked
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .await
+        .unwrap();
+    cx_b.foreground().run_until_parked();
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a>~< }")
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_on_input_format_from_guest_to_host(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    // Set up a fake language server.
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                    first_trigger_character: ":".to_string(),
+                    more_trigger_character: Some(vec![">".to_string()]),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
+    client_a.language_registry.add(Arc::new(language));
+
+    client_a
+        .fs
+        .insert_tree(
+            "/a",
+            json!({
+                "main.rs": "fn main() { a }",
+                "other.rs": "// Test file",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+
+    // Open a file in an editor as the guest.
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .await
+        .unwrap();
+    let (window_b, _) = cx_b.add_window(|_| EmptyView);
+    let editor_b = cx_b.add_view(window_b, |cx| {
+        Editor::for_buffer(buffer_b, Some(project_b.clone()), cx)
+    });
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.foreground().run_until_parked();
+    // Type a on type formatting trigger character as the guest.
+    editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+        editor.handle_input(":", cx);
+        cx.focus(&editor_b);
+    });
+
+    // Receive an OnTypeFormatting request as the host's language server.
+    // Return some formattings from the host's language server.
+    cx_a.foreground().start_waiting();
+    fake_language_server
+        .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 14),
+            );
+
+            Ok(Some(vec![lsp::TextEdit {
+                new_text: "~:".to_string(),
+                range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+            }]))
+        })
+        .next()
+        .await
+        .unwrap();
+    cx_a.foreground().finish_waiting();
+
+    // Open the buffer on the host and see that the formattings worked
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .await
+        .unwrap();
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a:~: }")
+    });
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct RoomParticipants {
     remote: Vec<String>,
