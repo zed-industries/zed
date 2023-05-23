@@ -119,6 +119,8 @@ actions!(
         ActivateNextPane,
         FollowNextCollaborator,
         ToggleLeftDock,
+        ToggleRightDock,
+        ToggleBottomDock,
         NewTerminal,
         ToggleTerminalFocus,
         NewSearch,
@@ -249,6 +251,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     });
     cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
         workspace.toggle_dock(DockPosition::Left, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+        workspace.toggle_dock(DockPosition::Right, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+        workspace.toggle_dock(DockPosition::Bottom, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
