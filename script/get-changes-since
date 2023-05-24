@@ -9,8 +9,8 @@ main();
 
 async function main() {
   // Use form of: YYYY-MM-DD - 2023-01-09
-  const startDate = new Date("2023-01-01");
-  const today = new Date("2023-01-010")
+  const startDate = new Date(process.argv[2]);
+  const today = new Date()
 
   console.log(`Changes from ${startDate} to ${today}\n`);
 
