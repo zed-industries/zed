@@ -291,12 +291,23 @@ impl Pane {
                             .handle_if_kind(TabBarContextMenuKind::New),
                     ))
                     .with_child(Self::render_tab_bar_button(
-                        2,
+                        1,
                         "icons/split_12.svg",
                         cx,
                         |pane, cx| pane.deploy_split_menu(cx),
                         pane.tab_bar_context_menu
                             .handle_if_kind(TabBarContextMenuKind::Split),
+                    ))
+                    .with_child(Pane::render_tab_bar_button(
+                        2,
+                        if pane.is_zoomed() {
+                            "icons/minimize_8.svg"
+                        } else {
+                            "icons/maximize_8.svg"
+                        },
+                        cx,
+                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                        None,
                     ))
                     .into_any()
             }),
@@ -684,6 +695,9 @@ impl Pane {
         if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {
+            if !self.has_focus {
+                cx.focus_self();
+            }
             cx.emit(Event::ZoomIn);
         }
     }
