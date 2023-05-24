@@ -347,7 +347,7 @@ impl Panel for TerminalPanel {
     }
 
     fn icon_tooltip(&self) -> String {
-        "Terminals".to_string()
+        "Terminal Panel".into()
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {
