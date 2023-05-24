@@ -105,16 +105,19 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
 #[derive(Copy, Clone, Default, Deserialize, PartialEq)]
 pub struct ToggleLeftDock {
+    #[serde(default = "default_true")]
     pub focus: bool,
 }
 
 #[derive(Copy, Clone, Default, Deserialize, PartialEq)]
 pub struct ToggleBottomDock {
+    #[serde(default = "default_true")]
     pub focus: bool,
 }
 
 #[derive(Copy, Clone, Default, Deserialize, PartialEq)]
 pub struct ToggleRightDock {
+    #[serde(default = "default_true")]
     pub focus: bool,
 }
 
@@ -3376,6 +3379,10 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
     let width: usize = parts.next()?.parse().ok()?;
     let height: usize = parts.next()?.parse().ok()?;
     Some(vec2f(width as f32, height as f32))
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]

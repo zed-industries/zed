@@ -3390,15 +3390,14 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
         self.keystroke_matcher
             .bindings_for_action_type(action.as_any().type_id())
             .find_map(|b| {
-                handler_depth
-                    .map(|highest_handler| {
-                        if (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..])) {
-                            Some(b.keystrokes().into())
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten()
+                let highest_handler = handler_depth?;
+                if action.eq(b.action())
+                    && (0..=highest_handler).any(|depth| b.match_context(&contexts[depth..]))
+                {
+                    Some(b.keystrokes().into())
+                } else {
+                    None
+                }
             })
     }
 
@@ -6088,6 +6087,53 @@ mod tests {
                 .sorted_by(|(name1, _), (name2, _)| name1.cmp(name2))
                 .collect()
         }
+    }
+
+    #[crate::test(self)]
+    fn test_keystrokes_for_action_with_data(cx: &mut TestAppContext) {
+        #[derive(Clone, Debug, Deserialize, PartialEq)]
+        struct ActionWithArg {
+            #[serde(default)]
+            arg: bool,
+        }
+
+        struct View;
+        impl super::Entity for View {
+            type Event = ();
+        }
+        impl super::View for View {
+            fn render(&mut self, _: &mut ViewContext<Self>) -> AnyElement<Self> {
+                Empty::new().into_any()
+            }
+            fn ui_name() -> &'static str {
+                "View"
+            }
+        }
+
+        impl_actions!(test, [ActionWithArg]);
+
+        let (window_id, view) = cx.add_window(|_| View);
+        cx.update(|cx| {
+            cx.add_global_action(|_: &ActionWithArg, _| {});
+            cx.add_bindings(vec![
+                Binding::new("a", ActionWithArg { arg: false }, None),
+                Binding::new("shift-a", ActionWithArg { arg: true }, None),
+            ]);
+        });
+
+        let actions = cx.available_actions(window_id, view.id());
+        assert_eq!(
+            actions[0].1.as_any().downcast_ref::<ActionWithArg>(),
+            Some(&ActionWithArg { arg: false })
+        );
+        assert_eq!(
+            actions[0]
+                .2
+                .iter()
+                .map(|b| b.keystrokes()[0].clone())
+                .collect::<Vec<_>>(),
+            vec![Keystroke::parse("a").unwrap()],
+        );
     }
 
     #[crate::test(self)]

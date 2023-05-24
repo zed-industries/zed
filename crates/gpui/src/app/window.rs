@@ -394,17 +394,18 @@ impl<'a> WindowContext<'a> {
             .iter()
             .filter_map(move |(name, (type_id, deserialize))| {
                 if let Some(action_depth) = handler_depths_by_action_type.get(type_id).copied() {
-                    Some((
-                        *name,
-                        deserialize("{}").ok()?,
-                        self.keystroke_matcher
-                            .bindings_for_action_type(*type_id)
-                            .filter(|b| {
-                                (0..=action_depth).any(|depth| b.match_context(&contexts[depth..]))
-                            })
-                            .cloned()
-                            .collect(),
-                    ))
+                    let action = deserialize("{}").ok()?;
+                    let bindings = self
+                        .keystroke_matcher
+                        .bindings_for_action_type(*type_id)
+                        .filter(|b| {
+                            action.eq(b.action())
+                                && (0..=action_depth)
+                                    .any(|depth| b.match_context(&contexts[depth..]))
+                        })
+                        .cloned()
+                        .collect();
+                    Some((*name, action, bindings))
                 } else {
                     None
                 }
