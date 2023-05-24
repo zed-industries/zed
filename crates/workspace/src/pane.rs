@@ -683,7 +683,7 @@ impl Pane {
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
         if self.zoomed {
             cx.emit(Event::ZoomOut);
-        } else {
+        } else if !self.items.is_empty() {
             cx.emit(Event::ZoomIn);
         }
     }
@@ -981,6 +981,10 @@ impl Pane {
                 .borrow_mut()
                 .paths_by_item
                 .remove(&item.id());
+        }
+
+        if self.items.is_empty() && self.zoomed {
+            cx.emit(Event::ZoomOut);
         }
 
         cx.notify();
