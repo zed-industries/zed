@@ -285,6 +285,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         0,
                         "icons/plus_12.svg",
+                        Some(("New...".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_new_menu(cx),
                         pane.tab_bar_context_menu
@@ -293,6 +294,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         1,
                         "icons/split_12.svg",
+                        Some(("Split Pane".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_split_menu(cx),
                         pane.tab_bar_context_menu
@@ -305,6 +307,7 @@ impl Pane {
                         } else {
                             "icons/maximize_8.svg"
                         },
+                        Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
                         None,
@@ -1589,29 +1592,37 @@ impl Pane {
     pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
         index: usize,
         icon: &'static str,
+        tooltip: Option<(String, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F,
         context_menu: Option<ViewHandle<ContextMenu>>,
     ) -> AnyElement<Pane> {
         enum TabBarButton {}
 
+        let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
+            let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
+            let style = theme.pane_button.style_for(mouse_state, false);
+            Svg::new(icon)
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx))
+        .into_any();
+        if let Some((tooltip, action)) = tooltip {
+            let tooltip_style = settings::get::<ThemeSettings>(cx).theme.tooltip.clone();
+            button = button
+                .with_tooltip::<TabBarButton>(index, tooltip, action, tooltip_style, cx)
+                .into_any();
+        }
+
         Stack::new()
-            .with_child(
-                MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
-                    let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
-                    let style = theme.pane_button.style_for(mouse_state, false);
-                    Svg::new(icon)
-                        .with_color(style.color)
-                        .constrained()
-                        .with_width(style.icon_width)
-                        .aligned()
-                        .constrained()
-                        .with_width(style.button_width)
-                        .with_height(style.button_width)
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx)),
-            )
+            .with_child(button)
             .with_children(
                 context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
             )

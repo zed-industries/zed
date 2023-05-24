@@ -68,6 +68,10 @@ impl TerminalPanel {
                     .with_child(Pane::render_tab_bar_button(
                         0,
                         "icons/plus_12.svg",
+                        Some((
+                            "New Terminal".into(),
+                            Some(Box::new(workspace::NewTerminal)),
+                        )),
                         cx,
                         move |_, cx| {
                             let this = this.clone();
@@ -88,6 +92,7 @@ impl TerminalPanel {
                         } else {
                             "icons/maximize_8.svg"
                         },
+                        Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
                         None,
