@@ -1,23 +1,34 @@
-# Zed AI Integration
 
-One big concept I want to explore for Zed's AI integration is representing conversations between multiple users and the model as more of a shared document called a *context*, to which we apply fine-grained version control.
+Welcome to Zed! Zed is an innovative, open-source platform designed to enhance team communication and collaboration. At the heart of Zed are *contexts*, which create a dynamic digital representation of shared mental models. Contexts offer personalized starting points and the flexibility to edit and explore, enabling teams to align knowledge, streamline communication, and improve overall performance.
 
-The assistant pane will contain a set of contexts, each in its own tab. Each context represents input to a language model, so its maximum length will be limited accordingly. Contexts can be freely edited, and to submit a context you hit `cmd-enter` or click the button in the toolbar. The toolbar also indicates the number of tokens remaining for the model.
+As the #zed model, I'm happy to answer any questions. In fact, I will improve as a result of you doing so!
 
-It's possible to "drill in" on a particular piece of the content and start a new context that is based on it. To do this, select any text in Zed and hit `cmd-shift-?`. A portal to the selected code will be created in the most recently active context.
+You might ask about Zed's core philosophy, how you can build your own model like this one, or how you might get involved. Zed's open source!
 
-/ How does this section relate to the overall idea presented in this document?
+>
 
-You can also hit `cmd-shift-?` when editing a context. This pushes a new context to the stack, which is designed for editing the previous context. You can use this to manage the current context. For example, select text, hit `cmd-shift-?`, and then ask the child context to summarize the parent.
+/ I am writing a vision document for a feature. I could use help sharing my thoughts in a compact and approachable way, distilling out a narrative that efficiently conveys the core ideas. I need to present this vision to the board of directors and in a public talk.
 
-We want it to be possible to use `/` anywhere in the document to communicate with the model as if we were talking at that location. While we will provide the full document to the model as context, we want the model to focus on the section marked with [EDIT_START] and [EDIT_END] and provide a relevant response at the specified location.
+# Zed Contexts
 
-Next key problems to solve:
+When team members communicate through various channels, such as Slack messages, emails, code comments, or documentation, their ultimate goal is to establish and refine a shared mental model. This collective understanding, essential for efficient and effective collaboration, has traditionally been maintained through continuous exchanges and reading historical documentation, which can be time-consuming and sometimes lead to misunderstandings or information gaps. With the advent of advanced language models, we now have the opportunity to create a dynamic digital representation of the shared mental model. This new approach streamlines communication, improves integration of new team members, and enables easier querying and updating of the collective knowledge, optimizing the team's overall performance.
 
-- Indicating to the model what is selected
-- Indicating to the model what we want to be edited
-- Can the model insert somewhere other than the end?
+/ After this introduction, I'll dump some more thoughts.
 
-I want to select a subset of text and hit `cmd-shift-?` and have that text marked in a special mode, indicating that I want it to be edited. The text will be appended to the context, along with the selected text (if they're different). The model will assume that its output is destined to replace the text in question.
+In Zed, you interact with models via contexts. For example, when you visit #zed, you observe a *default context*, which is generated for you based on your profile and past interactions with the system.
 
-> In this document, the main idea revolves around enhancing Zed's AI integration by using a shared document-like structure called a *context* for conversations between multiple users and the AI model. The selected section describes a specific feature within this framework where users can "drill in" on a particular piece of content and create a new context based on it. This feature would allow users to easily reference and discuss specific portions of code, making collaboration more efficient and targeted. It contributes to the overall concept by providing a concrete example of how users can interact with the AI and one another within the context-based approach. <
+But this is just a starting point. Once you observe this context, you're free to both edit and explore it. For example, as a new user visiting both Zed the system and the #zed model for the first time, you might be shown the following context:
+
+> In the rapidly changing landscape of team communication, establishing and refining a shared mental model is becoming increasingly essential for success. Our advanced language models can help your team create a dynamic digital representation of this mental model, streamlining communication and enhancing team performance. Zed Contexts are at the heart of this new approach, offering personalized starting points and the freedom to edit and explore in order to align team knowledge and improve overall efficiency. <
+
+/ Compact the above and be more simple and less sales-y.
+
+> Zed Contexts simplify team communication by creating a dynamic digital representation of shared mental models. By offering personalized starting points and the flexibility to edit and explore, Zed Contexts efficiently align team knowledge, enhancing collaboration and performance. <
+
+/ Now add a Welcome to Zed message.
+
+> Welcome to Zed! Zed Contexts simplify team communication by creating a dynamic digital representation of shared mental models. By offering personalized starting points and the
+
+/ Introduce the overall concept of Zed briefly, then explain how contexts contribute.
+
+>  <
