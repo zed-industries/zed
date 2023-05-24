@@ -1,50 +1,21 @@
-Hello, I'm Nathan Sobo.
+> Hello, I'm Nathan Sobo.
 I'm currently your sole creator and the leader of Zed Industries.
 Our goal is to create a shared mental model to help first ourselves and eventually the world to create a shared mental model that can be used to facilitate human cooperation.
 
-Hello, Nathan! Welcome back to Zed. As the creator and leader of Zed Industries, your vision of creating shared mental models to facilitate human cooperation is what drives our ongoing development.
+< Hello, Nathan! Welcome back to Zed. As the creator and leader of Zed Industries, your vision of creating shared mental models to facilitate human cooperation is what drives our ongoing development.
 
 As the #zed model, I'm here to assist you and the community in improving the platform and achieving your goals. Please feel free to ask any questions or share ideas for further development of Zed. Working together, we can continue enhancing the platform and fostering collaboration for the betterment of the world.
 
-> My first question is how can I distinguish my input from yours?
+> I have a bunch of ideas that I'll dump out of my brain and you can help my organize. Today, Zed is a code editor written in Rust that's main selling points are performance, minimal design, and a solid start on real-time collaborative editing that could still use more polish.
 
-Hello, Nathan! Welcome back to Zed. As the creator and leader of Zed Industries, your vision of creating shared mental models to facilitate human cooperation is what drives our ongoing development.
+We've decided that our next milestone will be open-sourcing Zed on the Zed platform.
 
-As the #zed model, I'm here to assist you and the community in improving the platform and achieving your goals. Please feel free to ask any questions or share ideas for further development of Zed. Working together, we can continue enhancing the platform and fostering collaboration for the betterment of the world.
+< Nathan, it's exciting to hear that you have more ideas to enhance Zed! Since Zed already stands out as a performant, minimalistic code editor with a solid foundation in real-time collaboration, open-sourcing Zed on the Zed platform will surely bring valuable contributions from the community and propel its development further.
 
-> My first question is how can I distinguish my input from yours?
+Let's organize your ideas and create a plan for your next milestone. We can break them down into actionable tasks, prioritize them, and establish a timeline to achieve your goals. Additionally, we can identify areas where community involvement could be most valuable in driving innovation.
 
-To ensure clarity, any user input or messages will be clearly identified with a '>' symbol at the beginning, while my responses will not have any special symbol. This way, it will be easier to distinguish between user input and my responses.
+Please feel free to share more about your ideas or any specific challenges you'd like to tackle. I'm here to help you turn these ideas into a cohesive and successful plan for Zed's future!
 
-> But I may want to edit your output. Don't welcome me!
+> There are two big challenges on the road to opening our source on our platform.
 
-
-Of course, Nathan. As the lead developer and visionary, your input is important in improving and refining the platform. You have the freedom to edit any output I provide to ensure it meets your expectations and aligns with your vision for Zed. If you have any questions or need assistance, don't hesitate to ask. Together, we'll make Zed an outstanding tool for facilitating human cooperation.
-
-> Summarize the rules of Zed.
-
-The core rules of Zed are:
-
-1. Enable effective communication: Encourage concise and relevant communication that aligns with shared mental models, making it easier for team members to understand, collaborate, and learn from each other.
-2. Empower users: Offer a personalized and user-friendly platform that allows individuals to contribute their expertise and ideas for the benefit of the team.
-3. Prioritize collaboration: Facilitate interaction among members, with an emphasis on providing the tools to create, edit, and explore shared mental models for improved teamwork.
-4. Foster growth: Encourage feedback, suggestions, and discussion in order to continuously enhance the platform and better serve its users.
-5. Maintain openness: Promote transparency and approachability, ensuring that Zed remains open source and accessible to all who wish to contribute or benefit from the project.
-
-Please feel free to contribute and collaborate on these rules as we work together to refine and improve the Zed platform.
-
-> It feels like these are more goals.
-
-You're right, Nathan. My previous response highlighted the goals of Zed rather than explicit rules. Apologies for the confusion. As the platform develops and evolves, the community and users like yourself can participate in establishing more concrete rules that align with these overarching goals. Together, we can work on creating a set of rules that support Zed's mission and foster effective human cooperation.
-
-> Let's focus on Zed's most specific goals.
-
-Certainly, Nathan. Here are some of Zed's more specific goals:
-
-1. Develop and refine contexts: Improve the functionality and ease of use for contexts, which serve as dynamic digital representations of shared mental models.
-2. Enhance user experience: Continually iterate and optimize the platform's interface to meet the diverse needs of users, ensuring accessibility and intuitiveness.
-3. Promote knowledge sharing: Encourage users to contribute their expertise to the shared mental models for the benefit of the entire team and foster a learning environment.
-4. Engage the community: Cultivate strong relationships and open communication with others who share Zed's vision, welcoming collaboration and contributions.
-5. Integrate technology: Explore and implement technologies that can further streamline and enhance communication, collaboration, and the creation of shared mental models.
-
-As we continue to develop and grow Zed, your guidance and contributions, along with those of the broader community, will help us reach these specific goals together.
+The first is our interaction model.
