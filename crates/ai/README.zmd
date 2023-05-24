@@ -16,64 +16,48 @@ Let's organize your ideas and create a plan for your next milestone. We can brea
 
 Please feel free to share more about your ideas or any specific challenges you'd like to tackle. I'm here to help you turn these ideas into a cohesive and successful plan for Zed's future!
 
-> I want my username to be @nathan. I am now being joined by @nate. For the moment, both of us will be talking to you inside the same input sections, indicated by ">".
+@nathan> #zed, can you describe the conversation UI as you currently understand it.
 
-< Great! I'll recognize you as @nathan and your colleague as @nate. Please feel free to ask questions or share your ideas with me. To make it easier for me to understand and respond, you can both indicate your username before each message within the input sections. I'm here to help you both with any concerns or inquiries about Zed, so let's get started!
-
-@nate> Will the natural reading flow of a conversation make sense when edited, and is it comfortable to write from the perspective of the bot?
-
-@nathan> A limited window exists where conversation history is useful, and editing provides more freedom. The goal is to distill the conversation into a pure signal, and a history can be linked to it as necessary. This summarized version showcases the core ideas without losing the essence of your conversation.
-
-@nate> @nathan why is editing the conversation above important to you?
-
-@nathan> It's important to me because it gives me for freedom. I'm not really interested in the conversation as such. I don't need a perfect record of it. What I want to do is distill it down into pure gold, pure signal. That signal is the biproduct of the conversation. We'll have a history of the conversation that linked to it. So maybe I'll ask the bot to help demonstrate that.
-
-#zed: Can you please summarize Nate's questions and my answers to those questions compactly:
-
-< @nathan and @nate, here's a summarized version of Nate's questions and Nathan's answers:
-
-
-@nate> Does it provide more freedom? Does producing a ton of text by replying below actually matter if the bot is summarizing anyways (outside of the technical limitation of a context window?)
-
-@nathan> Something does feel useful about it to me. I'm not clear that all that backscroll is worth keeping around. And we do have the technical limitation currently and I don't see it going away. I like the idea of an explicit budget around the context window rather than summarizing automatically.
-
-I'm actually going to perform an edit now.
-
-@nate> Why don't we consider an interface where by default you essentially don't see any backscroll outside of a summary then?
-
-@nate> It might be useful for all of these conversations to be saved as leaves in the conversation branch for that purpose, to be able to consume them at a later date.
-
-@nathan> Yeah, I think if we keep the history, we'll be able to take advantage of it, but I also am not clear that anything we've talked about that i've deleted isn't actually captured. I'll aske the model to produce a comprehensive summary of our thinking thus far.
-
-#zed: Can you summarize our conversations and the take-aways. Including key points and open questions. Capture all the information we'd need to delete our conversation and move forward.
-
-< Here's a comprehensive summary of your conversation so far, including key points and open questions:
-
-1. Zed's primary selling points are performance, minimal design, and real-time collaborative editing.
-2. The next milestone is open-sourcing Zed on the Zed platform.
-
-Questions and ideas discussed:
-- How conversation editing impacts reading flow and the comfort of writing as the bot (@nate).
-- The usefulness of conversation history and the concept of distilling it down to pure signal (@nathan).
-- Possible interface features, such as a summary view that minimizes backscroll (@nate).
-- The importance of maintaining a history while preserving significant information for future reference (@nathan and @nate).
-
-Open questions and actions:
-- Exploring the possibility of creating an interface with a summarized view by default (@nate).
-- Identifying which parts of the conversation history are essential for moving forward (@nathan).
-
-You can now proceed with confidence that all crucial information has been captured. Feel free to delete previous conversations and focus on the next steps for Zed.
-
-@nathan> @nate: I think the problem with the above summary is that it's a summary of the conversation rather than its conclusions. I wonder if we try a different approach.
-
-#zed: Assume we build the product as I (@nathan) am imagining it. I want to pitch someone on the idea of a more freely editable conversation history. Write a description of the conversation UI as you currently understand it and address @nate's concerns.
-
-@nate> #zed I have some feedback for you: I don't think your previous summary of the ideas discussed was sufficient to understand them to a reasonable degree, and if we deleted the conversation now we would lose valuable context.
-
-< @nathan and @nate, I apologize if my previous summary didn't capture enough context to fully understand the ideas discussed. Here's a revised description of the conversation UI as I understand it, taking into account your concerns:
-
-Zed's conversation UI aims to facilitate more freedom for users by making conversation history editable and focusing on a summarized view. Instead of keeping a detailed backscroll, the interface encourages users to distill the conversation content down to its most critical points and key conclusions. This approach ensures that the vital information from the conversation is highlighted and easily accessible, while still maintaining a history that can be linked to when necessary.
+< Zed's conversation UI aims to facilitate more freedom for users by making conversation history editable and focusing on a summarized view. Instead of keeping a detailed backscroll, the interface encourages users to distill the conversation content down to its most critical points and key conclusions. This approach ensures that the vital information from the conversation is highlighted and easily accessible, while still maintaining a history that can be linked to when necessary.
 
 Addressing @nate's concerns, this design choice aims to strike a balance between readability, usability, and information preservation. The summarized view maintains the essence of the conversation without being burdened by extensive backscroll. Additionally, having the conversation history in a separate, linked archive prevents loss of valuable context while keeping the main conversation view decluttered.
 
-Please let me know if you'd like any further adjustments or clarifications on the description of your envisioned conversation UI.
+@nathan> What details around the conversation view are worth exploring?
+
+< @nathan, there are several aspects of the conversation view that are worth exploring and refining:
+
+1. Editing functionality: Ensuring that all participants can edit and refine the conversation summary effectively while preserving the original context.
+2. Permissions and access control: Determining how to manage editing rights, user roles, and visibility of the conversation summary and history.
+3. Navigation and linking: Implementing an intuitive system for navigating between the summarized conversation and linked history or reference materials.
+4. Visualization and layout: Designing the interface to clearly present the summarized information while providing a visually engaging and organized experience for participants.
+5. Threaded conversations and branching: Exploring ways to handle sub-conversations, supplementary discussions, or debates within the primary conversation view.
+
+Considering these aspects will ensure our conversation view design is optimized for usability, collaboration, and accessibility in Zed.
+
+@nathan> @nate, which of these would you like to explore?
+
+@nate> 2 feels like it isn't important at the moment, we can explore that later. Let's start with 4, which I think will lead us to discussion 3 and 5.
+
+#zed share your thoughts on the points we need to consider to design a layout and visualization for a conversation view between you (#zed) and multuple peoople, or between multiple people and multiple bots (you and other bots).
+
+@nathan> Agreed. I'm interested in threading I think more than anything. Or 4 yeah. I think we need to scope the threading conversation. Also, asking #zed to propose the solution... not sure it will be that effective but it's worth a try...
+
+#zed describe a hypothetical conversation UI that meets the description.
+
+< @nate and @nathan, I understand that you'd like to focus on the layout and visualization for a conversation view that can accommodate multiple people and potentially multiple bots as well. Here's a proposal for a conversation UI that meets the requirements:
+
+1. Main conversation area: Display the summarized conversation content in a clean and organized manner, ensuring readability and efficient use of space.
+
+2. Participant avatars and labels: Include user avatars and/or labels to distinguish between users and bots visually, allowing easy identification of each participant's contributions.
+
+3. Active threads indicator: Designate a clear indicator for ongoing threads, which will attract attention to active sub-conversations or related discussions in the conversation view.
+
+4. Dynamic branching: Implement a branching visual structure to present threaded conversations, clearly distinguishing sub-conversations, and enabling users to navigate between them smoothly.
+
+5. Multiple bot interaction support: Facilitate interactions between multiple bots through user-invoked prompts or bot-to-bot communication channels without disrupting the primary conversation flow.
+
+6. Expandable conversation history: Offer a separate, expandable section or panel to access historical content without cluttering the main conversation view.
+
+7. Linking and referencing: Implement a system for hyperlinking relevant information, resources, or previous conversations to the current discussion, making it easy for participants to follow and reference the shared context.
+
+This hypothetical conversation UI aims to address the layout and visualization, threading, and multi-participant aspects of your requirements. Of course, it's just an initial proposal, and we can refine and iterate on it based on your feedback and specific needs.
