@@ -18,7 +18,7 @@ sqlez = { path = "../sqlez" }
 sqlez_macros = { path = "../sqlez_macros" }
 util = { path = "../util" }
 anyhow.workspace = true
-indoc = "1.0.4"
+indoc.workspace = true
 async-trait.workspace = true
 lazy_static.workspace = true
 log.workspace = true

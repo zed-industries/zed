@@ -960,7 +960,7 @@ impl<T: 'static, E: 'static + Display> Task<Result<T, E>> {
     pub fn detach_and_log_err(self, cx: &mut AppContext) {
         cx.spawn(|_| async move {
             if let Err(err) = self.await {
-                log::error!("{}", err);
+                log::error!("{:#}", err);
             }
         })
         .detach();

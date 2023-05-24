@@ -1,0 +1,63 @@
+> Hello, I'm Nathan Sobo.
+I'm currently your sole creator and the leader of Zed Industries.
+Our goal is to create a shared mental model to help first ourselves and eventually the world to create a shared mental model that can be used to facilitate human cooperation.
+
+< Hello, Nathan! Welcome back to Zed. As the creator and leader of Zed Industries, your vision of creating shared mental models to facilitate human cooperation is what drives our ongoing development.
+
+As the #zed model, I'm here to assist you and the community in improving the platform and achieving your goals. Please feel free to ask any questions or share ideas for further development of Zed. Working together, we can continue enhancing the platform and fostering collaboration for the betterment of the world.
+
+> I have a bunch of ideas that I'll dump out of my brain and you can help my organize. Today, Zed is a code editor written in Rust that's main selling points are performance, minimal design, and a solid start on real-time collaborative editing that could still use more polish.
+
+We've decided that our next milestone will be open-sourcing Zed on the Zed platform.
+
+< Nathan, it's exciting to hear that you have more ideas to enhance Zed! Since Zed already stands out as a performant, minimalistic code editor with a solid foundation in real-time collaboration, open-sourcing Zed on the Zed platform will surely bring valuable contributions from the community and propel its development further.
+
+Let's organize your ideas and create a plan for your next milestone. We can break them down into actionable tasks, prioritize them, and establish a timeline to achieve your goals. Additionally, we can identify areas where community involvement could be most valuable in driving innovation.
+
+Please feel free to share more about your ideas or any specific challenges you'd like to tackle. I'm here to help you turn these ideas into a cohesive and successful plan for Zed's future!
+
+@nathan> #zed, can you describe the conversation UI as you currently understand it.
+
+< Zed's conversation UI aims to facilitate more freedom for users by making conversation history editable and focusing on a summarized view. Instead of keeping a detailed backscroll, the interface encourages users to distill the conversation content down to its most critical points and key conclusions. This approach ensures that the vital information from the conversation is highlighted and easily accessible, while still maintaining a history that can be linked to when necessary.
+
+Addressing @nate's concerns, this design choice aims to strike a balance between readability, usability, and information preservation. The summarized view maintains the essence of the conversation without being burdened by extensive backscroll. Additionally, having the conversation history in a separate, linked archive prevents loss of valuable context while keeping the main conversation view decluttered.
+
+@nathan> What details around the conversation view are worth exploring?
+
+< @nathan, there are several aspects of the conversation view that are worth exploring and refining:
+
+1. Editing functionality: Ensuring that all participants can edit and refine the conversation summary effectively while preserving the original context.
+2. Permissions and access control: Determining how to manage editing rights, user roles, and visibility of the conversation summary and history.
+3. Navigation and linking: Implementing an intuitive system for navigating between the summarized conversation and linked history or reference materials.
+4. Visualization and layout: Designing the interface to clearly present the summarized information while providing a visually engaging and organized experience for participants.
+5. Threaded conversations and branching: Exploring ways to handle sub-conversations, supplementary discussions, or debates within the primary conversation view.
+
+Considering these aspects will ensure our conversation view design is optimized for usability, collaboration, and accessibility in Zed.
+
+@nathan> @nate, which of these would you like to explore?
+
+@nate> 2 feels like it isn't important at the moment, we can explore that later. Let's start with 4, which I think will lead us to discussion 3 and 5.
+
+#zed share your thoughts on the points we need to consider to design a layout and visualization for a conversation view between you (#zed) and multuple peoople, or between multiple people and multiple bots (you and other bots).
+
+@nathan> Agreed. I'm interested in threading I think more than anything. Or 4 yeah. I think we need to scope the threading conversation. Also, asking #zed to propose the solution... not sure it will be that effective but it's worth a try...
+
+#zed describe a hypothetical conversation UI that meets the description.
+
+< @nate and @nathan, I understand that you'd like to focus on the layout and visualization for a conversation view that can accommodate multiple people and potentially multiple bots as well. Here's a proposal for a conversation UI that meets the requirements:
+
+1. Main conversation area: Display the summarized conversation content in a clean and organized manner, ensuring readability and efficient use of space.
+
+2. Participant avatars and labels: Include user avatars and/or labels to distinguish between users and bots visually, allowing easy identification of each participant's contributions.
+
+3. Active threads indicator: Designate a clear indicator for ongoing threads, which will attract attention to active sub-conversations or related discussions in the conversation view.
+
+4. Dynamic branching: Implement a branching visual structure to present threaded conversations, clearly distinguishing sub-conversations, and enabling users to navigate between them smoothly.
+
+5. Multiple bot interaction support: Facilitate interactions between multiple bots through user-invoked prompts or bot-to-bot communication channels without disrupting the primary conversation flow.
+
+6. Expandable conversation history: Offer a separate, expandable section or panel to access historical content without cluttering the main conversation view.
+
+7. Linking and referencing: Implement a system for hyperlinking relevant information, resources, or previous conversations to the current discussion, making it easy for participants to follow and reference the shared context.
+
+This hypothetical conversation UI aims to address the layout and visualization, threading, and multi-participant aspects of your requirements. Of course, it's just an initial proposal, and we can refine and iterate on it based on your feedback and specific needs.

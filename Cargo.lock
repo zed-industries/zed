@@ -96,6 +96,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "collections",
+ "editor",
+ "futures 0.3.28",
+ "gpui",
+ "isahc",
+ "serde",
+ "serde_json",
+ "util",
+]
+
+[[package]]
 name = "alacritty_config"
 version = "0.1.1-dev"
 source = "git+https://github.com/zed-industries/alacritty?rev=a51dbe25d67e84d6ed4261e640d3954fbdd9be45#a51dbe25d67e84d6ed4261e640d3954fbdd9be45"
@@ -8762,6 +8778,7 @@ name = "zed"
 version = "0.88.0"
 dependencies = [
  "activity_indicator",
+ "ai",
  "anyhow",
  "assets",
  "async-compression",

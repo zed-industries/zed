@@ -48,6 +48,7 @@ language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
 lsp_log = { path = "../lsp_log" }
 node_runtime = { path = "../node_runtime" }
+ai = { path = "../ai" }
 outline = { path = "../outline" }
 plugin_runtime = { path = "../plugin_runtime" }
 project = { path = "../project" }
@@ -81,7 +82,7 @@ futures.workspace = true
 ignore = "0.4"
 image = "0.23"
 indexmap = "1.6.2"
-isahc = "1.7"
+isahc.workspace = true
 lazy_static.workspace = true
 libc = "0.2"
 log.workspace = true

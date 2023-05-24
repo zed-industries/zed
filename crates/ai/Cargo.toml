@@ -1,0 +1,25 @@
+[package]
+name = "ai"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/ai.rs"
+doctest = false
+
+[dependencies]
+assets = { path = "../assets"}
+collections = { path = "../collections"}
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+util = { path = "../util" }
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+isahc.workspace = true
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
