@@ -236,7 +236,8 @@ impl TerminalPanel {
                         Box::new(cx.add_view(|cx| {
                             TerminalView::new(terminal, workspace.database_id(), cx)
                         }));
-                    Pane::add_item(workspace, &pane, terminal, true, true, None, cx);
+                    let focus = pane.read(cx).has_focus();
+                    Pane::add_item(workspace, &pane, terminal, true, focus, None, cx);
                 }
             })?;
             this.update(&mut cx, |this, cx| this.serialize(cx))?;
