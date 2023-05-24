@@ -423,6 +423,16 @@ impl View for Dock {
             Empty::new().into_any()
         }
     }
+
+    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            if let Some(active_entry) = self.active_entry() {
+                cx.focus(active_entry.panel.as_any());
+            } else {
+                cx.focus_parent();
+            }
+        }
+    }
 }
 
 impl PanelButtons {
