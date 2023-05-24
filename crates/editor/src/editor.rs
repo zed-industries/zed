@@ -7231,7 +7231,7 @@ impl View for Editor {
         false
     }
 
-    fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
+    fn update_keymap_context(&self, keymap: &mut KeymapContext, cx: &AppContext) {
         Self::reset_to_default_keymap_context(keymap);
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -7249,6 +7249,15 @@ impl View for Editor {
         }
         for layer in self.keymap_context_layers.values() {
             keymap.extend(layer);
+        }
+
+        if let Some(extension) = self
+            .buffer
+            .read(cx)
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file()?.path().extension()?.to_str())
+        {
+            keymap.add_key("extension", extension.to_string());
         }
     }
 

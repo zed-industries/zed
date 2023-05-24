@@ -164,7 +164,7 @@
     "bindings": {
       "enter": "editor::Newline",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "cmd-enter": "ai::Assist",
+      "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
       "cmd-f": [
         "buffer_search::Deploy",
@@ -181,6 +181,12 @@
       "alt-\\": "copilot::Suggest",
       "alt-]": "copilot::NextSuggestion",
       "alt-[": "copilot::PreviousSuggestion"
+    }
+  },
+  {
+    "context": "Editor && extension == zmd",
+    "bindings": {
+      "cmd-enter": "ai::Assist"
     }
   },
   {
