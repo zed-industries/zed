@@ -164,8 +164,6 @@ impl Assistant {
             let snapshot = buffer.snapshot(cx); // Take a new snapshot after editing.
             let insertion_site = snapshot.anchor_after(snapshot.len() - 2);
 
-            println!("{}", user_message);
-
             (user_message, insertion_site)
         });
 
@@ -189,8 +187,6 @@ impl Assistant {
                         "\n\nAlso consider the following user-defined system prompt:\n\n",
                     );
                     // TODO: Replace this with our file system trait object.
-                    // What you could bind dependencies on an action when you bind it?.
-                    dbg!("reading from {:?}", &custom_system_message_path);
                     system_message.push_str(
                         &cx.background()
                             .spawn(async move { fs::read_to_string(custom_system_message_path) })
@@ -317,6 +313,3 @@ async fn stream_completion(
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {}
