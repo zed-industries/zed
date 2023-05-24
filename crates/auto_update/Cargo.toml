@@ -19,7 +19,7 @@ theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 anyhow.workspace = true
-isahc = "1.7"
+isahc.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 serde.workspace = true

@@ -189,6 +189,12 @@
     }
   },
   {
+    "context": "Editor && extension == zmd",
+    "bindings": {
+      "cmd-enter": "ai::Assist"
+    }
+  },
+  {
     "context": "Editor && mode == auto_height",
     "bindings": {
       "alt-enter": "editor::Newline",
