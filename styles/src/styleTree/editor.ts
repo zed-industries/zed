@@ -3,7 +3,7 @@ import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import { SyntaxHighlightStyle, buildSyntax } from "../themes/common/syntax"
+import { buildSyntax } from "../themes/common/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
     const { isLight } = colorScheme
@@ -103,7 +103,7 @@ export default function editor(colorScheme: ColorScheme) {
                 ? colorScheme.ramps.red(0.5).hex()
                 : colorScheme.ramps.red(0.4).hex(),
             modified: isLight
-                ? colorScheme.ramps.yellow(0.3).hex()
+                ? colorScheme.ramps.yellow(0.5).hex()
                 : colorScheme.ramps.yellow(0.5).hex(),
             inserted: isLight
                 ? colorScheme.ramps.green(0.4).hex()
@@ -244,12 +244,12 @@ export default function editor(colorScheme: ColorScheme) {
             thumb: {
                 background: withOpacity(background(layer, "inverted"), 0.3),
                 border: {
-                        width: 1,
-                        color: borderColor(layer, "variant"),
-                        top: false,
-                        right: true,
-                        left: true,
-                        bottom: false,
+                    width: 1,
+                    color: borderColor(layer, "variant"),
+                    top: false,
+                    right: true,
+                    left: true,
+                    bottom: false,
                 }
             },
             git: {
