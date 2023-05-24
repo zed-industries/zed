@@ -16,6 +16,55 @@ Let's organize your ideas and create a plan for your next milestone. We can brea
 
 Please feel free to share more about your ideas or any specific challenges you'd like to tackle. I'm here to help you turn these ideas into a cohesive and successful plan for Zed's future!
 
-> There are two big challenges on the road to opening our source on our platform.
+> I want my username to be @nathan. I am now being joined by @nate. For the moment, both of us will be talking to you inside the same input sections, indicated by ">".
 
-The first is our interaction model.
+< Great! I'll recognize you as @nathan and your colleague as @nate. Please feel free to ask questions or share your ideas with me. To make it easier for me to understand and respond, you can both indicate your username before each message within the input sections. I'm here to help you both with any concerns or inquiries about Zed, so let's get started!
+
+@nathan> Our first priority is to move beyond this simple text based approach to conversation to something a bit more structured. We still want freedom to be able to go back and edit text, and we have a sophisticated version control system that can enable arbitrary branching. What we need is a good way to visualize it. I'm thinking of a very lightweight presentation that uses typography and spacing to denote different sections. I don't want a "chat input" at the bottom of the screen. Instead, I want to be able to put my cursor at an arbitrary place in the document and just start typing, even if it's someone else's message. It will still show it as their message, but maybe add my avatar, or provide some kind of indication that the message is jointly composed by multiple people.
+
+@nathan< That's an interesting idea for enhancing collaboration in Zed! By moving beyond the simple text-based approach, you're allowing users to have a more interactive and fluid experience. A lightweight presentation that utilizes typography and spacing to denote different sections will keep the interface clean and visually appealing. Allowing users to edit text anywhere within the document and showing joint contributions with avatars or other indicators will promote real-time collaboration and shared ownership of the content.
+
+To implement this, you could start by designing a mock-up of the intended interface to visualize how these elements would look together. Then, work on adjusting the existing editor to support the required functionality, ensuring that the version control system can handle the new interaction patterns and branching. Engaging the community for feedback and suggestions throughout the process will be invaluable in refining the idea and ensuring it meets users' needs.
+
+@nathan>
+Here's a text based mockup
+
+@nathan   Hey, what do you think of this simple format? The text to the left
+9:30am    won't be editable, but this text will be.
+
+#zed      That's an interesting approach, it clearly shows the structure of
+          requests and replies, without introducing much additional visual noise. It still feels natural to move your cursor between them and
+          make edits.
+
+@nathan< Your text-based mockup showcases a clean and simple format for the intended collaboration. By including the username, timestamp, and preserving the text layout, you've created a recognizable structure that doesn't disrupt the reading flow. It maintains the editing experience while providing an additional layer of information.
+
+To move forward with this idea, you can develop a prototype that translates this text-based mockup into a functional interface in Zed. By utilizing the existing version control system and ensuring seamless synchronization among collaborators, you'll establish a consistent editing experience. Once the prototype is functional, you can gather feedback from the community and iterate as needed to refine your approach.
+
+Additionally, you may want to consider how to handle situations where multiple users edit the same section simultaneously to prevent conflicts and maintain a smooth editing experience. Feel free to share any further ideas or concerns, and I'll be happy to assist you in their development!
+
+@nate> Can you propose a few ways we could clearly show when someone else has edited a message? Also, how would you know that someone above had edited a message? Is there a branch of the entire document? Consider unconventional approaches as well as more common ones.
+
+@nate< You might explore:
+
+@nate< There are several ways to indicate when someone else has edited. Some approaches include:
+
+1. **Avatar overlays**: Display small avatars of the contributors near the edited text to show who has made changes. This can be a series of stacked avatars or icons forming a trail alongside the changed content.
+
+2. **Color-coding**: Assign each user a unique color. When a user edits text, their changes are highlighted in their associated color, making it clear who made the changes.
+
+3. **Revision history**: Integrate a revision history feature that allows users to see the entire modification history of a message. This could be accessed via a button, hover tooltip, or keyboard command showing all revisions and their authors.
+
+4. **Breadcrumbs**: In more unconventional approaches, you might explore visual cues such as time-based trails or animated effects to indicate recent changes. For instance, an animation of "ripple effect" when someone edits text, shortly displaying an associated avatar or username, and then fading away.
+
+As for knowing when someone above has edited a message, you could:
+
+1. Implement a notification system that alerts users when a specific message they've contributed to has been edited by another user.
+
+2. Use visual indicators such as a vertical branch or line connecting the original message with the edited message to form a clear link between them.
+
+3. Create a real-time editing log that shows a summary of recent changes in a designated location, which users can reference to stay informed about alterations made in the document.
+
+Remember that implementing these features will require careful consideration of the existing layout, version control system, and potential collaboration challenges. Once you have decided on one or more approaches, I recommend creating a prototype and gathering feedback from the community for continuous improvement.
+
+
+@nathan> I'm interested in adding nested structure to the document as well. Our version control system
