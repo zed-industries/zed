@@ -15,8 +15,8 @@ use gpui::{
     geometry::vector::Vector2F,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelHandle, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelHandle,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -1507,8 +1507,8 @@ impl workspace::dock::Panel for ProjectPanel {
         "icons/folder_tree_16.svg"
     }
 
-    fn icon_tooltip(&self) -> String {
-        "Project Panel".into()
+    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
+        ("Project Panel".into(), Some(Box::new(ToggleFocus)))
     }
 
     fn should_change_position_on_event(event: &Self::Event) -> bool {

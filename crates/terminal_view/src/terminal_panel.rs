@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, anyhow::Result, elements::*, serde_json, AppContext, AsyncAppContext, Entity,
+    actions, anyhow::Result, elements::*, serde_json, Action, AppContext, AsyncAppContext, Entity,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use project::Fs;
@@ -365,8 +365,8 @@ impl Panel for TerminalPanel {
         "icons/terminal_12.svg"
     }
 
-    fn icon_tooltip(&self) -> String {
-        "Terminal Panel".into()
+    fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
+        ("Terminal Panel".into(), Some(Box::new(ToggleFocus)))
     }
 
     fn icon_label(&self, cx: &WindowContext) -> Option<String> {

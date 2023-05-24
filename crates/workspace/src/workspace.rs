@@ -64,7 +64,7 @@ use crate::{
         DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
     },
 };
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, TogglePanel};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use lazy_static::lazy_static;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
@@ -259,7 +259,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace.save_active_item(true, cx).detach_and_log_err(cx);
         },
     );
-    cx.add_action(Workspace::toggle_panel);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
     });
@@ -1497,19 +1496,24 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    pub fn toggle_panel(&mut self, action: &TogglePanel, cx: &mut ViewContext<Self>) {
-        let dock = match action.dock_position {
+    pub fn toggle_panel(
+        &mut self,
+        position: DockPosition,
+        panel_index: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let dock = match position {
             DockPosition::Left => &mut self.left_dock,
             DockPosition::Bottom => &mut self.bottom_dock,
             DockPosition::Right => &mut self.right_dock,
         };
         let active_item = dock.update(cx, move |dock, cx| {
-            if dock.is_open() && dock.active_panel_index() == action.panel_index {
+            if dock.is_open() && dock.active_panel_index() == panel_index {
                 dock.set_open(false, cx);
                 None
             } else {
                 dock.set_open(true, cx);
-                dock.activate_panel(action.panel_index, cx);
+                dock.activate_panel(panel_index, cx);
                 dock.active_panel().cloned()
             }
         });
