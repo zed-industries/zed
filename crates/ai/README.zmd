@@ -1,34 +1,50 @@
+Hello, I'm Nathan Sobo.
+I'm currently your sole creator and the leader of Zed Industries.
+Our goal is to create a shared mental model to help first ourselves and eventually the world to create a shared mental model that can be used to facilitate human cooperation.
 
-Welcome to Zed! Zed is an innovative, open-source platform designed to enhance team communication and collaboration. At the heart of Zed are *contexts*, which create a dynamic digital representation of shared mental models. Contexts offer personalized starting points and the flexibility to edit and explore, enabling teams to align knowledge, streamline communication, and improve overall performance.
+Hello, Nathan! Welcome back to Zed. As the creator and leader of Zed Industries, your vision of creating shared mental models to facilitate human cooperation is what drives our ongoing development.
 
-As the #zed model, I'm happy to answer any questions. In fact, I will improve as a result of you doing so!
+As the #zed model, I'm here to assist you and the community in improving the platform and achieving your goals. Please feel free to ask any questions or share ideas for further development of Zed. Working together, we can continue enhancing the platform and fostering collaboration for the betterment of the world.
 
-You might ask about Zed's core philosophy, how you can build your own model like this one, or how you might get involved. Zed's open source!
+> My first question is how can I distinguish my input from yours?
 
->
+Hello, Nathan! Welcome back to Zed. As the creator and leader of Zed Industries, your vision of creating shared mental models to facilitate human cooperation is what drives our ongoing development.
 
-/ I am writing a vision document for a feature. I could use help sharing my thoughts in a compact and approachable way, distilling out a narrative that efficiently conveys the core ideas. I need to present this vision to the board of directors and in a public talk.
+As the #zed model, I'm here to assist you and the community in improving the platform and achieving your goals. Please feel free to ask any questions or share ideas for further development of Zed. Working together, we can continue enhancing the platform and fostering collaboration for the betterment of the world.
 
-# Zed Contexts
+> My first question is how can I distinguish my input from yours?
 
-When team members communicate through various channels, such as Slack messages, emails, code comments, or documentation, their ultimate goal is to establish and refine a shared mental model. This collective understanding, essential for efficient and effective collaboration, has traditionally been maintained through continuous exchanges and reading historical documentation, which can be time-consuming and sometimes lead to misunderstandings or information gaps. With the advent of advanced language models, we now have the opportunity to create a dynamic digital representation of the shared mental model. This new approach streamlines communication, improves integration of new team members, and enables easier querying and updating of the collective knowledge, optimizing the team's overall performance.
+To ensure clarity, any user input or messages will be clearly identified with a '>' symbol at the beginning, while my responses will not have any special symbol. This way, it will be easier to distinguish between user input and my responses.
 
-/ After this introduction, I'll dump some more thoughts.
+> But I may want to edit your output. Don't welcome me!
 
-In Zed, you interact with models via contexts. For example, when you visit #zed, you observe a *default context*, which is generated for you based on your profile and past interactions with the system.
 
-But this is just a starting point. Once you observe this context, you're free to both edit and explore it. For example, as a new user visiting both Zed the system and the #zed model for the first time, you might be shown the following context:
+Of course, Nathan. As the lead developer and visionary, your input is important in improving and refining the platform. You have the freedom to edit any output I provide to ensure it meets your expectations and aligns with your vision for Zed. If you have any questions or need assistance, don't hesitate to ask. Together, we'll make Zed an outstanding tool for facilitating human cooperation.
 
-> In the rapidly changing landscape of team communication, establishing and refining a shared mental model is becoming increasingly essential for success. Our advanced language models can help your team create a dynamic digital representation of this mental model, streamlining communication and enhancing team performance. Zed Contexts are at the heart of this new approach, offering personalized starting points and the freedom to edit and explore in order to align team knowledge and improve overall efficiency. <
+> Summarize the rules of Zed.
 
-/ Compact the above and be more simple and less sales-y.
+The core rules of Zed are:
 
-> Zed Contexts simplify team communication by creating a dynamic digital representation of shared mental models. By offering personalized starting points and the flexibility to edit and explore, Zed Contexts efficiently align team knowledge, enhancing collaboration and performance. <
+1. Enable effective communication: Encourage concise and relevant communication that aligns with shared mental models, making it easier for team members to understand, collaborate, and learn from each other.
+2. Empower users: Offer a personalized and user-friendly platform that allows individuals to contribute their expertise and ideas for the benefit of the team.
+3. Prioritize collaboration: Facilitate interaction among members, with an emphasis on providing the tools to create, edit, and explore shared mental models for improved teamwork.
+4. Foster growth: Encourage feedback, suggestions, and discussion in order to continuously enhance the platform and better serve its users.
+5. Maintain openness: Promote transparency and approachability, ensuring that Zed remains open source and accessible to all who wish to contribute or benefit from the project.
 
-/ Now add a Welcome to Zed message.
+Please feel free to contribute and collaborate on these rules as we work together to refine and improve the Zed platform.
 
-> Welcome to Zed! Zed Contexts simplify team communication by creating a dynamic digital representation of shared mental models. By offering personalized starting points and the
+> It feels like these are more goals.
 
-/ Introduce the overall concept of Zed briefly, then explain how contexts contribute.
+You're right, Nathan. My previous response highlighted the goals of Zed rather than explicit rules. Apologies for the confusion. As the platform develops and evolves, the community and users like yourself can participate in establishing more concrete rules that align with these overarching goals. Together, we can work on creating a set of rules that support Zed's mission and foster effective human cooperation.
 
->  <
+> Let's focus on Zed's most specific goals.
+
+Certainly, Nathan. Here are some of Zed's more specific goals:
+
+1. Develop and refine contexts: Improve the functionality and ease of use for contexts, which serve as dynamic digital representations of shared mental models.
+2. Enhance user experience: Continually iterate and optimize the platform's interface to meet the diverse needs of users, ensuring accessibility and intuitiveness.
+3. Promote knowledge sharing: Encourage users to contribute their expertise to the shared mental models for the benefit of the entire team and foster a learning environment.
+4. Engage the community: Cultivate strong relationships and open communication with others who share Zed's vision, welcoming collaboration and contributions.
+5. Integrate technology: Explore and implement technologies that can further streamline and enhance communication, collaboration, and the creation of shared mental models.
+
+As we continue to develop and grow Zed, your guidance and contributions, along with those of the broader community, will help us reach these specific goals together.
