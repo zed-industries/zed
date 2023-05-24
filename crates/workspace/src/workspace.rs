@@ -64,7 +64,7 @@ use crate::{
         DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
     },
 };
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, TogglePanel};
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use lazy_static::lazy_static;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
@@ -103,6 +103,21 @@ pub trait Modal: View {
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
+#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleLeftDock {
+    pub focus: bool,
+}
+
+#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleBottomDock {
+    pub focus: bool,
+}
+
+#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleRightDock {
+    pub focus: bool,
+}
+
 actions!(
     workspace,
     [
@@ -118,9 +133,6 @@ actions!(
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
-        ToggleLeftDock,
-        ToggleRightDock,
-        ToggleBottomDock,
         NewTerminal,
         ToggleTerminalFocus,
         NewSearch,
@@ -132,6 +144,11 @@ actions!(
 );
 
 actions!(zed, [OpenSettings]);
+
+impl_actions!(
+    workspace,
+    [ToggleLeftDock, ToggleBottomDock, ToggleRightDock]
+);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -242,21 +259,20 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace.save_active_item(true, cx).detach_and_log_err(cx);
         },
     );
-    cx.add_action(Workspace::toggle_panel);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
     });
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
-        workspace.toggle_dock(DockPosition::Left, cx);
+    cx.add_action(|workspace: &mut Workspace, action: &ToggleLeftDock, cx| {
+        workspace.toggle_dock(DockPosition::Left, action.focus, cx);
     });
-    cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
-        workspace.toggle_dock(DockPosition::Right, cx);
+    cx.add_action(|workspace: &mut Workspace, action: &ToggleRightDock, cx| {
+        workspace.toggle_dock(DockPosition::Right, action.focus, cx);
     });
-    cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
-        workspace.toggle_dock(DockPosition::Bottom, cx);
+    cx.add_action(|workspace: &mut Workspace, action: &ToggleBottomDock, cx| {
+        workspace.toggle_dock(DockPosition::Bottom, action.focus, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
@@ -1455,36 +1471,49 @@ impl Workspace {
         }
     }
 
-    pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
+    pub fn toggle_dock(
+        &mut self,
+        dock_side: DockPosition,
+        focus: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         let dock = match dock_side {
-            DockPosition::Left => &mut self.left_dock,
-            DockPosition::Bottom => &mut self.bottom_dock,
-            DockPosition::Right => &mut self.right_dock,
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
         };
         dock.update(cx, |dock, cx| {
             let open = !dock.is_open();
             dock.set_open(open, cx);
         });
 
-        self.serialize_workspace(cx);
-
-        cx.focus_self();
+        if dock.read(cx).is_open() && focus {
+            cx.focus(dock);
+        } else {
+            cx.focus_self();
+        }
         cx.notify();
+        self.serialize_workspace(cx);
     }
 
-    pub fn toggle_panel(&mut self, action: &TogglePanel, cx: &mut ViewContext<Self>) {
-        let dock = match action.dock_position {
+    pub fn toggle_panel(
+        &mut self,
+        position: DockPosition,
+        panel_index: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let dock = match position {
             DockPosition::Left => &mut self.left_dock,
             DockPosition::Bottom => &mut self.bottom_dock,
             DockPosition::Right => &mut self.right_dock,
         };
         let active_item = dock.update(cx, move |dock, cx| {
-            if dock.is_open() && dock.active_panel_index() == action.panel_index {
+            if dock.is_open() && dock.active_panel_index() == panel_index {
                 dock.set_open(false, cx);
                 None
             } else {
                 dock.set_open(true, cx);
-                dock.activate_panel(action.panel_index, cx);
+                dock.activate_panel(panel_index, cx);
                 dock.active_panel().cloned()
             }
         });
