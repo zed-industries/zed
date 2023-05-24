@@ -13,6 +13,7 @@ use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
 use std::{io, sync::Arc};
+use util::channel::{ReleaseChannel, RELEASE_CHANNEL};
 use util::{ResultExt, TryFutureExt};
 
 actions!(ai, [Assist]);
@@ -85,6 +86,10 @@ struct OpenAIChoice {
 }
 
 pub fn init(cx: &mut AppContext) {
+    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
+        return;
+    }
+
     let assistant = Rc::new(Assistant::default());
     cx.add_action({
         let assistant = assistant.clone();
