@@ -62,24 +62,42 @@ impl TerminalPanel {
                         item.handle.act_as::<TerminalView>(cx).is_some()
                     })
             });
-            pane.set_render_tab_bar_buttons(cx, move |_, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let this = weak_self.clone();
-                Pane::render_tab_bar_button(
-                    0,
-                    "icons/plus_12.svg",
-                    cx,
-                    move |_, cx| {
-                        let this = this.clone();
-                        cx.window_context().defer(move |cx| {
-                            if let Some(this) = this.upgrade(cx) {
-                                this.update(cx, |this, cx| {
-                                    this.add_terminal(&Default::default(), cx);
-                                });
-                            }
-                        })
-                    },
-                    None,
-                )
+                Flex::row()
+                    .with_child(Pane::render_tab_bar_button(
+                        0,
+                        "icons/plus_12.svg",
+                        Some((
+                            "New Terminal".into(),
+                            Some(Box::new(workspace::NewTerminal)),
+                        )),
+                        cx,
+                        move |_, cx| {
+                            let this = this.clone();
+                            cx.window_context().defer(move |cx| {
+                                if let Some(this) = this.upgrade(cx) {
+                                    this.update(cx, |this, cx| {
+                                        this.add_terminal(&Default::default(), cx);
+                                    });
+                                }
+                            })
+                        },
+                        None,
+                    ))
+                    .with_child(Pane::render_tab_bar_button(
+                        1,
+                        if pane.is_zoomed() {
+                            "icons/minimize_8.svg"
+                        } else {
+                            "icons/maximize_8.svg"
+                        },
+                        Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
+                        cx,
+                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                        None,
+                    ))
+                    .into_any()
             });
             pane
         });
