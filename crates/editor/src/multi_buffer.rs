@@ -1140,6 +1140,10 @@ impl MultiBuffer {
         let mut result = Vec::new();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         cursor.seek(&start, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
         while let Some(excerpt) = cursor.item() {
             if *cursor.start() > end {
                 break;
@@ -5072,16 +5076,19 @@ mod tests {
                     .read(cx)
                     .range_to_buffer_ranges(start_ix..end_ix, cx);
                 let excerpted_buffers_text = excerpted_buffer_ranges
-                    .into_iter()
+                    .iter()
                     .map(|(buffer, buffer_range)| {
                         buffer
                             .read(cx)
-                            .text_for_range(buffer_range)
+                            .text_for_range(buffer_range.clone())
                             .collect::<String>()
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
                 assert_eq!(excerpted_buffers_text, text_for_range);
+                if !expected_excerpts.is_empty() {
+                    assert!(!excerpted_buffer_ranges.is_empty());
+                }
 
                 let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
                 assert_eq!(
