@@ -1,10 +1,9 @@
 use std::borrow::Cow;
 
-use fs::repository::GitFileStatus;
 use gpui::{
     color::Color,
     elements::{
-        ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label, LabelStyle,
+        ConstrainedBox, Container, ContainerStyle, Empty, Flex, KeystrokeLabel, Label,
         MouseEventHandler, ParentElement, Stack, Svg,
     },
     fonts::TextStyle,
@@ -12,11 +11,11 @@ use gpui::{
     platform,
     platform::MouseButton,
     scene::MouseClick,
-    Action, AnyElement, Element, EventContext, MouseState, View, ViewContext,
+    Action, Element, EventContext, MouseState, View, ViewContext,
 };
 use serde::Deserialize;
 
-use crate::{ContainedText, Interactive, Theme};
+use crate::{ContainedText, Interactive};
 
 #[derive(Clone, Deserialize, Default)]
 pub struct CheckboxStyle {
@@ -252,54 +251,4 @@ where
         )
         .constrained()
         .with_height(style.dimensions().y())
-}
-
-pub struct FileName {
-    filename: String,
-    git_status: Option<GitFileStatus>,
-    style: FileNameStyle,
-}
-
-pub struct FileNameStyle {
-    template_style: LabelStyle,
-    git_inserted: Color,
-    git_modified: Color,
-    git_deleted: Color,
-}
-
-impl FileName {
-    pub fn new(filename: String, git_status: Option<GitFileStatus>, style: FileNameStyle) -> Self {
-        FileName {
-            filename,
-            git_status,
-            style,
-        }
-    }
-
-    pub fn style<I: Into<LabelStyle>>(style: I, theme: &Theme) -> FileNameStyle {
-        FileNameStyle {
-            template_style: style.into(),
-            git_inserted: theme.editor.diff.inserted,
-            git_modified: theme.editor.diff.modified,
-            git_deleted: theme.editor.diff.deleted,
-        }
-    }
-}
-
-impl<V: View> gpui::elements::Component<V> for FileName {
-    fn render(&self, _: &mut V, _: &mut ViewContext<V>) -> AnyElement<V> {
-        // Prepare colors for git statuses
-        let mut filename_text_style = self.style.template_style.text.clone();
-        filename_text_style.color = self
-            .git_status
-            .as_ref()
-            .map(|status| match status {
-                GitFileStatus::Added => self.style.git_inserted,
-                GitFileStatus::Modified => self.style.git_modified,
-                GitFileStatus::Conflict => self.style.git_deleted,
-            })
-            .unwrap_or(self.style.template_style.text.color);
-
-        Label::new(self.filename.clone(), filename_text_style).into_any()
-    }
 }

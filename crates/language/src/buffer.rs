@@ -1644,10 +1644,17 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         if lamport_timestamp > self.diagnostics_timestamp {
-            match self.diagnostics.binary_search_by_key(&server_id, |e| e.0) {
-                Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
-                Ok(ix) => self.diagnostics[ix].1 = diagnostics,
-            };
+            let ix = self.diagnostics.binary_search_by_key(&server_id, |e| e.0);
+            if diagnostics.len() == 0 {
+                if let Ok(ix) = ix {
+                    self.diagnostics.remove(ix);
+                }
+            } else {
+                match ix {
+                    Err(ix) => self.diagnostics.insert(ix, (server_id, diagnostics)),
+                    Ok(ix) => self.diagnostics[ix].1 = diagnostics,
+                };
+            }
             self.diagnostics_timestamp = lamport_timestamp;
             self.diagnostics_update_count += 1;
             self.text.lamport_clock.observe(lamport_timestamp);
@@ -2509,18 +2516,22 @@ impl BufferSnapshot {
     pub fn git_diff_hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
-        self.git_diff.hunks_in_row_range(range, self, reversed)
+        self.git_diff.hunks_in_row_range(range, self)
     }
 
     pub fn git_diff_hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
-        self.git_diff
-            .hunks_intersecting_range(range, self, reversed)
+        self.git_diff.hunks_intersecting_range(range, self)
+    }
+
+    pub fn git_diff_hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk<u32>> {
+        self.git_diff.hunks_intersecting_range_rev(range, self)
     }
 
     pub fn diagnostics_in_range<'a, T, O>(

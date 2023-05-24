@@ -27,6 +27,7 @@ smol.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+editor = { path = "../editor", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }

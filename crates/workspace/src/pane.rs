@@ -2,17 +2,14 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    dock::{icon_for_dock_anchor, AnchorDockBottom, AnchorDockRight, Dock, ExpandDock},
-    item::WeakItemHandle,
-    toolbar::Toolbar,
-    AutosaveSetting, DockAnchor, Item, NewFile, NewSearch, NewTerminal, Workspace,
-    WorkspaceSettings,
+    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
+    ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
-use drag_and_drop::Draggable;
-pub use dragged_item_receiver::{dragged_item_receiver, handle_dropped_item};
+use drag_and_drop::{DragAndDrop, Draggable};
+use dragged_item_receiver::dragged_item_receiver;
 use futures::StreamExt;
 use gpui::{
     actions,
@@ -41,7 +38,7 @@ use std::{
         Arc,
     },
 };
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 use util::ResultExt;
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -104,6 +101,7 @@ const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 pub type BackgroundActions = fn() -> &'static [(&'static str, &'static dyn Action)];
 
 pub fn init(cx: &mut AppContext) {
+    cx.add_action(Pane::toggle_zoom);
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
         pane.activate_item(action.0, true, true, cx);
     });
@@ -145,12 +143,15 @@ pub enum Event {
     Split(SplitDirection),
     ChangeItemTitle,
     Focus,
+    ZoomIn,
+    ZoomOut,
 }
 
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<usize>,
     is_active: bool,
+    zoomed: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
     autoscroll: bool,
@@ -158,10 +159,12 @@ pub struct Pane {
     toolbar: ViewHandle<Toolbar>,
     tab_bar_context_menu: TabBarContextMenu,
     tab_context_menu: ViewHandle<ContextMenu>,
-    docked: Option<DockAnchor>,
     _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
+    can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
+    can_split: bool,
+    render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
 }
 
 pub struct ItemNavHistory {
@@ -203,9 +206,9 @@ pub struct NavigationEntry {
     pub timestamp: usize,
 }
 
-struct DraggedItem {
-    item: Box<dyn ItemHandle>,
-    pane: WeakViewHandle<Pane>,
+pub struct DraggedItem {
+    pub handle: Box<dyn ItemHandle>,
+    pub pane: WeakViewHandle<Pane>,
 }
 
 pub enum ReorderBehavior {
@@ -218,7 +221,6 @@ pub enum ReorderBehavior {
 enum TabBarContextMenuKind {
     New,
     Split,
-    Dock,
 }
 
 struct TabBarContextMenu {
@@ -238,7 +240,6 @@ impl TabBarContextMenu {
 impl Pane {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
-        docked: Option<DockAnchor>,
         background_actions: BackgroundActions,
         next_timestamp: Arc<AtomicUsize>,
         cx: &mut ViewContext<Self>,
@@ -254,6 +255,7 @@ impl Pane {
             items: Vec::new(),
             activation_history: Vec::new(),
             is_active: true,
+            zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
             autoscroll: false,
@@ -272,10 +274,46 @@ impl Pane {
                 handle: context_menu,
             },
             tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
-            docked,
             _background_actions: background_actions,
             workspace,
             has_focus: false,
+            can_drop: Rc::new(|_, _| true),
+            can_split: true,
+            render_tab_bar_buttons: Rc::new(|pane, cx| {
+                Flex::row()
+                    // New menu
+                    .with_child(Self::render_tab_bar_button(
+                        0,
+                        "icons/plus_12.svg",
+                        Some(("New...".into(), None)),
+                        cx,
+                        |pane, cx| pane.deploy_new_menu(cx),
+                        pane.tab_bar_context_menu
+                            .handle_if_kind(TabBarContextMenuKind::New),
+                    ))
+                    .with_child(Self::render_tab_bar_button(
+                        1,
+                        "icons/split_12.svg",
+                        Some(("Split Pane".into(), None)),
+                        cx,
+                        |pane, cx| pane.deploy_split_menu(cx),
+                        pane.tab_bar_context_menu
+                            .handle_if_kind(TabBarContextMenuKind::Split),
+                    ))
+                    .with_child(Pane::render_tab_bar_button(
+                        2,
+                        if pane.is_zoomed() {
+                            "icons/minimize_8.svg"
+                        } else {
+                            "icons/maximize_8.svg"
+                        },
+                        Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
+                        cx,
+                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                        None,
+                    ))
+                    .into_any()
+            }),
         }
     }
 
@@ -296,8 +334,23 @@ impl Pane {
         self.has_focus
     }
 
-    pub fn set_docked(&mut self, docked: Option<DockAnchor>, cx: &mut ViewContext<Self>) {
-        self.docked = docked;
+    pub fn on_can_drop<F>(&mut self, can_drop: F)
+    where
+        F: 'static + Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool,
+    {
+        self.can_drop = Rc::new(can_drop);
+    }
+
+    pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
+        self.can_split = can_split;
+        cx.notify();
+    }
+
+    pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ViewContext<Self>, render: F)
+    where
+        F: 'static + Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>,
+    {
+        self.render_tab_bar_buttons = Rc::new(render);
         cx.notify();
     }
 
@@ -515,7 +568,7 @@ impl Pane {
         }
     }
 
-    pub(crate) fn add_item(
+    pub fn add_item(
         workspace: &mut Workspace,
         pane: &ViewHandle<Pane>,
         item: Box<dyn ItemHandle>,
@@ -641,6 +694,17 @@ impl Pane {
         self.items.iter().position(|i| i.id() == item.id())
     }
 
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        if self.zoomed {
+            cx.emit(Event::ZoomOut);
+        } else if !self.items.is_empty() {
+            if !self.has_focus {
+                cx.focus_self();
+            }
+            cx.emit(Event::ZoomIn);
+        }
+    }
+
     pub fn activate_item(
         &mut self,
         index: usize,
@@ -704,187 +768,118 @@ impl Pane {
     }
 
     pub fn close_active_item(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseActiveItem,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-
-        if pane.items.is_empty() {
+        if self.items.is_empty() {
             return None;
         }
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_item_by_id(workspace, pane_handle, active_item_id, cx);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_item_by_id(active_item_id, cx))
     }
 
     pub fn close_item_by_id(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         item_id_to_close: usize,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        Self::close_items(workspace, pane, cx, move |view_id| {
-            view_id == item_id_to_close
-        })
+        self.close_items(cx, move |view_id| view_id == item_id_to_close)
     }
 
     pub fn close_inactive_items(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseInactiveItems,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
+        if self.items.is_empty() {
+            return None;
+        }
 
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_id != active_item_id
-        });
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_items(cx, move |item_id| item_id != active_item_id))
     }
 
     pub fn close_clean_items(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseCleanItems,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-
-        let item_ids: Vec<_> = pane
+        let item_ids: Vec<_> = self
             .items()
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.id())
             .collect();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        Some(self.close_items(cx, move |item_id| item_ids.contains(&item_id)))
     }
 
     pub fn close_items_to_the_left(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseItemsToTheLeft,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_items_to_the_left_by_id(workspace, pane_handle, active_item_id, cx);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        if self.items.is_empty() {
+            return None;
+        }
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_items_to_the_left_by_id(active_item_id, cx))
     }
 
     pub fn close_items_to_the_left_by_id(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         item_id: usize,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let item_ids: Vec<_> = pane
-            .read(cx)
+        let item_ids: Vec<_> = self
             .items()
             .take_while(|item| item.id() != item_id)
             .map(|item| item.id())
             .collect();
-
-        let task = Self::close_items(workspace, pane, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
-
-        cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        })
+        self.close_items(cx, move |item_id| item_ids.contains(&item_id))
     }
 
     pub fn close_items_to_the_right(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseItemsToTheRight,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-        let pane = pane_handle.read(cx);
-        let active_item_id = pane.items[pane.active_item_index].id();
-
-        let task = Self::close_items_to_the_right_by_id(workspace, pane_handle, active_item_id, cx);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        if self.items.is_empty() {
+            return None;
+        }
+        let active_item_id = self.items[self.active_item_index].id();
+        Some(self.close_items_to_the_right_by_id(active_item_id, cx))
     }
 
     pub fn close_items_to_the_right_by_id(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         item_id: usize,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let item_ids: Vec<_> = pane
-            .read(cx)
+        let item_ids: Vec<_> = self
             .items()
             .rev()
             .take_while(|item| item.id() != item_id)
             .map(|item| item.id())
             .collect();
-
-        let task = Self::close_items(workspace, pane, cx, move |item_id| {
-            item_ids.contains(&item_id)
-        });
-
-        cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        })
+        self.close_items(cx, move |item_id| item_ids.contains(&item_id))
     }
 
     pub fn close_all_items(
-        workspace: &mut Workspace,
+        &mut self,
         _: &CloseAllItems,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let pane_handle = workspace.active_pane().clone();
-
-        let task = Self::close_items(workspace, pane_handle, cx, move |_| true);
-
-        Some(cx.foreground().spawn(async move {
-            task.await?;
-            Ok(())
-        }))
+        Some(self.close_items(cx, move |_| true))
     }
 
     pub fn close_items(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
-        cx: &mut ViewContext<Workspace>,
+        &mut self,
+        cx: &mut ViewContext<Pane>,
         should_close: impl 'static + Fn(usize) -> bool,
     ) -> Task<Result<()>> {
-        let project = workspace.project().clone();
-
         // Find the items to close.
         let mut items_to_close = Vec::new();
-        for item in &pane.read(cx).items {
+        for item in &self.items {
             if should_close(item.id()) {
                 items_to_close.push(item.boxed_clone());
             }
@@ -896,8 +891,8 @@ impl Pane {
         // of what content they would be saving.
         items_to_close.sort_by_key(|item| !item.is_singleton(cx));
 
-        let pane = pane.downgrade();
-        cx.spawn(|workspace, mut cx| async move {
+        let workspace = self.workspace.clone();
+        cx.spawn(|pane, mut cx| async move {
             let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
                 // Find the item's current index and its set of project item models. Avoid
@@ -915,7 +910,7 @@ impl Pane {
                 // Check if this view has any project items that are not open anywhere else
                 // in the workspace, AND that the user has not already been prompted to save.
                 // If there are any such project entries, prompt the user to save this item.
-                workspace.read_with(&cx, |workspace, cx| {
+                let project = workspace.read_with(&cx, |workspace, cx| {
                     for item in workspace.items(cx) {
                         if !items_to_close
                             .iter()
@@ -925,6 +920,7 @@ impl Pane {
                             project_item_ids.retain(|id| !other_project_item_ids.contains(id));
                         }
                     }
+                    workspace.project().clone()
                 })?;
                 let should_save = project_item_ids
                     .iter()
@@ -967,7 +963,8 @@ impl Pane {
                 // to activating the item to the left
                 .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1));
 
-            self.activate_item(index_to_activate, activate_pane, activate_pane, cx);
+            let should_activate = activate_pane || self.has_focus;
+            self.activate_item(index_to_activate, should_activate, should_activate, cx);
         }
 
         let item = self.items.remove(item_index);
@@ -1001,6 +998,10 @@ impl Pane {
                 .borrow_mut()
                 .paths_by_item
                 .remove(&item.id());
+        }
+
+        if self.items.is_empty() && self.zoomed {
+            cx.emit(Event::ZoomOut);
         }
 
         cx.notify();
@@ -1177,23 +1178,6 @@ impl Pane {
         self.tab_bar_context_menu.kind = TabBarContextMenuKind::Split;
     }
 
-    fn deploy_dock_menu(&mut self, cx: &mut ViewContext<Self>) {
-        self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
-            menu.show(
-                Default::default(),
-                AnchorCorner::TopRight,
-                vec![
-                    ContextMenuItem::action("Anchor Dock Right", AnchorDockRight),
-                    ContextMenuItem::action("Anchor Dock Bottom", AnchorDockBottom),
-                    ContextMenuItem::action("Expand Dock", ExpandDock),
-                ],
-                cx,
-            );
-        });
-
-        self.tab_bar_context_menu.kind = TabBarContextMenuKind::Dock;
-    }
-
     fn deploy_new_menu(&mut self, cx: &mut ViewContext<Self>) {
         self.tab_bar_context_menu.handle.update(cx, |menu, cx| {
             menu.show(
@@ -1240,14 +1224,11 @@ impl Pane {
                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
                     vec![
                         ContextMenuItem::handler("Close Inactive Item", {
-                            let workspace = self.workspace.clone();
                             let pane = target_pane.clone();
                             move |cx| {
-                                if let Some((workspace, pane)) =
-                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Self::close_item_by_id(workspace, pane, target_item_id, cx)
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_item_by_id(target_item_id, cx)
                                             .detach_and_log_err(cx);
                                     })
                                 }
@@ -1256,39 +1237,23 @@ impl Pane {
                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
                         ContextMenuItem::handler("Close Items To The Left", {
-                            let workspace = self.workspace.clone();
                             let pane = target_pane.clone();
                             move |cx| {
-                                if let Some((workspace, pane)) =
-                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Self::close_items_to_the_left_by_id(
-                                            workspace,
-                                            pane,
-                                            target_item_id,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_items_to_the_left_by_id(target_item_id, cx)
+                                            .detach_and_log_err(cx);
                                     })
                                 }
                             }
                         }),
                         ContextMenuItem::handler("Close Items To The Right", {
-                            let workspace = self.workspace.clone();
                             let pane = target_pane.clone();
                             move |cx| {
-                                if let Some((workspace, pane)) =
-                                    workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                {
-                                    workspace.update(cx, |workspace, cx| {
-                                        Self::close_items_to_the_right_by_id(
-                                            workspace,
-                                            pane,
-                                            target_item_id,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
+                                if let Some(pane) = pane.upgrade(cx) {
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_items_to_the_right_by_id(target_item_id, cx)
+                                            .detach_and_log_err(cx);
                                     })
                                 }
                             }
@@ -1303,6 +1268,25 @@ impl Pane {
 
     pub fn toolbar(&self) -> &ViewHandle<Toolbar> {
         &self.toolbar
+    }
+
+    pub fn handle_deleted_project_item(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Pane>,
+    ) -> Option<()> {
+        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+                Some((i, item.id()))
+            } else {
+                None
+            }
+        })?;
+
+        self.remove_item(item_index_to_delete, false, cx);
+        self.nav_history.borrow_mut().remove_item(item_id);
+
+        Some(())
     }
 
     fn update_toolbar(&mut self, cx: &mut ViewContext<Self>) {
@@ -1342,7 +1326,7 @@ impl Pane {
             row.add_child({
                 enum TabDragReceiver {}
                 let mut receiver =
-                    dragged_item_receiver::<TabDragReceiver, _, _>(ix, ix, true, None, cx, {
+                    dragged_item_receiver::<TabDragReceiver, _, _>(self, ix, ix, true, None, cx, {
                         let item = item.clone();
                         let pane = pane.clone();
                         let detail = detail.clone();
@@ -1376,20 +1360,7 @@ impl Pane {
                                 .on_click(MouseButton::Middle, {
                                     let item_id = item.id();
                                     move |_, pane, cx| {
-                                        let workspace = pane.workspace.clone();
-                                        let pane = cx.weak_handle();
-                                        cx.window_context().defer(move |cx| {
-                                            if let Some((workspace, pane)) =
-                                                workspace.upgrade(cx).zip(pane.upgrade(cx))
-                                            {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    Self::close_item_by_id(
-                                                        workspace, pane, item_id, cx,
-                                                    )
-                                                    .detach_and_log_err(cx);
-                                                });
-                                            }
-                                        });
+                                        pane.close_item_by_id(item_id, cx).detach_and_log_err(cx);
                                     }
                                 })
                                 .on_down(
@@ -1421,7 +1392,7 @@ impl Pane {
 
                 receiver.as_draggable(
                     DraggedItem {
-                        item,
+                        handle: item,
                         pane: pane.clone(),
                     },
                     {
@@ -1431,7 +1402,7 @@ impl Pane {
                         move |dragged_item: &DraggedItem, cx: &mut ViewContext<Workspace>| {
                             let tab_style = &theme.workspace.tab_bar.dragged_tab;
                             Self::render_dragged_tab(
-                                &dragged_item.item,
+                                &dragged_item.handle,
                                 dragged_item.pane.clone(),
                                 false,
                                 detail,
@@ -1451,7 +1422,7 @@ impl Pane {
         let filler_style = theme.workspace.tab_bar.tab_style(pane_active, false);
         enum Filler {}
         row.add_child(
-            dragged_item_receiver::<Filler, _, _>(0, filler_index, true, None, cx, |_, _| {
+            dragged_item_receiver::<Filler, _, _>(self, 0, filler_index, true, None, cx, |_, _| {
                 Empty::new()
                     .contained()
                     .with_style(filler_style.container)
@@ -1596,12 +1567,9 @@ impl Pane {
                             let pane = pane.clone();
                             cx.window_context().defer(move |cx| {
                                 if let Some(pane) = pane.upgrade(cx) {
-                                    if let Some(workspace) = pane.read(cx).workspace.upgrade(cx) {
-                                        workspace.update(cx, |workspace, cx| {
-                                            Self::close_item_by_id(workspace, pane, item_id, cx)
-                                                .detach_and_log_err(cx);
-                                        });
-                                    }
+                                    pane.update(cx, |pane, cx| {
+                                        pane.close_item_by_id(item_id, cx).detach_and_log_err(cx);
+                                    });
                                 }
                             });
                         }
@@ -1621,82 +1589,62 @@ impl Pane {
             .into_any()
     }
 
-    fn render_tab_bar_buttons(
-        &mut self,
-        theme: &Theme,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
-        Flex::row()
-            // New menu
-            .with_child(render_tab_bar_button(
-                0,
-                "icons/plus_12.svg",
-                cx,
-                |pane, cx| pane.deploy_new_menu(cx),
-                self.tab_bar_context_menu
-                    .handle_if_kind(TabBarContextMenuKind::New),
-            ))
-            .with_child(
-                self.docked
-                    .map(|anchor| {
-                        // Add the dock menu button if this pane is a dock
-                        let dock_icon = icon_for_dock_anchor(anchor);
+    pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
+        index: usize,
+        icon: &'static str,
+        tooltip: Option<(String, Option<Box<dyn Action>>)>,
+        cx: &mut ViewContext<Pane>,
+        on_click: F,
+        context_menu: Option<ViewHandle<ContextMenu>>,
+    ) -> AnyElement<Pane> {
+        enum TabBarButton {}
 
-                        render_tab_bar_button(
-                            1,
-                            dock_icon,
-                            cx,
-                            |pane, cx| pane.deploy_dock_menu(cx),
-                            self.tab_bar_context_menu
-                                .handle_if_kind(TabBarContextMenuKind::Dock),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        // Add the split menu if this pane is not a dock
-                        render_tab_bar_button(
-                            2,
-                            "icons/split_12.svg",
-                            cx,
-                            |pane, cx| pane.deploy_split_menu(cx),
-                            self.tab_bar_context_menu
-                                .handle_if_kind(TabBarContextMenuKind::Split),
-                        )
-                    }),
+        let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
+            let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
+            let style = theme.pane_button.style_for(mouse_state, false);
+            Svg::new(icon)
+                .with_color(style.color)
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx))
+        .into_any();
+        if let Some((tooltip, action)) = tooltip {
+            let tooltip_style = settings::get::<ThemeSettings>(cx).theme.tooltip.clone();
+            button = button
+                .with_tooltip::<TabBarButton>(index, tooltip, action, tooltip_style, cx)
+                .into_any();
+        }
+
+        Stack::new()
+            .with_child(button)
+            .with_children(
+                context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
             )
-            // Add the close dock button if this pane is a dock
-            .with_children(self.docked.map(|_| {
-                render_tab_bar_button(
-                    3,
-                    "icons/x_mark_8.svg",
-                    cx,
-                    |this, cx| {
-                        if let Some(workspace) = this.workspace.upgrade(cx) {
-                            cx.window_context().defer(move |cx| {
-                                workspace.update(cx, |workspace, cx| {
-                                    Dock::hide_dock(workspace, &Default::default(), cx)
-                                })
-                            });
-                        }
-                    },
-                    None,
-                )
-            }))
-            .contained()
-            .with_style(theme.workspace.tab_bar.pane_button_container)
             .flex(1., false)
-            .into_any()
+            .into_any_named("tab bar button")
     }
 
-    fn render_blank_pane(
-        &mut self,
-        theme: &Theme,
-        _cx: &mut ViewContext<Self>,
-    ) -> AnyElement<Self> {
+    fn render_blank_pane(&self, theme: &Theme, _cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let background = theme.workspace.background;
         Empty::new()
             .contained()
             .with_background_color(background)
             .into_any()
+    }
+
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
+    }
+
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed
     }
 }
 
@@ -1741,7 +1689,14 @@ impl View for Pane {
                             .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
 
                         if self.is_active {
-                            tab_row.add_child(self.render_tab_bar_buttons(&theme, cx))
+                            let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
+                            tab_row.add_child(
+                                (render_tab_bar_buttons)(self, cx)
+                                    .contained()
+                                    .with_style(theme.workspace.tab_bar.pane_button_container)
+                                    .flex(1., false)
+                                    .into_any(),
+                            )
                         }
 
                         stack.add_child(tab_row);
@@ -1754,14 +1709,11 @@ impl View for Pane {
                     .with_child({
                         enum PaneContentTabDropTarget {}
                         dragged_item_receiver::<PaneContentTabDropTarget, _, _>(
+                            self,
                             0,
                             self.active_item_index + 1,
-                            false,
-                            if self.docked.is_some() {
-                                None
-                            } else {
-                                Some(100.)
-                            },
+                            !self.can_split,
+                            if self.can_split { Some(100.) } else { None },
                             cx,
                             {
                                 let toolbar = self.toolbar.clone();
@@ -1786,7 +1738,7 @@ impl View for Pane {
                 enum EmptyPane {}
                 let theme = theme::current(cx).clone();
 
-                dragged_item_receiver::<EmptyPane, _, _>(0, 0, false, None, cx, |_, cx| {
+                dragged_item_receiver::<EmptyPane, _, _>(self, 0, 0, false, None, cx, |_, cx| {
                     self.render_blank_pane(&theme, cx)
                 })
                 .on_down(MouseButton::Left, |_, _, cx| {
@@ -1824,7 +1776,11 @@ impl View for Pane {
     }
 
     fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
-        self.has_focus = true;
+        if !self.has_focus {
+            self.has_focus = true;
+            cx.emit(Event::Focus);
+        }
+
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(true, cx);
         });
@@ -1850,8 +1806,6 @@ impl View for Pane {
                     .insert(active_item.id(), focused.downgrade());
             }
         }
-
-        cx.emit(Event::Focus);
     }
 
     fn focus_out(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -1863,43 +1817,7 @@ impl View for Pane {
 
     fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
         Self::reset_to_default_keymap_context(keymap);
-        if self.docked.is_some() {
-            keymap.add_identifier("docked");
-        }
     }
-}
-
-fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
-    index: usize,
-    icon: &'static str,
-    cx: &mut ViewContext<Pane>,
-    on_click: F,
-    context_menu: Option<ViewHandle<ContextMenu>>,
-) -> AnyElement<Pane> {
-    enum TabBarButton {}
-
-    Stack::new()
-        .with_child(
-            MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
-                let theme = &theme::current(cx).workspace.tab_bar;
-                let style = theme.pane_button.style_for(mouse_state, false);
-                Svg::new(icon)
-                    .with_color(style.color)
-                    .constrained()
-                    .with_width(style.icon_width)
-                    .aligned()
-                    .constrained()
-                    .with_width(style.button_width)
-                    .with_height(style.button_width)
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, move |_, pane, cx| on_click(pane, cx)),
-        )
-        .with_children(
-            context_menu.map(|menu| ChildView::new(&menu, cx).aligned().bottom().right()),
-        )
-        .flex(1., false)
-        .into_any_named("tab bar button")
 }
 
 impl ItemNavHistory {
@@ -2006,6 +1924,15 @@ impl NavHistory {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+
+    fn remove_item(&mut self, item_id: usize) {
+        self.paths_by_item.remove(&item_id);
+        self.backward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        self.forward_stack
+            .retain(|entry| entry.item.id() != item_id);
+        self.closed_stack.retain(|entry| entry.item.id() != item_id);
     }
 }
 
@@ -2130,11 +2057,9 @@ impl<V: View> Element<V> for PaneBackdrop<V> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{executor::Deterministic, TestAppContext};
+    use gpui::TestAppContext;
     use project::FakeFs;
     use settings::SettingsStore;
 
@@ -2145,9 +2070,10 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        workspace.update(cx, |workspace, cx| {
-            assert!(Pane::close_active_item(workspace, &CloseActiveItem, cx).is_none())
+        pane.update(cx, |pane, cx| {
+            assert!(pane.close_active_item(&CloseActiveItem, cx).is_none())
         });
     }
 
@@ -2426,7 +2352,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remove_item_ordering(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_remove_item_ordering(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2444,36 +2370,36 @@ mod tests {
         add_labeled_item(&workspace, &pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A", "C*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &CloseActiveItem, cx);
-        });
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
     }
 
     #[gpui::test]
-    async fn test_close_inactive_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_close_inactive_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2483,16 +2409,17 @@ mod tests {
 
         set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_inactive_items(workspace, &CloseInactiveItems, cx);
-        });
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| {
+            pane.close_inactive_items(&CloseInactiveItems, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["C*"], cx);
     }
 
     #[gpui::test]
-    async fn test_close_clean_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_close_clean_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2507,19 +2434,15 @@ mod tests {
         add_labeled_item(&workspace, &pane, "E", false, cx);
         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_clean_items(workspace, &CloseCleanItems, cx);
-        });
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, ["A^", "C*^"], cx);
     }
 
     #[gpui::test]
-    async fn test_close_items_to_the_left(
-        deterministic: Arc<Deterministic>,
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_close_items_to_the_left(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2529,19 +2452,17 @@ mod tests {
 
         set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_items_to_the_left(workspace, &CloseItemsToTheLeft, cx);
-        });
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["C*", "D", "E"], cx);
     }
 
     #[gpui::test]
-    async fn test_close_items_to_the_right(
-        deterministic: Arc<Deterministic>,
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_close_items_to_the_right(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2551,16 +2472,17 @@ mod tests {
 
         set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_items_to_the_right(workspace, &CloseItemsToTheRight, cx);
-        });
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
     }
 
     #[gpui::test]
-    async fn test_close_all_items(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    async fn test_close_all_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -2573,11 +2495,10 @@ mod tests {
         add_labeled_item(&workspace, &pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_all_items(workspace, &CloseAllItems, cx);
-        });
-
-        deterministic.run_until_parked();
+        pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx))
+            .unwrap()
+            .await
+            .unwrap();
         assert_item_labels(&pane, [], cx);
     }
 

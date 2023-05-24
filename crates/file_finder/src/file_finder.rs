@@ -380,7 +380,7 @@ mod tests {
     use gpui::{TestAppContext, ViewHandle};
     use menu::{Confirm, SelectNext};
     use serde_json::json;
-    use workspace::{AppState, Pane, Workspace};
+    use workspace::{AppState, Workspace};
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1161,9 +1161,13 @@ mod tests {
                 assert!(insertion_result.is_none(), "Pane id {pane_id} collision");
             }
         });
-        workspace.update(cx, |workspace, cx| {
-            Pane::close_active_item(workspace, &workspace::CloseActiveItem, cx);
-        });
+        active_pane
+            .update(cx, |pane, cx| {
+                pane.close_active_item(&workspace::CloseActiveItem, cx)
+                    .unwrap()
+            })
+            .await
+            .unwrap();
         deterministic.run_until_parked();
         cx.read(|cx| {
             for pane in workspace.read(cx).panes() {

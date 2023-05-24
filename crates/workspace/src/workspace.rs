@@ -1,8 +1,8 @@
+pub mod dock;
 /// NOTE: Focus only 'takes' after an update has flushed_effects.
 ///
 /// This may cause issues when you're trying to write tests that use workspace focus to add items at
 /// specific locations.
-pub mod dock;
 pub mod item;
 pub mod notifications;
 pub mod pane;
@@ -10,7 +10,6 @@ pub mod pane_group;
 mod persistence;
 pub mod searchable;
 pub mod shared_screen;
-pub mod sidebar;
 mod status_bar;
 mod toolbar;
 mod workspace_settings;
@@ -23,7 +22,6 @@ use client::{
     Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
-use dock::{Dock, DockDefaultItemFactory, ToggleDockButton};
 use drag_and_drop::DragAndDrop;
 use futures::{
     channel::{mpsc, oneshot},
@@ -62,10 +60,12 @@ use std::{
 
 use crate::{
     notifications::simple_message_notification::MessageNotification,
-    persistence::model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+    persistence::model::{
+        DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+    },
 };
+use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle};
 use lazy_static::lazy_static;
-use log::warn;
 use notifications::{NotificationHandle, NotifyResultExt};
 pub use pane::*;
 pub use pane_group::*;
@@ -78,13 +78,12 @@ use postage::prelude::Stream;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use serde::Deserialize;
 use shared_screen::SharedScreen;
-use sidebar::{Sidebar, SidebarButtons, SidebarSide, ToggleSidebarItem};
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::Theme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::{async_iife, paths, ResultExt};
-pub use workspace_settings::{AutosaveSetting, DockAnchor, GitGutterSetting, WorkspaceSettings};
+pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Vector2F> = env::var("ZED_WINDOW_SIZE")
@@ -104,6 +103,21 @@ pub trait Modal: View {
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
+#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleLeftDock {
+    pub focus: bool,
+}
+
+#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleBottomDock {
+    pub focus: bool,
+}
+
+#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
+pub struct ToggleRightDock {
+    pub focus: bool,
+}
+
 actions!(
     workspace,
     [
@@ -119,16 +133,22 @@ actions!(
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
-        ToggleLeftSidebar,
         NewTerminal,
+        ToggleTerminalFocus,
         NewSearch,
         Feedback,
         Restart,
-        Welcome
+        Welcome,
+        ToggleZoom,
     ]
 );
 
 actions!(zed, [OpenSettings]);
+
+impl_actions!(
+    workspace,
+    [ToggleLeftDock, ToggleBottomDock, ToggleRightDock]
+);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -192,7 +212,6 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     pane::init(cx);
-    dock::init(cx);
     notifications::init(cx);
 
     cx.add_global_action({
@@ -240,15 +259,20 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace.save_active_item(true, cx).detach_and_log_err(cx);
         },
     );
-    cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
         workspace.activate_previous_pane(cx)
     });
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftSidebar, cx| {
-        workspace.toggle_sidebar(SidebarSide::Left, cx);
+    cx.add_action(|workspace: &mut Workspace, action: &ToggleLeftDock, cx| {
+        workspace.toggle_dock(DockPosition::Left, action.focus, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, action: &ToggleRightDock, cx| {
+        workspace.toggle_dock(DockPosition::Right, action.focus, cx);
+    });
+    cx.add_action(|workspace: &mut Workspace, action: &ToggleBottomDock, cx| {
+        workspace.toggle_dock(DockPosition::Bottom, action.focus, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
 
@@ -366,8 +390,8 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
-    pub initialize_workspace: fn(&mut Workspace, &Arc<AppState>, &mut ViewContext<Workspace>),
-    pub dock_default_item_factory: DockDefaultItemFactory,
+    pub initialize_workspace:
+        fn(WeakViewHandle<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<Result<()>>,
     pub background_actions: BackgroundActions,
 }
 
@@ -395,9 +419,8 @@ impl AppState {
             fs,
             languages,
             user_store,
-            initialize_workspace: |_, _, _| {},
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
-            dock_default_item_factory: |_, _| None,
             background_actions: || &[],
         })
     }
@@ -450,7 +473,6 @@ impl DelayedDebouncedEditAction {
 }
 
 pub enum Event {
-    DockAnchorChanged,
     PaneAdded(ViewHandle<Pane>),
     ContactRequestedJoin(u64),
 }
@@ -460,15 +482,15 @@ pub struct Workspace {
     remote_entity_subscription: Option<client::Subscription>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,
-    left_sidebar: ViewHandle<Sidebar>,
-    right_sidebar: ViewHandle<Sidebar>,
+    left_dock: ViewHandle<Dock>,
+    bottom_dock: ViewHandle<Dock>,
+    right_dock: ViewHandle<Dock>,
     panes: Vec<ViewHandle<Pane>>,
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     last_active_center_pane: Option<WeakViewHandle<Pane>>,
     status_bar: ViewHandle<StatusBar>,
     titlebar_item: Option<AnyViewHandle>,
-    dock: Dock,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
     leader_state: LeaderState,
@@ -479,7 +501,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: WorkspaceId,
     app_state: Arc<AppState>,
-    _window_subscriptions: [Subscription; 3],
+    subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
@@ -537,6 +559,14 @@ impl Workspace {
                     cx.remove_window();
                 }
 
+                project::Event::DeletedEntry(entry_id) => {
+                    for pane in this.panes.iter() {
+                        pane.update(cx, |pane, cx| {
+                            pane.handle_deleted_project_item(*entry_id, cx)
+                        });
+                    }
+                }
+
                 _ => {}
             }
             cx.notify()
@@ -549,7 +579,6 @@ impl Workspace {
         let center_pane = cx.add_view(|cx| {
             Pane::new(
                 weak_handle.clone(),
-                None,
                 app_state.background_actions,
                 pane_history_timestamp.clone(),
                 cx,
@@ -558,13 +587,6 @@ impl Workspace {
         cx.subscribe(&center_pane, Self::handle_pane_event).detach();
         cx.focus(&center_pane);
         cx.emit(Event::PaneAdded(center_pane.clone()));
-        let dock = Dock::new(
-            app_state.dock_default_item_factory,
-            app_state.background_actions,
-            pane_history_timestamp.clone(),
-            cx,
-        );
-        let dock_pane = dock.pane().clone();
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user();
         let mut connection_status = app_state.client.status();
@@ -579,7 +601,6 @@ impl Workspace {
             }
             anyhow::Ok(())
         });
-        let handle = cx.handle();
 
         // All leader updates are enqueued and then processed in a single task, so
         // that each asynchronous operation can be run in order.
@@ -597,18 +618,20 @@ impl Workspace {
 
         cx.emit_global(WorkspaceCreated(weak_handle.clone()));
 
-        let left_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Left));
-        let right_sidebar = cx.add_view(|_| Sidebar::new(SidebarSide::Right));
-        let left_sidebar_buttons =
-            cx.add_view(|cx| SidebarButtons::new(left_sidebar.clone(), weak_handle.clone(), cx));
-        let toggle_dock = cx.add_view(|cx| ToggleDockButton::new(handle, cx));
-        let right_sidebar_buttons =
-            cx.add_view(|cx| SidebarButtons::new(right_sidebar.clone(), weak_handle.clone(), cx));
+        let left_dock = cx.add_view(|_| Dock::new(DockPosition::Left));
+        let bottom_dock = cx.add_view(|_| Dock::new(DockPosition::Bottom));
+        let right_dock = cx.add_view(|_| Dock::new(DockPosition::Right));
+        let left_dock_buttons =
+            cx.add_view(|cx| PanelButtons::new(left_dock.clone(), weak_handle.clone(), cx));
+        let bottom_dock_buttons =
+            cx.add_view(|cx| PanelButtons::new(bottom_dock.clone(), weak_handle.clone(), cx));
+        let right_dock_buttons =
+            cx.add_view(|cx| PanelButtons::new(right_dock.clone(), weak_handle.clone(), cx));
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), cx);
-            status_bar.add_left_item(left_sidebar_buttons, cx);
-            status_bar.add_right_item(right_sidebar_buttons, cx);
-            status_bar.add_right_item(toggle_dock, cx);
+            status_bar.add_left_item(left_dock_buttons, cx);
+            status_bar.add_right_item(right_dock_buttons, cx);
+            status_bar.add_right_item(bottom_dock_buttons, cx);
             status_bar
         });
 
@@ -624,7 +647,7 @@ impl Workspace {
             active_call = Some((call, subscriptions));
         }
 
-        let subscriptions = [
+        let subscriptions = vec![
             cx.observe_fullscreen(|_, _, cx| cx.notify()),
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |_, mut bounds, display, cx| {
@@ -644,17 +667,25 @@ impl Workspace {
                     .spawn(DB.set_window_bounds(workspace_id, bounds, display))
                     .detach_and_log_err(cx);
             }),
+            cx.observe(&left_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&bottom_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
+            cx.observe(&right_dock, |this, _, cx| {
+                this.serialize_workspace(cx);
+                cx.notify();
+            }),
         ];
 
         let mut this = Workspace {
-            modal: None,
             weak_self: weak_handle.clone(),
+            modal: None,
             center: PaneGroup::new(center_pane.clone()),
-            dock,
-            // When removing an item, the last element remaining in this array
-            // is used to find where focus should fallback to. As such, the order
-            // of these two variables is important.
-            panes: vec![dock_pane.clone(), center_pane.clone()],
+            panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
@@ -662,8 +693,9 @@ impl Workspace {
             titlebar_item: None,
             notifications: Default::default(),
             remote_entity_subscription: None,
-            left_sidebar,
-            right_sidebar,
+            left_dock,
+            bottom_dock,
+            right_dock,
             project: project.clone(),
             leader_state: Default::default(),
             follower_states_by_leader: Default::default(),
@@ -675,12 +707,11 @@ impl Workspace {
             _observe_current_user,
             _apply_leader_updates,
             leader_updates_tx,
-            _window_subscriptions: subscriptions,
+            subscriptions,
             pane_history_timestamp,
         };
         this.project_remote_id_changed(project.read(cx).remote_id(), cx);
         cx.defer(|this, cx| this.update_window_title(cx));
-
         this
     }
 
@@ -742,11 +773,7 @@ impl Workspace {
                     });
 
             let build_workspace = |cx: &mut ViewContext<Workspace>| {
-                let mut workspace =
-                    Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx);
-                (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-
-                workspace
+                Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
             };
 
             let workspace = requesting_window_id
@@ -794,6 +821,17 @@ impl Workspace {
                     .1
                 });
 
+            (app_state.initialize_workspace)(
+                workspace.downgrade(),
+                serialized_workspace.is_some(),
+                app_state.clone(),
+                cx.clone(),
+            )
+            .await
+            .log_err();
+
+            cx.update_window(workspace.window_id(), |cx| cx.activate_window());
+
             let workspace = workspace.downgrade();
             notify_if_database_failed(&workspace, &mut cx);
             let opened_items = open_items(
@@ -813,12 +851,66 @@ impl Workspace {
         self.weak_self.clone()
     }
 
-    pub fn left_sidebar(&self) -> &ViewHandle<Sidebar> {
-        &self.left_sidebar
+    pub fn left_dock(&self) -> &ViewHandle<Dock> {
+        &self.left_dock
     }
 
-    pub fn right_sidebar(&self) -> &ViewHandle<Sidebar> {
-        &self.right_sidebar
+    pub fn bottom_dock(&self) -> &ViewHandle<Dock> {
+        &self.bottom_dock
+    }
+
+    pub fn right_dock(&self) -> &ViewHandle<Dock> {
+        &self.right_dock
+    }
+
+    pub fn add_panel<T: Panel>(&mut self, panel: ViewHandle<T>, cx: &mut ViewContext<Self>) {
+        let dock = match panel.position(cx) {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
+
+        self.subscriptions.push(cx.subscribe(&panel, {
+            let mut dock = dock.clone();
+            let mut prev_position = panel.position(cx);
+            move |this, panel, event, cx| {
+                if T::should_change_position_on_event(event) {
+                    let new_position = panel.read(cx).position(cx);
+                    let mut was_visible = false;
+                    dock.update(cx, |dock, cx| {
+                        prev_position = new_position;
+
+                        was_visible = dock.is_open()
+                            && dock
+                                .active_panel()
+                                .map_or(false, |active_panel| active_panel.id() == panel.id());
+                        dock.remove_panel(&panel, cx);
+                    });
+                    dock = match panel.read(cx).position(cx) {
+                        DockPosition::Left => &this.left_dock,
+                        DockPosition::Bottom => &this.bottom_dock,
+                        DockPosition::Right => &this.right_dock,
+                    }
+                    .clone();
+                    dock.update(cx, |dock, cx| {
+                        dock.add_panel(panel.clone(), cx);
+                        if was_visible {
+                            dock.set_open(true, cx);
+                            dock.activate_panel(dock.panels_len() - 1, cx);
+                        }
+                    });
+                } else if T::should_zoom_in_on_event(event) {
+                    this.zoom_out(cx);
+                    dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
+                } else if T::should_zoom_out_on_event(event) {
+                    this.zoom_out(cx);
+                } else if T::is_focus_event(event) {
+                    cx.notify();
+                }
+            }
+        }));
+
+        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
     }
 
     pub fn status_bar(&self) -> &ViewHandle<StatusBar> {
@@ -1264,6 +1356,44 @@ impl Workspace {
         }
     }
 
+    fn zoomed(&self, cx: &WindowContext) -> Option<AnyViewHandle> {
+        self.zoomed_panel_for_dock(DockPosition::Left, cx)
+            .or_else(|| self.zoomed_panel_for_dock(DockPosition::Bottom, cx))
+            .or_else(|| self.zoomed_panel_for_dock(DockPosition::Right, cx))
+            .or_else(|| self.zoomed_pane(cx))
+    }
+
+    fn zoomed_panel_for_dock(
+        &self,
+        position: DockPosition,
+        cx: &WindowContext,
+    ) -> Option<AnyViewHandle> {
+        let (dock, other_docks) = match position {
+            DockPosition::Left => (&self.left_dock, [&self.bottom_dock, &self.right_dock]),
+            DockPosition::Bottom => (&self.bottom_dock, [&self.left_dock, &self.right_dock]),
+            DockPosition::Right => (&self.right_dock, [&self.left_dock, &self.bottom_dock]),
+        };
+
+        let zoomed_panel = dock.read(&cx).zoomed_panel(cx)?;
+        if other_docks.iter().all(|dock| !dock.read(cx).has_focus(cx))
+            && !self.active_pane.read(cx).has_focus()
+        {
+            Some(zoomed_panel.as_any().clone())
+        } else {
+            None
+        }
+    }
+
+    fn zoomed_pane(&self, cx: &WindowContext) -> Option<AnyViewHandle> {
+        let active_pane = self.active_pane.read(cx);
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        if active_pane.is_zoomed() && docks.iter().all(|dock| !dock.read(cx).has_focus(cx)) {
+            Some(self.active_pane.clone().into_any())
+        } else {
+            None
+        }
+    }
+
     pub fn items<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -1341,47 +1471,55 @@ impl Workspace {
         }
     }
 
-    pub fn toggle_sidebar(&mut self, sidebar_side: SidebarSide, cx: &mut ViewContext<Self>) {
-        let sidebar = match sidebar_side {
-            SidebarSide::Left => &mut self.left_sidebar,
-            SidebarSide::Right => &mut self.right_sidebar,
+    pub fn toggle_dock(
+        &mut self,
+        dock_side: DockPosition,
+        focus: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let dock = match dock_side {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
         };
-        let open = sidebar.update(cx, |sidebar, cx| {
-            let open = !sidebar.is_open();
-            sidebar.set_open(open, cx);
-            open
+        dock.update(cx, |dock, cx| {
+            let open = !dock.is_open();
+            dock.set_open(open, cx);
         });
 
-        if open {
-            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
+        if dock.read(cx).is_open() && focus {
+            cx.focus(dock);
+        } else {
+            cx.focus_self();
         }
-
-        self.serialize_workspace(cx);
-
-        cx.focus_self();
         cx.notify();
+        self.serialize_workspace(cx);
     }
 
-    pub fn toggle_sidebar_item(&mut self, action: &ToggleSidebarItem, cx: &mut ViewContext<Self>) {
-        let sidebar = match action.sidebar_side {
-            SidebarSide::Left => &mut self.left_sidebar,
-            SidebarSide::Right => &mut self.right_sidebar,
+    pub fn toggle_panel(
+        &mut self,
+        position: DockPosition,
+        panel_index: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let dock = match position {
+            DockPosition::Left => &mut self.left_dock,
+            DockPosition::Bottom => &mut self.bottom_dock,
+            DockPosition::Right => &mut self.right_dock,
         };
-        let active_item = sidebar.update(cx, move |sidebar, cx| {
-            if sidebar.is_open() && sidebar.active_item_ix() == action.item_index {
-                sidebar.set_open(false, cx);
+        let active_item = dock.update(cx, move |dock, cx| {
+            if dock.is_open() && dock.active_panel_index() == panel_index {
+                dock.set_open(false, cx);
                 None
             } else {
-                sidebar.set_open(true, cx);
-                sidebar.activate_item(action.item_index, cx);
-                sidebar.active_item().cloned()
+                dock.set_open(true, cx);
+                dock.activate_panel(panel_index, cx);
+                dock.active_panel().cloned()
             }
         });
 
         if let Some(active_item) = active_item {
-            Dock::hide_on_sidebar_shown(self, action.sidebar_side, cx);
-
-            if active_item.is_focused(cx) {
+            if active_item.has_focus(cx) {
                 cx.focus_self();
             } else {
                 cx.focus(active_item.as_any());
@@ -1395,32 +1533,37 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_sidebar_item_focus(
-        &mut self,
-        sidebar_side: SidebarSide,
-        item_index: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let sidebar = match sidebar_side {
-            SidebarSide::Left => &mut self.left_sidebar,
-            SidebarSide::Right => &mut self.right_sidebar,
-        };
-        let active_item = sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_open(true, cx);
-            sidebar.activate_item(item_index, cx);
-            sidebar.active_item().cloned()
-        });
-        if let Some(active_item) = active_item {
-            Dock::hide_on_sidebar_shown(self, sidebar_side, cx);
+    pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
+                let active_item = dock.update(cx, |dock, cx| {
+                    dock.set_open(true, cx);
+                    dock.activate_panel(panel_index, cx);
+                    dock.active_panel().cloned()
+                });
+                if let Some(active_item) = active_item {
+                    if active_item.has_focus(cx) {
+                        cx.focus_self();
+                    } else {
+                        cx.focus(active_item.as_any());
+                    }
+                }
 
-            if active_item.is_focused(cx) {
-                cx.focus_self();
-            } else {
-                cx.focus(active_item.as_any());
+                self.serialize_workspace(cx);
+                cx.notify();
+                break;
             }
         }
+    }
 
-        self.serialize_workspace(cx);
+    fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
+        for pane in &self.panes {
+            pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+        }
+
+        self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
 
         cx.notify();
     }
@@ -1429,7 +1572,6 @@ impl Workspace {
         let pane = cx.add_view(|cx| {
             Pane::new(
                 self.weak_handle(),
-                None,
                 self.app_state.background_actions,
                 self.pane_history_timestamp.clone(),
                 cx,
@@ -1472,16 +1614,12 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = pane.unwrap_or_else(|| {
-            if !self.dock_active() {
-                self.active_pane().downgrade()
-            } else {
-                self.last_active_center_pane.clone().unwrap_or_else(|| {
-                    self.panes
-                        .first()
-                        .expect("There must be an active pane")
-                        .downgrade()
-                })
-            }
+            self.last_active_center_pane.clone().unwrap_or_else(|| {
+                self.panes
+                    .first()
+                    .expect("There must be an active pane")
+                    .downgrade()
+            })
         });
 
         let task = self.load_path(path.into(), cx);
@@ -1560,9 +1698,6 @@ impl Workspace {
                 .map(|ix| (pane.clone(), ix))
         });
         if let Some((pane, ix)) = result {
-            if &pane == self.dock_pane() {
-                Dock::show(self, false, cx);
-            }
             pane.update(cx, |pane, cx| pane.activate_item(ix, true, true, cx));
             true
         } else {
@@ -1608,16 +1743,7 @@ impl Workspace {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
             self.active_item_path_changed(cx);
-
-            if &pane == self.dock_pane() {
-                Dock::show(self, false, cx);
-            } else {
-                self.last_active_center_pane = Some(pane.downgrade());
-                if self.dock.is_anchored_at(DockAnchor::Expanded) {
-                    Dock::hide(self, cx);
-                }
-            }
-            cx.notify();
+            self.last_active_center_pane = Some(pane.downgrade());
         }
 
         self.update_followers(
@@ -1631,6 +1757,8 @@ impl Workspace {
             }),
             cx,
         );
+
+        cx.notify();
     }
 
     fn handle_pane_event(
@@ -1639,13 +1767,11 @@ impl Workspace {
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        let is_dock = &pane == self.dock.pane();
         match event {
-            pane::Event::Split(direction) if !is_dock => {
+            pane::Event::Split(direction) => {
                 self.split_pane(pane, *direction, cx);
             }
-            pane::Event::Remove if !is_dock => self.remove_pane(pane, cx),
-            pane::Event::Remove if is_dock => Dock::hide(self, cx),
+            pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
                 if *local {
                     self.unfollow(&pane, cx);
@@ -1671,7 +1797,14 @@ impl Workspace {
             pane::Event::Focus => {
                 self.handle_pane_focused(pane.clone(), cx);
             }
-            _ => {}
+            pane::Event::ZoomIn => {
+                if pane == self.active_pane {
+                    self.zoom_out(cx);
+                    pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+                    cx.notify();
+                }
+            }
+            pane::Event::ZoomOut => self.zoom_out(cx),
         }
 
         self.serialize_workspace(cx);
@@ -1683,11 +1816,6 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) -> Option<ViewHandle<Pane>> {
-        if &pane == self.dock_pane() {
-            warn!("Can't split dock pane.");
-            return None;
-        }
-
         let item = pane.read(cx).active_item()?;
         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
             let new_pane = self.add_pane(cx);
@@ -1711,10 +1839,6 @@ impl Workspace {
     ) {
         let Some(pane_to_split) = pane_to_split.upgrade(cx) else { return; };
         let Some(from) = from.upgrade(cx) else { return; };
-        if &pane_to_split == self.dock_pane() {
-            warn!("Can't split dock pane.");
-            return;
-        }
 
         let new_pane = self.add_pane(cx);
         Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
@@ -1732,11 +1856,6 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane_to_split = pane_to_split.upgrade(cx)?;
-        if &pane_to_split == self.dock_pane() {
-            warn!("Can't split dock pane.");
-            return None;
-        }
-
         let new_pane = self.add_pane(cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
@@ -1771,14 +1890,6 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
-    }
-
-    pub fn dock_pane(&self) -> &ViewHandle<Pane> {
-        self.dock.pane()
-    }
-
-    fn dock_active(&self) -> bool {
-        &self.active_pane == self.dock.pane()
     }
 
     fn project_remote_id_changed(&mut self, remote_id: Option<u64>, cx: &mut ViewContext<Self>) {
@@ -2522,23 +2633,65 @@ impl Workspace {
             }
         }
 
+        fn build_serialized_docks(this: &Workspace, cx: &AppContext) -> DockStructure {
+            let left_dock = this.left_dock.read(cx);
+            let left_visible = left_dock.is_open();
+            let left_active_panel = left_dock.active_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                        .to_string(),
+                )
+            });
+
+            let right_dock = this.right_dock.read(cx);
+            let right_visible = right_dock.is_open();
+            let right_active_panel = right_dock.active_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                        .to_string(),
+                )
+            });
+
+            let bottom_dock = this.bottom_dock.read(cx);
+            let bottom_visible = bottom_dock.is_open();
+            let bottom_active_panel = bottom_dock.active_panel().and_then(|panel| {
+                Some(
+                    cx.view_ui_name(panel.as_any().window_id(), panel.id())?
+                        .to_string(),
+                )
+            });
+
+            DockStructure {
+                left: DockData {
+                    visible: left_visible,
+                    active_panel: left_active_panel,
+                },
+                right: DockData {
+                    visible: right_visible,
+                    active_panel: right_active_panel,
+                },
+                bottom: DockData {
+                    visible: bottom_visible,
+                    active_panel: bottom_active_panel,
+                },
+            }
+        }
+
         if let Some(location) = self.location(cx) {
             // Load bearing special case:
             //  - with_local_workspace() relies on this to not have other stuff open
             //    when you open your log
             if !location.paths().is_empty() {
-                let dock_pane = serialize_pane_handle(self.dock.pane(), cx);
                 let center_group = build_serialized_pane_group(&self.center.root, cx);
+                let docks = build_serialized_docks(self, cx);
 
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
                     location,
-                    dock_position: self.dock.position(),
-                    dock_pane,
                     center_group,
-                    left_sidebar_open: self.left_sidebar.read(cx).is_open(),
                     bounds: Default::default(),
                     display: Default::default(),
+                    docks,
                 };
 
                 cx.background()
@@ -2556,25 +2709,13 @@ impl Workspace {
     ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
         cx.spawn(|mut cx| async move {
             let result = async_iife! {{
-                let (project, dock_pane_handle, old_center_pane) =
+                let (project, old_center_pane) =
                 workspace.read_with(&cx, |workspace, _| {
                     (
                         workspace.project().clone(),
-                        workspace.dock_pane().downgrade(),
                         workspace.last_active_center_pane.clone(),
                     )
                 })?;
-
-                let dock_items = serialized_workspace
-                    .dock_pane
-                    .deserialize_to(
-                        &project,
-                        &dock_pane_handle,
-                        serialized_workspace.id,
-                        &workspace,
-                        &mut cx,
-                    )
-                    .await?;
 
                 let mut center_items = None;
                 let mut center_group = None;
@@ -2591,7 +2732,6 @@ impl Workspace {
                     let mut opened_items = center_items
                         .unwrap_or_default()
                         .into_iter()
-                        .chain(dock_items.into_iter())
                         .filter_map(|item| {
                             let item = item?;
                             let project_path = item.project_path(cx)?;
@@ -2637,22 +2777,30 @@ impl Workspace {
                         }
                     }
 
-                    if workspace.left_sidebar().read(cx).is_open()
-                        != serialized_workspace.left_sidebar_open
-                    {
-                        workspace.toggle_sidebar(SidebarSide::Left, cx);
-                    }
-
-                    // Note that without after_window, the focus_self() and
-                    // the focus the dock generates start generating alternating
-                    // focus due to the deferred execution each triggering each other
-                    cx.after_window_update(move |workspace, cx| {
-                        Dock::set_dock_position(
-                            workspace,
-                            serialized_workspace.dock_position,
-                            false,
-                            cx,
-                        );
+                    let docks = serialized_workspace.docks;
+                    workspace.left_dock.update(cx, |dock, cx| {
+                        dock.set_open(docks.left.visible, cx);
+                        if let Some(active_panel) = docks.left.active_panel {
+                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                                dock.activate_panel(ix, cx);
+                            }
+                        }
+                    });
+                    workspace.right_dock.update(cx, |dock, cx| {
+                        dock.set_open(docks.right.visible, cx);
+                        if let Some(active_panel) = docks.right.active_panel {
+                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                                dock.activate_panel(ix, cx);
+                            }
+                        }
+                    });
+                    workspace.bottom_dock.update(cx, |dock, cx| {
+                        dock.set_open(docks.bottom.visible, cx);
+                        if let Some(active_panel) = docks.bottom.active_panel {
+                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                                dock.activate_panel(ix, cx);
+                            }
+                        }
                     });
 
                     cx.notify();
@@ -2676,11 +2824,37 @@ impl Workspace {
             user_store: project.read(cx).user_store(),
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _| {},
-            dock_default_item_factory: |_, _| None,
+            initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             background_actions: || &[],
         });
         Self::new(0, project, app_state, cx)
+    }
+
+    fn render_dock(&self, position: DockPosition, cx: &WindowContext) -> Option<AnyElement<Self>> {
+        let dock = match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Right => &self.right_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+        };
+        let active_panel = dock.read(cx).active_panel()?;
+        let element = if Some(active_panel.as_any()) == self.zoomed(cx).as_ref() {
+            dock.read(cx).render_placeholder(cx)
+        } else {
+            ChildView::new(dock, cx).into_any()
+        };
+
+        Some(
+            element
+                .constrained()
+                .dynamically(move |constraint, _, cx| match position {
+                    DockPosition::Left | DockPosition::Right => SizeConstraint::new(
+                        Vector2F::new(20., constraint.min.y()),
+                        Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
+                    ),
+                    _ => constraint,
+                })
+                .into_any(),
+        )
     }
 }
 
@@ -2827,76 +3001,46 @@ impl View for Workspace {
                             .with_child({
                                 let project = self.project.clone();
                                 Flex::row()
-                                    .with_children(
-                                        if self.left_sidebar.read(cx).active_item().is_some() {
-                                            Some(
-                                                ChildView::new(&self.left_sidebar, cx)
-                                                    .constrained()
-                                                    .dynamically(|constraint, _, cx| {
-                                                        SizeConstraint::new(
-                                                            Vector2F::new(20., constraint.min.y()),
-                                                            Vector2F::new(
-                                                                cx.window_size().x() * 0.8,
-                                                                constraint.max.y(),
-                                                            ),
-                                                        )
-                                                    }),
-                                            )
-                                        } else {
-                                            None
-                                        },
-                                    )
+                                    .with_children(self.render_dock(DockPosition::Left, cx))
                                     .with_child(
-                                        FlexItem::new(
-                                            Flex::column()
-                                                .with_child(
-                                                    FlexItem::new(self.center.render(
-                                                        &project,
-                                                        &theme,
-                                                        &self.follower_states_by_leader,
-                                                        self.active_call(),
-                                                        self.active_pane(),
-                                                        &self.app_state,
-                                                        cx,
-                                                    ))
-                                                    .flex(1., true),
-                                                )
-                                                .with_children(self.dock.render(
+                                        Flex::column()
+                                            .with_child(
+                                                FlexItem::new(self.center.render(
+                                                    &project,
                                                     &theme,
-                                                    DockAnchor::Bottom,
+                                                    &self.follower_states_by_leader,
+                                                    self.active_call(),
+                                                    self.active_pane(),
+                                                    self.zoomed(cx).as_ref(),
+                                                    &self.app_state,
                                                     cx,
-                                                )),
-                                        )
-                                        .flex(1., true),
-                                    )
-                                    .with_children(self.dock.render(&theme, DockAnchor::Right, cx))
-                                    .with_children(
-                                        if self.right_sidebar.read(cx).active_item().is_some() {
-                                            Some(
-                                                ChildView::new(&self.right_sidebar, cx)
-                                                    .constrained()
-                                                    .dynamically(|constraint, _, cx| {
-                                                        SizeConstraint::new(
-                                                            Vector2F::new(20., constraint.min.y()),
-                                                            Vector2F::new(
-                                                                cx.window_size().x() * 0.8,
-                                                                constraint.max.y(),
-                                                            ),
-                                                        )
-                                                    }),
+                                                ))
+                                                .flex(1., true),
                                             )
-                                        } else {
-                                            None
-                                        },
+                                            .with_children(
+                                                self.render_dock(DockPosition::Bottom, cx),
+                                            )
+                                            .flex(1., true),
                                     )
+                                    .with_children(self.render_dock(DockPosition::Right, cx))
                             })
                             .with_child(Overlay::new(
                                 Stack::new()
-                                    .with_children(self.dock.render(
-                                        &theme,
-                                        DockAnchor::Expanded,
-                                        cx,
-                                    ))
+                                    .with_children(self.zoomed(cx).map(|zoomed| {
+                                        enum ZoomBackground {}
+
+                                        ChildView::new(&zoomed, cx)
+                                            .contained()
+                                            .with_style(theme.workspace.zoomed_foreground)
+                                            .aligned()
+                                            .contained()
+                                            .with_style(theme.workspace.zoomed_background)
+                                            .mouse::<ZoomBackground>(0)
+                                            .capture_all()
+                                            .on_down(MouseButton::Left, |_, this: &mut Self, cx| {
+                                                this.zoom_out(cx);
+                                            })
+                                    }))
                                     .with_children(self.modal.as_ref().map(|modal| {
                                         ChildView::new(modal, cx)
                                             .contained()
@@ -2921,6 +3065,7 @@ impl View for Workspace {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         }
+        cx.notify();
     }
 }
 
@@ -3030,28 +3175,11 @@ pub fn open_paths(
                     .await,
             ))
         } else {
-            let contains_directory =
-                futures::future::join_all(abs_paths.iter().map(|path| app_state.fs.is_file(path)))
-                    .await
-                    .contains(&false);
-
-            cx.update(|cx| {
-                let task =
-                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx);
-
-                cx.spawn(|mut cx| async move {
-                    let (workspace, items) = task.await;
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        if contains_directory {
-                            workspace.toggle_sidebar(SidebarSide::Left, cx);
-                        }
-                    })?;
-
-                    anyhow::Ok((workspace, items))
+            Ok(cx
+                .update(|cx| {
+                    Workspace::new_local(abs_paths, app_state.clone(), requesting_window_id, cx)
                 })
-            })
-            .await
+                .await)
         }
     })
 }
@@ -3140,12 +3268,17 @@ pub fn join_remote_project(
 
             let (_, workspace) = cx.add_window(
                 (app_state.build_window_options)(None, None, cx.platform().as_ref()),
-                |cx| {
-                    let mut workspace = Workspace::new(0, project, app_state.clone(), cx);
-                    (app_state.initialize_workspace)(&mut workspace, &app_state, cx);
-                    workspace
-                },
+                |cx| Workspace::new(0, project, app_state.clone(), cx),
             );
+            (app_state.initialize_workspace)(
+                workspace.downgrade(),
+                false,
+                app_state.clone(),
+                cx.clone(),
+            )
+            .await
+            .log_err();
+
             workspace.downgrade()
         };
 
@@ -3248,7 +3381,10 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::test::{TestItem, TestItemEvent, TestProjectItem};
+    use crate::{
+        dock::test::{TestPanel, TestPanelEvent},
+        item::test::{TestItem, TestItemEvent, TestProjectItem},
+    };
     use fs::FakeFs;
     use gpui::{executor::Deterministic, TestAppContext};
     use project::{Project, ProjectEntryId};
@@ -3327,6 +3463,7 @@ mod tests {
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3369,12 +3506,11 @@ mod tests {
         });
 
         // Close the active item
-        workspace
-            .update(cx, |workspace, cx| {
-                Pane::close_active_item(workspace, &Default::default(), cx).unwrap()
-            })
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&Default::default(), cx).unwrap()
+        })
+        .await
+        .unwrap();
         assert_eq!(
             cx.current_window_title(window_id).as_deref(),
             Some("one.txt — root1")
@@ -3483,18 +3619,13 @@ mod tests {
             workspace.active_pane().clone()
         });
 
-        let close_items = workspace.update(cx, |workspace, cx| {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(1, true, true, cx);
-                assert_eq!(pane.active_item().unwrap().id(), item2.id());
-            });
-
+        let close_items = pane.update(cx, |pane, cx| {
+            pane.activate_item(1, true, true, cx);
+            assert_eq!(pane.active_item().unwrap().id(), item2.id());
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            Pane::close_items(workspace, pane.clone(), cx, move |id| {
-                [item1_id, item3_id, item4_id].contains(&id)
-            })
+            pane.close_items(cx, move |id| [item1_id, item3_id, item4_id].contains(&id))
         });
         cx.foreground().run_until_parked();
 
@@ -3628,10 +3759,7 @@ mod tests {
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
 
-        let close = workspace.update(cx, |workspace, cx| {
-            Pane::close_items(workspace, left_pane.clone(), cx, |_| true)
-        });
-
+        let close = left_pane.update(cx, |pane, cx| pane.close_items(cx, |_| true));
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(
@@ -3665,6 +3793,7 @@ mod tests {
 
         let project = Project::test(fs, [], cx).await;
         let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let item = cx.add_view(window_id, |cx| {
             TestItem::new().with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3745,11 +3874,7 @@ mod tests {
             item.is_dirty = true;
         });
 
-        workspace
-            .update(cx, |workspace, cx| {
-                let pane = workspace.active_pane().clone();
-                Pane::close_items(workspace, pane, cx, move |id| id == item_id)
-            })
+        pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
             .await
             .unwrap();
         assert!(!cx.has_pending_prompt(window_id));
@@ -3770,10 +3895,8 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
-        let _close_items = workspace.update(cx, |workspace, cx| {
-            let pane = workspace.active_pane().clone();
-            Pane::close_items(workspace, pane, cx, move |id| id == item_id)
-        });
+        let _close_items =
+            pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
         deterministic.run_until_parked();
         assert!(cx.has_pending_prompt(window_id));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
@@ -3832,6 +3955,175 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panels(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (_window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
+            // Add panel_1 on the left, panel_2 on the right.
+            let panel_1 = cx.add_view(|_| TestPanel::new(DockPosition::Left));
+            workspace.add_panel(panel_1.clone(), cx);
+            workspace
+                .left_dock()
+                .update(cx, |left_dock, cx| left_dock.set_open(true, cx));
+            let panel_2 = cx.add_view(|_| TestPanel::new(DockPosition::Right));
+            workspace.add_panel(panel_2.clone(), cx);
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+
+            let left_dock = workspace.left_dock();
+            assert_eq!(
+                left_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            assert_eq!(
+                left_dock.read(cx).active_panel_size(cx).unwrap(),
+                panel_1.size(cx)
+            );
+
+            left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
+            assert_eq!(
+                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                panel_2.id()
+            );
+
+            (panel_1, panel_2)
+        });
+
+        // Move panel_1 to the right
+        panel_1.update(cx, |panel_1, cx| {
+            panel_1.set_position(DockPosition::Right, cx)
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_1 was visible on the left, it should now be visible now that it's been moved to the right.
+            // Since it was the only panel on the left, the left dock should now be closed.
+            assert!(!workspace.left_dock().read(cx).is_open());
+            assert!(workspace.left_dock().read(cx).active_panel().is_none());
+            let right_dock = workspace.right_dock();
+            assert_eq!(
+                right_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            assert_eq!(right_dock.read(cx).active_panel_size(cx).unwrap(), 1337.);
+
+            // Now we move panel_2 to the left
+            panel_2.set_position(DockPosition::Left, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_2 was not visible on the right, we don't open the left dock.
+            assert!(!workspace.left_dock().read(cx).is_open());
+            // And the right dock is unaffected in it's displaying of panel_1
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(
+                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+        });
+
+        // Move panel_1 back to the left
+        panel_1.update(cx, |panel_1, cx| {
+            panel_1.set_position(DockPosition::Left, cx)
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_1 was visible on the right, we open the left dock and make panel_1 active.
+            let left_dock = workspace.left_dock();
+            assert!(left_dock.read(cx).is_open());
+            assert_eq!(
+                left_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            assert_eq!(left_dock.read(cx).active_panel_size(cx).unwrap(), 1337.);
+            // And right the dock should be closed as it no longer has any panels.
+            assert!(!workspace.right_dock().read(cx).is_open());
+
+            // Now we move panel_1 to the bottom
+            panel_1.set_position(DockPosition::Bottom, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            // Since panel_1 was visible on the left, we close the left dock.
+            assert!(!workspace.left_dock().read(cx).is_open());
+            // The bottom dock is sized based on the panel's default size,
+            // since the panel orientation changed from vertical to horizontal.
+            let bottom_dock = workspace.bottom_dock();
+            assert_eq!(
+                bottom_dock.read(cx).active_panel_size(cx).unwrap(),
+                panel_1.size(cx),
+            );
+            // Close bottom dock and move panel_1 back to the left.
+            bottom_dock.update(cx, |bottom_dock, cx| bottom_dock.set_open(false, cx));
+            panel_1.set_position(DockPosition::Left, cx);
+        });
+
+        // Emit activated event on panel 1
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::Activated));
+
+        // Now the left dock is open and panel_1 is active and focused.
+        workspace.read_with(cx, |workspace, cx| {
+            let left_dock = workspace.left_dock();
+            assert!(left_dock.read(cx).is_open());
+            assert_eq!(
+                left_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+            assert!(panel_1.is_focused(cx));
+        });
+
+        // Emit closed event on panel 2, which is not active
+        panel_2.update(cx, |_, cx| cx.emit(TestPanelEvent::Closed));
+
+        // Wo don't close the left dock, because panel_2 wasn't the active panel
+        workspace.read_with(cx, |workspace, cx| {
+            let left_dock = workspace.left_dock();
+            assert!(left_dock.read(cx).is_open());
+            assert_eq!(
+                left_dock.read(cx).active_panel().unwrap().id(),
+                panel_1.id()
+            );
+        });
+
+        // Emitting a ZoomIn event shows the panel as zoomed.
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomIn));
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), Some(panel_1.clone().into_any()));
+        });
+
+        // If focus is transferred elsewhere in the workspace, the panel is no longer zoomed.
+        workspace.update(cx, |_, cx| cx.focus_self());
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), None);
+        });
+
+        // When focus is transferred back to the panel, it is zoomed again.
+        panel_1.update(cx, |_, cx| cx.focus_self());
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), Some(panel_1.clone().into_any()));
+        });
+
+        // Emitting a ZoomOut event unzooms the panel.
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomOut));
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.zoomed(cx), None);
+        });
+
+        // Emit closed event on panel 1, which is active
+        panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::Closed));
+
+        // Now the left dock is closed, because panel_1 was the active panel
+        workspace.read_with(cx, |workspace, cx| {
+            let left_dock = workspace.left_dock();
+            assert!(!left_dock.read(cx).is_open());
         });
     }
 

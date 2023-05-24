@@ -7,7 +7,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    Axis, Border, ModelHandle, ViewContext, ViewHandle,
+    AnyViewHandle, Axis, Border, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -71,6 +71,7 @@ impl PaneGroup {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
@@ -80,6 +81,7 @@ impl PaneGroup {
             follower_states,
             active_call,
             active_pane,
+            zoomed,
             app_state,
             cx,
         )
@@ -134,6 +136,7 @@ impl Member {
         follower_states: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
@@ -141,6 +144,12 @@ impl Member {
 
         match self {
             Member::Pane(pane) => {
+                let pane_element = if Some(&**pane) == zoomed {
+                    Empty::new().into_any()
+                } else {
+                    ChildView::new(pane, cx).into_any()
+                };
+
                 let leader = follower_states
                     .iter()
                     .find_map(|(leader_id, follower_states)| {
@@ -257,7 +266,7 @@ impl Member {
                 };
 
                 Stack::new()
-                    .with_child(ChildView::new(pane, cx).contained().with_border(border))
+                    .with_child(pane_element.contained().with_border(border))
                     .with_children(leader_status_box)
                     .into_any()
             }
@@ -267,6 +276,7 @@ impl Member {
                 follower_states,
                 active_call,
                 active_pane,
+                zoomed,
                 app_state,
                 cx,
             ),
@@ -371,6 +381,7 @@ impl PaneAxis {
         follower_state: &FollowerStatesByLeader,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
+        zoomed: Option<&AnyViewHandle>,
         app_state: &Arc<AppState>,
         cx: &mut ViewContext<Workspace>,
     ) -> AnyElement<Workspace> {
@@ -388,6 +399,7 @@ impl PaneAxis {
                     follower_state,
                     active_call,
                     active_pane,
+                    zoomed,
                     app_state,
                     cx,
                 );

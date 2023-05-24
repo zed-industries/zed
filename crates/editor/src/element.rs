@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
-    editor_settings::ShowScrollbars,
+    editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         hide_hover, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH,
@@ -50,6 +50,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
+use text::Point;
 use workspace::{item::Item, GitGutterSetting, WorkspaceSettings};
 
 enum FoldMarkers {}
@@ -651,7 +652,7 @@ impl EditorElement {
 
                 //TODO: This rendering is entirely a horrible hack
                 DiffHunkStatus::Removed => {
-                    let row = *display_row_range.start();
+                    let row = display_row_range.start;
 
                     let offset = line_height / 2.;
                     let start_y = row as f32 * line_height - offset - scroll_top;
@@ -673,11 +674,11 @@ impl EditorElement {
                 }
             };
 
-            let start_row = *display_row_range.start();
-            let end_row = *display_row_range.end();
+            let start_row = display_row_range.start;
+            let end_row = display_row_range.end;
 
             let start_y = start_row as f32 * line_height - scroll_top;
-            let end_y = end_row as f32 * line_height - scroll_top + line_height;
+            let end_y = end_row as f32 * line_height - scroll_top;
 
             let width = diff_style.width_em * line_height;
             let highlight_origin = bounds.origin() + vec2f(-width, start_y);
@@ -1051,47 +1052,53 @@ impl EditorElement {
                 ..Default::default()
             });
 
-            let diff_style = theme::current(cx).editor.diff.clone();
-            for hunk in layout
-                .position_map
-                .snapshot
-                .buffer_snapshot
-                .git_diff_hunks_in_range(0..(max_row.floor() as u32), false)
-            {
-                let start_y = y_for_row(hunk.buffer_range.start as f32);
-                let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
-                    y_for_row((hunk.buffer_range.end + 1) as f32)
-                } else {
-                    y_for_row((hunk.buffer_range.end) as f32)
-                };
+            if layout.is_singleton && settings::get::<EditorSettings>(cx).scrollbar.git_diff {
+                let diff_style = theme::current(cx).editor.scrollbar.git.clone();
+                for hunk in layout
+                    .position_map
+                    .snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range(0..(max_row.floor() as u32))
+                {
+                    let start_display = Point::new(hunk.buffer_range.start, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let end_display = Point::new(hunk.buffer_range.end, 0)
+                        .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = if hunk.buffer_range.start == hunk.buffer_range.end {
+                        y_for_row((end_display.row() + 1) as f32)
+                    } else {
+                        y_for_row((end_display.row()) as f32)
+                    };
 
-                if end_y - start_y < 1. {
-                    end_y = start_y + 1.;
+                    if end_y - start_y < 1. {
+                        end_y = start_y + 1.;
+                    }
+                    let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
+
+                    let color = match hunk.status() {
+                        DiffHunkStatus::Added => diff_style.inserted,
+                        DiffHunkStatus::Modified => diff_style.modified,
+                        DiffHunkStatus::Removed => diff_style.deleted,
+                    };
+
+                    let border = Border {
+                        width: 1.,
+                        color: style.thumb.border.color,
+                        overlay: false,
+                        top: false,
+                        right: true,
+                        bottom: false,
+                        left: true,
+                    };
+
+                    scene.push_quad(Quad {
+                        bounds,
+                        background: Some(color),
+                        border,
+                        corner_radius: style.thumb.corner_radius,
+                    })
                 }
-                let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
-
-                let color = match hunk.status() {
-                    DiffHunkStatus::Added => diff_style.inserted,
-                    DiffHunkStatus::Modified => diff_style.modified,
-                    DiffHunkStatus::Removed => diff_style.deleted,
-                };
-
-                let border = Border {
-                    width: 1.,
-                    color: style.thumb.border.color,
-                    overlay: false,
-                    top: false,
-                    right: true,
-                    bottom: false,
-                    left: true,
-                };
-
-                scene.push_quad(Quad {
-                    bounds,
-                    background: Some(color),
-                    border,
-                    corner_radius: style.thumb.corner_radius,
-                })
             }
 
             scene.push_quad(Quad {
@@ -1269,7 +1276,7 @@ impl EditorElement {
             .row;
 
         buffer_snapshot
-            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row, false)
+            .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
             .dedup()
             .collect()
@@ -2060,13 +2067,17 @@ impl Element<Editor> for EditorElement {
             ));
         }
 
-        let show_scrollbars = match settings::get::<EditorSettings>(cx).show_scrollbars {
-            ShowScrollbars::Auto => {
-                snapshot.has_scrollbar_info() || editor.scroll_manager.scrollbars_visible()
+        let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
+        let show_scrollbars = match scrollbar_settings.show {
+            ShowScrollbar::Auto => {
+                // Git
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+                // Scrollmanager
+                || editor.scroll_manager.scrollbars_visible()
             }
-            ShowScrollbars::System => editor.scroll_manager.scrollbars_visible(),
-            ShowScrollbars::Always => true,
-            ShowScrollbars::Never => false,
+            ShowScrollbar::System => editor.scroll_manager.scrollbars_visible(),
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
         };
 
         let include_root = editor
@@ -2285,6 +2296,7 @@ impl Element<Editor> for EditorElement {
                 text_size,
                 scrollbar_row_range,
                 show_scrollbars,
+                is_singleton,
                 max_row,
                 gutter_margin,
                 active_rows,
@@ -2440,6 +2452,7 @@ pub struct LayoutState {
     selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
+    is_singleton: bool,
     max_row: u32,
     context_menu: Option<(DisplayPoint, AnyElement<Editor>)>,
     code_actions_indicator: Option<(u32, AnyElement<Editor>)>,

@@ -192,8 +192,7 @@ impl TestServer {
             languages: Arc::new(LanguageRegistry::test()),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
-            initialize_workspace: |_, _, _| unimplemented!(),
-            dock_default_item_factory: |_, _| None,
+            initialize_workspace: |_, _, _, _| unimplemented!(),
             background_actions: || &[],
         });
 

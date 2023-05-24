@@ -1,6 +1,7 @@
 use crate::{worktree::WorktreeHandle, Event, *};
 use fs::{FakeFs, LineEnding, RealFs};
 use futures::{future, StreamExt};
+use globset::Glob;
 use gpui::{executor::Deterministic, test::subscribe, AppContext};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
@@ -505,7 +506,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 register_options: serde_json::to_value(
                     lsp::DidChangeWatchedFilesRegistrationOptions {
                         watchers: vec![lsp::FileSystemWatcher {
-                            glob_pattern: "*.{rs,c}".to_string(),
+                            glob_pattern: "/the-root/*.{rs,c}".to_string(),
                             kind: None,
                         }],
                     },
@@ -921,6 +922,95 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
                 .language_servers_running_disk_based_diagnostics()
                 .collect::<Vec<_>>(),
             [LanguageServerId(0); 0]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut language = Language::new(
+        LanguageConfig {
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        None,
+    );
+    let mut fake_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree("/dir", json!({ "a.rs": "x" })).await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages.add(Arc::new(language)));
+
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .await
+        .unwrap();
+
+    // Publish diagnostics
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: Url::from_file_path("/dir/a.rs").unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "the message".to_string(),
+            ..Default::default()
+        }],
+    });
+
+    cx.foreground().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..1, false)
+                .map(|entry| entry.diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            ["the message".to_string()]
+        );
+    });
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    project.update(cx, |project, cx| {
+        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+    });
+
+    // The diagnostics are cleared.
+    cx.foreground().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..1, false)
+                .map(|entry| entry.diagnostic.message.clone())
+                .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        );
+    });
+    project.read_with(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(cx),
+            DiagnosticSummary {
+                error_count: 0,
+                warning_count: 0,
+            }
         );
     });
 }
@@ -3393,7 +3483,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
                 Vec::new()
             ),
             cx
@@ -3411,7 +3501,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.rs").unwrap()],
+                vec![Glob::new("*.rs").unwrap().compile_matcher()],
                 Vec::new()
             ),
             cx
@@ -3433,8 +3523,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
                 Vec::new()
             ),
@@ -3457,9 +3547,9 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.rs").unwrap(),
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.rs").unwrap().compile_matcher(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
                 Vec::new()
             ),
@@ -3504,7 +3594,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Vec::new(),
-                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3527,7 +3617,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 Vec::new(),
-                vec![glob::Pattern::new("*.rs").unwrap()],
+                vec![Glob::new("*.rs").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3549,8 +3639,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 Vec::new(),
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
             ),
             cx
@@ -3573,9 +3663,9 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 Vec::new(),
                 vec![
-                    glob::Pattern::new("*.rs").unwrap(),
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap(),
+                    Glob::new("*.rs").unwrap().compile_matcher(),
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher(),
                 ],
             ),
             cx
@@ -3612,8 +3702,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.odd").unwrap()],
-                vec![glob::Pattern::new("*.odd").unwrap()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
+                vec![Glob::new("*.odd").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3630,8 +3720,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 search_query,
                 false,
                 true,
-                vec![glob::Pattern::new("*.ts").unwrap()],
-                vec![glob::Pattern::new("*.ts").unwrap()],
+                vec![Glob::new("*.ts").unwrap().compile_matcher()],
+                vec![Glob::new("*.ts").unwrap().compile_matcher()],
             ),
             cx
         )
@@ -3649,12 +3739,12 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
             ),
             cx
@@ -3673,12 +3763,12 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 vec![
-                    glob::Pattern::new("*.ts").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.ts").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
                 vec![
-                    glob::Pattern::new("*.rs").unwrap(),
-                    glob::Pattern::new("*.odd").unwrap()
+                    Glob::new("*.rs").unwrap().compile_matcher(),
+                    Glob::new("*.odd").unwrap().compile_matcher()
                 ],
             ),
             cx

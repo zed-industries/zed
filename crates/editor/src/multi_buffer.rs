@@ -1140,6 +1140,10 @@ impl MultiBuffer {
         let mut result = Vec::new();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         cursor.seek(&start, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
         while let Some(excerpt) = cursor.item() {
             if *cursor.start() > end {
                 break;
@@ -2841,20 +2845,24 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn git_diff_hunks_in_range<'a>(
+    pub fn has_git_diffs(&self) -> bool {
+        for excerpt in self.excerpts.iter() {
+            if !excerpt.buffer.git_diff.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn git_diff_hunks_in_range_rev<'a>(
         &'a self,
         row_range: Range<u32>,
-        reversed: bool,
     ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
         let mut cursor = self.excerpts.cursor::<Point>();
 
-        if reversed {
-            cursor.seek(&Point::new(row_range.end, 0), Bias::Left, &());
-            if cursor.item().is_none() {
-                cursor.prev(&());
-            }
-        } else {
-            cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+        cursor.seek(&Point::new(row_range.end, 0), Bias::Left, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
         }
 
         std::iter::from_fn(move || {
@@ -2884,7 +2892,7 @@ impl MultiBufferSnapshot {
 
             let buffer_hunks = excerpt
                 .buffer
-                .git_diff_hunks_intersecting_range(buffer_start..buffer_end, reversed)
+                .git_diff_hunks_intersecting_range_rev(buffer_start..buffer_end)
                 .filter_map(move |hunk| {
                     let start = multibuffer_start.row
                         + hunk
@@ -2904,11 +2912,69 @@ impl MultiBufferSnapshot {
                     })
                 });
 
-            if reversed {
-                cursor.prev(&());
-            } else {
-                cursor.next(&());
+            cursor.prev(&());
+
+            Some(buffer_hunks)
+        })
+        .flatten()
+    }
+
+    pub fn git_diff_hunks_in_range<'a>(
+        &'a self,
+        row_range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+        let mut cursor = self.excerpts.cursor::<Point>();
+
+        cursor.seek(&Point::new(row_range.start, 0), Bias::Right, &());
+
+        std::iter::from_fn(move || {
+            let excerpt = cursor.item()?;
+            let multibuffer_start = *cursor.start();
+            let multibuffer_end = multibuffer_start + excerpt.text_summary.lines;
+            if multibuffer_start.row >= row_range.end {
+                return None;
             }
+
+            let mut buffer_start = excerpt.range.context.start;
+            let mut buffer_end = excerpt.range.context.end;
+            let excerpt_start_point = buffer_start.to_point(&excerpt.buffer);
+            let excerpt_end_point = excerpt_start_point + excerpt.text_summary.lines;
+
+            if row_range.start > multibuffer_start.row {
+                let buffer_start_point =
+                    excerpt_start_point + Point::new(row_range.start - multibuffer_start.row, 0);
+                buffer_start = excerpt.buffer.anchor_before(buffer_start_point);
+            }
+
+            if row_range.end < multibuffer_end.row {
+                let buffer_end_point =
+                    excerpt_start_point + Point::new(row_range.end - multibuffer_start.row, 0);
+                buffer_end = excerpt.buffer.anchor_before(buffer_end_point);
+            }
+
+            let buffer_hunks = excerpt
+                .buffer
+                .git_diff_hunks_intersecting_range(buffer_start..buffer_end)
+                .filter_map(move |hunk| {
+                    let start = multibuffer_start.row
+                        + hunk
+                            .buffer_range
+                            .start
+                            .saturating_sub(excerpt_start_point.row);
+                    let end = multibuffer_start.row
+                        + hunk
+                            .buffer_range
+                            .end
+                            .min(excerpt_end_point.row + 1)
+                            .saturating_sub(excerpt_start_point.row);
+
+                    Some(DiffHunk {
+                        buffer_range: start..end,
+                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                    })
+                });
+
+            cursor.next(&());
 
             Some(buffer_hunks)
         })
@@ -4647,7 +4713,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(0..12, false)
+                .git_diff_hunks_in_range(0..12)
                 .map(|hunk| (hunk.status(), hunk.buffer_range))
                 .collect::<Vec<_>>(),
             &expected,
@@ -4655,7 +4721,7 @@ mod tests {
 
         assert_eq!(
             snapshot
-                .git_diff_hunks_in_range(0..12, true)
+                .git_diff_hunks_in_range_rev(0..12)
                 .map(|hunk| (hunk.status(), hunk.buffer_range))
                 .collect::<Vec<_>>(),
             expected
@@ -5010,16 +5076,19 @@ mod tests {
                     .read(cx)
                     .range_to_buffer_ranges(start_ix..end_ix, cx);
                 let excerpted_buffers_text = excerpted_buffer_ranges
-                    .into_iter()
+                    .iter()
                     .map(|(buffer, buffer_range)| {
                         buffer
                             .read(cx)
-                            .text_for_range(buffer_range)
+                            .text_for_range(buffer_range.clone())
                             .collect::<String>()
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
                 assert_eq!(excerpted_buffers_text, text_for_range);
+                if !expected_excerpts.is_empty() {
+                    assert!(!excerpted_buffer_ranges.is_empty());
+                }
 
                 let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
                 assert_eq!(

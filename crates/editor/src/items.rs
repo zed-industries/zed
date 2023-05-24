@@ -1231,27 +1231,27 @@ mod tests {
         }
 
         fn as_local(&self) -> Option<&dyn language::LocalFile> {
-            todo!()
+            unimplemented!()
         }
 
         fn mtime(&self) -> SystemTime {
-            todo!()
+            unimplemented!()
         }
 
         fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
-            todo!()
+            unimplemented!()
         }
 
         fn is_deleted(&self) -> bool {
-            todo!()
+            unimplemented!()
         }
 
         fn as_any(&self) -> &dyn std::any::Any {
-            todo!()
+            unimplemented!()
         }
 
         fn to_proto(&self) -> rpc::proto::File {
-            todo!()
+            unimplemented!()
         }
     }
 }

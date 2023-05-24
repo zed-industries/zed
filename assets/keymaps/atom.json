@@ -39,8 +39,8 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-\\": "workspace::ToggleLeftSidebar",
-      "cmd-k cmd-b": "workspace::ToggleLeftSidebar",
+      "cmd-\\": "workspace::ToggleLeftDock",
+      "cmd-k cmd-b": "workspace::ToggleLeftDock",
       "cmd-t": "file_finder::Toggle",
       "cmd-shift-r": "project_symbols::Toggle"
     }
@@ -62,9 +62,5 @@
       "ctrl-f": "project_panel::ExpandSelectedEntry",
       "ctrl-shift-c": "project_panel::CopyPath"
     }
-  },
-  {
-    "context": "Dock",
-    "bindings": {}
   }
 ]

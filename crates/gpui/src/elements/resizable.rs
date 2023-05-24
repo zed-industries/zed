@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -7,25 +7,23 @@ use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
     scene::MouseDrag,
-    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, MouseRegion, SceneBuilder, View,
+    AnyElement, Axis, Element, LayoutContext, MouseRegion, SceneBuilder, SizeConstraint, View,
     ViewContext,
 };
 
-use super::{ConstrainedBox, Hook};
-
 #[derive(Copy, Clone, Debug)]
-pub enum Side {
+pub enum HandleSide {
     Top,
     Bottom,
     Left,
     Right,
 }
 
-impl Side {
+impl HandleSide {
     fn axis(&self) -> Axis {
         match self {
-            Side::Left | Side::Right => Axis::Horizontal,
-            Side::Top | Side::Bottom => Axis::Vertical,
+            HandleSide::Left | HandleSide::Right => Axis::Horizontal,
+            HandleSide::Top | HandleSide::Bottom => Axis::Vertical,
         }
     }
 
@@ -33,8 +31,8 @@ impl Side {
     /// then top-to-bottom
     fn before_content(self) -> bool {
         match self {
-            Side::Left | Side::Top => true,
-            Side::Right | Side::Bottom => false,
+            HandleSide::Left | HandleSide::Top => true,
+            HandleSide::Right | HandleSide::Bottom => false,
         }
     }
 
@@ -55,14 +53,14 @@ impl Side {
 
     fn of_rect(&self, bounds: RectF, handle_size: f32) -> RectF {
         match self {
-            Side::Top => RectF::new(bounds.origin(), vec2f(bounds.width(), handle_size)),
-            Side::Left => RectF::new(bounds.origin(), vec2f(handle_size, bounds.height())),
-            Side::Bottom => {
+            HandleSide::Top => RectF::new(bounds.origin(), vec2f(bounds.width(), handle_size)),
+            HandleSide::Left => RectF::new(bounds.origin(), vec2f(handle_size, bounds.height())),
+            HandleSide::Bottom => {
                 let mut origin = bounds.lower_left();
                 origin.set_y(origin.y() - handle_size);
                 RectF::new(origin, vec2f(bounds.width(), handle_size))
             }
-            Side::Right => {
+            HandleSide::Right => {
                 let mut origin = bounds.upper_right();
                 origin.set_x(origin.x() - handle_size);
                 RectF::new(origin, vec2f(handle_size, bounds.height()))
@@ -71,69 +69,44 @@ impl Side {
     }
 }
 
-struct ResizeHandleState {
-    actual_dimension: Cell<f32>,
-    custom_dimension: Cell<f32>,
+pub struct Resizable<V: View> {
+    child: AnyElement<V>,
+    handle_side: HandleSide,
+    handle_size: f32,
+    on_resize: Rc<RefCell<dyn FnMut(&mut V, f32, &mut ViewContext<V>)>>,
 }
 
-pub struct Resizable<V: View> {
-    side: Side,
-    handle_size: f32,
-    child: AnyElement<V>,
-    state: Rc<ResizeHandleState>,
-    _state_handle: ElementStateHandle<Rc<ResizeHandleState>>,
-}
+const DEFAULT_HANDLE_SIZE: f32 = 4.0;
 
 impl<V: View> Resizable<V> {
-    pub fn new<Tag: 'static, T: View>(
+    pub fn new(
         child: AnyElement<V>,
-        element_id: usize,
-        side: Side,
-        handle_size: f32,
-        initial_size: f32,
-        cx: &mut ViewContext<V>,
+        handle_side: HandleSide,
+        size: f32,
+        on_resize: impl 'static + FnMut(&mut V, f32, &mut ViewContext<V>),
     ) -> Self {
-        let state_handle = cx.element_state::<Tag, Rc<ResizeHandleState>>(
-            element_id,
-            Rc::new(ResizeHandleState {
-                actual_dimension: Cell::new(initial_size),
-                custom_dimension: Cell::new(initial_size),
-            }),
-        );
-
-        let state = state_handle.read(cx).clone();
-
-        let child = Hook::new({
-            let constrained = ConstrainedBox::new(child);
-            match side.axis() {
-                Axis::Horizontal => constrained.with_max_width(state.custom_dimension.get()),
-                Axis::Vertical => constrained.with_max_height(state.custom_dimension.get()),
-            }
-        })
-        .on_after_layout({
-            let state = state.clone();
-            move |size, _| {
-                state.actual_dimension.set(side.relevant_component(size));
-            }
-        })
+        let child = match handle_side.axis() {
+            Axis::Horizontal => child.constrained().with_max_width(size),
+            Axis::Vertical => child.constrained().with_max_height(size),
+        }
         .into_any();
 
         Self {
-            side,
             child,
-            handle_size,
-            state,
-            _state_handle: state_handle,
+            handle_side,
+            handle_size: DEFAULT_HANDLE_SIZE,
+            on_resize: Rc::new(RefCell::new(on_resize)),
         }
     }
 
-    pub fn current_size(&self) -> f32 {
-        self.state.actual_dimension.get()
+    pub fn with_handle_size(mut self, handle_size: f32) -> Self {
+        self.handle_size = handle_size;
+        self
     }
 }
 
 impl<V: View> Element<V> for Resizable<V> {
-    type LayoutState = ();
+    type LayoutState = SizeConstraint;
     type PaintState = ();
 
     fn layout(
@@ -142,7 +115,7 @@ impl<V: View> Element<V> for Resizable<V> {
         view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
-        (self.child.layout(constraint, view, cx), ())
+        (self.child.layout(constraint, view, cx), constraint)
     }
 
     fn paint(
@@ -150,34 +123,44 @@ impl<V: View> Element<V> for Resizable<V> {
         scene: &mut SceneBuilder,
         bounds: pathfinder_geometry::rect::RectF,
         visible_bounds: pathfinder_geometry::rect::RectF,
-        _child_size: &mut Self::LayoutState,
+        constraint: &mut SizeConstraint,
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         scene.push_stacking_context(None, None);
 
-        let handle_region = self.side.of_rect(bounds, self.handle_size);
+        let handle_region = self.handle_side.of_rect(bounds, self.handle_size);
 
         enum ResizeHandle {}
         scene.push_mouse_region(
-            MouseRegion::new::<ResizeHandle>(cx.view_id(), self.side as usize, handle_region)
-                .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
-                .on_drag(MouseButton::Left, {
-                    let state = self.state.clone();
-                    let side = self.side;
-                    move |e, _: &mut V, cx| {
-                        let prev_width = state.actual_dimension.get();
-                        state
-                            .custom_dimension
-                            .set(0f32.max(prev_width + side.compute_delta(e)).round());
-                        cx.notify();
+            MouseRegion::new::<ResizeHandle>(
+                cx.view_id(),
+                self.handle_side as usize,
+                handle_region,
+            )
+            .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
+            .on_drag(MouseButton::Left, {
+                let bounds = bounds.clone();
+                let side = self.handle_side;
+                let prev_size = side.relevant_component(bounds.size());
+                let min_size = side.relevant_component(constraint.min);
+                let max_size = side.relevant_component(constraint.max);
+                let on_resize = self.on_resize.clone();
+                move |event, view: &mut V, cx| {
+                    let new_size = min_size
+                        .max(prev_size + side.compute_delta(event))
+                        .min(max_size)
+                        .round();
+                    if new_size != prev_size {
+                        on_resize.borrow_mut()(view, new_size, cx);
                     }
-                }),
+                }
+            }),
         );
 
         scene.push_cursor_region(crate::CursorRegion {
             bounds: handle_region,
-            style: match self.side.axis() {
+            style: match self.handle_side.axis() {
                 Axis::Horizontal => CursorStyle::ResizeLeftRight,
                 Axis::Vertical => CursorStyle::ResizeUpDown,
             },

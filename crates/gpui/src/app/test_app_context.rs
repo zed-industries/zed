@@ -270,7 +270,7 @@ impl TestAppContext {
             .borrow_mut()
             .pop_front()
             .expect("prompt was not called");
-        let _ = done_tx.try_send(answer);
+        done_tx.try_send(answer).ok();
     }
 
     pub fn has_pending_prompt(&self, window_id: usize) -> bool {

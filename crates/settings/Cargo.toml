@@ -22,7 +22,6 @@ util = { path = "../util" }
 
 anyhow.workspace = true
 futures.workspace = true
-glob.workspace = true
 json_comments = "0.2"
 lazy_static.workspace = true
 postage.workspace = true

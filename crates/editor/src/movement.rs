@@ -193,6 +193,44 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     })
 }
 
+pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == 0 {
+        return map.max_point();
+    }
+
+    let mut found_non_blank_line = false;
+    for row in (0..point.row + 1).rev() {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if found_non_blank_line && blank {
+            return Point::new(row, 0).to_display_point(map);
+        }
+
+        found_non_blank_line |= !blank;
+    }
+
+    DisplayPoint::zero()
+}
+
+pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let point = display_point.to_point(map);
+    if point.row == map.max_buffer_row() {
+        return DisplayPoint::zero();
+    }
+
+    let mut found_non_blank_line = false;
+    for row in point.row..map.max_buffer_row() + 1 {
+        let blank = map.buffer_snapshot.is_line_blank(row);
+        if found_non_blank_line && blank {
+            return Point::new(row, 0).to_display_point(map);
+        }
+
+        found_non_blank_line |= !blank;
+    }
+
+    map.max_point()
+}
+
 /// Scans for a boundary preceding the given start point `from` until a boundary is found, indicated by the
 /// given predicate returning true. The predicate is called with the character to the left and right
 /// of the candidate boundary location, and will be called with `\n` characters indicating the start

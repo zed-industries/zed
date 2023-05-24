@@ -339,7 +339,7 @@ pub struct TelemetrySettings {
     pub metrics: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TelemetrySettingsContent {
     pub diagnostics: Option<bool>,
     pub metrics: Option<bool>,

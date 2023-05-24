@@ -119,6 +119,14 @@ pub fn init(cx: &mut AppContext) {
     settings::register::<TerminalSettings>(cx);
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalDockPosition {
+    Left,
+    Bottom,
+    Right,
+}
+
 #[derive(Deserialize)]
 pub struct TerminalSettings {
     pub shell: Shell,
@@ -132,6 +140,9 @@ pub struct TerminalSettings {
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
+    pub dock: TerminalDockPosition,
+    pub default_width: f32,
+    pub default_height: f32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -147,6 +158,9 @@ pub struct TerminalSettingsContent {
     pub alternate_scroll: Option<AlternateScroll>,
     pub option_as_meta: Option<bool>,
     pub copy_on_select: Option<bool>,
+    pub dock: Option<TerminalDockPosition>,
+    pub default_width: Option<f32>,
+    pub default_height: Option<f32>,
 }
 
 impl TerminalSettings {

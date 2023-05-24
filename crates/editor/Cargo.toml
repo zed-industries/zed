@@ -49,8 +49,7 @@ workspace = { path = "../workspace" }
 aho-corasick = "0.7"
 anyhow.workspace = true
 futures.workspace = true
-glob.workspace = true
-indoc.workspace = true
+indoc = "1.0.4"
 itertools = "0.10"
 lazy_static.workspace = true
 log.workspace = true
@@ -82,7 +81,6 @@ workspace = { path = "../workspace", features = ["test-support"] }
 
 ctor.workspace = true
 env_logger.workspace = true
-glob.workspace = true
 rand.workspace = true
 unindent.workspace = true
 tree-sitter = "0.20"

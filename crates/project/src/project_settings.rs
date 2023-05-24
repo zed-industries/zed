@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use settings::Setting;
 use std::sync::Arc;
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,

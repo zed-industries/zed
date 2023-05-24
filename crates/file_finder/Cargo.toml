@@ -23,6 +23,7 @@ workspace = { path = "../workspace" }
 postage.workspace = true
 
 [dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

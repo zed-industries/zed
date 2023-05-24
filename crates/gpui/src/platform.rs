@@ -173,6 +173,7 @@ pub struct WindowOptions<'a> {
     pub titlebar: Option<TitlebarOptions<'a>>,
     pub center: bool,
     pub focus: bool,
+    pub show: bool,
     pub kind: WindowKind,
     pub is_movable: bool,
     pub screen: Option<Rc<dyn Screen>>,
@@ -222,21 +223,21 @@ impl Bind for WindowBounds {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let (region, next_index) = match self {
             WindowBounds::Fullscreen => {
-                let next_index = statement.bind("Fullscreen", start_index)?;
+                let next_index = statement.bind(&"Fullscreen", start_index)?;
                 (None, next_index)
             }
             WindowBounds::Maximized => {
-                let next_index = statement.bind("Maximized", start_index)?;
+                let next_index = statement.bind(&"Maximized", start_index)?;
                 (None, next_index)
             }
             WindowBounds::Fixed(region) => {
-                let next_index = statement.bind("Fixed", start_index)?;
+                let next_index = statement.bind(&"Fixed", start_index)?;
                 (Some(*region), next_index)
             }
         };
 
         statement.bind(
-            region.map(|region| {
+            &region.map(|region| {
                 (
                     region.min_x(),
                     region.min_y(),
@@ -376,6 +377,7 @@ impl<'a> Default for WindowOptions<'a> {
             }),
             center: false,
             focus: true,
+            show: true,
             kind: WindowKind::Normal,
             is_movable: true,
             screen: None,

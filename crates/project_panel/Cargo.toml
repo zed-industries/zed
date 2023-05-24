@@ -10,6 +10,7 @@ doctest = false
 
 [dependencies]
 context_menu = { path = "../context_menu" }
+db = { path = "../db" }
 drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
@@ -21,6 +22,11 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 postage.workspace = true
 futures.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+schemars.workspace = true
 unicase = "2.6"
 
 [dev-dependencies]

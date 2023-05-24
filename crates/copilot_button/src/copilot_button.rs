@@ -66,8 +66,8 @@ impl View for CopilotButton {
                         let style = theme
                             .workspace
                             .status_bar
-                            .sidebar_buttons
-                            .item
+                            .panel_buttons
+                            .button
                             .style_for(state, active);
 
                         Flex::row()
@@ -335,10 +335,9 @@ async fn configure_disabled_globs(
                     .get::<AllLanguageSettings>(None)
                     .copilot
                     .disabled_globs
-                    .clone()
                     .iter()
-                    .map(|glob| glob.as_str().to_string())
-                    .collect::<Vec<_>>()
+                    .map(|glob| glob.glob().to_string())
+                    .collect()
             });
 
             if let Some(path_to_disable) = &path_to_disable {

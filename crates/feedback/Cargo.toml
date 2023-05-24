@@ -35,3 +35,6 @@ serde_derive.workspace = true
 sysinfo = "0.27.1"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 urlencoding = "2.1.2"
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }

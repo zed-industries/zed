@@ -56,8 +56,7 @@ use fs::RealFs;
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{
-    dock::FocusDock, item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings,
-    Workspace,
+    item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings, Workspace,
 };
 use zed::{
     self, build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
@@ -187,7 +186,6 @@ fn main() {
             fs,
             build_window_options,
             initialize_workspace,
-            dock_default_item_factory,
             background_actions,
         });
         cx.set_global(Arc::downgrade(&app_state));
@@ -817,7 +815,6 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
     &[
         ("Go to file", &file_finder::Toggle),
         ("Open command palette", &command_palette::Toggle),
-        ("Focus the dock", &FocusDock),
         ("Open recent projects", &recent_projects::OpenRecent),
         ("Change your settings", &OpenSettings),
     ]

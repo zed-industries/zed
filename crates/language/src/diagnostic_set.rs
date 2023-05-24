@@ -80,6 +80,10 @@ impl DiagnosticSet {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.diagnostics.summary().count
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {
         self.diagnostics.iter()
     }

@@ -73,6 +73,7 @@ fn create_copilot_auth_window(
         titlebar: None,
         center: true,
         focus: true,
+        show: true,
         kind: WindowKind::Normal,
         is_movable: true,
         screen: None,

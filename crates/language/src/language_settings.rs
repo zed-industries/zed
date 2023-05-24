@@ -1,5 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
+use globset::GlobMatcher;
 use gpui::AppContext;
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
@@ -45,10 +46,10 @@ pub struct LanguageSettings {
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     pub feature_enabled: bool,
-    pub disabled_globs: Vec<glob::Pattern>,
+    pub disabled_globs: Vec<GlobMatcher>,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     #[serde(default)]
     pub features: Option<FeaturesContent>,
@@ -151,7 +152,7 @@ impl AllLanguageSettings {
             .copilot
             .disabled_globs
             .iter()
-            .any(|glob| glob.matches_path(path))
+            .any(|glob| glob.is_match(path))
     }
 
     pub fn copilot_enabled(&self, language_name: Option<&str>, path: Option<&Path>) -> bool {
@@ -236,7 +237,7 @@ impl settings::Setting for AllLanguageSettings {
                 feature_enabled: copilot_enabled,
                 disabled_globs: copilot_globs
                     .iter()
-                    .filter_map(|pattern| glob::Pattern::new(pattern).ok())
+                    .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
             },
             defaults,

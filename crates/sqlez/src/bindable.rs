@@ -27,7 +27,7 @@ impl StaticColumnCount for bool {}
 impl Bind for bool {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement
-            .bind(self.then_some(1).unwrap_or(0), start_index)
+            .bind(&self.then_some(1).unwrap_or(0), start_index)
             .with_context(|| format!("Failed to bind bool at index {start_index}"))
     }
 }

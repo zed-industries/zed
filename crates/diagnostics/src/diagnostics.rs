@@ -33,7 +33,7 @@ use theme::ThemeSettings;
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
-    ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
+    ItemNavHistory, Pane, PaneBackdrop, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy]);
@@ -90,11 +90,15 @@ impl View for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if self.path_states.is_empty() {
             let theme = &theme::current(cx).project_diagnostics;
-            Label::new("No problems in workspace", theme.empty_message.clone())
-                .aligned()
-                .contained()
-                .with_style(theme.container)
-                .into_any()
+            PaneBackdrop::new(
+                cx.view_id(),
+                Label::new("No problems in workspace", theme.empty_message.clone())
+                    .aligned()
+                    .contained()
+                    .with_style(theme.container)
+                    .into_any(),
+            )
+            .into_any()
         } else {
             ChildView::new(&self.editor, cx).into_any()
         }
@@ -161,8 +165,13 @@ impl ProjectDiagnosticsEditor {
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()))
-            .detach();
+        cx.subscribe(&editor, |this, _, event, cx| {
+            cx.emit(event.clone());
+            if event == &editor::Event::Focused && this.path_states.is_empty() {
+                cx.focus_self()
+            }
+        })
+        .detach();
 
         let project = project_handle.read(cx);
         let paths_to_update = project

@@ -1,7 +1,4 @@
-use crate::{
-    dock::DockPosition, item::ItemHandle, DockAnchor, ItemDeserializers, Member, Pane, PaneAxis,
-    Workspace, WorkspaceId,
-};
+use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
 use db::sqlez::{
@@ -62,12 +59,68 @@ impl Column for WorkspaceLocation {
 pub struct SerializedWorkspace {
     pub id: WorkspaceId,
     pub location: WorkspaceLocation,
-    pub dock_position: DockPosition,
     pub center_group: SerializedPaneGroup,
-    pub dock_pane: SerializedPane,
-    pub left_sidebar_open: bool,
     pub bounds: Option<WindowBounds>,
     pub display: Option<Uuid>,
+    pub docks: DockStructure,
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct DockStructure {
+    pub(crate) left: DockData,
+    pub(crate) right: DockData,
+    pub(crate) bottom: DockData,
+}
+
+impl Column for DockStructure {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (left, next_index) = DockData::column(statement, start_index)?;
+        let (right, next_index) = DockData::column(statement, next_index)?;
+        let (bottom, next_index) = DockData::column(statement, next_index)?;
+        Ok((
+            DockStructure {
+                left,
+                right,
+                bottom,
+            },
+            next_index,
+        ))
+    }
+}
+
+impl Bind for DockStructure {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.left, start_index)?;
+        let next_index = statement.bind(&self.right, next_index)?;
+        statement.bind(&self.bottom, next_index)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct DockData {
+    pub(crate) visible: bool,
+    pub(crate) active_panel: Option<String>,
+}
+
+impl Column for DockData {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (visible, next_index) = Option::<bool>::column(statement, start_index)?;
+        let (active_panel, next_index) = Option::<String>::column(statement, next_index)?;
+        Ok((
+            DockData {
+                visible: visible.unwrap_or(false),
+                active_panel,
+            },
+            next_index,
+        ))
+    }
+}
+
+impl Bind for DockData {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.visible, start_index)?;
+        statement.bind(&self.active_panel, next_index)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -266,9 +319,9 @@ impl StaticColumnCount for SerializedItem {
 }
 impl Bind for &SerializedItem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(self.kind.clone(), start_index)?;
-        let next_index = statement.bind(self.item_id, next_index)?;
-        statement.bind(self.active, next_index)
+        let next_index = statement.bind(&self.kind, start_index)?;
+        let next_index = statement.bind(&self.item_id, next_index)?;
+        statement.bind(&self.active, next_index)
     }
 }
 
@@ -285,66 +338,5 @@ impl Column for SerializedItem {
             },
             next_index,
         ))
-    }
-}
-
-impl StaticColumnCount for DockPosition {
-    fn column_count() -> usize {
-        2
-    }
-}
-impl Bind for DockPosition {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(self.is_visible(), start_index)?;
-        statement.bind(self.anchor(), next_index)
-    }
-}
-
-impl Column for DockPosition {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (visible, next_index) = bool::column(statement, start_index)?;
-        let (dock_anchor, next_index) = DockAnchor::column(statement, next_index)?;
-        let position = if visible {
-            DockPosition::Shown(dock_anchor)
-        } else {
-            DockPosition::Hidden(dock_anchor)
-        };
-        Ok((position, next_index))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::WorkspaceLocation;
-    use crate::DockAnchor;
-    use db::sqlez::connection::Connection;
-
-    #[test]
-    fn test_workspace_round_trips() {
-        let db = Connection::open_memory(Some("workspace_id_round_trips"));
-
-        db.exec(indoc::indoc! {"
-                CREATE TABLE workspace_id_test(
-                    workspace_id INTEGER,
-                    dock_anchor TEXT
-                );"})
-            .unwrap()()
-        .unwrap();
-
-        let workspace_id: WorkspaceLocation = WorkspaceLocation::from(&["\test2", "\test1"]);
-
-        db.exec_bound("INSERT INTO workspace_id_test(workspace_id, dock_anchor) VALUES (?,?)")
-            .unwrap()((&workspace_id, DockAnchor::Bottom))
-        .unwrap();
-
-        assert_eq!(
-            db.select_row("SELECT workspace_id, dock_anchor FROM workspace_id_test LIMIT 1")
-                .unwrap()()
-            .unwrap(),
-            Some((
-                WorkspaceLocation::from(&["\test1", "\test2"]),
-                DockAnchor::Bottom
-            ))
-        );
     }
 }

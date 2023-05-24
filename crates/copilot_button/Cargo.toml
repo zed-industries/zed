@@ -23,3 +23,6 @@ workspace = { path = "../workspace" }
 anyhow.workspace = true
 smol.workspace = true
 futures.workspace = true
+
+[dev-dependencies]
+editor = { path = "../editor", features = ["test-support"] }

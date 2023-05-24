@@ -20,6 +20,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Result};
 use blink_manager::BlinkManager;
@@ -215,6 +216,8 @@ actions!(
         MoveToNextSubwordEnd,
         MoveToBeginningOfLine,
         MoveToEndOfLine,
+        MoveToStartOfParagraph,
+        MoveToEndOfParagraph,
         MoveToBeginning,
         MoveToEnd,
         SelectUp,
@@ -225,6 +228,8 @@ actions!(
         SelectToPreviousSubwordStart,
         SelectToNextWordEnd,
         SelectToNextSubwordEnd,
+        SelectToStartOfParagraph,
+        SelectToEndOfParagraph,
         SelectToBeginning,
         SelectToEnd,
         SelectAll,
@@ -336,6 +341,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::move_to_next_subword_end);
     cx.add_action(Editor::move_to_beginning_of_line);
     cx.add_action(Editor::move_to_end_of_line);
+    cx.add_action(Editor::move_to_start_of_paragraph);
+    cx.add_action(Editor::move_to_end_of_paragraph);
     cx.add_action(Editor::move_to_beginning);
     cx.add_action(Editor::move_to_end);
     cx.add_action(Editor::select_up);
@@ -348,6 +355,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::select_to_next_subword_end);
     cx.add_action(Editor::select_to_beginning_of_line);
     cx.add_action(Editor::select_to_end_of_line);
+    cx.add_action(Editor::select_to_start_of_paragraph);
+    cx.add_action(Editor::select_to_end_of_paragraph);
     cx.add_action(Editor::select_to_beginning);
     cx.add_action(Editor::select_to_end);
     cx.add_action(Editor::select_all);
@@ -522,15 +531,6 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
-}
-
-impl EditorSnapshot {
-    fn has_scrollbar_info(&self) -> bool {
-        self.buffer_snapshot
-            .git_diff_hunks_in_range(0..self.max_point().row(), false)
-            .next()
-            .is_some()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -4761,6 +4761,80 @@ impl Editor {
         });
     }
 
+    pub fn move_to_start_of_paragraph(
+        &mut self,
+        _: &MoveToStartOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::start_of_paragraph(map, selection.head()),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_end_of_paragraph(
+        &mut self,
+        _: &MoveToEndOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::end_of_paragraph(map, selection.head()),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn select_to_start_of_paragraph(
+        &mut self,
+        _: &SelectToStartOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (movement::start_of_paragraph(map, head), SelectionGoal::None)
+            });
+        })
+    }
+
+    pub fn select_to_end_of_paragraph(
+        &mut self,
+        _: &SelectToEndOfParagraph,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (movement::end_of_paragraph(map, head), SelectionGoal::None)
+            });
+        })
+    }
+
     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
@@ -5569,68 +5643,91 @@ impl Editor {
     }
 
     fn go_to_hunk(&mut self, _: &GoToHunk, cx: &mut ViewContext<Self>) {
-        self.go_to_hunk_impl(Direction::Next, cx)
-    }
-
-    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
-        self.go_to_hunk_impl(Direction::Prev, cx)
-    }
-
-    pub fn go_to_hunk_impl(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let snapshot = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let selection = self.selections.newest::<Point>(cx);
 
-        fn seek_in_direction(
-            this: &mut Editor,
-            snapshot: &DisplaySnapshot,
-            initial_point: Point,
-            is_wrapped: bool,
-            direction: Direction,
-            cx: &mut ViewContext<Editor>,
-        ) -> bool {
-            let hunks = if direction == Direction::Next {
+        if !self.seek_in_direction(
+            &snapshot,
+            selection.head(),
+            false,
+            snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range((selection.head().row + 1)..u32::MAX),
+            cx,
+        ) {
+            let wrapped_point = Point::zero();
+            self.seek_in_direction(
+                &snapshot,
+                wrapped_point,
+                true,
                 snapshot
                     .buffer_snapshot
-                    .git_diff_hunks_in_range(initial_point.row..u32::MAX, false)
-            } else {
-                snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range(0..initial_point.row, true)
-            };
-
-            let display_point = initial_point.to_display_point(snapshot);
-            let mut hunks = hunks
-                .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
-                .skip_while(|hunk| {
-                    if is_wrapped {
-                        false
-                    } else {
-                        hunk.contains_display_row(display_point.row())
-                    }
-                })
-                .dedup();
-
-            if let Some(hunk) = hunks.next() {
-                this.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    let row = hunk.start_display_row();
-                    let point = DisplayPoint::new(row, 0);
-                    s.select_display_ranges([point..point]);
-                });
-
-                true
-            } else {
-                false
-            }
+                    .git_diff_hunks_in_range((wrapped_point.row + 1)..u32::MAX),
+                cx,
+            );
         }
+    }
 
-        if !seek_in_direction(self, &snapshot, selection.head(), false, direction, cx) {
-            let wrapped_point = match direction {
-                Direction::Next => Point::zero(),
-                Direction::Prev => snapshot.buffer_snapshot.max_point(),
-            };
-            seek_in_direction(self, &snapshot, wrapped_point, true, direction, cx);
+    fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let selection = self.selections.newest::<Point>(cx);
+
+        if !self.seek_in_direction(
+            &snapshot,
+            selection.head(),
+            false,
+            snapshot
+                .buffer_snapshot
+                .git_diff_hunks_in_range_rev(0..selection.head().row),
+            cx,
+        ) {
+            let wrapped_point = snapshot.buffer_snapshot.max_point();
+            self.seek_in_direction(
+                &snapshot,
+                wrapped_point,
+                true,
+                snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range_rev(0..wrapped_point.row),
+                cx,
+            );
+        }
+    }
+
+    fn seek_in_direction(
+        &mut self,
+        snapshot: &DisplaySnapshot,
+        initial_point: Point,
+        is_wrapped: bool,
+        hunks: impl Iterator<Item = DiffHunk<u32>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
+        let display_point = initial_point.to_display_point(snapshot);
+        let mut hunks = hunks
+            .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
+            .skip_while(|hunk| {
+                if is_wrapped {
+                    false
+                } else {
+                    hunk.contains_display_row(display_point.row())
+                }
+            })
+            .dedup();
+
+        if let Some(hunk) = hunks.next() {
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                let row = hunk.start_display_row();
+                let point = DisplayPoint::new(row, 0);
+                s.select_display_ranges([point..point]);
+            });
+
+            true
+        } else {
+            false
         }
     }
 
@@ -7104,6 +7201,7 @@ pub enum Event {
     BufferEdited,
     Edited,
     Reparsed,
+    Focused,
     Blurred,
     DirtyChanged,
     Saved,
@@ -7157,6 +7255,7 @@ impl View for Editor {
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
+            cx.emit(Event::Focused);
             cx.emit_global(focused_event);
         }
         if let Some(rename) = self.pending_rename.as_ref() {
