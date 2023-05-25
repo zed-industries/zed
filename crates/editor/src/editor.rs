@@ -2524,15 +2524,33 @@ impl Editor {
             .buffer
             .read(cx)
             .text_anchor_for_position(position.clone(), cx)?;
-        let on_type_formatting = project.update(cx, |project, cx| {
-            project.on_type_format(buffer, buffer_position, input, true, cx)
-        });
 
+        // OnTypeFormatting retuns a list of edits, no need to pass them between Zed instances,
+        // hence we do LSP request & edit on host side only — add formats to host's history.
+        let push_to_lsp_host_history = true;
+        // If this is not the host, append its history with new edits.
+        let push_to_client_history = project.read(cx).is_remote();
+
+        let on_type_formatting = project.update(cx, |project, cx| {
+            project.on_type_format(
+                buffer.clone(),
+                buffer_position,
+                input,
+                push_to_lsp_host_history,
+                cx,
+            )
+        });
         Some(cx.spawn(|editor, mut cx| async move {
-            on_type_formatting.await?;
-            editor.update(&mut cx, |editor, cx| {
-                editor.refresh_document_highlights(cx);
-            })?;
+            if let Some(transaction) = on_type_formatting.await? {
+                if push_to_client_history {
+                    buffer.update(&mut cx, |buffer, _| {
+                        buffer.push_transaction(transaction, Instant::now());
+                    });
+                }
+                editor.update(&mut cx, |editor, cx| {
+                    editor.refresh_document_highlights(cx);
+                })?;
+            }
             Ok(())
         }))
     }

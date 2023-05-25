@@ -7464,9 +7464,6 @@ async fn test_on_input_format_from_host_to_guest(
             }]))
         },
     );
-    // .next()
-    // .await
-    // .unwrap();
 
     // Open the buffer on the guest and see that the formattings worked
     let buffer_b = project_b
@@ -7485,6 +7482,27 @@ async fn test_on_input_format_from_host_to_guest(
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.text(), "fn main() { a>~< }")
+    });
+
+    // Undo should remove LSP edits first
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(editor.text(cx), "fn main() { a>~< }");
+        editor.undo(&Undo, cx);
+        assert_eq!(editor.text(cx), "fn main() { a> }");
+    });
+    cx_b.foreground().run_until_parked();
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a> }")
+    });
+
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(editor.text(cx), "fn main() { a> }");
+        editor.undo(&Undo, cx);
+        assert_eq!(editor.text(cx), "fn main() { a }");
+    });
+    cx_b.foreground().run_until_parked();
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a }")
     });
 }
 
@@ -7594,6 +7612,27 @@ async fn test_on_input_format_from_guest_to_host(
     cx_a.foreground().run_until_parked();
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.text(), "fn main() { a:~: }")
+    });
+
+    // Undo should remove LSP edits first
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.text(cx), "fn main() { a:~: }");
+        editor.undo(&Undo, cx);
+        assert_eq!(editor.text(cx), "fn main() { a: }");
+    });
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a: }")
+    });
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(editor.text(cx), "fn main() { a: }");
+        editor.undo(&Undo, cx);
+        assert_eq!(editor.text(cx), "fn main() { a }");
+    });
+    cx_a.foreground().run_until_parked();
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.text(), "fn main() { a }")
     });
 }
 
