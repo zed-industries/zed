@@ -2,7 +2,7 @@ use crate::{
     DocumentHighlight, Hover, HoverBlock, HoverBlockKind, Location, LocationLink, Project,
     ProjectTransaction,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use fs::LineEnding;
@@ -123,6 +123,7 @@ pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
     pub trigger: String,
     pub options: FormattingOptions,
+    pub push_to_history: bool,
 }
 
 pub(crate) struct FormattingOptions {
@@ -1627,7 +1628,7 @@ impl LspCommand for GetCodeActions {
 
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
-    type Response = Vec<(Range<Anchor>, String)>;
+    type Response = ProjectTransaction;
     type LspRequest = lsp::request::OnTypeFormatting;
     type ProtoRequest = proto::OnTypeFormatting;
 
@@ -1667,14 +1668,23 @@ impl LspCommand for OnTypeFormatting {
         buffer: ModelHandle<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
-        cx.update(|cx| {
-            project.update(cx, |project, cx| {
-                project.edits_from_lsp(&buffer, message.into_iter().flatten(), server_id, None, cx)
-            })
-        })
-        .await
-        .context("LSP edits conversion")
+    ) -> Result<ProjectTransaction> {
+        if let Some(edits) = message {
+            let (lsp_adapter, lsp_server) =
+                language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
+            Project::deserialize_edits(
+                project,
+                buffer,
+                edits,
+                self.push_to_history,
+                lsp_adapter,
+                lsp_server,
+                &mut cx,
+            )
+            .await
+        } else {
+            Ok(ProjectTransaction::default())
+        }
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::OnTypeFormatting {
@@ -1714,58 +1724,38 @@ impl LspCommand for OnTypeFormatting {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             trigger: message.trigger.clone(),
             options: lsp_formatting_options(tab_size.get()).into(),
+            push_to_history: false,
         })
     }
 
     fn response_to_proto(
-        response: Vec<(Range<Anchor>, String)>,
-        _: &mut Project,
-        _: PeerId,
-        buffer_version: &clock::Global,
-        _: &mut AppContext,
+        response: ProjectTransaction,
+        project: &mut Project,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut AppContext,
     ) -> proto::OnTypeFormattingResponse {
+        let transaction = project.serialize_project_transaction_for_peer(response, peer_id, cx);
         proto::OnTypeFormattingResponse {
-            entries: response
-                .into_iter()
-                .map(
-                    |(response_range, new_text)| proto::OnTypeFormattingResponseEntry {
-                        start: Some(language::proto::serialize_anchor(&response_range.start)),
-                        end: Some(language::proto::serialize_anchor(&response_range.end)),
-                        new_text,
-                    },
-                )
-                .collect(),
-            version: serialize_version(&buffer_version),
+            transaction: Some(transaction),
         }
     }
 
     async fn response_from_proto(
         self,
         message: proto::OnTypeFormattingResponse,
-        _: ModelHandle<Project>,
-        buffer: ModelHandle<Buffer>,
+        project: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
+    ) -> Result<ProjectTransaction> {
+        let message = message
+            .transaction
+            .ok_or_else(|| anyhow!("missing transaction"))?;
+        project
+            .update(&mut cx, |project, cx| {
+                project.deserialize_project_transaction(message, self.push_to_history, cx)
             })
-            .await?;
-        message
-            .entries
-            .into_iter()
-            .map(|entry| {
-                let start = entry
-                    .start
-                    .and_then(language::proto::deserialize_anchor)
-                    .ok_or_else(|| anyhow!("invalid start"))?;
-                let end = entry
-                    .end
-                    .and_then(language::proto::deserialize_anchor)
-                    .ok_or_else(|| anyhow!("invalid end"))?;
-                Ok((start..end, entry.new_text))
-            })
-            .collect()
+            .await
     }
 
     fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {

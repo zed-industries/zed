@@ -417,6 +417,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
+        client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
@@ -429,7 +430,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
-        client.add_model_request_handler(Self::handle_lsp_command::<OnTypeFormatting>);
         client.add_model_request_handler(Self::handle_search_project);
         client.add_model_request_handler(Self::handle_get_project_symbols);
         client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
@@ -4035,6 +4035,118 @@ impl Project {
         }
     }
 
+    fn apply_on_type_formatting(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: Anchor,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        if self.is_local() {
+            cx.spawn(|this, mut cx| async move {
+                // Do not allow multiple concurrent formatting requests for the
+                // same buffer.
+                this.update(&mut cx, |this, cx| {
+                    this.buffers_being_formatted
+                        .insert(buffer.read(cx).remote_id())
+                });
+
+                let _cleanup = defer({
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    let closure_buffer = buffer.clone();
+                    move || {
+                        this.update(&mut cx, |this, cx| {
+                            this.buffers_being_formatted
+                                .remove(&closure_buffer.read(cx).remote_id());
+                        });
+                    }
+                });
+
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_edits(Some(position.timestamp))
+                    })
+                    .await?;
+                this.update(&mut cx, |this, cx| {
+                    let position = position.to_point_utf16(buffer.read(cx));
+                    this.on_type_format(buffer, position, trigger, cx)
+                })
+                .await
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::OnTypeFormatting {
+                project_id,
+                buffer_id: buffer.read(cx).remote_id(),
+                position: Some(serialize_anchor(&position)),
+                trigger,
+                version: serialize_version(&buffer.read(cx).version()),
+            };
+            cx.spawn(|this, mut cx| async move {
+                let response = client
+                    .request(request)
+                    .await?
+                    .transaction
+                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                this.update(&mut cx, |this, cx| {
+                    this.deserialize_project_transaction(response, push_to_history, cx)
+                })
+                .await
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
+    async fn deserialize_edits(
+        this: ModelHandle<Self>,
+        buffer_to_edit: ModelHandle<Buffer>,
+        edits: Vec<lsp::TextEdit>,
+        push_to_history: bool,
+        _: Arc<CachedLspAdapter>,
+        language_server: Arc<LanguageServer>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ProjectTransaction> {
+        let edits = this
+            .update(cx, |this, cx| {
+                this.edits_from_lsp(
+                    &buffer_to_edit,
+                    edits,
+                    language_server.server_id(),
+                    None,
+                    cx,
+                )
+            })
+            .await?;
+
+        let transaction = buffer_to_edit.update(cx, |buffer, cx| {
+            buffer.finalize_last_transaction();
+            buffer.start_transaction();
+            for (range, text) in edits {
+                buffer.edit([(range, text)], None, cx);
+            }
+
+            if buffer.end_transaction(cx).is_some() {
+                let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                if !push_to_history {
+                    buffer.forget_transaction(transaction.id);
+                }
+                Some(transaction)
+            } else {
+                None
+            }
+        });
+
+        let mut project_transaction = ProjectTransaction::default();
+        if let Some(transaction) = transaction {
+            project_transaction.0.insert(buffer_to_edit, transaction);
+        }
+
+        Ok(project_transaction)
+    }
+
     async fn deserialize_workspace_edit(
         this: ModelHandle<Self>,
         edit: lsp::WorkspaceEdit,
@@ -4204,39 +4316,24 @@ impl Project {
         &self,
         buffer: ModelHandle<Buffer>,
         position: T,
-        input: char,
+        trigger: String,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<ProjectTransaction>> {
         let tab_size = buffer.read_with(cx, |buffer, cx| {
             let language_name = buffer.language().map(|language| language.name());
             language_settings(language_name.as_deref(), cx).tab_size
         });
         let position = position.to_point_utf16(buffer.read(cx));
-        let edits_task = self.request_lsp(
+        self.request_lsp(
             buffer.clone(),
             OnTypeFormatting {
                 position,
-                trigger: input.to_string(),
+                trigger,
                 options: lsp_command::lsp_formatting_options(tab_size.get()).into(),
+                push_to_history: true,
             },
             cx,
-        );
-
-        cx.spawn(|_project, mut cx| async move {
-            let edits = edits_task
-                .await
-                .context("requesting OnTypeFormatting edits for char '{new_char}'")?;
-
-            if !edits.is_empty() {
-                cx.update(|cx| {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.edit(edits, None, cx);
-                    });
-                });
-            }
-
-            Ok(())
-        })
+        )
     }
 
     #[allow(clippy::type_complexity)]
@@ -5809,6 +5906,42 @@ impl Project {
         })
     }
 
+    async fn handle_on_type_formatting(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::OnTypeFormatting>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OnTypeFormattingResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let on_type_formatting = this.update(&mut cx, |this, cx| {
+            let buffer = this
+                .opened_buffers
+                .get(&envelope.payload.buffer_id)
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+            let position = envelope
+                .payload
+                .position
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("invalid position"))?;
+            Ok::<_, anyhow::Error>(this.apply_on_type_formatting(
+                buffer,
+                position,
+                envelope.payload.trigger.clone(),
+                false,
+                cx,
+            ))
+        })?;
+
+        let project_transaction = on_type_formatting.await?;
+        let project_transaction = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::OnTypeFormattingResponse {
+            transaction: Some(project_transaction),
+        })
+    }
+
     async fn handle_lsp_command<T: LspCommand>(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
@@ -6379,7 +6512,7 @@ impl Project {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn edits_from_lsp(
+    fn edits_from_lsp(
         &mut self,
         buffer: &ModelHandle<Buffer>,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,

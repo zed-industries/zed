@@ -2123,9 +2123,10 @@ impl Editor {
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
             // When buffer contents is updated and caret is moved, try triggering on type formatting.
-            if settings::get::<EditorSettings>(cx).use_on_type_format && text.len() == 1 {
-                let input_char = text.chars().next().expect("single char input");
-                if let Some(on_type_format_task) = this.trigger_on_type_format(input_char, cx) {
+            if settings::get::<EditorSettings>(cx).use_on_type_format {
+                if let Some(on_type_format_task) =
+                    this.trigger_on_type_formatting(text.to_string(), cx)
+                {
                     on_type_format_task.detach_and_log_err(cx);
                 }
             }
@@ -2508,20 +2509,42 @@ impl Editor {
         }
     }
 
-    fn trigger_on_type_format(
+    fn trigger_on_type_formatting(
         &self,
-        input: char,
+        input: String,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        if input.len() != 1 {
+            return None;
+        }
+
+        let transaction_title = format!("OnTypeFormatting after {input}");
+        let workspace = self.workspace(cx)?;
         let project = self.project.as_ref()?;
         let position = self.selections.newest_anchor().head();
         let (buffer, buffer_position) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(position.clone(), cx)?;
+        let on_type_formatting = project.update(cx, |project, cx| {
+            project.on_type_format(buffer, buffer_position, input, cx)
+        });
 
-        Some(project.update(cx, |project, cx| {
-            project.on_type_format(buffer.clone(), buffer_position, input, cx)
+        Some(cx.spawn(|editor, mut cx| async move {
+            let project_transaction = on_type_formatting.await?;
+            Self::open_project_transaction(
+                &editor,
+                workspace.downgrade(),
+                project_transaction,
+                transaction_title,
+                cx.clone(),
+            )
+            .await?;
+
+            editor.update(&mut cx, |editor, cx| {
+                editor.refresh_document_highlights(cx);
+            })?;
+            Ok(())
         }))
     }
 
