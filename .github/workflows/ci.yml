@@ -78,9 +78,6 @@ jobs:
       - name: Build other binaries
         run: cargo build --workspace --bins --all-features
 
-      - name: Generate license file
-        run: script/generate-licenses
-
   bundle:
     name: Bundle app
     runs-on:
@@ -141,9 +138,6 @@ jobs:
             echo "invalid release tag ${GITHUB_REF_NAME}. expected ${expected_tag_name}"
             exit 1
           fi
-
-      - name: Generate license file
-        run: script/generate-licenses
 
       - name: Create app bundle
         run: script/bundle
