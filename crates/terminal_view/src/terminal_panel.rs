@@ -55,6 +55,7 @@ impl TerminalPanel {
                 cx,
             );
             pane.set_can_split(false, cx);
+            pane.set_can_navigate(false, cx);
             pane.on_can_drop(move |drag_and_drop, cx| {
                 drag_and_drop
                     .currently_dragged::<DraggedItem>(window_id)
