@@ -4,8 +4,7 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts"
+        "build": "ts-node ./src/buildThemes.ts"
     },
     "author": "",
     "license": "ISC",
