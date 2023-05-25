@@ -34,12 +34,6 @@ export interface License {
 
 export interface Verification {
     https_url: string
-    license_checksum: string
-}
-
-// License name -> License text
-export interface Licenses {
-    [key: string]: string
 }
 
 // FIXME: Add support for the SPDX expression syntax
