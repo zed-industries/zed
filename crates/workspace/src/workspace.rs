@@ -40,9 +40,9 @@ use gpui::{
         CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
         WindowOptions,
     },
-    AnyModelHandle, AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle,
-    SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
+    ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowContext,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use itertools::Itertools;
@@ -484,6 +484,7 @@ pub struct Workspace {
     weak_self: WeakViewHandle<Self>,
     remote_entity_subscription: Option<client::Subscription>,
     modal: Option<AnyViewHandle>,
+    zoomed: Option<AnyWeakViewHandle>,
     center: PaneGroup,
     left_dock: ViewHandle<Dock>,
     bottom_dock: ViewHandle<Dock>,
@@ -687,6 +688,7 @@ impl Workspace {
         let mut this = Workspace {
             weak_self: weak_handle.clone(),
             modal: None,
+            zoomed: None,
             center: PaneGroup::new(center_pane.clone()),
             panes: vec![center_pane.clone()],
             panes_by_item: Default::default(),
@@ -905,9 +907,17 @@ impl Workspace {
                 } else if T::should_zoom_in_on_event(event) {
                     this.zoom_out(cx);
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
+                    if panel.has_focus(cx) {
+                        this.zoomed = Some(panel.downgrade().into_any());
+                    }
                 } else if T::should_zoom_out_on_event(event) {
                     this.zoom_out(cx);
                 } else if T::is_focus_event(event) {
+                    if panel.is_zoomed(cx) {
+                        this.zoomed = Some(panel.downgrade().into_any());
+                    } else {
+                        this.zoomed = None;
+                    }
                     cx.notify();
                 }
             }
@@ -1359,44 +1369,6 @@ impl Workspace {
         }
     }
 
-    fn zoomed(&self, cx: &WindowContext) -> Option<AnyViewHandle> {
-        self.zoomed_panel_for_dock(DockPosition::Left, cx)
-            .or_else(|| self.zoomed_panel_for_dock(DockPosition::Bottom, cx))
-            .or_else(|| self.zoomed_panel_for_dock(DockPosition::Right, cx))
-            .or_else(|| self.zoomed_pane(cx))
-    }
-
-    fn zoomed_panel_for_dock(
-        &self,
-        position: DockPosition,
-        cx: &WindowContext,
-    ) -> Option<AnyViewHandle> {
-        let (dock, other_docks) = match position {
-            DockPosition::Left => (&self.left_dock, [&self.bottom_dock, &self.right_dock]),
-            DockPosition::Bottom => (&self.bottom_dock, [&self.left_dock, &self.right_dock]),
-            DockPosition::Right => (&self.right_dock, [&self.left_dock, &self.bottom_dock]),
-        };
-
-        let zoomed_panel = dock.read(&cx).zoomed_panel(cx)?;
-        if other_docks.iter().all(|dock| !dock.read(cx).has_focus(cx))
-            && !self.active_pane.read(cx).has_focus()
-        {
-            Some(zoomed_panel.as_any().clone())
-        } else {
-            None
-        }
-    }
-
-    fn zoomed_pane(&self, cx: &WindowContext) -> Option<AnyViewHandle> {
-        let active_pane = self.active_pane.read(cx);
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
-        if active_pane.is_zoomed() && docks.iter().all(|dock| !dock.read(cx).has_focus(cx)) {
-            Some(self.active_pane.clone().into_any())
-        } else {
-            None
-        }
-    }
-
     pub fn items<'a>(
         &'a self,
         cx: &'a AppContext,
@@ -1567,6 +1539,7 @@ impl Workspace {
         self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
         self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
         self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        self.zoomed = None;
 
         cx.notify();
     }
@@ -1749,6 +1722,12 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
+        if pane.read(cx).is_zoomed() {
+            self.zoomed = Some(pane.downgrade().into_any());
+        } else {
+            self.zoomed = None;
+        }
+
         self.update_followers(
             proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
                 id: self.active_item(cx).and_then(|item| {
@@ -1804,6 +1783,9 @@ impl Workspace {
                 if pane == self.active_pane {
                     self.zoom_out(cx);
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
+                    if pane.read(cx).has_focus() {
+                        self.zoomed = Some(pane.downgrade().into_any());
+                    }
                     cx.notify();
                 }
             }
@@ -2840,7 +2822,7 @@ impl Workspace {
             DockPosition::Bottom => &self.bottom_dock,
         };
         let active_panel = dock.read(cx).active_panel()?;
-        let element = if Some(active_panel.as_any()) == self.zoomed(cx).as_ref() {
+        let element = if Some(active_panel.id()) == self.zoomed.as_ref().map(|zoomed| zoomed.id()) {
             dock.read(cx).render_placeholder(cx)
         } else {
             ChildView::new(dock, cx).into_any()
@@ -3008,16 +2990,21 @@ impl View for Workspace {
                                     .with_child(
                                         Flex::column()
                                             .with_child(
-                                                FlexItem::new(self.center.render(
-                                                    &project,
-                                                    &theme,
-                                                    &self.follower_states_by_leader,
-                                                    self.active_call(),
-                                                    self.active_pane(),
-                                                    self.zoomed(cx).as_ref(),
-                                                    &self.app_state,
-                                                    cx,
-                                                ))
+                                                FlexItem::new(
+                                                    self.center.render(
+                                                        &project,
+                                                        &theme,
+                                                        &self.follower_states_by_leader,
+                                                        self.active_call(),
+                                                        self.active_pane(),
+                                                        self.zoomed
+                                                            .as_ref()
+                                                            .and_then(|zoomed| zoomed.upgrade(cx))
+                                                            .as_ref(),
+                                                        &self.app_state,
+                                                        cx,
+                                                    ),
+                                                )
                                                 .flex(1., true),
                                             )
                                             .with_children(
@@ -3029,20 +3016,25 @@ impl View for Workspace {
                             })
                             .with_child(Overlay::new(
                                 Stack::new()
-                                    .with_children(self.zoomed(cx).map(|zoomed| {
+                                    .with_children(self.zoomed.as_ref().and_then(|zoomed| {
                                         enum ZoomBackground {}
-
-                                        ChildView::new(&zoomed, cx)
-                                            .contained()
-                                            .with_style(theme.workspace.zoomed_foreground)
-                                            .aligned()
-                                            .contained()
-                                            .with_style(theme.workspace.zoomed_background)
-                                            .mouse::<ZoomBackground>(0)
-                                            .capture_all()
-                                            .on_down(MouseButton::Left, |_, this: &mut Self, cx| {
-                                                this.zoom_out(cx);
-                                            })
+                                        let zoomed = zoomed.upgrade(cx)?;
+                                        Some(
+                                            ChildView::new(&zoomed, cx)
+                                                .contained()
+                                                .with_style(theme.workspace.zoomed_foreground)
+                                                .aligned()
+                                                .contained()
+                                                .with_style(theme.workspace.zoomed_background)
+                                                .mouse::<ZoomBackground>(0)
+                                                .capture_all()
+                                                .on_down(
+                                                    MouseButton::Left,
+                                                    |_, this: &mut Self, cx| {
+                                                        this.zoom_out(cx);
+                                                    },
+                                                ),
+                                        )
                                     }))
                                     .with_children(self.modal.as_ref().map(|modal| {
                                         ChildView::new(modal, cx)
@@ -3068,7 +3060,6 @@ impl View for Workspace {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         }
-        cx.notify();
     }
 }
 
@@ -3393,7 +3384,7 @@ mod tests {
         item::test::{TestItem, TestItemEvent, TestProjectItem},
     };
     use fs::FakeFs;
-    use gpui::{executor::Deterministic, TestAppContext};
+    use gpui::{executor::Deterministic, test::EmptyView, TestAppContext};
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
@@ -3971,7 +3962,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (_window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let (panel_1, panel_2) = workspace.update(cx, |workspace, cx| {
             // Add panel_1 on the left, panel_2 on the right.
@@ -4102,26 +4093,41 @@ mod tests {
 
         // Emitting a ZoomIn event shows the panel as zoomed.
         panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomIn));
-        workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.zoomed(cx), Some(panel_1.clone().into_any()));
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
+        });
+
+        // If focus is transferred to another view that's not a panel or another pane, we still show
+        // the panel as zoomed.
+        let focus_receiver = cx.add_view(window_id, |_| EmptyView);
+        focus_receiver.update(cx, |_, cx| cx.focus_self());
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
         });
 
         // If focus is transferred elsewhere in the workspace, the panel is no longer zoomed.
         workspace.update(cx, |_, cx| cx.focus_self());
-        workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.zoomed(cx), None);
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, None);
+        });
+
+        // If focus is transferred again to another view that's not a panel or a pane, we won't
+        // show the panel as zoomed because it wasn't zoomed before.
+        focus_receiver.update(cx, |_, cx| cx.focus_self());
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, None);
         });
 
         // When focus is transferred back to the panel, it is zoomed again.
         panel_1.update(cx, |_, cx| cx.focus_self());
-        workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.zoomed(cx), Some(panel_1.clone().into_any()));
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, Some(panel_1.downgrade().into_any()));
         });
 
         // Emitting a ZoomOut event unzooms the panel.
         panel_1.update(cx, |_, cx| cx.emit(TestPanelEvent::ZoomOut));
-        workspace.read_with(cx, |workspace, cx| {
-            assert_eq!(workspace.zoomed(cx), None);
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(workspace.zoomed, None);
         });
 
         // Emit closed event on panel 1, which is active
