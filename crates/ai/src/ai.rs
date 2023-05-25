@@ -100,8 +100,6 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action({
         let assistant = assistant.clone();
         move |_: &mut Editor, _: &editor::Cancel, cx: &mut ViewContext<Editor>| {
-            dbg!("CANCEL LAST ASSIST");
-
             if !assistant.cancel_last_assist(cx.view_id()) {
                 cx.propagate_action();
             }
