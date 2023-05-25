@@ -2085,6 +2085,7 @@ mod tests {
             theme::init((), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
             language::init(cx);
             editor::init(cx);
             project_panel::init_settings(cx);

@@ -1268,6 +1268,7 @@ pub mod tests {
             client::init_settings(cx);
             editor::init_settings(cx);
             workspace::init_settings(cx);
+            Project::init_settings(cx);
         });
     }
 }

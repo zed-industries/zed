@@ -1273,6 +1273,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // The diagnostics have moved down since they were created.
     buffer.next_notification(cx).await;
+    buffer.next_notification(cx).await;
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer

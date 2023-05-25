@@ -1198,6 +1198,7 @@ mod tests {
             super::init(cx);
             editor::init(cx);
             workspace::init_settings(cx);
+            Project::init_settings(cx);
             state
         })
     }
