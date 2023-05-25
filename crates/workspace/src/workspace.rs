@@ -2836,7 +2836,10 @@ impl Workspace {
                         Vector2F::new(20., constraint.min.y()),
                         Vector2F::new(cx.window_size().x() * 0.8, constraint.max.y()),
                     ),
-                    _ => constraint,
+                    DockPosition::Bottom => SizeConstraint::new(
+                        Vector2F::new(constraint.min.x(), 20.),
+                        Vector2F::new(constraint.max.x(), cx.window_size().y() * 0.8),
+                    ),
                 })
                 .into_any(),
         )
