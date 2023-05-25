@@ -682,7 +682,7 @@ message OnTypeFormatting {
 }
 
 message OnTypeFormattingResponse {
-    ProjectTransaction transaction = 1;
+    Transaction transaction = 1;
 }
 
 message PerformRenameResponse {

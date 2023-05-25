@@ -2518,8 +2518,6 @@ impl Editor {
             return None;
         }
 
-        let transaction_title = format!("OnTypeFormatting after {input}");
-        let workspace = self.workspace(cx)?;
         let project = self.project.as_ref()?;
         let position = self.selections.newest_anchor().head();
         let (buffer, buffer_position) = self
@@ -2527,20 +2525,11 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position.clone(), cx)?;
         let on_type_formatting = project.update(cx, |project, cx| {
-            project.on_type_format(buffer, buffer_position, input, cx)
+            project.on_type_format(buffer, buffer_position, input, true, cx)
         });
 
         Some(cx.spawn(|editor, mut cx| async move {
-            let project_transaction = on_type_formatting.await?;
-            Self::open_project_transaction(
-                &editor,
-                workspace.downgrade(),
-                project_transaction,
-                transaction_title,
-                cx.clone(),
-            )
-            .await?;
-
+            on_type_formatting.await?;
             editor.update(&mut cx, |editor, cx| {
                 editor.refresh_document_highlights(cx);
             })?;

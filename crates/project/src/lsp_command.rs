@@ -12,7 +12,7 @@ use language::{
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
-    Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Unclipped,
+    Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
@@ -1628,7 +1628,7 @@ impl LspCommand for GetCodeActions {
 
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
-    type Response = ProjectTransaction;
+    type Response = Option<Transaction>;
     type LspRequest = lsp::request::OnTypeFormatting;
     type ProtoRequest = proto::OnTypeFormatting;
 
@@ -1668,7 +1668,7 @@ impl LspCommand for OnTypeFormatting {
         buffer: ModelHandle<Buffer>,
         server_id: LanguageServerId,
         mut cx: AsyncAppContext,
-    ) -> Result<ProjectTransaction> {
+    ) -> Result<Option<Transaction>> {
         if let Some(edits) = message {
             let (lsp_adapter, lsp_server) =
                 language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
@@ -1683,7 +1683,7 @@ impl LspCommand for OnTypeFormatting {
             )
             .await
         } else {
-            Ok(ProjectTransaction::default())
+            Ok(None)
         }
     }
 
@@ -1729,33 +1729,27 @@ impl LspCommand for OnTypeFormatting {
     }
 
     fn response_to_proto(
-        response: ProjectTransaction,
-        project: &mut Project,
-        peer_id: PeerId,
+        response: Option<Transaction>,
+        _: &mut Project,
+        _: PeerId,
         _: &clock::Global,
-        cx: &mut AppContext,
+        _: &mut AppContext,
     ) -> proto::OnTypeFormattingResponse {
-        let transaction = project.serialize_project_transaction_for_peer(response, peer_id, cx);
         proto::OnTypeFormattingResponse {
-            transaction: Some(transaction),
+            transaction: response
+                .map(|transaction| language::proto::serialize_transaction(&transaction)),
         }
     }
 
     async fn response_from_proto(
         self,
         message: proto::OnTypeFormattingResponse,
-        project: ModelHandle<Project>,
+        _: ModelHandle<Project>,
         _: ModelHandle<Buffer>,
-        mut cx: AsyncAppContext,
-    ) -> Result<ProjectTransaction> {
-        let message = message
-            .transaction
-            .ok_or_else(|| anyhow!("missing transaction"))?;
-        project
-            .update(&mut cx, |project, cx| {
-                project.deserialize_project_transaction(message, self.push_to_history, cx)
-            })
-            .await
+        _: AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        let Some(transaction) = message.transaction else { return Ok(None) };
+        Ok(Some(language::proto::deserialize_transaction(transaction)?))
     }
 
     fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {

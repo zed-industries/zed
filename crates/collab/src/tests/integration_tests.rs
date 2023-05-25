@@ -7444,18 +7444,11 @@ async fn test_on_input_format_from_host_to_guest(
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     cx_b.foreground().run_until_parked();
-    // Type a on type formatting trigger character as the guest.
-    editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
-        editor.handle_input(">", cx);
-        cx.focus(&editor_a);
-    });
 
     // Receive an OnTypeFormatting request as the host's language server.
     // Return some formattings from the host's language server.
-    cx_b.foreground().start_waiting();
-    fake_language_server
-        .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+    fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
+        |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -7469,18 +7462,27 @@ async fn test_on_input_format_from_host_to_guest(
                 new_text: "~<".to_string(),
                 range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
             }]))
-        })
-        .next()
-        .await
-        .unwrap();
-    cx_b.foreground().finish_waiting();
+        },
+    );
+    // .next()
+    // .await
+    // .unwrap();
 
     // Open the buffer on the guest and see that the formattings worked
     let buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
         .await
         .unwrap();
+
+    // Type a on type formatting trigger character as the guest.
+    editor_a.update(cx_a, |editor, cx| {
+        cx.focus(&editor_a);
+        editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
+        editor.handle_input(">", cx);
+    });
+
     cx_b.foreground().run_until_parked();
+
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.text(), "fn main() { a>~< }")
     });

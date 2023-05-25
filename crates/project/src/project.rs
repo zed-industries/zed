@@ -4040,9 +4040,8 @@ impl Project {
         buffer: ModelHandle<Buffer>,
         position: Anchor,
         trigger: String,
-        push_to_history: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ProjectTransaction>> {
+    ) -> Task<Result<Option<Transaction>>> {
         if self.is_local() {
             cx.spawn(|this, mut cx| async move {
                 // Do not allow multiple concurrent formatting requests for the
@@ -4071,7 +4070,7 @@ impl Project {
                     .await?;
                 this.update(&mut cx, |this, cx| {
                     let position = position.to_point_utf16(buffer.read(cx));
-                    this.on_type_format(buffer, position, trigger, cx)
+                    this.on_type_format(buffer, position, trigger, false, cx)
                 })
                 .await
             })
@@ -4084,16 +4083,13 @@ impl Project {
                 trigger,
                 version: serialize_version(&buffer.read(cx).version()),
             };
-            cx.spawn(|this, mut cx| async move {
-                let response = client
+            cx.spawn(|_, _| async move {
+                client
                     .request(request)
                     .await?
                     .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
-                this.update(&mut cx, |this, cx| {
-                    this.deserialize_project_transaction(response, push_to_history, cx)
-                })
-                .await
+                    .map(language::proto::deserialize_transaction)
+                    .transpose()
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -4108,7 +4104,7 @@ impl Project {
         _: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncAppContext,
-    ) -> Result<ProjectTransaction> {
+    ) -> Result<Option<Transaction>> {
         let edits = this
             .update(cx, |this, cx| {
                 this.edits_from_lsp(
@@ -4139,12 +4135,7 @@ impl Project {
             }
         });
 
-        let mut project_transaction = ProjectTransaction::default();
-        if let Some(transaction) = transaction {
-            project_transaction.0.insert(buffer_to_edit, transaction);
-        }
-
-        Ok(project_transaction)
+        Ok(transaction)
     }
 
     async fn deserialize_workspace_edit(
@@ -4317,8 +4308,9 @@ impl Project {
         buffer: ModelHandle<Buffer>,
         position: T,
         trigger: String,
+        push_to_history: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ProjectTransaction>> {
+    ) -> Task<Result<Option<Transaction>>> {
         let tab_size = buffer.read_with(cx, |buffer, cx| {
             let language_name = buffer.language().map(|language| language.name());
             language_settings(language_name.as_deref(), cx).tab_size
@@ -4330,7 +4322,7 @@ impl Project {
                 position,
                 trigger,
                 options: lsp_command::lsp_formatting_options(tab_size.get()).into(),
-                push_to_history: true,
+                push_to_history,
             },
             cx,
         )
@@ -5912,7 +5904,6 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OnTypeFormattingResponse> {
-        let sender_id = envelope.original_sender_id()?;
         let on_type_formatting = this.update(&mut cx, |this, cx| {
             let buffer = this
                 .opened_buffers
@@ -5928,18 +5919,15 @@ impl Project {
                 buffer,
                 position,
                 envelope.payload.trigger.clone(),
-                false,
                 cx,
             ))
         })?;
 
-        let project_transaction = on_type_formatting.await?;
-        let project_transaction = this.update(&mut cx, |this, cx| {
-            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
-        });
-        Ok(proto::OnTypeFormattingResponse {
-            transaction: Some(project_transaction),
-        })
+        let transaction = on_type_formatting
+            .await?
+            .as_ref()
+            .map(language::proto::serialize_transaction);
+        Ok(proto::OnTypeFormattingResponse { transaction })
     }
 
     async fn handle_lsp_command<T: LspCommand>(
