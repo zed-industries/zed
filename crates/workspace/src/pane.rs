@@ -164,6 +164,7 @@ pub struct Pane {
     has_focus: bool,
     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     can_split: bool,
+    can_navigate: bool,
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement<Pane>>,
 }
 
@@ -279,6 +280,7 @@ impl Pane {
             has_focus: false,
             can_drop: Rc::new(|_, _| true),
             can_split: true,
+            can_navigate: true,
             render_tab_bar_buttons: Rc::new(|pane, cx| {
                 Flex::row()
                     // New menu
@@ -343,6 +345,14 @@ impl Pane {
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
         self.can_split = can_split;
+        cx.notify();
+    }
+
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
+        self.can_navigate = can_navigate;
+        self.toolbar.update(cx, |toolbar, cx| {
+            toolbar.set_can_navigate(can_navigate, cx);
+        });
         cx.notify();
     }
 
@@ -430,6 +440,10 @@ impl Pane {
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade(cx) {
+            if !pane.read(cx).can_navigate {
+                return Task::ready(Ok(()));
+            }
+
             cx.focus(&pane);
 
             pane.update(cx, |pane, cx| {

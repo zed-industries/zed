@@ -53,6 +53,7 @@ pub enum ToolbarItemLocation {
 pub struct Toolbar {
     active_pane_item: Option<Box<dyn ItemHandle>>,
     hidden: bool,
+    can_navigate: bool,
     pane: WeakViewHandle<Pane>,
     items: Vec<(Box<dyn ToolbarItemViewHandle>, ToolbarItemLocation)>,
 }
@@ -132,76 +133,86 @@ impl View for Toolbar {
         let button_style = theme.nav_button;
         let tooltip_style = theme::current(cx).tooltip.clone();
 
-        Flex::column()
-            .with_child(
-                Flex::row()
-                    .with_child(nav_button(
-                        "icons/arrow_left_16.svg",
-                        button_style,
-                        nav_button_height,
-                        tooltip_style.clone(),
-                        enable_go_backward,
-                        spacing,
+        let mut primary_items = Flex::row();
+        if self.can_navigate {
+            primary_items.add_child(nav_button(
+                "icons/arrow_left_16.svg",
+                button_style,
+                nav_button_height,
+                tooltip_style.clone(),
+                enable_go_backward,
+                spacing,
+                {
+                    let pane = pane.clone();
+                    move |toolbar, cx| {
+                        if let Some(workspace) = toolbar
+                            .pane
+                            .upgrade(cx)
+                            .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
                         {
                             let pane = pane.clone();
-                            move |toolbar, cx| {
-                                if let Some(workspace) = toolbar
-                                    .pane
-                                    .upgrade(cx)
-                                    .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
-                                {
-                                    let pane = pane.clone();
-                                    cx.window_context().defer(move |cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            Pane::go_back(workspace, Some(pane.clone()), cx)
-                                                .detach_and_log_err(cx);
-                                        });
-                                    })
-                                }
-                            }
-                        },
-                        super::GoBack { pane: None },
-                        "Go Back",
-                        cx,
-                    ))
-                    .with_child(nav_button(
-                        "icons/arrow_right_16.svg",
-                        button_style,
-                        nav_button_height,
-                        tooltip_style,
-                        enable_go_forward,
-                        spacing,
+                            cx.window_context().defer(move |cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    Pane::go_back(workspace, Some(pane.clone()), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            })
+                        }
+                    }
+                },
+                super::GoBack { pane: None },
+                "Go Back",
+                cx,
+            ));
+            primary_items.add_child(nav_button(
+                "icons/arrow_right_16.svg",
+                button_style,
+                nav_button_height,
+                tooltip_style,
+                enable_go_forward,
+                spacing,
+                {
+                    let pane = pane.clone();
+                    move |toolbar, cx| {
+                        if let Some(workspace) = toolbar
+                            .pane
+                            .upgrade(cx)
+                            .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
                         {
                             let pane = pane.clone();
-                            move |toolbar, cx| {
-                                if let Some(workspace) = toolbar
-                                    .pane
-                                    .upgrade(cx)
-                                    .and_then(|pane| pane.read(cx).workspace().upgrade(cx))
-                                {
-                                    let pane = pane.clone();
-                                    cx.window_context().defer(move |cx| {
-                                        workspace.update(cx, |workspace, cx| {
-                                            Pane::go_forward(workspace, Some(pane.clone()), cx)
-                                                .detach_and_log_err(cx);
-                                        });
-                                    });
-                                }
-                            }
-                        },
-                        super::GoForward { pane: None },
-                        "Go Forward",
-                        cx,
-                    ))
-                    .with_children(primary_left_items)
-                    .with_children(primary_right_items)
-                    .constrained()
-                    .with_height(height),
-            )
-            .with_children(secondary_item)
-            .contained()
-            .with_style(container_style)
-            .into_any_named("toolbar")
+                            cx.window_context().defer(move |cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    Pane::go_forward(workspace, Some(pane.clone()), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            });
+                        }
+                    }
+                },
+                super::GoForward { pane: None },
+                "Go Forward",
+                cx,
+            ));
+        }
+        primary_items.extend(primary_left_items);
+        primary_items.extend(primary_right_items);
+
+        let mut toolbar = Flex::column();
+        if !primary_items.is_empty() {
+            toolbar.add_child(primary_items.constrained().with_height(height));
+        }
+        if let Some(secondary_item) = secondary_item {
+            toolbar.add_child(secondary_item);
+        }
+
+        if toolbar.is_empty() {
+            toolbar.into_any_named("toolbar")
+        } else {
+            toolbar
+                .contained()
+                .with_style(container_style)
+                .into_any_named("toolbar")
+        }
     }
 }
 
@@ -264,7 +275,13 @@ impl Toolbar {
             pane,
             items: Default::default(),
             hidden: false,
+            can_navigate: true,
         }
+    }
+
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ViewContext<Self>) {
+        self.can_navigate = can_navigate;
+        cx.notify();
     }
 
     pub fn add_item<T>(&mut self, item: ViewHandle<T>, cx: &mut ViewContext<Self>)
