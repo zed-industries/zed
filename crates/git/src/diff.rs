@@ -161,13 +161,6 @@ impl BufferDiff {
         self.tree = SumTree::new();
     }
 
-    pub fn needs_update(&self, buffer: &text::BufferSnapshot) -> bool {
-        match &self.last_buffer_version {
-            Some(last) => buffer.version().changed_since(last),
-            None => true,
-        }
-    }
-
     pub async fn update(&mut self, diff_base: &str, buffer: &text::BufferSnapshot) {
         let mut tree = SumTree::new();
 

@@ -1,6 +1,6 @@
 mod ignore;
 mod lsp_command;
-mod project_settings;
+pub mod project_settings;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
@@ -14,7 +14,10 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
 use futures::{
-    channel::mpsc::{self, UnboundedReceiver},
+    channel::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
     future::{try_join_all, Shared},
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -130,11 +133,56 @@ pub struct Project {
     incomplete_remote_buffers: HashMap<u64, Option<ModelHandle<Buffer>>>,
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<u64>,
+    buffers_needing_diff: HashSet<WeakModelHandle<Buffer>>,
+    git_diff_debouncer: DelayedDebounced,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
     copilot_enabled: bool,
+}
+
+struct DelayedDebounced {
+    task: Option<Task<()>>,
+    cancel_channel: Option<oneshot::Sender<()>>,
+}
+
+impl DelayedDebounced {
+    fn new() -> DelayedDebounced {
+        DelayedDebounced {
+            task: None,
+            cancel_channel: None,
+        }
+    }
+
+    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ModelContext<Project>, func: F)
+    where
+        F: 'static + FnOnce(&mut Project, &mut ModelContext<Project>) -> Task<()>,
+    {
+        if let Some(channel) = self.cancel_channel.take() {
+            _ = channel.send(());
+        }
+
+        let (sender, mut receiver) = oneshot::channel::<()>();
+        self.cancel_channel = Some(sender);
+
+        let previous_task = self.task.take();
+        self.task = Some(cx.spawn(|workspace, mut cx| async move {
+            let mut timer = cx.background().timer(delay).fuse();
+            if let Some(previous_task) = previous_task {
+                previous_task.await;
+            }
+
+            futures::select_biased! {
+                _ = receiver => return,
+                    _ = timer => {}
+            }
+
+            workspace
+                .update(&mut cx, |workspace, cx| (func)(workspace, cx))
+                .await;
+        }));
+    }
 }
 
 struct LspBufferSnapshot {
@@ -484,6 +532,8 @@ impl Project {
                 language_server_statuses: Default::default(),
                 last_workspace_edits_by_language_server: Default::default(),
                 buffers_being_formatted: Default::default(),
+                buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DelayedDebounced::new(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
@@ -573,6 +623,8 @@ impl Project {
                 last_workspace_edits_by_language_server: Default::default(),
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
+                buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DelayedDebounced::new(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
@@ -1607,6 +1659,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.request_buffer_diff_recalculation(buffer, cx);
         buffer.update(cx, |buffer, _| {
             buffer.set_language_registry(self.languages.clone())
         });
@@ -1924,6 +1977,13 @@ impl Project {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
+        if matches!(
+            event,
+            BufferEvent::Edited { .. } | BufferEvent::Reloaded | BufferEvent::DiffBaseChanged
+        ) {
+            self.request_buffer_diff_recalculation(&buffer, cx);
+        }
+
         match event {
             BufferEvent::Operation(operation) => {
                 self.buffer_ordered_messages_tx
@@ -2061,6 +2121,74 @@ impl Project {
         }
 
         None
+    }
+
+    fn request_buffer_diff_recalculation(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.buffers_needing_diff.insert(buffer.downgrade());
+        let first_insertion = self.buffers_needing_diff.len() == 1;
+
+        let settings = settings::get::<ProjectSettings>(cx);
+        let delay = if let Some(delay) = settings.git.gutter_debounce {
+            delay
+        } else {
+            if first_insertion {
+                let this = cx.weak_handle();
+                cx.defer(move |cx| {
+                    if let Some(this) = this.upgrade(cx) {
+                        this.update(cx, |this, cx| {
+                            this.recalculate_buffer_diffs(cx).detach();
+                        });
+                    }
+                });
+            }
+            return;
+        };
+
+        const MIN_DELAY: u64 = 50;
+        let delay = delay.max(MIN_DELAY);
+        let duration = Duration::from_millis(delay);
+
+        self.git_diff_debouncer
+            .fire_new(duration, cx, move |this, cx| {
+                this.recalculate_buffer_diffs(cx)
+            });
+    }
+
+    fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+        cx.spawn(|this, mut cx| async move {
+            let buffers: Vec<_> = this.update(&mut cx, |this, _| {
+                this.buffers_needing_diff.drain().collect()
+            });
+
+            let tasks: Vec<_> = this.update(&mut cx, |_, cx| {
+                buffers
+                    .iter()
+                    .filter_map(|buffer| {
+                        let buffer = buffer.upgrade(cx)?;
+                        buffer.update(cx, |buffer, cx| buffer.git_diff_recalc(cx))
+                    })
+                    .collect()
+            });
+
+            futures::future::join_all(tasks).await;
+
+            this.update(&mut cx, |this, cx| {
+                if !this.buffers_needing_diff.is_empty() {
+                    this.recalculate_buffer_diffs(cx).detach();
+                } else {
+                    // TODO: Would a `ModelContext<Project>.notify()` suffice here?
+                    for buffer in buffers {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, |_, cx| cx.notify());
+                        }
+                    }
+                }
+            });
+        })
     }
 
     fn language_servers_for_worktree(
@@ -6189,11 +6317,13 @@ impl Project {
                 let Some(this) = this.upgrade(&cx) else {
                     return Err(anyhow!("project dropped"));
                 };
+
                 let buffer = this.read_with(&cx, |this, cx| {
                     this.opened_buffers
                         .get(&id)
                         .and_then(|buffer| buffer.upgrade(cx))
                 });
+
                 if let Some(buffer) = buffer {
                     break buffer;
                 } else if this.read_with(&cx, |this, _| this.is_read_only()) {
@@ -6204,12 +6334,13 @@ impl Project {
                     this.incomplete_remote_buffers.entry(id).or_default();
                 });
                 drop(this);
+
                 opened_buffer_rx
                     .next()
                     .await
                     .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
             };
-            buffer.update(&mut cx, |buffer, cx| buffer.git_diff_recalc(cx));
+
             Ok(buffer)
         })
     }

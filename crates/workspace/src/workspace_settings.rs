@@ -8,7 +8,6 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
-    pub git: GitSettings,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -17,7 +16,6 @@ pub struct WorkspaceSettingsContent {
     pub confirm_quit: Option<bool>,
     pub show_call_status_icon: Option<bool>,
     pub autosave: Option<AutosaveSetting>,
-    pub git: Option<GitSettings>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

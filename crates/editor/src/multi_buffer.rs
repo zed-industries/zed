@@ -66,6 +66,7 @@ pub enum Event {
     },
     Edited,
     Reloaded,
+    DiffBaseChanged,
     LanguageChanged,
     Reparsed,
     Saved,
@@ -341,17 +342,6 @@ impl MultiBuffer {
         cx: &AppContext,
     ) -> Option<(u64, Vec<OutlineItem<Anchor>>)> {
         self.read(cx).symbols_containing(offset, theme)
-    }
-
-    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
-        let buffers = self.buffers.borrow();
-        for buffer_state in buffers.values() {
-            if buffer_state.buffer.read(cx).needs_git_diff_recalc() {
-                buffer_state
-                    .buffer
-                    .update(cx, |buffer, cx| buffer.git_diff_recalc(cx))
-            }
-        }
     }
 
     pub fn edit<I, S, T>(
@@ -1312,6 +1302,7 @@ impl MultiBuffer {
             language::Event::Saved => Event::Saved,
             language::Event::FileHandleChanged => Event::FileHandleChanged,
             language::Event::Reloaded => Event::Reloaded,
+            language::Event::DiffBaseChanged => Event::DiffBaseChanged,
             language::Event::LanguageChanged => Event::LanguageChanged,
             language::Event::Reparsed => Event::Reparsed,
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
@@ -1547,6 +1538,13 @@ impl MultiBuffer {
 impl MultiBuffer {
     pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> ModelHandle<Self> {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        cx.add_model(|cx| Self::singleton(buffer, cx))
+    }
+
+    pub fn build_from_buffer(
+        buffer: ModelHandle<Buffer>,
+        cx: &mut gpui::AppContext,
+    ) -> ModelHandle<Self> {
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
@@ -3870,10 +3868,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::editor_tests::init_test;
+
     use super::*;
     use futures::StreamExt;
     use gpui::{AppContext, TestAppContext};
     use language::{Buffer, Rope};
+    use project::{FakeFs, Project};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::{env, rc::Rc};
@@ -4564,73 +4565,85 @@ mod tests {
     #[gpui::test]
     async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
         use git::diff::DiffHunkStatus;
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.background());
+        let project = Project::test(fs, [], cx).await;
 
         // buffer has two modified hunks with two rows each
-        let buffer_1 = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(
-                0,
-                "
-                1.zero
-                1.ONE
-                1.TWO
-                1.three
-                1.FOUR
-                1.FIVE
-                1.six
-            "
-                .unindent(),
-                cx,
-            );
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                project.create_buffer(
+                    "
+                        1.zero
+                        1.ONE
+                        1.TWO
+                        1.three
+                        1.FOUR
+                        1.FIVE
+                        1.six
+                    "
+                    .unindent()
+                    .as_str(),
+                    None,
+                    cx,
+                )
+            })
+            .unwrap();
+        buffer_1.update(cx, |buffer, cx| {
             buffer.set_diff_base(
                 Some(
                     "
-                1.zero
-                1.one
-                1.two
-                1.three
-                1.four
-                1.five
-                1.six
-            "
+                        1.zero
+                        1.one
+                        1.two
+                        1.three
+                        1.four
+                        1.five
+                        1.six
+                    "
                     .unindent(),
                 ),
                 cx,
             );
-            buffer
         });
 
         // buffer has a deletion hunk and an insertion hunk
-        let buffer_2 = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(
-                0,
-                "
-                2.zero
-                2.one
-                2.two
-                2.three
-                2.four
-                2.five
-                2.six
-            "
-                .unindent(),
-                cx,
-            );
+        let buffer_2 = project
+            .update(cx, |project, cx| {
+                project.create_buffer(
+                    "
+                        2.zero
+                        2.one
+                        2.two
+                        2.three
+                        2.four
+                        2.five
+                        2.six
+                    "
+                    .unindent()
+                    .as_str(),
+                    None,
+                    cx,
+                )
+            })
+            .unwrap();
+        buffer_2.update(cx, |buffer, cx| {
             buffer.set_diff_base(
                 Some(
                     "
-                2.zero
-                2.one
-                2.one-and-a-half
-                2.two
-                2.three
-                2.four
-                2.six
-            "
+                        2.zero
+                        2.one
+                        2.one-and-a-half
+                        2.two
+                        2.three
+                        2.four
+                        2.six
+                    "
                     .unindent(),
                 ),
                 cx,
             );
-            buffer
         });
 
         cx.foreground().run_until_parked();

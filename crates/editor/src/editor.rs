@@ -6873,6 +6873,7 @@ impl Editor {
             multi_buffer::Event::Saved => cx.emit(Event::Saved),
             multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
             multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
+            multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
             multi_buffer::Event::Closed => cx.emit(Event::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
@@ -7261,6 +7262,7 @@ pub enum Event {
     DirtyChanged,
     Saved,
     TitleChanged,
+    DiffBaseChanged,
     SelectionsChanged {
         local: bool,
     },

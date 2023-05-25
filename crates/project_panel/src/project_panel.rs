@@ -2229,6 +2229,7 @@ mod tests {
             editor::init_settings(cx);
             crate::init(cx);
             workspace::init_settings(cx);
+            Project::init_settings(cx);
         });
     }
 
@@ -2243,6 +2244,7 @@ mod tests {
             pane::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
         });
     }
 

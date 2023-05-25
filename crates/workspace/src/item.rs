@@ -1,9 +1,8 @@
 use crate::{
-    pane, persistence::model::ItemId, searchable::SearchableItemHandle, DelayedDebouncedEditAction,
-    FollowableItemBuilders, ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace,
-    WorkspaceId,
+    pane, persistence::model::ItemId, searchable::SearchableItemHandle, FollowableItemBuilders,
+    ItemNavHistory, Pane, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
-use crate::{AutosaveSetting, WorkspaceSettings};
+use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
 use client::{proto, Client};
 use gpui::{
@@ -101,13 +100,6 @@ pub trait Item: View {
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
-    }
-    fn git_diff_recalc(
-        &mut self,
-        _project: ModelHandle<Project>,
-        _cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
-        Task::ready(Ok(()))
     }
     fn to_item_events(_event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         SmallVec::new()
@@ -221,11 +213,6 @@ pub trait ItemHandle: 'static + fmt::Debug {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn reload(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
-    fn git_diff_recalc(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>>;
     fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle>;
     fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
     fn on_release(
@@ -381,7 +368,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
             .is_none()
         {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
-            let mut pending_git_update = DelayedDebouncedEditAction::new();
             let pending_update = Rc::new(RefCell::new(None));
             let pending_update_scheduled = Rc::new(AtomicBool::new(false));
 
@@ -450,47 +436,13 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                             }
 
                             ItemEvent::Edit => {
-                                let settings = settings::get::<WorkspaceSettings>(cx);
-                                let debounce_delay = settings.git.gutter_debounce;
-
-                                if let AutosaveSetting::AfterDelay { milliseconds } =
-                                    settings.autosave
-                                {
+                                let autosave = settings::get::<WorkspaceSettings>(cx).autosave;
+                                if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
                                     let delay = Duration::from_millis(milliseconds);
                                     let item = item.clone();
                                     pending_autosave.fire_new(delay, cx, move |workspace, cx| {
                                         Pane::autosave_item(&item, workspace.project().clone(), cx)
                                     });
-                                }
-
-                                let item = item.clone();
-
-                                if let Some(delay) = debounce_delay {
-                                    const MIN_GIT_DELAY: u64 = 50;
-
-                                    let delay = delay.max(MIN_GIT_DELAY);
-                                    let duration = Duration::from_millis(delay);
-
-                                    pending_git_update.fire_new(
-                                        duration,
-                                        cx,
-                                        move |workspace, cx| {
-                                            item.git_diff_recalc(workspace.project().clone(), cx)
-                                        },
-                                    );
-                                } else {
-                                    cx.spawn(|workspace, mut cx| async move {
-                                        workspace
-                                            .update(&mut cx, |workspace, cx| {
-                                                item.git_diff_recalc(
-                                                    workspace.project().clone(),
-                                                    cx,
-                                                )
-                                            })?
-                                            .await?;
-                                        anyhow::Ok(())
-                                    })
-                                    .detach_and_log_err(cx);
                                 }
                             }
 
@@ -574,14 +526,6 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
 
     fn reload(&self, project: ModelHandle<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, cx))
-    }
-
-    fn git_diff_recalc(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut WindowContext,
-    ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.git_diff_recalc(project, cx))
     }
 
     fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<&'a AnyViewHandle> {
