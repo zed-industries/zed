@@ -417,6 +417,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
+        client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
@@ -3476,12 +3477,7 @@ impl Project {
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
-                    options: lsp::FormattingOptions {
-                        tab_size: tab_size.into(),
-                        insert_spaces: true,
-                        insert_final_newline: Some(true),
-                        ..Default::default()
-                    },
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
                 .await?
@@ -3497,12 +3493,7 @@ impl Project {
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                     text_document,
                     range: lsp::Range::new(buffer_start, buffer_end),
-                    options: lsp::FormattingOptions {
-                        tab_size: tab_size.into(),
-                        insert_spaces: true,
-                        insert_final_newline: Some(true),
-                        ..Default::default()
-                    },
+                    options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
                 .await?
@@ -4044,6 +4035,109 @@ impl Project {
         }
     }
 
+    fn apply_on_type_formatting(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: Anchor,
+        trigger: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Transaction>>> {
+        if self.is_local() {
+            cx.spawn(|this, mut cx| async move {
+                // Do not allow multiple concurrent formatting requests for the
+                // same buffer.
+                this.update(&mut cx, |this, cx| {
+                    this.buffers_being_formatted
+                        .insert(buffer.read(cx).remote_id())
+                });
+
+                let _cleanup = defer({
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    let closure_buffer = buffer.clone();
+                    move || {
+                        this.update(&mut cx, |this, cx| {
+                            this.buffers_being_formatted
+                                .remove(&closure_buffer.read(cx).remote_id());
+                        });
+                    }
+                });
+
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_edits(Some(position.timestamp))
+                    })
+                    .await?;
+                this.update(&mut cx, |this, cx| {
+                    let position = position.to_point_utf16(buffer.read(cx));
+                    this.on_type_format(buffer, position, trigger, false, cx)
+                })
+                .await
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::OnTypeFormatting {
+                project_id,
+                buffer_id: buffer.read(cx).remote_id(),
+                position: Some(serialize_anchor(&position)),
+                trigger,
+                version: serialize_version(&buffer.read(cx).version()),
+            };
+            cx.spawn(|_, _| async move {
+                client
+                    .request(request)
+                    .await?
+                    .transaction
+                    .map(language::proto::deserialize_transaction)
+                    .transpose()
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
+    async fn deserialize_edits(
+        this: ModelHandle<Self>,
+        buffer_to_edit: ModelHandle<Buffer>,
+        edits: Vec<lsp::TextEdit>,
+        push_to_history: bool,
+        _: Arc<CachedLspAdapter>,
+        language_server: Arc<LanguageServer>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        let edits = this
+            .update(cx, |this, cx| {
+                this.edits_from_lsp(
+                    &buffer_to_edit,
+                    edits,
+                    language_server.server_id(),
+                    None,
+                    cx,
+                )
+            })
+            .await?;
+
+        let transaction = buffer_to_edit.update(cx, |buffer, cx| {
+            buffer.finalize_last_transaction();
+            buffer.start_transaction();
+            for (range, text) in edits {
+                buffer.edit([(range, text)], None, cx);
+            }
+
+            if buffer.end_transaction(cx).is_some() {
+                let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                if !push_to_history {
+                    buffer.forget_transaction(transaction.id);
+                }
+                Some(transaction)
+            } else {
+                None
+            }
+        });
+
+        Ok(transaction)
+    }
+
     async fn deserialize_workspace_edit(
         this: ModelHandle<Self>,
         edit: lsp::WorkspaceEdit,
@@ -4203,6 +4297,31 @@ impl Project {
             PerformRename {
                 position,
                 new_name,
+                push_to_history,
+            },
+            cx,
+        )
+    }
+
+    pub fn on_type_format<T: ToPointUtf16>(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: T,
+        trigger: String,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Transaction>>> {
+        let tab_size = buffer.read_with(cx, |buffer, cx| {
+            let language_name = buffer.language().map(|language| language.name());
+            language_settings(language_name.as_deref(), cx).tab_size
+        });
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(
+            buffer.clone(),
+            OnTypeFormatting {
+                position,
+                trigger,
+                options: lsp_command::lsp_formatting_options(tab_size.get()).into(),
                 push_to_history,
             },
             cx,
@@ -5777,6 +5896,38 @@ impl Project {
         Ok(proto::ApplyCodeActionResponse {
             transaction: Some(project_transaction),
         })
+    }
+
+    async fn handle_on_type_formatting(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::OnTypeFormatting>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OnTypeFormattingResponse> {
+        let on_type_formatting = this.update(&mut cx, |this, cx| {
+            let buffer = this
+                .opened_buffers
+                .get(&envelope.payload.buffer_id)
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+            let position = envelope
+                .payload
+                .position
+                .and_then(deserialize_anchor)
+                .ok_or_else(|| anyhow!("invalid position"))?;
+            Ok::<_, anyhow::Error>(this.apply_on_type_formatting(
+                buffer,
+                position,
+                envelope.payload.trigger.clone(),
+                cx,
+            ))
+        })?;
+
+        let transaction = on_type_formatting
+            .await?
+            .as_ref()
+            .map(language::proto::serialize_transaction);
+        Ok(proto::OnTypeFormattingResponse { transaction })
     }
 
     async fn handle_lsp_command<T: LspCommand>(

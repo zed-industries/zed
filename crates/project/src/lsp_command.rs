@@ -8,13 +8,23 @@ use client::proto::{self, PeerId};
 use fs::LineEnding;
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
+    language_settings::language_settings,
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CharKind, CodeAction,
-    Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Unclipped,
+    Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+
+pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
+    lsp::FormattingOptions {
+        tab_size,
+        insert_spaces: true,
+        insert_final_newline: Some(true),
+        ..lsp::FormattingOptions::default()
+    }
+}
 
 #[async_trait(?Send)]
 pub(crate) trait LspCommand: 'static + Sized {
@@ -107,6 +117,25 @@ pub(crate) struct GetCompletions {
 
 pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
+}
+
+pub(crate) struct OnTypeFormatting {
+    pub position: PointUtf16,
+    pub trigger: String,
+    pub options: FormattingOptions,
+    pub push_to_history: bool,
+}
+
+pub(crate) struct FormattingOptions {
+    tab_size: u32,
+}
+
+impl From<lsp::FormattingOptions> for FormattingOptions {
+    fn from(value: lsp::FormattingOptions) -> Self {
+        Self {
+            tab_size: value.tab_size,
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -1593,6 +1622,137 @@ impl LspCommand for GetCodeActions {
     }
 
     fn buffer_id_from_proto(message: &proto::GetCodeActions) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for OnTypeFormatting {
+    type Response = Option<Transaction>;
+    type LspRequest = lsp::request::OnTypeFormatting;
+    type ProtoRequest = proto::OnTypeFormatting;
+
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &server_capabilities.document_on_type_formatting_provider else { return false };
+        on_type_formatting_options
+            .first_trigger_character
+            .contains(&self.trigger)
+            || on_type_formatting_options
+                .more_trigger_character
+                .iter()
+                .flatten()
+                .any(|chars| chars.contains(&self.trigger))
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::DocumentOnTypeFormattingParams {
+        lsp::DocumentOnTypeFormattingParams {
+            text_document_position: lsp::TextDocumentPositionParams::new(
+                lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path).unwrap()),
+                point_to_lsp(self.position),
+            ),
+            ch: self.trigger.clone(),
+            options: lsp_formatting_options(self.options.tab_size),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::TextEdit>>,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        if let Some(edits) = message {
+            let (lsp_adapter, lsp_server) =
+                language_server_for_buffer(&project, &buffer, server_id, &mut cx)?;
+            Project::deserialize_edits(
+                project,
+                buffer,
+                edits,
+                self.push_to_history,
+                lsp_adapter,
+                lsp_server,
+                &mut cx,
+            )
+            .await
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::OnTypeFormatting {
+        proto::OnTypeFormatting {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            trigger: self.trigger.clone(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::OnTypeFormatting,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        let tab_size = buffer.read_with(&cx, |buffer, cx| {
+            let language_name = buffer.language().map(|language| language.name());
+            language_settings(language_name.as_deref(), cx).tab_size
+        });
+
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            trigger: message.trigger.clone(),
+            options: lsp_formatting_options(tab_size.get()).into(),
+            push_to_history: false,
+        })
+    }
+
+    fn response_to_proto(
+        response: Option<Transaction>,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::OnTypeFormattingResponse {
+        proto::OnTypeFormattingResponse {
+            transaction: response
+                .map(|transaction| language::proto::serialize_transaction(&transaction)),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::OnTypeFormattingResponse,
+        _: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Option<Transaction>> {
+        let Some(transaction) = message.transaction else { return Ok(None) };
+        Ok(Some(language::proto::deserialize_transaction(transaction)?))
+    }
+
+    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {
         message.buffer_id
     }
 }

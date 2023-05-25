@@ -2122,6 +2122,15 @@ impl Editor {
             let had_active_copilot_suggestion = this.has_active_copilot_suggestion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
+            // When buffer contents is updated and caret is moved, try triggering on type formatting.
+            if settings::get::<EditorSettings>(cx).use_on_type_format {
+                if let Some(on_type_format_task) =
+                    this.trigger_on_type_formatting(text.to_string(), cx)
+                {
+                    on_type_format_task.detach_and_log_err(cx);
+                }
+            }
+
             if had_active_copilot_suggestion {
                 this.refresh_copilot_suggestions(true, cx);
                 if !this.has_active_copilot_suggestion(cx) {
@@ -2498,6 +2507,52 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    fn trigger_on_type_formatting(
+        &self,
+        input: String,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        if input.len() != 1 {
+            return None;
+        }
+
+        let project = self.project.as_ref()?;
+        let position = self.selections.newest_anchor().head();
+        let (buffer, buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)?;
+
+        // OnTypeFormatting retuns a list of edits, no need to pass them between Zed instances,
+        // hence we do LSP request & edit on host side only — add formats to host's history.
+        let push_to_lsp_host_history = true;
+        // If this is not the host, append its history with new edits.
+        let push_to_client_history = project.read(cx).is_remote();
+
+        let on_type_formatting = project.update(cx, |project, cx| {
+            project.on_type_format(
+                buffer.clone(),
+                buffer_position,
+                input,
+                push_to_lsp_host_history,
+                cx,
+            )
+        });
+        Some(cx.spawn(|editor, mut cx| async move {
+            if let Some(transaction) = on_type_formatting.await? {
+                if push_to_client_history {
+                    buffer.update(&mut cx, |buffer, _| {
+                        buffer.push_transaction(transaction, Instant::now());
+                    });
+                }
+                editor.update(&mut cx, |editor, cx| {
+                    editor.refresh_document_highlights(cx);
+                })?;
+            }
+            Ok(())
+        }))
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {

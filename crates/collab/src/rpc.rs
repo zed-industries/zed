@@ -223,6 +223,7 @@ impl Server {
             .add_request_handler(forward_project_request::<proto::RenameProjectEntry>)
             .add_request_handler(forward_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(forward_project_request::<proto::DeleteProjectEntry>)
+            .add_request_handler(forward_project_request::<proto::OnTypeFormatting>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(update_buffer_file)
