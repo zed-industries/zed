@@ -360,15 +360,6 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn git_diff_recalc(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
-        self.results_editor
-            .update(cx, |editor, cx| editor.git_diff_recalc(project, cx))
-    }
-
     fn to_item_events(event: &Self::Event) -> SmallVec<[ItemEvent; 2]> {
         match event {
             ViewEvent::UpdateTab => {

@@ -1,6 +1,6 @@
 mod ignore;
 mod lsp_command;
-mod project_settings;
+pub mod project_settings;
 pub mod search;
 pub mod terminals;
 pub mod worktree;
@@ -14,7 +14,10 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
 use futures::{
-    channel::mpsc::{self, UnboundedReceiver},
+    channel::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
     future::{try_join_all, Shared},
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -131,11 +134,55 @@ pub struct Project {
     buffer_snapshots: HashMap<u64, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     buffers_being_formatted: HashSet<u64>,
     buffers_needing_diff: HashSet<WeakModelHandle<Buffer>>,
+    git_diff_debouncer: DelayedDebounced,
     nonce: u128,
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
     copilot_enabled: bool,
+}
+
+struct DelayedDebounced {
+    task: Option<Task<()>>,
+    cancel_channel: Option<oneshot::Sender<()>>,
+}
+
+impl DelayedDebounced {
+    fn new() -> DelayedDebounced {
+        DelayedDebounced {
+            task: None,
+            cancel_channel: None,
+        }
+    }
+
+    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ModelContext<Project>, func: F)
+    where
+        F: 'static + FnOnce(&mut Project, &mut ModelContext<Project>) -> Task<()>,
+    {
+        if let Some(channel) = self.cancel_channel.take() {
+            _ = channel.send(());
+        }
+
+        let (sender, mut receiver) = oneshot::channel::<()>();
+        self.cancel_channel = Some(sender);
+
+        let previous_task = self.task.take();
+        self.task = Some(cx.spawn(|workspace, mut cx| async move {
+            let mut timer = cx.background().timer(delay).fuse();
+            if let Some(previous_task) = previous_task {
+                previous_task.await;
+            }
+
+            futures::select_biased! {
+                _ = receiver => return,
+                    _ = timer => {}
+            }
+
+            workspace
+                .update(&mut cx, |workspace, cx| (func)(workspace, cx))
+                .await;
+        }));
+    }
 }
 
 struct LspBufferSnapshot {
@@ -486,6 +533,7 @@ impl Project {
                 last_workspace_edits_by_language_server: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DelayedDebounced::new(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
@@ -576,6 +624,7 @@ impl Project {
                 opened_buffers: Default::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_needing_diff: Default::default(),
+                git_diff_debouncer: DelayedDebounced::new(),
                 buffer_snapshots: Default::default(),
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
@@ -2077,19 +2126,36 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         self.buffers_needing_diff.insert(buffer.downgrade());
-        if self.buffers_needing_diff.len() == 1 {
-            let this = cx.weak_handle();
-            cx.defer(move |cx| {
-                if let Some(this) = this.upgrade(cx) {
-                    this.update(cx, |this, cx| {
-                        this.recalculate_buffer_diffs(cx);
-                    });
-                }
+        let first_insertion = self.buffers_needing_diff.len() == 1;
+
+        let settings = settings::get::<ProjectSettings>(cx);
+        let delay = if let Some(delay) = settings.git.gutter_debounce {
+            delay
+        } else {
+            if first_insertion {
+                let this = cx.weak_handle();
+                cx.defer(move |cx| {
+                    if let Some(this) = this.upgrade(cx) {
+                        this.update(cx, |this, cx| {
+                            this.recalculate_buffer_diffs(cx).detach();
+                        });
+                    }
+                });
+            }
+            return;
+        };
+
+        const MIN_DELAY: u64 = 50;
+        let delay = delay.max(MIN_DELAY);
+        let duration = Duration::from_millis(delay);
+
+        self.git_diff_debouncer
+            .fire_new(duration, cx, move |this, cx| {
+                this.recalculate_buffer_diffs(cx)
             });
-        }
     }
 
-    fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) {
+    fn recalculate_buffer_diffs(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
         cx.spawn(|this, mut cx| async move {
             let buffers: Vec<_> = this.update(&mut cx, |this, _| {
                 this.buffers_needing_diff.drain().collect()
@@ -2109,7 +2175,7 @@ impl Project {
 
             this.update(&mut cx, |this, cx| {
                 if !this.buffers_needing_diff.is_empty() {
-                    this.recalculate_buffer_diffs(cx);
+                    this.recalculate_buffer_diffs(cx).detach();
                 } else {
                     // TODO: Would a `ModelContext<Project>.notify()` suffice here?
                     for buffer in buffers {
@@ -2120,7 +2186,6 @@ impl Project {
                 }
             });
         })
-        .detach();
     }
 
     fn language_servers_for_worktree(

@@ -442,7 +442,7 @@ impl DelayedDebouncedEditAction {
         }
     }
 
-    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ViewContext<Workspace>, f: F)
+    fn fire_new<F>(&mut self, delay: Duration, cx: &mut ViewContext<Workspace>, func: F)
     where
         F: 'static + FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> Task<Result<()>>,
     {
@@ -466,7 +466,7 @@ impl DelayedDebouncedEditAction {
             }
 
             if let Some(result) = workspace
-                .update(&mut cx, |workspace, cx| (f)(workspace, cx))
+                .update(&mut cx, |workspace, cx| (func)(workspace, cx))
                 .log_err()
             {
                 result.await.log_err();

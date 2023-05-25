@@ -8,6 +8,22 @@ use std::sync::Arc;
 pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
+    #[serde(default)]
+    pub git: GitSettings,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct GitSettings {
+    pub git_gutter: Option<GitGutterSetting>,
+    pub gutter_debounce: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitGutterSetting {
+    #[default]
+    TrackedFiles,
+    Hide,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

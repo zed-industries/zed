@@ -343,17 +343,6 @@ impl MultiBuffer {
         self.read(cx).symbols_containing(offset, theme)
     }
 
-    pub fn git_diff_recalc(&mut self, _: &mut ModelContext<Self>) {
-        // let buffers = self.buffers.borrow();
-        // for buffer_state in buffers.values() {
-        //     if buffer_state.buffer.read(cx).needs_git_diff_recalc() {
-        //         buffer_state
-        //             .buffer
-        //             .update(cx, |buffer, cx| buffer.git_diff_recalc(cx))
-        //     }
-        // }
-    }
-
     pub fn edit<I, S, T>(
         &mut self,
         edits: I,

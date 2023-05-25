@@ -40,7 +40,10 @@ use language::{
     language_settings::ShowWhitespaceSetting, Bias, CursorShape, DiagnosticSeverity, OffsetUtf16,
     Selection,
 };
-use project::ProjectPath;
+use project::{
+    project_settings::{GitGutterSetting, ProjectSettings},
+    ProjectPath,
+};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -51,7 +54,7 @@ use std::{
     sync::Arc,
 };
 use text::Point;
-use workspace::{item::Item, GitGutterSetting, WorkspaceSettings};
+use workspace::item::Item;
 
 enum FoldMarkers {}
 
@@ -551,11 +554,8 @@ impl EditorElement {
         let scroll_top = scroll_position.y() * line_height;
 
         let show_gutter = matches!(
-            settings::get::<WorkspaceSettings>(cx)
-                .git
-                .git_gutter
-                .unwrap_or_default(),
-            GitGutterSetting::TrackedFiles
+            settings::get::<ProjectSettings>(cx).git.git_gutter,
+            Some(GitGutterSetting::TrackedFiles)
         );
 
         if show_gutter {

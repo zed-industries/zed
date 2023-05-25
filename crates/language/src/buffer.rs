@@ -620,7 +620,6 @@ impl Buffer {
                 cx,
             );
         }
-        self.git_diff_recalc(cx);
         cx.emit(Event::Reloaded);
         cx.notify();
     }
