@@ -1977,7 +1977,10 @@ impl Project {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
+        if matches!(
+            event,
+            BufferEvent::Edited { .. } | BufferEvent::Reloaded | BufferEvent::DiffBaseChanged
+        ) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
@@ -2166,7 +2169,7 @@ impl Project {
                     .iter()
                     .filter_map(|buffer| {
                         let buffer = buffer.upgrade(cx)?;
-                        buffer.update(cx, |buffer, cx| buffer.git_diff_recalc_2(cx))
+                        buffer.update(cx, |buffer, cx| buffer.git_diff_recalc(cx))
                     })
                     .collect()
             });

@@ -2244,6 +2244,7 @@ mod tests {
             pane::init(cx);
             crate::init(cx);
             workspace::init(app_state.clone(), cx);
+            Project::init_settings(cx);
         });
     }
 

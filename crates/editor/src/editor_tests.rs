@@ -1246,7 +1246,7 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
     cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
@@ -1358,7 +1358,7 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
 #[gpui::test]
 async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
     cx.simulate_window_resize(cx.window_id, vec2f(100., 4. * line_height));
@@ -1473,7 +1473,7 @@ async fn test_move_page_up_page_down(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_delete_to_beginning_of_line(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("one «two threeˇ» four");
     cx.update_editor(|editor, cx| {
         editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
@@ -1637,7 +1637,7 @@ async fn test_newline_above(cx: &mut gpui::TestAppContext) {
         .unwrap(),
     );
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.set_state(indoc! {"
         const a: ˇA = (
@@ -1685,7 +1685,7 @@ async fn test_newline_below(cx: &mut gpui::TestAppContext) {
         .unwrap(),
     );
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.set_state(indoc! {"
         const a: ˇA = (
@@ -1751,7 +1751,7 @@ async fn test_tab(cx: &mut gpui::TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(3)
     });
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.set_state(indoc! {"
         ˇabˇc
         ˇ🏀ˇ🏀ˇefg
@@ -1779,7 +1779,7 @@ async fn test_tab(cx: &mut gpui::TestAppContext) {
 async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(
         Language::new(
             LanguageConfig::default(),
@@ -1850,7 +1850,7 @@ async fn test_tab_with_mixed_whitespace(cx: &mut gpui::TestAppContext) {
         .unwrap(),
     );
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.set_state(indoc! {"
         fn a() {
@@ -1876,7 +1876,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4);
     });
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     cx.set_state(indoc! {"
           «oneˇ» «twoˇ»
@@ -1949,7 +1949,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut gpui::TestAppContext) {
         settings.defaults.hard_tabs = Some(true);
     });
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     // select two ranges on one line
     cx.set_state(indoc! {"
@@ -2156,7 +2156,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
 async fn test_backspace(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     // Basic backspace
     cx.set_state(indoc! {"
@@ -2205,7 +2205,7 @@ async fn test_backspace(cx: &mut gpui::TestAppContext) {
 async fn test_delete(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.set_state(indoc! {"
         onˇe two three
         fou«rˇ» five six
@@ -2559,7 +2559,7 @@ fn test_transpose(cx: &mut TestAppContext) {
 async fn test_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     cx.set_state("«one✅ ˇ»two «three ˇ»four «five ˇ»six ");
     cx.update_editor(|e, cx| e.cut(&Cut, cx));
@@ -2641,7 +2641,7 @@ async fn test_clipboard(cx: &mut gpui::TestAppContext) {
 async fn test_paste_multiline(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig::default(),
         Some(tree_sitter_rust::language()),
@@ -3085,7 +3085,7 @@ fn test_add_selection_above_below(cx: &mut TestAppContext) {
 async fn test_select_next(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
     cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
@@ -3314,7 +3314,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
 async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let language = Arc::new(Language::new(
         LanguageConfig {
@@ -3485,7 +3485,7 @@ async fn test_autoclose_pairs(cx: &mut gpui::TestAppContext) {
 async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let html_language = Arc::new(
         Language::new(
@@ -3721,7 +3721,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
 async fn test_autoclose_with_overrides(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let rust_language = Arc::new(
         Language::new(
@@ -4938,7 +4938,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
     let registry = Arc::new(LanguageRegistry::test());
     registry.add(language.clone());
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| {
         buffer.set_language_registry(registry);
         buffer.set_language(Some(language), cx);
@@ -5060,7 +5060,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
 async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let html_language = Arc::new(
         Language::new(
@@ -5985,7 +5985,7 @@ fn test_combine_syntax_and_fuzzy_match_highlights() {
 async fn go_to_hunk(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx);
+    let mut cx = EditorTestContext::new(cx).await;
 
     let diff_base = r#"
         use some::mod;

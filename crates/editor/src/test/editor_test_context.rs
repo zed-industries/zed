@@ -7,6 +7,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{Buffer, BufferSnapshot};
+use project::{FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
@@ -25,11 +26,16 @@ pub struct EditorTestContext<'a> {
 }
 
 impl<'a> EditorTestContext<'a> {
-    pub fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
+    pub async fn new(cx: &'a mut gpui::TestAppContext) -> EditorTestContext<'a> {
+        let fs = FakeFs::new(cx.background());
+        let project = Project::test(fs, [], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .unwrap();
         let (window_id, editor) = cx.update(|cx| {
             cx.add_window(Default::default(), |cx| {
                 cx.focus_self();
-                build_editor(MultiBuffer::build_simple("", cx), cx)
+                build_editor(MultiBuffer::build_from_buffer(buffer, cx), cx)
             })
         });
 

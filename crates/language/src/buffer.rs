@@ -50,16 +50,10 @@ pub use {tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
-struct GitDiffStatus {
-    diff: git::diff::BufferDiff,
-    update_in_progress: bool,
-    update_requested: bool,
-}
-
 pub struct Buffer {
     text: TextBuffer,
     diff_base: Option<String>,
-    git_diff_status: GitDiffStatus,
+    git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
     saved_version: clock::Global,
     saved_version_fingerprint: RopeFingerprint,
@@ -195,6 +189,7 @@ pub enum Event {
     Saved,
     FileHandleChanged,
     Reloaded,
+    DiffBaseChanged,
     LanguageChanged,
     Reparsed,
     DiagnosticsUpdated,
@@ -466,11 +461,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             diff_base,
-            git_diff_status: GitDiffStatus {
-                diff: git::diff::BufferDiff::new(),
-                update_in_progress: false,
-                update_requested: false,
-            },
+            git_diff: git::diff::BufferDiff::new(),
             file,
             syntax_map: Mutex::new(SyntaxMap::new()),
             parsing_in_background: false,
@@ -501,7 +492,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
-            git_diff: self.git_diff_status.diff.clone(),
+            git_diff: self.git_diff.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -675,17 +666,14 @@ impl Buffer {
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
         self.git_diff_recalc(cx);
+        cx.emit(Event::DiffBaseChanged);
     }
 
-    pub fn needs_git_diff_recalc(&self) -> bool {
-        self.git_diff_status.diff.needs_update(self)
-    }
-
-    pub fn git_diff_recalc_2(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+    pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
         let diff_base = self.diff_base.clone()?; // TODO: Make this an Arc
         let snapshot = self.snapshot();
 
-        let mut diff = self.git_diff_status.diff.clone();
+        let mut diff = self.git_diff.clone();
         let diff = cx.background().spawn(async move {
             diff.update(&diff_base, &snapshot).await;
             diff
@@ -696,53 +684,11 @@ impl Buffer {
             let buffer_diff = diff.await;
             if let Some(this) = handle.upgrade(&mut cx) {
                 this.update(&mut cx, |this, _| {
-                    this.git_diff_status.diff = buffer_diff;
+                    this.git_diff = buffer_diff;
                     this.git_diff_update_count += 1;
                 })
             }
         }))
-    }
-
-    fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) {
-        if self.git_diff_status.update_in_progress {
-            self.git_diff_status.update_requested = true;
-            return;
-        }
-
-        if let Some(diff_base) = &self.diff_base {
-            self.git_diff_status.update_in_progress = true;
-            let snapshot = self.snapshot();
-            let diff_base = diff_base.clone();
-
-            let mut diff = self.git_diff_status.diff.clone();
-            let diff = cx.background().spawn(async move {
-                diff.update(&diff_base, &snapshot).await;
-                diff
-            });
-
-            cx.spawn_weak(|this, mut cx| async move {
-                let buffer_diff = diff.await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        this.git_diff_status.diff = buffer_diff;
-                        this.git_diff_update_count += 1;
-                        cx.notify();
-
-                        if this.git_diff_status.update_requested {
-                            this.git_diff_recalc(cx);
-                        } else {
-                            this.git_diff_status.update_in_progress = false;
-                        }
-                    })
-                }
-            })
-            .detach()
-        } else {
-            let snapshot = self.snapshot();
-            self.git_diff_status.diff.clear(&snapshot);
-            self.git_diff_update_count += 1;
-            cx.notify();
-        }
     }
 
     pub fn close(&mut self, cx: &mut ModelContext<Self>) {
