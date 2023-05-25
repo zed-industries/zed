@@ -55,6 +55,7 @@ impl TerminalPanel {
                 cx,
             );
             pane.set_can_split(false, cx);
+            pane.set_can_navigate(false, cx);
             pane.on_can_drop(move |drag_and_drop, cx| {
                 drag_and_drop
                     .currently_dragged::<DraggedItem>(window_id)
@@ -99,6 +100,9 @@ impl TerminalPanel {
                     ))
                     .into_any()
             });
+            let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
+            pane.toolbar()
+                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
             pane
         });
         let subscriptions = vec![
