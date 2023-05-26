@@ -13,7 +13,11 @@ assets = { path = "../assets"}
 collections = { path = "../collections"}
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+language = { path = "../language" }
+search = { path = "../search" }
+theme = { path = "../theme" }
 util = { path = "../util" }
+workspace = { path = "../workspace" }
 
 serde.workspace = true
 serde_json.workspace = true

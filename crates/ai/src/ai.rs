@@ -1,3 +1,5 @@
+mod assistant;
+
 use anyhow::{anyhow, Result};
 use assets::Assets;
 use collections::HashMap;
@@ -15,6 +17,8 @@ use std::rc::Rc;
 use std::{io, sync::Arc};
 use util::channel::{ReleaseChannel, RELEASE_CHANNEL};
 use util::{ResultExt, TryFutureExt};
+
+pub use assistant::AssistantPanel;
 
 actions!(ai, [Assist]);
 
@@ -38,7 +42,7 @@ struct ResponseMessage {
     content: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 enum Role {
     User,
@@ -86,25 +90,27 @@ struct OpenAIChoice {
 }
 
 pub fn init(cx: &mut AppContext) {
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
-        return;
-    }
+    // if *RELEASE_CHANNEL == ReleaseChannel::Stable {
+    //     return;
+    // }
 
-    let assistant = Rc::new(Assistant::default());
-    cx.add_action({
-        let assistant = assistant.clone();
-        move |editor: &mut Editor, _: &Assist, cx: &mut ViewContext<Editor>| {
-            assistant.assist(editor, cx).log_err();
-        }
-    });
-    cx.capture_action({
-        let assistant = assistant.clone();
-        move |_: &mut Editor, _: &editor::Cancel, cx: &mut ViewContext<Editor>| {
-            if !assistant.cancel_last_assist(cx.view_id()) {
-                cx.propagate_action();
-            }
-        }
-    });
+    assistant::init(cx);
+
+    // let assistant = Rc::new(Assistant::default());
+    // cx.add_action({
+    //     let assistant = assistant.clone();
+    //     move |editor: &mut Editor, _: &Assist, cx: &mut ViewContext<Editor>| {
+    //         assistant.assist(editor, cx).log_err();
+    //     }
+    // });
+    // cx.capture_action({
+    //     let assistant = assistant.clone();
+    //     move |_: &mut Editor, _: &editor::Cancel, cx: &mut ViewContext<Editor>| {
+    //         if !assistant.cancel_last_assist(cx.view_id()) {
+    //             cx.propagate_action();
+    //         }
+    //     }
+    // });
 }
 
 type CompletionId = usize;

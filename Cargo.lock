@@ -106,9 +106,13 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "isahc",
+ "language",
+ "search",
  "serde",
  "serde_json",
+ "theme",
  "util",
+ "workspace",
 ]
 
 [[package]]

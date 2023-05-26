@@ -2,6 +2,7 @@ pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
@@ -357,7 +358,11 @@ pub fn initialize_workspace(
                 workspace.toggle_dock(project_panel_position, false, cx);
             }
 
-            workspace.add_panel(terminal_panel, cx)
+            workspace.add_panel(terminal_panel, cx);
+
+            // TODO: deserialize state.
+            let assistant_panel = cx.add_view(|cx| AssistantPanel::new(workspace, cx));
+            workspace.add_panel(assistant_panel, cx);
         })?;
         Ok(())
     })
