@@ -975,23 +975,25 @@ impl Workspace {
                 });
         }
 
-        let project = self.project.read(cx);
         history
             .into_iter()
             .sorted_by_key(|(_, (_, timestamp))| *timestamp)
             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
             .filter(|(history_path, abs_path)| {
-                project
-                    .worktree_for_id(history_path.worktree_id, cx)
-                    .is_some()
-                    || abs_path
-                        .as_ref()
-                        .and_then(|abs_path| {
-                            let buffers_opened = abs_paths_opened.get(abs_path)?;
-                            Some(buffers_opened.len() < 2)
-                        })
-                        .unwrap_or(false)
+                let latest_project_path_opened = abs_path
+                    .as_ref()
+                    .and_then(|abs_path| abs_paths_opened.get(abs_path))
+                    .and_then(|project_paths| {
+                        project_paths
+                            .iter()
+                            .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
+                    });
+
+                match latest_project_path_opened {
+                    Some(latest_project_path_opened) => latest_project_path_opened == history_path,
+                    None => true,
+                }
             })
             .take(limit.unwrap_or(usize::MAX))
             .collect()

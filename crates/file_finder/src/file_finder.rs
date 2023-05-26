@@ -32,6 +32,7 @@ pub struct FileFinderDelegate {
     history_items: Vec<FoundPath>,
 }
 
+#[derive(Debug)]
 enum Matches {
     History(Vec<FoundPath>),
     Search(Vec<PathMatch>),
@@ -113,6 +114,12 @@ fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContex
                             != currently_opened_path
                                 .as_ref()
                                 .map(|found_path| &found_path.project)
+                    })
+                    .filter(|(_, history_abs_path)| {
+                        history_abs_path.as_ref()
+                            != currently_opened_path
+                                .as_ref()
+                                .and_then(|found_path| found_path.absolute.as_ref())
                     })
                     .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
             )
@@ -330,7 +337,6 @@ impl FileFinderDelegate {
     ) -> (String, Vec<usize>, String, Vec<usize>) {
         let path = &path_match.path;
         let path_string = path.to_string_lossy();
-        // TODO kb full path could be very long, trim it to fit the panel width
         let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
         let path_positions = path_match.positions.clone();
 
@@ -437,7 +443,7 @@ impl PickerDelegate for FileFinderDelegate {
                         } else {
                             match history_match.absolute.as_ref() {
                                 Some(abs_path) => {
-                                    workspace.open_abs_path(abs_path.to_path_buf(), true, cx)
+                                    workspace.open_abs_path(abs_path.to_path_buf(), false, cx)
                                 }
                                 None => workspace.open_path(
                                     ProjectPath {
@@ -1192,10 +1198,13 @@ mod tests {
         .await;
         assert_eq!(
             history_after_first,
-            vec![dummy_found_path(ProjectPath {
-                worktree_id,
-                path: Arc::from(Path::new("test/first.rs")),
-            })],
+            vec![FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from("/src/test/first.rs"))
+            )],
             "Should show 1st opened item in the history when opening the 2nd item"
         );
 
@@ -1212,14 +1221,20 @@ mod tests {
         assert_eq!(
             history_after_second,
             vec![
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
-                }),
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
-                }),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/second.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/second.rs"))
+                ),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/first.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/first.rs"))
+                ),
             ],
             "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
 2nd item should be the first in the history, as the last opened."
@@ -1238,18 +1253,27 @@ mod tests {
         assert_eq!(
             history_after_third,
             vec![
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/third.rs")),
-                }),
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
-                }),
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
-                }),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/third.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/third.rs"))
+                ),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/second.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/second.rs"))
+                ),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/first.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/first.rs"))
+                ),
             ],
             "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
 3rd item should be the first in the history, as the last opened."
@@ -1268,21 +1292,159 @@ mod tests {
         assert_eq!(
             history_after_second_again,
             vec![
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
-                }),
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/third.rs")),
-                }),
-                dummy_found_path(ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
-                }),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/second.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/second.rs"))
+                ),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/third.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/third.rs"))
+                ),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/first.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/first.rs"))
+                ),
             ],
             "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
 2nd item, as the last opened, 3rd item should go next as it was opened right before."
+        );
+    }
+
+    #[gpui::test]
+    async fn test_external_files_history(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/external-src",
+                json!({
+                    "test": {
+                        "third.rs": "// Third Rust file",
+                        "fourth.rs": "// Fourth Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        cx.update(|cx| {
+            project.update(cx, |project, cx| {
+                project.find_or_create_local_worktree("/external-src", false, cx)
+            })
+        })
+        .detach();
+        deterministic.run_until_parked();
+
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1,);
+
+            WorktreeId::from_usize(worktrees[0].id())
+        });
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/external-src/test/third.rs"), false, cx)
+            })
+            .detach();
+        deterministic.run_until_parked();
+        let external_worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(
+                worktrees.len(),
+                2,
+                "External file should get opened in a new worktree"
+            );
+
+            WorktreeId::from_usize(
+                worktrees
+                    .into_iter()
+                    .find(|worktree| worktree.id() != worktree_id.to_usize())
+                    .expect("New worktree should have a different id")
+                    .id(),
+            )
+        });
+        close_active_item(&workspace, &deterministic, cx).await;
+
+        let initial_history_items = open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            initial_history_items,
+            vec![FoundPath::new(
+                ProjectPath {
+                    worktree_id: external_worktree_id,
+                    path: Arc::from(Path::new("")),
+                },
+                Some(PathBuf::from("/external-src/test/third.rs"))
+            )],
+            "Should show external file with its full path in the history after it was open"
+        );
+
+        let updated_history_items = open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window_id,
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        assert_eq!(
+            updated_history_items,
+            vec![
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/second.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/second.rs"))
+                ),
+                FoundPath::new(
+                    ProjectPath {
+                        worktree_id: external_worktree_id,
+                        path: Arc::from(Path::new("")),
+                    },
+                    Some(PathBuf::from("/external-src/test/third.rs"))
+                ),
+            ],
+            "Should keep external file with history updates",
         );
     }
 
@@ -1332,6 +1494,16 @@ mod tests {
             );
         });
 
+        close_active_item(workspace, deterministic, cx).await;
+
+        history_items
+    }
+
+    async fn close_active_item(
+        workspace: &ViewHandle<Workspace>,
+        deterministic: &gpui::executor::Deterministic,
+        cx: &mut TestAppContext,
+    ) {
         let mut original_items = HashMap::new();
         cx.read(|cx| {
             for pane in workspace.read(cx).panes() {
@@ -1341,6 +1513,8 @@ mod tests {
                 assert!(insertion_result.is_none(), "Pane id {pane_id} collision");
             }
         });
+
+        let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
         active_pane
             .update(cx, |pane, cx| {
                 pane.close_active_item(&workspace::CloseActiveItem, cx)
@@ -1365,8 +1539,10 @@ mod tests {
                 }
             }
         });
-
-        history_items
+        assert!(
+            original_items.len() <= 1,
+            "At most one panel should got closed"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

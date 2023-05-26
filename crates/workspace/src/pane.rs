@@ -1018,9 +1018,11 @@ impl Pane {
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
-                .workspace()
-                .upgrade(cx)
-                .and_then(|workspace| workspace.read(cx).absolute_path(&path, cx));
+                .nav_history
+                .borrow()
+                .paths_by_item
+                .get(&item.id())
+                .and_then(|(_, abs_path)| abs_path.clone());
             self.nav_history
                 .borrow_mut()
                 .paths_by_item
