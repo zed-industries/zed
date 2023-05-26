@@ -31,7 +31,7 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp, mem,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -180,7 +180,7 @@ struct NavHistory {
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
-    paths_by_item: HashMap<usize, ProjectPath>,
+    paths_by_item: HashMap<usize, (ProjectPath, Option<PathBuf>)>,
     pane: WeakViewHandle<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
@@ -482,7 +482,7 @@ impl Pane {
                             .paths_by_item
                             .get(&entry.item.id())
                             .cloned()
-                            .map(|project_path| (project_path, entry));
+                            .map(|(project_path, _)| (project_path, entry));
                     }
                 }
             })
@@ -591,6 +591,20 @@ impl Pane {
         destination_index: Option<usize>,
         cx: &mut ViewContext<Workspace>,
     ) {
+        if item.is_singleton(cx) {
+            if let Some(&entry_id) = item.project_entry_ids(cx).get(0) {
+                if let Some(project_path) =
+                    workspace.project().read(cx).path_for_entry(entry_id, cx)
+                {
+                    let abs_path = workspace.absolute_path(&project_path, cx);
+                    pane.read(cx)
+                        .nav_history
+                        .borrow_mut()
+                        .paths_by_item
+                        .insert(item.id(), (project_path, abs_path));
+                }
+            }
+        }
         // If no destination index is specified, add or move the item after the active item.
         let mut insertion_index = {
             let pane = pane.read(cx);
@@ -1003,10 +1017,16 @@ impl Pane {
             .set_mode(NavigationMode::Normal);
 
         if let Some(path) = item.project_path(cx) {
+            let abs_path = self
+                .nav_history
+                .borrow()
+                .paths_by_item
+                .get(&item.id())
+                .and_then(|(_, abs_path)| abs_path.clone());
             self.nav_history
                 .borrow_mut()
                 .paths_by_item
-                .insert(item.id(), path);
+                .insert(item.id(), (path, abs_path));
         } else {
             self.nav_history
                 .borrow_mut()
@@ -1954,7 +1974,7 @@ impl PaneNavHistory {
     pub fn for_each_entry(
         &self,
         cx: &AppContext,
-        mut f: impl FnMut(&NavigationEntry, ProjectPath),
+        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
     ) {
         let borrowed_history = self.0.borrow();
         borrowed_history
@@ -1963,12 +1983,13 @@ impl PaneNavHistory {
             .chain(borrowed_history.backward_stack.iter())
             .chain(borrowed_history.closed_stack.iter())
             .for_each(|entry| {
-                if let Some(path) = borrowed_history.paths_by_item.get(&entry.item.id()) {
-                    f(entry, path.clone());
+                if let Some(project_and_abs_path) =
+                    borrowed_history.paths_by_item.get(&entry.item.id())
+                {
+                    f(entry, project_and_abs_path.clone());
                 } else if let Some(item) = entry.item.upgrade(cx) {
-                    let path = item.project_path(cx);
-                    if let Some(path) = path {
-                        f(entry, path);
+                    if let Some(path) = item.project_path(cx) {
+                        f(entry, (path, None));
                     }
                 }
             })

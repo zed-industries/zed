@@ -240,7 +240,7 @@ impl Assistant {
             .assist_stacks
             .entry(cx.view_id())
             .or_default()
-            .push((dbg!(assist_id), assist_task));
+            .push((assist_id, assist_task));
 
         Ok(())
     }
