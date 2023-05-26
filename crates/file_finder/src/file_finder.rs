@@ -285,7 +285,7 @@ impl FileFinderDelegate {
         cx: &AppContext,
         ix: usize,
     ) -> (String, Vec<usize>, String, Vec<usize>) {
-        match path_match {
+        let (file_name, file_name_positions, full_path, full_path_positions) = match path_match {
             Match::History(found_path) => {
                 let worktree_id = found_path.project.worktree_id;
                 let project_relative_path = &found_path.project.path;
@@ -328,7 +328,30 @@ impl FileFinderDelegate {
                 })
             }
             Match::Search(path_match) => self.labels_for_path_match(path_match),
+        };
+
+        if file_name_positions.is_empty() {
+            if let Some(user_home_path) = std::env::var("HOME").ok() {
+                let user_home_path = user_home_path.trim();
+                if !user_home_path.is_empty() {
+                    if (&full_path).starts_with(user_home_path) {
+                        return (
+                            file_name,
+                            file_name_positions,
+                            full_path.replace(user_home_path, "~"),
+                            full_path_positions,
+                        );
+                    }
+                }
+            }
         }
+
+        (
+            file_name,
+            file_name_positions,
+            full_path,
+            full_path_positions,
+        )
     }
 
     fn labels_for_path_match(
