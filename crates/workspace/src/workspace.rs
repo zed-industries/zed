@@ -1582,6 +1582,36 @@ impl Workspace {
         Pane::add_item(self, &active_pane, item, true, true, None, cx);
     }
 
+    pub fn open_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        cx.spawn(|workspace, mut cx| async move {
+            let open_paths_task_result = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_paths(vec![abs_path.clone()], visible, cx)
+                })
+                .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
+                .await;
+            anyhow::ensure!(
+                open_paths_task_result.len() == 1,
+                "open abs path {abs_path:?} task returned incorrect number of results"
+            );
+            match open_paths_task_result
+                .into_iter()
+                .next()
+                .expect("ensured single task result")
+            {
+                Some(open_result) => {
+                    open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
+                }
+                None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
+            }
+        })
+    }
+
     pub fn open_path(
         &mut self,
         path: impl Into<ProjectPath>,
