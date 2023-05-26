@@ -6,7 +6,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -25,11 +25,17 @@ pub struct FileFinderDelegate {
     latest_search_id: usize,
     latest_search_did_cancel: bool,
     latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
-    currently_opened_path: Option<ProjectPath>,
+    currently_opened_path: Option<FoundPath>,
     matches: Vec<PathMatch>,
     selected: Option<(usize, Arc<Path>)>,
     cancel_flag: Arc<AtomicBool>,
-    history_items: Vec<ProjectPath>,
+    history_items: Vec<FoundPath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FoundPath {
+    project: ProjectPath,
+    absolute: Option<PathBuf>,
 }
 
 actions!(file_finder, [Toggle]);
@@ -43,10 +49,36 @@ const MAX_RECENT_SELECTIONS: usize = 20;
 
 fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
-        let history_items = workspace.recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx);
+        let project = workspace.project().read(cx);
+        let project_to_found_path = |project_path: ProjectPath| FoundPath {
+            absolute: project
+                .worktree_for_id(project_path.worktree_id, cx)
+                .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path)),
+            project: project_path,
+        };
+
         let currently_opened_path = workspace
             .active_item(cx)
-            .and_then(|item| item.project_path(cx));
+            .and_then(|item| item.project_path(cx))
+            .map(project_to_found_path);
+
+        // if exists, bubble the currently opened path to the top
+        let history_items = currently_opened_path
+            .clone()
+            .into_iter()
+            .chain(
+                workspace
+                    .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+                    .into_iter()
+                    .filter(|history_path| {
+                        Some(history_path)
+                            != currently_opened_path
+                                .as_ref()
+                                .map(|found_path| &found_path.project)
+                    })
+                    .map(project_to_found_path),
+            )
+            .collect();
 
         let project = workspace.project().clone();
         let workspace = cx.handle().downgrade();
@@ -113,11 +145,11 @@ impl FileFinderDelegate {
         (file_name, file_name_positions, full_path, path_positions)
     }
 
-    pub fn new(
+    fn new(
         workspace: WeakViewHandle<Workspace>,
         project: ModelHandle<Project>,
-        currently_opened_path: Option<ProjectPath>,
-        history_items: Vec<ProjectPath>,
+        currently_opened_path: Option<FoundPath>,
+        history_items: Vec<FoundPath>,
         cx: &mut ViewContext<FileFinder>,
     ) -> Self {
         cx.observe(&project, |picker, _, cx| {
@@ -147,7 +179,7 @@ impl FileFinderDelegate {
         let relative_to = self
             .currently_opened_path
             .as_ref()
-            .map(|project_path| Arc::clone(&project_path.path));
+            .map(|found_path| Arc::clone(&found_path.project.path));
         let worktrees = self
             .project
             .read(cx)
@@ -255,20 +287,33 @@ impl PickerDelegate for FileFinderDelegate {
             self.latest_search_id = post_inc(&mut self.search_count);
             self.matches.clear();
 
+            let project = self.project.read(cx);
             self.matches = self
-                .currently_opened_path
-                .iter() // if exists, bubble the currently opened path to the top
-                .chain(self.history_items.iter().filter(|history_item| {
-                    Some(*history_item) != self.currently_opened_path.as_ref()
-                }))
+                .history_items
+                .iter()
                 .enumerate()
-                .map(|(i, history_item)| PathMatch {
-                    score: i as f64,
-                    positions: Vec::new(),
-                    worktree_id: history_item.worktree_id.to_usize(),
-                    path: Arc::clone(&history_item.path),
-                    path_prefix: "".into(),
-                    distance_to_relative_ancestor: usize::MAX,
+                .map(|(i, found_path)| {
+                    let worktree_id = found_path.project.worktree_id;
+                    // TODO kb wrong:
+                    // * for no worktree, check the project path
+                    // * if no project path exists — filter out(?), otherwise take it and open a workspace for it (enum for match kinds?)
+                    let path = if project.worktree_for_id(worktree_id, cx).is_some() {
+                        Arc::clone(&found_path.project.path)
+                    } else {
+                        found_path
+                            .absolute
+                            .as_ref()
+                            .map(|abs_path| Arc::from(abs_path.as_path()))
+                            .unwrap_or_else(|| Arc::clone(&found_path.project.path))
+                    };
+                    PathMatch {
+                        score: i as f64,
+                        positions: Vec::new(),
+                        worktree_id: worktree_id.to_usize(),
+                        path,
+                        path_prefix: "".into(),
+                        distance_to_relative_ancestor: usize::MAX,
+                    }
                 })
                 .collect();
             cx.notify();
@@ -876,10 +921,10 @@ mod tests {
         // When workspace has an active item, sort items which are closer to that item
         // first when they have the same name. In this case, b.txt is closer to dir2's a.txt
         // so that one should be sorted earlier
-        let b_path = Some(ProjectPath {
+        let b_path = Some(dummy_found_path(ProjectPath {
             worktree_id,
             path: Arc::from(Path::new("/root/dir2/b.txt")),
-        });
+        }));
         let (_, finder) = cx.add_window(|cx| {
             Picker::new(
                 FileFinderDelegate::new(
@@ -1012,10 +1057,10 @@ mod tests {
         .await;
         assert_eq!(
             history_after_first,
-            vec![ProjectPath {
+            vec![dummy_found_path(ProjectPath {
                 worktree_id,
                 path: Arc::from(Path::new("test/first.rs")),
-            }],
+            })],
             "Should show 1st opened item in the history when opening the 2nd item"
         );
 
@@ -1032,14 +1077,14 @@ mod tests {
         assert_eq!(
             history_after_second,
             vec![
-                ProjectPath {
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
-                },
-                ProjectPath {
+                }),
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
-                },
+                }),
             ],
             "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
 2nd item should be the first in the history, as the last opened."
@@ -1058,18 +1103,18 @@ mod tests {
         assert_eq!(
             history_after_third,
             vec![
-                ProjectPath {
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/third.rs")),
-                },
-                ProjectPath {
+                }),
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
-                },
-                ProjectPath {
+                }),
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
-                },
+                }),
             ],
             "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
 3rd item should be the first in the history, as the last opened."
@@ -1088,18 +1133,18 @@ mod tests {
         assert_eq!(
             history_after_second_again,
             vec![
-                ProjectPath {
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
-                },
-                ProjectPath {
+                }),
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/third.rs")),
-                },
-                ProjectPath {
+                }),
+                dummy_found_path(ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
-                },
+                }),
             ],
             "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
 2nd item, as the last opened, 3rd item should go next as it was opened right before."
@@ -1114,7 +1159,7 @@ mod tests {
         workspace: &ViewHandle<Workspace>,
         deterministic: &gpui::executor::Deterministic,
         cx: &mut gpui::TestAppContext,
-    ) -> Vec<ProjectPath> {
+    ) -> Vec<FoundPath> {
         cx.dispatch_action(window_id, Toggle);
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
@@ -1215,5 +1260,12 @@ mod tests {
             })
         })
         .unwrap()
+    }
+
+    fn dummy_found_path(project_path: ProjectPath) -> FoundPath {
+        FoundPath {
+            project: project_path,
+            absolute: None,
+        }
     }
 }
