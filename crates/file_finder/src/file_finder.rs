@@ -6,7 +6,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -27,7 +27,7 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<PathLikeWithPosition<FileSearchQuery>>,
     currently_opened_path: Option<FoundPath>,
     matches: Vec<PathMatch>,
-    selected: Option<(usize, Arc<Path>)>,
+    selected_index: Option<usize>,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
 }
@@ -165,7 +165,7 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Vec::new(),
-            selected: None,
+            selected_index: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
         }
@@ -264,21 +264,11 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn selected_index(&self) -> usize {
-        if let Some(selected) = self.selected.as_ref() {
-            for (ix, path_match) in self.matches.iter().enumerate() {
-                if (path_match.worktree_id, path_match.path.as_ref())
-                    == (selected.0, selected.1.as_ref())
-                {
-                    return ix;
-                }
-            }
-        }
-        0
+        self.selected_index.unwrap_or(0)
     }
 
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<FileFinder>) {
-        let mat = &self.matches[ix];
-        self.selected = Some((mat.worktree_id, mat.path.clone()));
+        self.selected_index = Some(ix);
         cx.notify();
     }
 
@@ -418,7 +408,7 @@ impl PickerDelegate for FileFinderDelegate {
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_eq, collections::HashMap, time::Duration};
+    use std::{assert_eq, collections::HashMap, path::Path, time::Duration};
 
     use super::*;
     use editor::Editor;
