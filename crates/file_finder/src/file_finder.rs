@@ -101,11 +101,11 @@ fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContex
             });
 
         // if exists, bubble the currently opened path to the top
-        let history_items = dbg!(dbg!(currently_opened_path.clone())
+        let history_items = currently_opened_path
+            .clone()
             .into_iter()
             .chain(
                 workspace
-                    // TODO kb history contains empty paths
                     .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
                     .into_iter()
                     .filter(|(history_path, _)| {
@@ -116,7 +116,7 @@ fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContex
                     })
                     .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
             )
-            .collect());
+            .collect();
 
         let project = workspace.project().clone();
         let workspace = cx.handle().downgrade();

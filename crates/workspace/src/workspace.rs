@@ -1306,14 +1306,19 @@ impl Workspace {
     }
 
     pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
-        Some(
-            self.project()
-                .read(cx)
-                .worktree_for_id(project_path.worktree_id, cx)?
-                .read(cx)
-                .abs_path()
-                .to_path_buf(),
-        )
+        let workspace_root = self
+            .project()
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+        let project_path = project_path.path.as_ref();
+
+        Some(if project_path == Path::new("") {
+            workspace_root.to_path_buf()
+        } else {
+            workspace_root.join(project_path)
+        })
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
@@ -1661,23 +1666,14 @@ impl Workspace {
             })
         });
 
-        let project_path = path.into();
-        let task = self.load_path(project_path.clone(), cx);
+        let task = self.load_path(path.into(), cx);
         cx.spawn(|this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             let pane = pane
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("pane was closed"))?;
             this.update(&mut cx, |this, cx| {
-                Pane::open_item(
-                    this,
-                    pane,
-                    project_entry_id,
-                    &project_path,
-                    focus_item,
-                    cx,
-                    build_item,
-                )
+                Pane::open_item(this, pane, project_entry_id, focus_item, cx, build_item)
             })
         })
     }

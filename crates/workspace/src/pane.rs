@@ -492,7 +492,7 @@ impl Pane {
 
         if let Some((project_path, entry)) = to_load {
             // If the item was no longer present, then load it again from its previous path.
-            let task = workspace.load_path(project_path.clone(), cx);
+            let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
                 let task = task.await;
                 let mut navigated = false;
@@ -510,7 +510,6 @@ impl Pane {
                             workspace,
                             pane.clone(),
                             project_entry_id,
-                            &project_path,
                             true,
                             cx,
                             build_item,
@@ -547,7 +546,6 @@ impl Pane {
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
         project_entry_id: ProjectEntryId,
-        project_path: &ProjectPath,
         focus_item: bool,
         cx: &mut ViewContext<Workspace>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
@@ -580,15 +578,6 @@ impl Pane {
                 None,
                 cx,
             );
-            {
-                let abs_path = workspace.absolute_path(project_path, cx);
-                pane.read(cx)
-                    .nav_history
-                    .borrow_mut()
-                    .paths_by_item
-                    .insert(new_item.id(), (project_path.clone(), abs_path));
-            }
-
             new_item
         }
     }
@@ -602,6 +591,20 @@ impl Pane {
         destination_index: Option<usize>,
         cx: &mut ViewContext<Workspace>,
     ) {
+        if item.is_singleton(cx) {
+            if let Some(&entry_id) = item.project_entry_ids(cx).get(0) {
+                if let Some(project_path) =
+                    workspace.project().read(cx).path_for_entry(entry_id, cx)
+                {
+                    let abs_path = workspace.absolute_path(&project_path, cx);
+                    pane.read(cx)
+                        .nav_history
+                        .borrow_mut()
+                        .paths_by_item
+                        .insert(item.id(), (project_path, abs_path));
+                }
+            }
+        }
         // If no destination index is specified, add or move the item after the active item.
         let mut insertion_index = {
             let pane = pane.read(cx);
@@ -1984,7 +1987,6 @@ impl PaneNavHistory {
                     f(entry, project_and_abs_path.clone());
                 } else if let Some(item) = entry.item.upgrade(cx) {
                     if let Some(path) = item.project_path(cx) {
-                        // TODO kb ??? this should be the full path
                         f(entry, (path, None));
                     }
                 }
