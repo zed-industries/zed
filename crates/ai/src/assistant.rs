@@ -235,6 +235,7 @@ impl ContextEditor {
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(multibuffer, None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_show_gutter(false, cx);
             editor
         });
 
@@ -328,7 +329,12 @@ impl View for ContextEditor {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        ChildView::new(&self.editor, cx).into_any()
+        let theme = &theme::current(cx).assistant;
+
+        ChildView::new(&self.editor, cx)
+            .contained()
+            .with_style(theme.container)
+            .into_any()
     }
 }
 

@@ -22,6 +22,7 @@ import { ColorScheme } from "../themes/common/colorScheme"
 import feedback from "./feedback"
 import welcome from "./welcome"
 import copilot from "./copilot"
+import assistant from "./assistant"
 
 export default function app(colorScheme: ColorScheme): Object {
     return {
@@ -50,6 +51,7 @@ export default function app(colorScheme: ColorScheme): Object {
         simpleMessageNotification: simpleMessageNotification(colorScheme),
         tooltip: tooltip(colorScheme),
         terminal: terminal(colorScheme),
+        assistant: assistant(colorScheme),
         feedback: feedback(colorScheme),
         colorScheme: {
             ...colorScheme,

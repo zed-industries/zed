@@ -60,6 +60,7 @@ pub struct Theme {
     pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
+    pub assistant: AssistantStyle,
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
@@ -965,6 +966,11 @@ pub struct TerminalStyle {
     pub dim_white: Color,
     pub bright_foreground: Color,
     pub dim_foreground: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AssistantStyle {
+    pub container: ContainerStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

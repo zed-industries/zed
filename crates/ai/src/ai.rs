@@ -15,7 +15,6 @@ use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
 use std::{io, sync::Arc};
-use util::channel::{ReleaseChannel, RELEASE_CHANNEL};
 use util::{ResultExt, TryFutureExt};
 
 pub use assistant::AssistantPanel;

@@ -496,6 +496,7 @@ pub struct Editor {
     blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
     mode: EditorMode,
+    show_gutter: bool,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
@@ -526,6 +527,7 @@ pub struct Editor {
 
 pub struct EditorSnapshot {
     pub mode: EditorMode,
+    pub show_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -1297,6 +1299,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            show_gutter: mode == EditorMode::Full,
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
@@ -1393,6 +1396,7 @@ impl Editor {
     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
+            show_gutter: self.show_gutter,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -6651,6 +6655,11 @@ impl Editor {
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
+        cx.notify();
+    }
+
+    pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_gutter = show_gutter;
         cx.notify();
     }
 
