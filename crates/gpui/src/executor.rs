@@ -876,6 +876,14 @@ impl Background {
             }
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn start_waiting(&self) {
+        match self {
+            Self::Deterministic { executor, .. } => executor.start_waiting(),
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
 }
 
 impl Default for Background {

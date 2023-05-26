@@ -1193,7 +1193,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         .await;
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 3)]
 async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -1273,7 +1273,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // The diagnostics have moved down since they were created.
     buffer.next_notification(cx).await;
-    buffer.next_notification(cx).await;
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer
@@ -1352,6 +1352,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     buffer.next_notification(cx).await;
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer
@@ -1444,6 +1445,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     buffer.next_notification(cx).await;
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer
