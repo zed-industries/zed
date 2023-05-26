@@ -3089,7 +3089,7 @@ impl Project {
     ) -> Result<(), anyhow::Error> {
         let (worktree, relative_path) = self
             .find_local_worktree(&abs_path, cx)
-            .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+            .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
