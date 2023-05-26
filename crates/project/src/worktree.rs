@@ -330,7 +330,7 @@ pub struct BackgroundScannerState {
 
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
-    pub(crate) scan_id: usize,
+    pub(crate) work_dir_scan_id: usize,
     pub(crate) git_dir_scan_id: usize,
     pub(crate) repo_ptr: Arc<Mutex<dyn GitRepository>>,
     /// Path to the actual .git folder.
@@ -863,19 +863,33 @@ impl LocalWorktree {
                     match Ord::cmp(&new_entry_id, &old_entry_id) {
                         Ordering::Less => {
                             if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
-                                changes.push((entry.path.clone(), None));
+                                changes.push((
+                                    entry.path.clone(),
+                                    GitRepositoryChange {
+                                        old_repository: None,
+                                        git_dir_changed: true,
+                                    },
+                                ));
                             }
                             new_repos.next();
                         }
                         Ordering::Equal => {
-                            if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id {
+                            let git_dir_changed =
+                                new_repo.git_dir_scan_id != old_repo.git_dir_scan_id;
+                            let work_dir_changed =
+                                new_repo.work_dir_scan_id != old_repo.work_dir_scan_id;
+                            if git_dir_changed || work_dir_changed {
                                 if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
+                                    let old_repo = old_snapshot
+                                        .repository_entries
+                                        .get(&RepositoryWorkDirectory(entry.path.clone()))
+                                        .cloned();
                                     changes.push((
                                         entry.path.clone(),
-                                        old_snapshot
-                                            .repository_entries
-                                            .get(&RepositoryWorkDirectory(entry.path.clone()))
-                                            .cloned(),
+                                        GitRepositoryChange {
+                                            old_repository: old_repo,
+                                            git_dir_changed,
+                                        },
                                     ));
                                 }
                             }
@@ -884,12 +898,16 @@ impl LocalWorktree {
                         }
                         Ordering::Greater => {
                             if let Some(entry) = old_snapshot.entry_for_id(old_entry_id) {
+                                let old_repo = old_snapshot
+                                    .repository_entries
+                                    .get(&RepositoryWorkDirectory(entry.path.clone()))
+                                    .cloned();
                                 changes.push((
                                     entry.path.clone(),
-                                    old_snapshot
-                                        .repository_entries
-                                        .get(&RepositoryWorkDirectory(entry.path.clone()))
-                                        .cloned(),
+                                    GitRepositoryChange {
+                                        old_repository: old_repo,
+                                        git_dir_changed: true,
+                                    },
                                 ));
                             }
                             old_repos.next();
@@ -898,18 +916,28 @@ impl LocalWorktree {
                 }
                 (Some((entry_id, _)), None) => {
                     if let Some(entry) = new_snapshot.entry_for_id(entry_id) {
-                        changes.push((entry.path.clone(), None));
+                        changes.push((
+                            entry.path.clone(),
+                            GitRepositoryChange {
+                                old_repository: None,
+                                git_dir_changed: true,
+                            },
+                        ));
                     }
                     new_repos.next();
                 }
                 (None, Some((entry_id, _))) => {
                     if let Some(entry) = old_snapshot.entry_for_id(entry_id) {
+                        let old_repo = old_snapshot
+                            .repository_entries
+                            .get(&RepositoryWorkDirectory(entry.path.clone()))
+                            .cloned();
                         changes.push((
                             entry.path.clone(),
-                            old_snapshot
-                                .repository_entries
-                                .get(&RepositoryWorkDirectory(entry.path.clone()))
-                                .cloned(),
+                            GitRepositoryChange {
+                                old_repository: old_repo,
+                                git_dir_changed: true,
+                            },
                         ));
                     }
                     old_repos.next();
@@ -1890,11 +1918,12 @@ impl LocalSnapshot {
                 updated_entries.push(proto::Entry::from(entry));
             }
         }
-        for (work_dir_path, old_repo) in repo_changes.iter() {
+
+        for (work_dir_path, change) in repo_changes.iter() {
             let new_repo = self
                 .repository_entries
                 .get(&RepositoryWorkDirectory(work_dir_path.clone()));
-            match (old_repo, new_repo) {
+            match (&change.old_repository, new_repo) {
                 (Some(old_repo), Some(new_repo)) => {
                     updated_repositories.push(new_repo.build_update(old_repo));
                 }
@@ -2042,7 +2071,7 @@ impl LocalSnapshot {
             self.git_repositories.insert(
                 work_dir_id,
                 LocalRepositoryEntry {
-                    scan_id,
+                    work_dir_scan_id: scan_id,
                     git_dir_scan_id: scan_id,
                     repo_ptr: repo,
                     git_dir_path: parent_path.clone(),
@@ -2494,8 +2523,16 @@ pub enum PathChange {
     Loaded,
 }
 
+pub struct GitRepositoryChange {
+    /// The previous state of the repository, if it already existed.
+    pub old_repository: Option<RepositoryEntry>,
+    /// Whether the content of the .git directory changed. This will be false
+    /// if only the repository's work directory changed.
+    pub git_dir_changed: bool,
+}
+
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
-pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, Option<RepositoryEntry>)]>;
+pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
 impl Entry {
     fn new(
@@ -3181,7 +3218,7 @@ impl BackgroundScanner {
 
             snapshot
                 .git_repositories
-                .update(&work_dir_id, |entry| entry.scan_id = scan_id);
+                .update(&work_dir_id, |entry| entry.work_dir_scan_id = scan_id);
 
             snapshot.repository_entries.update(&work_dir, |entry| {
                 entry
@@ -3230,7 +3267,7 @@ impl BackgroundScanner {
             let statuses = repo.statuses().unwrap_or_default();
 
             snapshot.git_repositories.update(&entry_id, |entry| {
-                entry.scan_id = scan_id;
+                entry.work_dir_scan_id = scan_id;
                 entry.git_dir_scan_id = scan_id;
             });
 
@@ -3253,14 +3290,14 @@ impl BackgroundScanner {
             let work_dir = repo.work_directory(snapshot)?;
             let work_dir_id = repo.work_directory.clone();
 
-            snapshot
-                .git_repositories
-                .update(&work_dir_id, |entry| entry.scan_id = scan_id);
-
-            let local_repo = snapshot.get_local_repo(&repo)?.to_owned();
+            let (local_repo, git_dir_scan_id) =
+                snapshot.git_repositories.update(&work_dir_id, |entry| {
+                    entry.work_dir_scan_id = scan_id;
+                    (entry.repo_ptr.clone(), entry.git_dir_scan_id)
+                })?;
 
             // Short circuit if we've already scanned everything
-            if local_repo.git_dir_scan_id == scan_id {
+            if git_dir_scan_id == scan_id {
                 return None;
             }
 
@@ -3271,7 +3308,7 @@ impl BackgroundScanner {
                     continue;
                 };
 
-                let status = local_repo.repo_ptr.lock().status(&repo_path);
+                let status = local_repo.lock().status(&repo_path);
                 if let Some(status) = status {
                     repository.statuses.insert(repo_path.clone(), status);
                 } else {
