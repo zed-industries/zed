@@ -946,31 +946,53 @@ impl Workspace {
         &self,
         limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<ProjectPath> {
-        let mut history: HashMap<ProjectPath, usize> = HashMap::default();
+    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+        let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
+        let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
         for pane in &self.panes {
             let pane = pane.read(cx);
             pane.nav_history()
-                .for_each_entry(cx, |entry, project_path| {
+                .for_each_entry(cx, |entry, (project_path, fs_path)| {
+                    if let Some(fs_path) = &fs_path {
+                        abs_paths_opened
+                            .entry(fs_path.clone())
+                            .or_default()
+                            .insert(project_path.clone());
+                    }
                     let timestamp = entry.timestamp;
                     match history.entry(project_path) {
                         hash_map::Entry::Occupied(mut entry) => {
-                            if &timestamp > entry.get() {
-                                entry.insert(timestamp);
+                            let (old_fs_path, old_timestamp) = entry.get();
+                            if &timestamp > old_timestamp {
+                                assert_eq!(&fs_path, old_fs_path, "Inconsistent nav history");
+                                entry.insert((fs_path, timestamp));
                             }
                         }
                         hash_map::Entry::Vacant(entry) => {
-                            entry.insert(timestamp);
+                            entry.insert((fs_path, timestamp));
                         }
                     }
                 });
         }
 
+        let project = self.project.read(cx);
         history
             .into_iter()
-            .sorted_by_key(|(_, timestamp)| *timestamp)
-            .map(|(project_path, _)| project_path)
+            .sorted_by_key(|(_, (_, timestamp))| *timestamp)
+            .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
+            .filter(|(history_path, abs_path)| {
+                project
+                    .worktree_for_id(history_path.worktree_id, cx)
+                    .is_some()
+                    || abs_path
+                        .as_ref()
+                        .and_then(|abs_path| {
+                            let buffers_opened = abs_paths_opened.get(abs_path)?;
+                            Some(buffers_opened.len() < 2)
+                        })
+                        .unwrap_or(false)
+            })
             .take(limit.unwrap_or(usize::MAX))
             .collect()
     }
@@ -1281,6 +1303,17 @@ impl Workspace {
 
             futures::future::join_all(tasks).await
         })
+    }
+
+    pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
+        Some(
+            self.project()
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .abs_path()
+                .to_path_buf(),
+        )
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
@@ -1628,14 +1661,23 @@ impl Workspace {
             })
         });
 
-        let task = self.load_path(path.into(), cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), cx);
         cx.spawn(|this, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             let pane = pane
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("pane was closed"))?;
             this.update(&mut cx, |this, cx| {
-                Pane::open_item(this, pane, project_entry_id, focus_item, cx, build_item)
+                Pane::open_item(
+                    this,
+                    pane,
+                    project_entry_id,
+                    &project_path,
+                    focus_item,
+                    cx,
+                    build_item,
+                )
             })
         })
     }

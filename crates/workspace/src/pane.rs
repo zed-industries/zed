@@ -31,7 +31,7 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp, mem,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -180,7 +180,7 @@ struct NavHistory {
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
-    paths_by_item: HashMap<usize, ProjectPath>,
+    paths_by_item: HashMap<usize, (ProjectPath, Option<PathBuf>)>,
     pane: WeakViewHandle<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
@@ -482,7 +482,7 @@ impl Pane {
                             .paths_by_item
                             .get(&entry.item.id())
                             .cloned()
-                            .map(|project_path| (project_path, entry));
+                            .map(|(project_path, _)| (project_path, entry));
                     }
                 }
             })
@@ -492,7 +492,7 @@ impl Pane {
 
         if let Some((project_path, entry)) = to_load {
             // If the item was no longer present, then load it again from its previous path.
-            let task = workspace.load_path(project_path, cx);
+            let task = workspace.load_path(project_path.clone(), cx);
             cx.spawn(|workspace, mut cx| async move {
                 let task = task.await;
                 let mut navigated = false;
@@ -510,6 +510,7 @@ impl Pane {
                             workspace,
                             pane.clone(),
                             project_entry_id,
+                            &project_path,
                             true,
                             cx,
                             build_item,
@@ -546,6 +547,7 @@ impl Pane {
         workspace: &mut Workspace,
         pane: ViewHandle<Pane>,
         project_entry_id: ProjectEntryId,
+        project_path: &ProjectPath,
         focus_item: bool,
         cx: &mut ViewContext<Workspace>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
@@ -578,6 +580,15 @@ impl Pane {
                 None,
                 cx,
             );
+            {
+                let abs_path = workspace.absolute_path(project_path, cx);
+                pane.read(cx)
+                    .nav_history
+                    .borrow_mut()
+                    .paths_by_item
+                    .insert(new_item.id(), (project_path.clone(), abs_path));
+            }
+
             new_item
         }
     }
@@ -1003,10 +1014,14 @@ impl Pane {
             .set_mode(NavigationMode::Normal);
 
         if let Some(path) = item.project_path(cx) {
+            let abs_path = self
+                .workspace()
+                .upgrade(cx)
+                .and_then(|workspace| workspace.read(cx).absolute_path(&path, cx));
             self.nav_history
                 .borrow_mut()
                 .paths_by_item
-                .insert(item.id(), path);
+                .insert(item.id(), (path, abs_path));
         } else {
             self.nav_history
                 .borrow_mut()
@@ -1954,7 +1969,7 @@ impl PaneNavHistory {
     pub fn for_each_entry(
         &self,
         cx: &AppContext,
-        mut f: impl FnMut(&NavigationEntry, ProjectPath),
+        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
     ) {
         let borrowed_history = self.0.borrow();
         borrowed_history
@@ -1963,12 +1978,14 @@ impl PaneNavHistory {
             .chain(borrowed_history.backward_stack.iter())
             .chain(borrowed_history.closed_stack.iter())
             .for_each(|entry| {
-                if let Some(path) = borrowed_history.paths_by_item.get(&entry.item.id()) {
-                    f(entry, path.clone());
+                if let Some(project_and_abs_path) =
+                    borrowed_history.paths_by_item.get(&entry.item.id())
+                {
+                    f(entry, project_and_abs_path.clone());
                 } else if let Some(item) = entry.item.upgrade(cx) {
-                    let path = item.project_path(cx);
-                    if let Some(path) = path {
-                        f(entry, path);
+                    if let Some(path) = item.project_path(cx) {
+                        // TODO kb ??? this should be the full path
+                        f(entry, (path, None));
                     }
                 }
             })

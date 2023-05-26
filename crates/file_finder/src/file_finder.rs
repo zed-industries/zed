@@ -71,6 +71,12 @@ struct FoundPath {
     absolute: Option<PathBuf>,
 }
 
+impl FoundPath {
+    fn new(project: ProjectPath, absolute: Option<PathBuf>) -> Self {
+        Self { project, absolute }
+    }
+}
+
 actions!(file_finder, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
@@ -83,37 +89,34 @@ const MAX_RECENT_SELECTIONS: usize = 20;
 fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     workspace.toggle_modal(cx, |workspace, cx| {
         let project = workspace.project().read(cx);
-        let project_to_found_path = |project_path: ProjectPath| FoundPath {
-            absolute: project
-                // TODO kb this will be called on every panel reopen, will the workspaec exist if all files are closed?
-                // might need to store these in the history instead
-                .worktree_for_id(project_path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path)),
-            project: project_path,
-        };
 
         let currently_opened_path = workspace
             .active_item(cx)
             .and_then(|item| item.project_path(cx))
-            .map(project_to_found_path);
+            .map(|project_path| {
+                let abs_path = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
+                FoundPath::new(project_path, abs_path)
+            });
 
         // if exists, bubble the currently opened path to the top
-        let history_items = currently_opened_path
-            .clone()
+        let history_items = dbg!(dbg!(currently_opened_path.clone())
             .into_iter()
             .chain(
                 workspace
+                    // TODO kb history contains empty paths
                     .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
                     .into_iter()
-                    .filter(|history_path| {
+                    .filter(|(history_path, _)| {
                         Some(history_path)
                             != currently_opened_path
                                 .as_ref()
                                 .map(|found_path| &found_path.project)
                     })
-                    .map(project_to_found_path),
+                    .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
             )
-            .collect();
+            .collect());
 
         let project = workspace.project().clone();
         let workspace = cx.handle().downgrade();
