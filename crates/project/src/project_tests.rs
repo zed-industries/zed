@@ -1193,7 +1193,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         .await;
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 3)]
 async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -1273,7 +1273,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
 
     // The diagnostics have moved down since they were created.
     buffer.next_notification(cx).await;
-    buffer.next_notification(cx).await;
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer
@@ -1352,6 +1352,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     buffer.next_notification(cx).await;
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer
@@ -1444,6 +1445,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     buffer.next_notification(cx).await;
+    cx.foreground().run_until_parked();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(
             buffer
@@ -2524,29 +2526,21 @@ async fn test_rescan_and_remote_updates(
 
     // Create a remote copy of this worktree.
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    let initial_snapshot = tree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
-    let remote = cx.update(|cx| {
-        Worktree::remote(
-            1,
-            1,
-            proto::WorktreeMetadata {
-                id: initial_snapshot.id().to_proto(),
-                root_name: initial_snapshot.root_name().into(),
-                abs_path: initial_snapshot
-                    .abs_path()
-                    .as_os_str()
-                    .to_string_lossy()
-                    .into(),
-                visible: true,
-            },
-            rpc.clone(),
-            cx,
-        )
+
+    let metadata = tree.read_with(cx, |tree, _| tree.as_local().unwrap().metadata_proto());
+
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |tree, cx| {
+        let _ = tree.as_local_mut().unwrap().observe_updates(0, cx, {
+            let updates = updates.clone();
+            move |update| {
+                updates.lock().push(update);
+                async { true }
+            }
+        });
     });
-    remote.update(cx, |remote, _| {
-        let update = initial_snapshot.build_initial_update(1);
-        remote.as_remote_mut().unwrap().update_from_remote(update);
-    });
+
+    let remote = cx.update(|cx| Worktree::remote(1, 1, metadata, rpc.clone(), cx));
     deterministic.run_until_parked();
 
     cx.read(|cx| {
@@ -2612,14 +2606,11 @@ async fn test_rescan_and_remote_updates(
 
     // Update the remote worktree. Check that it becomes consistent with the
     // local worktree.
-    remote.update(cx, |remote, cx| {
-        let update = tree.read(cx).as_local().unwrap().snapshot().build_update(
-            &initial_snapshot,
-            1,
-            1,
-            true,
-        );
-        remote.as_remote_mut().unwrap().update_from_remote(update);
+    deterministic.run_until_parked();
+    remote.update(cx, |remote, _| {
+        for update in updates.lock().drain(..) {
+            remote.as_remote_mut().unwrap().update_from_remote(update);
+        }
     });
     deterministic.run_until_parked();
     remote.read_with(cx, |remote, _| {

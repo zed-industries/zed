@@ -796,6 +796,12 @@ impl LanguageRegistry {
         http_client: Arc<dyn HttpClient>,
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
+        let server_id = self.state.write().next_language_server_id();
+        log::info!(
+            "starting language server name:{}, path:{root_path:?}, id:{server_id}",
+            adapter.name.0
+        );
+
         #[cfg(any(test, feature = "test-support"))]
         if language.fake_adapter.is_some() {
             let task = cx.spawn(|cx| async move {
@@ -825,7 +831,6 @@ impl LanguageRegistry {
                 Ok(server)
             });
 
-            let server_id = self.state.write().next_language_server_id();
             return Some(PendingLanguageServer { server_id, task });
         }
 
@@ -834,7 +839,6 @@ impl LanguageRegistry {
             .clone()
             .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
             .log_err()?;
-
         let this = self.clone();
         let language = language.clone();
         let http_client = http_client.clone();
@@ -843,7 +847,6 @@ impl LanguageRegistry {
         let adapter = adapter.clone();
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
-        let server_id = self.state.write().next_language_server_id();
 
         let task = cx.spawn(|cx| async move {
             login_shell_env_loaded.await;
