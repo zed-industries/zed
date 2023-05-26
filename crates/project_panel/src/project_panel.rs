@@ -527,18 +527,22 @@ impl ProjectPanel {
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
         let filename = self.filename_editor.read(cx).text(cx);
 
+        let path_already_exists = |path| worktree.read(cx).entry_for_path(path).is_some();
         let edit_task;
         let edited_entry_id;
-
         if is_new_entry {
             self.selection = Some(Selection {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
             let new_path = entry.path.join(&filename);
+            if path_already_exists(new_path.as_path()) {
+                return None;
+            }
+
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((worktree_id, new_path), is_dir, cx)
+                project.create_entry((worktree_id, &new_path), is_dir, cx)
             })?;
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -546,9 +550,13 @@ impl ProjectPanel {
             } else {
                 filename.clone().into()
             };
+            if path_already_exists(new_path.as_path()) {
+                return None;
+            }
+
             edited_entry_id = entry.id;
             edit_task = self.project.update(cx, |project, cx| {
-                project.rename_entry(entry.id, new_path, cx)
+                project.rename_entry(entry.id, new_path.as_path(), cx)
             })?;
         };
 
@@ -2124,6 +2132,152 @@ mod tests {
             "Project panel should have no deleted file, with one last file remaining"
         );
         ensure_no_open_items_and_panes(window_id, &workspace, cx);
+    }
+
+    #[gpui::test]
+    async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        select_path(&panel, "src/", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src  <== selected", "    > test"]
+        );
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        cx.read_window(window_id, |cx| {
+            let panel = panel.read(cx);
+            assert!(panel.filename_editor.is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > [EDITOR: '']  <== selected", "    > test"]
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("test", cx));
+            assert!(
+                panel.confirm(&Confirm, cx).is_none(),
+                "Should not allow to confirm on conflicting new directory name"
+            )
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > test"],
+            "File list should be unchanged after failed folder create confirmation"
+        );
+
+        select_path(&panel, "src/test/", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > test  <== selected"]
+        );
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        cx.read_window(window_id, |cx| {
+            let panel = panel.read(cx);
+            assert!(panel.filename_editor.is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          [EDITOR: '']  <== selected",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("first.rs", cx));
+            assert!(
+                panel.confirm(&Confirm, cx).is_none(),
+                "Should not allow to confirm on conflicting new file name"
+            )
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "File list should be unchanged after failed file create confirmation"
+        );
+
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ],
+        );
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        cx.read_window(window_id, |cx| {
+            let panel = panel.read(cx);
+            assert!(panel.filename_editor.is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          [EDITOR: 'first.rs']  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("second.rs", cx));
+            assert!(
+                panel.confirm(&Confirm, cx).is_none(),
+                "Should not allow to confirm on conflicting file rename"
+            )
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected",
+                "          second.rs",
+                "          third.rs"
+            ],
+            "File list should be unchanged after failed rename confirmation"
+        );
     }
 
     fn toggle_expand_dir(
