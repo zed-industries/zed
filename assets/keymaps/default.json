@@ -198,7 +198,8 @@
   {
     "context": "ContextEditor > Editor",
     "bindings": {
-      "cmd-enter": "assistant::Assist"
+      "cmd-enter": "assistant::Assist",
+      "escape": "assistant::CancelLastAssist"
     }
   },
   {
