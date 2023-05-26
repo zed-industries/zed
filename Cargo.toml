@@ -15,6 +15,7 @@ members = [
     "crates/context_menu",
     "crates/copilot",
     "crates/copilot_button",
+    "crates/crdb",
     "crates/db",
     "crates/diagnostics",
     "crates/drag_and_drop",

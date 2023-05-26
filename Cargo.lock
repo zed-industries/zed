@@ -1731,6 +1731,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crdb"
+version = "0.1.0"
+dependencies = [
+ "rope",
+ "sum_tree",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
