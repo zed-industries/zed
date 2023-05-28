@@ -506,7 +506,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 register_options: serde_json::to_value(
                     lsp::DidChangeWatchedFilesRegistrationOptions {
                         watchers: vec![lsp::FileSystemWatcher {
-                            glob_pattern: "/the-root/*.{rs,c}".to_string(),
+                            glob_pattern: lsp::GlobPattern::String(
+                                "/the-root/*.{rs,c}".to_string(),
+                            ),
                             kind: None,
                         }],
                     },

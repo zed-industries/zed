@@ -40,6 +40,7 @@ use language::{
     PendingLanguageServer, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
 };
+use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -3017,10 +3018,12 @@ impl Project {
                     if let Some(worktree) = worktree.upgrade(cx) {
                         let worktree = worktree.read(cx);
                         if let Some(abs_path) = worktree.abs_path().to_str() {
-                            if let Some(suffix) = watcher
-                                .glob_pattern
-                                .strip_prefix(abs_path)
-                                .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
+                            if let Some(suffix) = match &watcher.glob_pattern {
+                                lsp::GlobPattern::String(s) => s,
+                                lsp::GlobPattern::Relative(rp) => &rp.pattern,
+                            }
+                            .strip_prefix(abs_path)
+                            .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
                             {
                                 if let Some(glob) = Glob::new(suffix).log_err() {
                                     builders
@@ -3759,7 +3762,7 @@ impl Project {
                         let worktree_abs_path = worktree.abs_path().clone();
                         requests.push(
                             server
-                                .request::<lsp::request::WorkspaceSymbol>(
+                                .request::<lsp::request::WorkspaceSymbolRequest>(
                                     lsp::WorkspaceSymbolParams {
                                         query: query.to_string(),
                                         ..Default::default()
@@ -3767,12 +3770,32 @@ impl Project {
                                 )
                                 .log_err()
                                 .map(move |response| {
+                                    let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                            flat_responses.into_iter().map(|lsp_symbol| {
+                                                (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                            }).collect::<Vec<_>>()
+                                        }
+                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                                let location = match lsp_symbol.location {
+                                                    lsp::OneOf::Left(location) => location,
+                                                    lsp::OneOf::Right(_) => {
+                                                        error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                        return None
+                                                    }
+                                                };
+                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                            }).collect::<Vec<_>>()
+                                        }
+                                    }).unwrap_or_default();
+
                                     (
                                         adapter,
                                         language,
                                         worktree_id,
                                         worktree_abs_path,
-                                        response.unwrap_or_default(),
+                                        lsp_symbols,
                                     )
                                 }),
                         );
@@ -3794,53 +3817,54 @@ impl Project {
                         adapter_language,
                         source_worktree_id,
                         worktree_abs_path,
-                        response,
+                        lsp_symbols,
                     ) in responses
                     {
-                        symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
-                            let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
-                            let mut worktree_id = source_worktree_id;
-                            let path;
-                            if let Some((worktree, rel_path)) =
-                                this.find_local_worktree(&abs_path, cx)
-                            {
-                                worktree_id = worktree.read(cx).id();
-                                path = rel_path;
-                            } else {
-                                path = relativize_path(&worktree_abs_path, &abs_path);
-                            }
-
-                            let project_path = ProjectPath {
-                                worktree_id,
-                                path: path.into(),
-                            };
-                            let signature = this.symbol_signature(&project_path);
-                            let adapter_language = adapter_language.clone();
-                            let language = this
-                                .languages
-                                .language_for_file(&project_path.path, None)
-                                .unwrap_or_else(move |_| adapter_language);
-                            let language_server_name = adapter.name.clone();
-                            Some(async move {
-                                let language = language.await;
-                                let label = language
-                                    .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
-                                    .await;
-
-                                Symbol {
-                                    language_server_name,
-                                    source_worktree_id,
-                                    path: project_path,
-                                    label: label.unwrap_or_else(|| {
-                                        CodeLabel::plain(lsp_symbol.name.clone(), None)
-                                    }),
-                                    kind: lsp_symbol.kind,
-                                    name: lsp_symbol.name,
-                                    range: range_from_lsp(lsp_symbol.location.range),
-                                    signature,
+                        symbols.extend(lsp_symbols.into_iter().filter_map(
+                            |(symbol_name, symbol_kind, symbol_location)| {
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let mut worktree_id = source_worktree_id;
+                                let path;
+                                if let Some((worktree, rel_path)) =
+                                    this.find_local_worktree(&abs_path, cx)
+                                {
+                                    worktree_id = worktree.read(cx).id();
+                                    path = rel_path;
+                                } else {
+                                    path = relativize_path(&worktree_abs_path, &abs_path);
                                 }
-                            })
-                        }));
+
+                                let project_path = ProjectPath {
+                                    worktree_id,
+                                    path: path.into(),
+                                };
+                                let signature = this.symbol_signature(&project_path);
+                                let adapter_language = adapter_language.clone();
+                                let language = this
+                                    .languages
+                                    .language_for_file(&project_path.path, None)
+                                    .unwrap_or_else(move |_| adapter_language);
+                                let language_server_name = adapter.name.clone();
+                                Some(async move {
+                                    let language = language.await;
+                                    let label =
+                                        language.label_for_symbol(&symbol_name, symbol_kind).await;
+
+                                    Symbol {
+                                        language_server_name,
+                                        source_worktree_id,
+                                        path: project_path,
+                                        label: label.unwrap_or_else(|| {
+                                            CodeLabel::plain(symbol_name.clone(), None)
+                                        }),
+                                        kind: symbol_kind,
+                                        name: symbol_name,
+                                        range: range_from_lsp(symbol_location.range),
+                                        signature,
+                                    }
+                                })
+                            },
+                        ));
                     }
                     symbols
                 });
@@ -5850,7 +5874,7 @@ impl Project {
 
         this.update(&mut cx, |this, cx| {
             let Some(guest_id) = envelope.original_sender_id else {
-                log::error!("missing original_sender_id on SynchronizeBuffers request");
+                error!("missing original_sender_id on SynchronizeBuffers request");
                 return;
             };
 
