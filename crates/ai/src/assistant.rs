@@ -3,11 +3,11 @@ use anyhow::{anyhow, Result};
 use editor::{Editor, MultiBuffer};
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use gpui::{
-    actions, elements::*, executor::Background, Action, AppContext, Entity, ModelHandle,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    actions, elements::*, executor::Background, Action, AppContext, AsyncAppContext, Entity,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use isahc::{http::StatusCode, Request, RequestExt};
-use language::{language_settings::SoftWrap, Anchor, Buffer};
+use language::{language_settings::SoftWrap, Anchor, Buffer, Language, LanguageRegistry};
 use std::{io, sync::Arc};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -38,57 +38,70 @@ pub struct AssistantPanel {
 }
 
 impl AssistantPanel {
-    pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let pane = cx.add_view(|cx| {
-            let mut pane = Pane::new(
-                workspace.weak_handle(),
-                workspace.app_state().background_actions,
-                Default::default(),
-                cx,
-            );
-            pane.set_can_split(false, cx);
-            pane.set_can_navigate(false, cx);
-            pane.on_can_drop(move |_, _| false);
-            pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                Flex::row()
-                    .with_child(Pane::render_tab_bar_button(
-                        0,
-                        "icons/plus_12.svg",
-                        Some(("New Context".into(), Some(Box::new(NewContext)))),
-                        cx,
-                        move |_, _| todo!(),
-                        None,
-                    ))
-                    .with_child(Pane::render_tab_bar_button(
-                        1,
-                        if pane.is_zoomed() {
-                            "icons/minimize_8.svg"
-                        } else {
-                            "icons/maximize_8.svg"
-                        },
-                        Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
-                        cx,
-                        move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
-                        None,
-                    ))
-                    .into_any()
-            });
-            let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
-            pane.toolbar()
-                .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
-            pane
-        });
-        let subscriptions = vec![
-            cx.observe(&pane, |_, _, cx| cx.notify()),
-            cx.subscribe(&pane, Self::handle_pane_event),
-        ];
+    pub fn load(
+        workspace: WeakViewHandle<Workspace>,
+        cx: AsyncAppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        cx.spawn(|mut cx| async move {
+            // TODO: deserialize state.
+            workspace.update(&mut cx, |workspace, cx| {
+                cx.add_view(|cx| {
+                    let pane = cx.add_view(|cx| {
+                        let mut pane = Pane::new(
+                            workspace.weak_handle(),
+                            workspace.app_state().background_actions,
+                            Default::default(),
+                            cx,
+                        );
+                        pane.set_can_split(false, cx);
+                        pane.set_can_navigate(false, cx);
+                        pane.on_can_drop(move |_, _| false);
+                        pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                            Flex::row()
+                                .with_child(Pane::render_tab_bar_button(
+                                    0,
+                                    "icons/plus_12.svg",
+                                    Some(("New Context".into(), Some(Box::new(NewContext)))),
+                                    cx,
+                                    move |_, _| todo!(),
+                                    None,
+                                ))
+                                .with_child(Pane::render_tab_bar_button(
+                                    1,
+                                    if pane.is_zoomed() {
+                                        "icons/minimize_8.svg"
+                                    } else {
+                                        "icons/maximize_8.svg"
+                                    },
+                                    Some((
+                                        "Toggle Zoom".into(),
+                                        Some(Box::new(workspace::ToggleZoom)),
+                                    )),
+                                    cx,
+                                    move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
+                                    None,
+                                ))
+                                .into_any()
+                        });
+                        let buffer_search_bar = cx.add_view(search::BufferSearchBar::new);
+                        pane.toolbar()
+                            .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
+                        pane
+                    });
+                    let subscriptions = vec![
+                        cx.observe(&pane, |_, _, cx| cx.notify()),
+                        cx.subscribe(&pane, Self::handle_pane_event),
+                    ];
 
-        Self {
-            pane,
-            workspace: workspace.weak_handle(),
-            width: None,
-            _subscriptions: subscriptions,
-        }
+                    Self {
+                        pane,
+                        workspace: workspace.weak_handle(),
+                        width: None,
+                        _subscriptions: subscriptions,
+                    }
+                })
+            })
+        })
     }
 
     fn handle_pane_event(
@@ -161,15 +174,28 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            cx.defer(|this, cx| {
-                if let Some(workspace) = this.workspace.upgrade(cx) {
-                    workspace.update(cx, |workspace, cx| {
-                        let focus = this.pane.read(cx).has_focus();
-                        let editor = Box::new(cx.add_view(|cx| Assistant::new(cx)));
-                        Pane::add_item(workspace, &this.pane, editor, true, focus, None, cx);
-                    })
-                }
-            });
+            let workspace = self.workspace.clone();
+            let pane = self.pane.clone();
+            let focus = self.has_focus(cx);
+            cx.spawn(|_, mut cx| async move {
+                let markdown = workspace
+                    .read_with(&cx, |workspace, _| {
+                        workspace
+                            .app_state()
+                            .languages
+                            .language_for_name("Markdown")
+                    })?
+                    .await?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    let editor = Box::new(cx.add_view(|cx| {
+                        Assistant::new(markdown, workspace.app_state().languages.clone(), cx)
+                    }));
+                    Pane::add_item(workspace, &pane, editor, true, focus, None, cx);
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
         }
     }
 
@@ -208,6 +234,8 @@ struct Assistant {
     editor: ViewHandle<Editor>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
+    markdown: Arc<Language>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 struct PendingCompletion {
@@ -216,37 +244,29 @@ struct PendingCompletion {
 }
 
 impl Assistant {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
-        let messages = vec![Message {
-            role: Role::User,
-            content: cx.add_model(|cx| Buffer::new(0, "", cx)),
-        }];
-
-        let multibuffer = cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
-            for message in &messages {
-                multibuffer.push_excerpts_with_context_lines(
-                    message.content.clone(),
-                    vec![Anchor::MIN..Anchor::MAX],
-                    0,
-                    cx,
-                );
-            }
-            multibuffer
-        });
+    fn new(
+        markdown: Arc<Language>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let editor = cx.add_view(|cx| {
+            let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
             let mut editor = Editor::for_multibuffer(multibuffer, None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor
         });
 
-        Self {
-            messages,
+        let mut this = Self {
+            messages: Default::default(),
             editor,
             completion_count: 0,
             pending_completions: Vec::new(),
-        }
+            markdown,
+            language_registry,
+        };
+        this.push_message(Role::User, cx);
+        this
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
@@ -266,32 +286,8 @@ impl Assistant {
 
         if let Some(api_key) = std::env::var("OPENAI_API_KEY").log_err() {
             let stream = stream_completion(api_key, cx.background_executor().clone(), request);
-            let response_buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
-            self.messages.push(Message {
-                role: Role::Assistant,
-                content: response_buffer.clone(),
-            });
-            let next_request_buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
-            self.messages.push(Message {
-                role: Role::User,
-                content: next_request_buffer.clone(),
-            });
-            self.editor.update(cx, |editor, cx| {
-                editor.buffer().update(cx, |multibuffer, cx| {
-                    multibuffer.push_excerpts_with_context_lines(
-                        response_buffer.clone(),
-                        vec![Anchor::MIN..Anchor::MAX],
-                        0,
-                        cx,
-                    );
-                    multibuffer.push_excerpts_with_context_lines(
-                        next_request_buffer,
-                        vec![Anchor::MIN..Anchor::MAX],
-                        0,
-                        cx,
-                    );
-                });
-            });
+            let response_buffer = self.push_message(Role::Assistant, cx);
+            self.push_message(Role::User, cx);
             let task = cx.spawn(|this, mut cx| {
                 async move {
                     let mut messages = stream.await?;
@@ -329,6 +325,33 @@ impl Assistant {
         if self.pending_completions.pop().is_none() {
             cx.propagate_action();
         }
+    }
+
+    fn push_message(&mut self, role: Role, cx: &mut ViewContext<Self>) -> ModelHandle<Buffer> {
+        let content = cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx);
+            buffer.set_language(Some(self.markdown.clone()), cx);
+            buffer.set_language_registry(self.language_registry.clone());
+            buffer
+        });
+        let message = Message {
+            role,
+            content: content.clone(),
+        };
+        self.messages.push(message);
+
+        self.editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                buffer.push_excerpts_with_context_lines(
+                    content.clone(),
+                    vec![Anchor::MIN..Anchor::MAX],
+                    0,
+                    cx,
+                )
+            });
+        });
+
+        content
     }
 }
 
