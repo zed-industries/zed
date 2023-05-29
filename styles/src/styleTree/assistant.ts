@@ -18,6 +18,10 @@ export default function assistant(colorScheme: ColorScheme) {
       },
       assistant_sender: {
         ...text(layer, "sans", "accent", { size: "sm", weight: "bold" }),
+      },
+      sent_at: {
+        margin: { top: 2, left: 8 },
+        ...text(layer, "sans", "default", { size: "2xs" }),
       }
     }
 }

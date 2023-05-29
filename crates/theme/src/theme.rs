@@ -972,6 +972,7 @@ pub struct TerminalStyle {
 pub struct AssistantStyle {
     pub container: ContainerStyle,
     pub header: ContainerStyle,
+    pub sent_at: ContainedText,
     pub user_sender: ContainedText,
     pub assistant_sender: ContainedText,
 }

@@ -1,5 +1,6 @@
 use crate::{OpenAIRequest, OpenAIResponseStreamEvent, RequestMessage, Role};
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Local};
 use collections::HashMap;
 use editor::{Editor, ExcerptId, ExcerptRange, MultiBuffer};
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
@@ -343,6 +344,7 @@ impl Assistant {
         let message = Message {
             role,
             content: content.clone(),
+            sent_at: Local::now(),
         };
         self.messages.push(message.clone());
         self.messages_by_id.insert(excerpt_id, message.clone());
@@ -394,7 +396,16 @@ impl AssistantEditor {
                             };
 
                             Flex::row()
-                                .with_child(sender)
+                                .with_child(sender.aligned())
+                                .with_child(
+                                    Label::new(
+                                        message.sent_at.format("%I:%M%P").to_string(),
+                                        style.sent_at.text.clone(),
+                                    )
+                                    .contained()
+                                    .with_style(style.sent_at.container)
+                                    .aligned(),
+                                )
                                 .aligned()
                                 .left()
                                 .contained()
@@ -461,6 +472,7 @@ impl Item for AssistantEditor {
 struct Message {
     role: Role,
     content: ModelHandle<Buffer>,
+    sent_at: DateTime<Local>,
 }
 
 async fn stream_completion(
