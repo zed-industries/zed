@@ -99,7 +99,7 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(nav_history) = self.nav_history.as_ref() {
+        if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }
     }

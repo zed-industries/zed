@@ -278,6 +278,19 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.toggle_dock(DockPosition::Bottom, action.focus, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
+    cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+        workspace.reopen_closed_item(cx).detach();
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
+        workspace
+            .go_back(workspace.active_pane().downgrade(), cx)
+            .detach();
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
+        workspace
+            .go_forward(workspace.active_pane().downgrade(), cx)
+            .detach();
+    });
 
     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
         cx.spawn(|workspace, mut cx| async move {
@@ -998,6 +1011,115 @@ impl Workspace {
             })
             .take(limit.unwrap_or(usize::MAX))
             .collect()
+    }
+
+    fn navigate_history(
+        &mut self,
+        pane: WeakViewHandle<Pane>,
+        mode: NavigationMode,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let to_load = if let Some(pane) = pane.upgrade(cx) {
+            cx.focus(&pane);
+
+            pane.update(cx, |pane, cx| {
+                loop {
+                    // Retrieve the weak item handle from the history.
+                    let entry = pane.nav_history_mut().pop(mode, cx)?;
+
+                    // If the item is still present in this pane, then activate it.
+                    if let Some(index) = entry
+                        .item
+                        .upgrade(cx)
+                        .and_then(|v| pane.index_for_item(v.as_ref()))
+                    {
+                        let prev_active_item_index = pane.active_item_index();
+                        pane.nav_history_mut().set_mode(mode);
+                        pane.activate_item(index, true, true, cx);
+                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
+
+                        let mut navigated = prev_active_item_index != pane.active_item_index();
+                        if let Some(data) = entry.data {
+                            navigated |= pane.active_item()?.navigate(data, cx);
+                        }
+
+                        if navigated {
+                            break None;
+                        }
+                    }
+                    // If the item is no longer present in this pane, then retrieve its
+                    // project path in order to reopen it.
+                    else {
+                        break pane
+                            .nav_history()
+                            .path_for_item(entry.item.id())
+                            .map(|(project_path, _)| (project_path, entry));
+                    }
+                }
+            })
+        } else {
+            None
+        };
+
+        if let Some((project_path, entry)) = to_load {
+            // If the item was no longer present, then load it again from its previous path.
+            let task = self.load_path(project_path, cx);
+            cx.spawn(|workspace, mut cx| async move {
+                let task = task.await;
+                let mut navigated = false;
+                if let Some((project_entry_id, build_item)) = task.log_err() {
+                    let prev_active_item_id = pane.update(&mut cx, |pane, _| {
+                        pane.nav_history_mut().set_mode(mode);
+                        pane.active_item().map(|p| p.id())
+                    })?;
+
+                    pane.update(&mut cx, |pane, cx| {
+                        let item = pane.open_item(project_entry_id, true, cx, build_item);
+                        navigated |= Some(item.id()) != prev_active_item_id;
+                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
+                        if let Some(data) = entry.data {
+                            navigated |= item.navigate(data, cx);
+                        }
+                    })?;
+                }
+
+                if !navigated {
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            Self::navigate_history(workspace, pane, mode, cx)
+                        })?
+                        .await?;
+                }
+
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
+    pub fn go_back(
+        &mut self,
+        pane: WeakViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history(pane, NavigationMode::GoingBack, cx)
+    }
+
+    pub fn go_forward(
+        &mut self,
+        pane: WeakViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history(pane, NavigationMode::GoingForward, cx)
+    }
+
+    pub fn reopen_closed_item(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
+        self.navigate_history(
+            self.active_pane().downgrade(),
+            NavigationMode::ReopeningClosedItem,
+            cx,
+        )
     }
 
     pub fn client(&self) -> &Client {
@@ -4037,9 +4159,7 @@ mod tests {
         });
 
         workspace
-            .update(cx, |workspace, cx| {
-                Pane::go_back(workspace, Some(pane.downgrade()), cx)
-            })
+            .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
             .await
             .unwrap();
 
