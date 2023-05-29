@@ -1,3 +1,4 @@
+use crate::File;
 use anyhow::Result;
 use collections::HashMap;
 use globset::GlobMatcher;
@@ -13,8 +14,16 @@ pub fn init(cx: &mut AppContext) {
     settings::register::<AllLanguageSettings>(cx);
 }
 
-pub fn language_settings<'a>(language: Option<&str>, cx: &'a AppContext) -> &'a LanguageSettings {
-    settings::get::<AllLanguageSettings>(cx).language(language)
+pub fn language_settings<'a>(
+    language: Option<&str>,
+    file: Option<&dyn File>,
+    cx: &'a AppContext,
+) -> &'a LanguageSettings {
+    settings::get_local::<AllLanguageSettings>(
+        file.map(|f| (f.worktree_id(), f.path().as_ref())),
+        cx,
+    )
+    .language(language)
 }
 
 pub fn all_language_settings<'a>(cx: &'a AppContext) -> &'a AllLanguageSettings {

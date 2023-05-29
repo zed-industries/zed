@@ -107,7 +107,7 @@ impl LspAdapter for YamlLspAdapter {
                     "keyOrdering": false
                 },
                 "[yaml]": {
-                    "editor.tabSize": language_settings(Some("YAML"), cx).tab_size,
+                    "editor.tabSize": language_settings(Some("YAML"), None, cx).tab_size,
                 }
             }))
             .boxed(),

@@ -198,7 +198,7 @@ impl CopilotButton {
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
             let language_enabled =
-                language_settings::language_settings(Some(language.as_ref()), cx)
+                language_settings::language_settings(Some(language.as_ref()), None, cx)
                     .show_copilot_suggestions;
             menu_options.push(ContextMenuItem::handler(
                 format!(

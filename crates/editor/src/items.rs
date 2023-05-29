@@ -1231,6 +1231,10 @@ mod tests {
             unimplemented!()
         }
 
+        fn worktree_id(&self) -> usize {
+            0
+        }
+
         fn is_deleted(&self) -> bool {
             unimplemented!()
         }

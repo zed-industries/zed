@@ -787,6 +787,7 @@ impl Copilot {
         let position = position.to_point_utf16(buffer);
         let settings = language_settings(
             buffer.language_at(position).map(|l| l.name()).as_deref(),
+            buffer.file().map(|f| f.as_ref()),
             cx,
         );
         let tab_size = settings.tab_size;
@@ -1174,6 +1175,10 @@ mod tests {
 
         fn to_proto(&self) -> rpc::proto::File {
             unimplemented!()
+        }
+
+        fn worktree_id(&self) -> usize {
+            0
         }
     }
 
