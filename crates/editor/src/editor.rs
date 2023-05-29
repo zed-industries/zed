@@ -46,7 +46,8 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::{self, json},
     AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, Entity,
-    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    LayoutContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -498,6 +499,7 @@ pub struct Editor {
     mode: EditorMode,
     show_gutter: bool,
     placeholder_text: Option<Arc<str>>,
+    render_excerpt_header: Option<element::RenderExcerptHeader>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
@@ -1301,6 +1303,7 @@ impl Editor {
             mode,
             show_gutter: mode == EditorMode::Full,
             placeholder_text: None,
+            render_excerpt_header: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
             nav_history: None,
@@ -6663,6 +6666,20 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_render_excerpt_header(
+        &mut self,
+        render_excerpt_header: impl 'static
+            + Fn(
+                &mut Editor,
+                RenderExcerptHeaderParams,
+                &mut LayoutContext<Editor>,
+            ) -> AnyElement<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.render_excerpt_header = Some(Arc::new(render_excerpt_header));
+        cx.notify();
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
@@ -7308,8 +7325,12 @@ impl View for Editor {
             });
         }
 
+        let mut editor = EditorElement::new(style.clone());
+        if let Some(render_excerpt_header) = self.render_excerpt_header.clone() {
+            editor = editor.with_render_excerpt_header(render_excerpt_header);
+        }
         Stack::new()
-            .with_child(EditorElement::new(style.clone()))
+            .with_child(editor)
             .with_child(ChildView::new(&self.mouse_context_menu, cx))
             .into_any()
     }

@@ -971,6 +971,9 @@ pub struct TerminalStyle {
 #[derive(Clone, Deserialize, Default)]
 pub struct AssistantStyle {
     pub container: ContainerStyle,
+    pub header: ContainerStyle,
+    pub user_sender: ContainedText,
+    pub assistant_sender: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]
