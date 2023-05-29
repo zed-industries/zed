@@ -361,13 +361,18 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
-                    did_change_watched_files: Some(DynamicRegistrationClientCapabilities {
+                    did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                         dynamic_registration: Some(true),
+                        relative_pattern_support: Some(true),
                     }),
                     did_change_configuration: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
                     workspace_folders: Some(true),
+                    symbol: Some(WorkspaceSymbolClientCapabilities {
+                        resolve_support: None,
+                        ..WorkspaceSymbolClientCapabilities::default()
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {

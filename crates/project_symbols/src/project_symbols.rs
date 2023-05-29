@@ -284,7 +284,7 @@ mod tests {
             symbol("uno", "/dir/test.rs"),
         ];
         let fake_server = fake_servers.next().await.unwrap();
-        fake_server.handle_request::<lsp::request::WorkspaceSymbol, _, _>(
+        fake_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(
             move |params: lsp::WorkspaceSymbolParams, cx| {
                 let executor = cx.background();
                 let fake_symbols = fake_symbols.clone();
@@ -308,12 +308,12 @@ mod tests {
                         .await
                     };
 
-                    Ok(Some(
+                    Ok(Some(lsp::WorkspaceSymbolResponse::Flat(
                         matches
                             .into_iter()
                             .map(|mat| fake_symbols[mat.candidate_id].clone())
                             .collect(),
-                    ))
+                    )))
                 }
             },
         );

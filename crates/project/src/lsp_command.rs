@@ -1524,6 +1524,7 @@ impl LspCommand for GetCodeActions {
             context: lsp::CodeActionContext {
                 diagnostics: relevant_diagnostics,
                 only: language_server.code_action_kinds(),
+                ..lsp::CodeActionContext::default()
             },
         }
     }
