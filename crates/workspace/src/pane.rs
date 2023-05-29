@@ -5,7 +5,7 @@ use crate::{
     item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
     ToggleZoom, Workspace, WorkspaceSettings,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use context_menu::{ContextMenu, ContextMenuItem};
 use drag_and_drop::{DragAndDrop, Draggable};
@@ -161,6 +161,7 @@ pub struct Pane {
     tab_context_menu: ViewHandle<ContextMenu>,
     _background_actions: BackgroundActions,
     workspace: WeakViewHandle<Workspace>,
+    project: ModelHandle<Project>,
     has_focus: bool,
     can_drop: Rc<dyn Fn(&DragAndDrop<Workspace>, &WindowContext) -> bool>,
     can_split: bool,
@@ -241,6 +242,7 @@ impl TabBarContextMenu {
 impl Pane {
     pub fn new(
         workspace: WeakViewHandle<Workspace>,
+        project: ModelHandle<Project>,
         background_actions: BackgroundActions,
         next_timestamp: Arc<AtomicUsize>,
         cx: &mut ViewContext<Self>,
@@ -277,6 +279,7 @@ impl Pane {
             tab_context_menu: cx.add_view(|cx| ContextMenu::new(pane_view_id, cx)),
             _background_actions: background_actions,
             workspace,
+            project,
             has_focus: false,
             can_drop: Rc::new(|_, _| true),
             can_split: true,
@@ -502,21 +505,8 @@ impl Pane {
                         pane.active_item().map(|p| p.id())
                     })?;
 
-                    let item = workspace.update(&mut cx, |workspace, cx| {
-                        let pane = pane
-                            .upgrade(cx)
-                            .ok_or_else(|| anyhow!("pane was dropped"))?;
-                        anyhow::Ok(Self::open_item(
-                            workspace,
-                            pane.clone(),
-                            project_entry_id,
-                            true,
-                            cx,
-                            build_item,
-                        ))
-                    })??;
-
                     pane.update(&mut cx, |pane, cx| {
+                        let item = pane.open_item(project_entry_id, true, cx, build_item);
                         navigated |= Some(item.id()) != prev_active_item_id;
                         pane.nav_history
                             .borrow_mut()
@@ -543,62 +533,46 @@ impl Pane {
     }
 
     pub(crate) fn open_item(
-        workspace: &mut Workspace,
-        pane: ViewHandle<Pane>,
+        &mut self,
         project_entry_id: ProjectEntryId,
         focus_item: bool,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
-        let existing_item = pane.update(cx, |pane, cx| {
-            for (index, item) in pane.items.iter().enumerate() {
-                if item.is_singleton(cx)
-                    && item.project_entry_ids(cx).as_slice() == [project_entry_id]
-                {
-                    let item = item.boxed_clone();
-                    return Some((index, item));
-                }
+        let mut existing_item = None;
+        for (index, item) in self.items.iter().enumerate() {
+            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [project_entry_id]
+            {
+                let item = item.boxed_clone();
+                existing_item = Some((index, item));
+                break;
             }
-            None
-        });
+        }
 
         if let Some((index, existing_item)) = existing_item {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(index, focus_item, focus_item, cx);
-            });
+            self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
-            let new_item = pane.update(cx, |_, cx| build_item(cx));
-            Pane::add_item(
-                workspace,
-                &pane,
-                new_item.clone(),
-                true,
-                focus_item,
-                None,
-                cx,
-            );
+            let new_item = build_item(cx);
+            self.add_item(new_item.clone(), true, focus_item, None, cx);
             new_item
         }
     }
 
     pub fn add_item(
-        workspace: &mut Workspace,
-        pane: &ViewHandle<Pane>,
+        &mut self,
         item: Box<dyn ItemHandle>,
         activate_pane: bool,
         focus_item: bool,
         destination_index: Option<usize>,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) {
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).get(0) {
-                if let Some(project_path) =
-                    workspace.project().read(cx).path_for_entry(entry_id, cx)
-                {
-                    let abs_path = workspace.absolute_path(&project_path, cx);
-                    pane.read(cx)
-                        .nav_history
+                let project = self.project.read(cx);
+                if let Some(project_path) = project.path_for_entry(entry_id, cx) {
+                    let abs_path = project.absolute_path(&project_path, cx);
+                    self.nav_history
                         .borrow_mut()
                         .paths_by_item
                         .insert(item.id(), (project_path, abs_path));
@@ -607,18 +581,15 @@ impl Pane {
         }
         // If no destination index is specified, add or move the item after the active item.
         let mut insertion_index = {
-            let pane = pane.read(cx);
             cmp::min(
                 if let Some(destination_index) = destination_index {
                     destination_index
                 } else {
-                    pane.active_item_index + 1
+                    self.active_item_index + 1
                 },
-                pane.items.len(),
+                self.items.len(),
             )
         };
-
-        item.added_to_pane(workspace, pane.clone(), cx);
 
         // Does the item already exist?
         let project_entry_id = if item.is_singleton(cx) {
@@ -627,7 +598,7 @@ impl Pane {
             None
         };
 
-        let existing_item_index = pane.read(cx).items.iter().position(|existing_item| {
+        let existing_item_index = self.items.iter().position(|existing_item| {
             if existing_item.id() == item.id() {
                 true
             } else if existing_item.is_singleton(cx) {
@@ -644,45 +615,42 @@ impl Pane {
 
         if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
-            pane.update(cx, |pane, cx| {
-                if existing_item_index != insertion_index {
-                    let existing_item_is_active = existing_item_index == pane.active_item_index;
 
-                    // If the caller didn't specify a destination and the added item is already
-                    // the active one, don't move it
-                    if existing_item_is_active && destination_index.is_none() {
-                        insertion_index = existing_item_index;
-                    } else {
-                        pane.items.remove(existing_item_index);
-                        if existing_item_index < pane.active_item_index {
-                            pane.active_item_index -= 1;
-                        }
-                        insertion_index = insertion_index.min(pane.items.len());
+            if existing_item_index != insertion_index {
+                let existing_item_is_active = existing_item_index == self.active_item_index;
 
-                        pane.items.insert(insertion_index, item.clone());
-
-                        if existing_item_is_active {
-                            pane.active_item_index = insertion_index;
-                        } else if insertion_index <= pane.active_item_index {
-                            pane.active_item_index += 1;
-                        }
+                // If the caller didn't specify a destination and the added item is already
+                // the active one, don't move it
+                if existing_item_is_active && destination_index.is_none() {
+                    insertion_index = existing_item_index;
+                } else {
+                    self.items.remove(existing_item_index);
+                    if existing_item_index < self.active_item_index {
+                        self.active_item_index -= 1;
                     }
+                    insertion_index = insertion_index.min(self.items.len());
 
-                    cx.notify();
+                    self.items.insert(insertion_index, item.clone());
+
+                    if existing_item_is_active {
+                        self.active_item_index = insertion_index;
+                    } else if insertion_index <= self.active_item_index {
+                        self.active_item_index += 1;
+                    }
                 }
 
-                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
-            });
-        } else {
-            pane.update(cx, |pane, cx| {
-                pane.items.insert(insertion_index, item);
-                if insertion_index <= pane.active_item_index {
-                    pane.active_item_index += 1;
-                }
-
-                pane.activate_item(insertion_index, activate_pane, focus_item, cx);
                 cx.notify();
-            });
+            }
+
+            self.activate_item(insertion_index, activate_pane, focus_item, cx);
+        } else {
+            self.items.insert(insertion_index, item);
+            if insertion_index <= self.active_item_index {
+                self.active_item_index += 1;
+            }
+
+            self.activate_item(insertion_index, activate_pane, focus_item, cx);
+            cx.notify();
         }
     }
 
@@ -974,7 +942,12 @@ impl Pane {
         })
     }
 
-    fn remove_item(&mut self, item_index: usize, activate_pane: bool, cx: &mut ViewContext<Self>) {
+    pub fn remove_item(
+        &mut self,
+        item_index: usize,
+        activate_pane: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.activation_history
             .retain(|&history_entry| history_entry != self.items[item_index].id());
 
@@ -1146,48 +1119,6 @@ impl Pane {
         if let Some(active_item) = self.active_item() {
             cx.focus(active_item.as_any());
         }
-    }
-
-    pub fn move_item(
-        workspace: &mut Workspace,
-        from: ViewHandle<Pane>,
-        to: ViewHandle<Pane>,
-        item_id_to_move: usize,
-        destination_index: usize,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let item_to_move = from
-            .read(cx)
-            .items()
-            .enumerate()
-            .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
-
-        if item_to_move.is_none() {
-            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
-            return;
-        }
-        let (item_ix, item_handle) = item_to_move.unwrap();
-        let item_handle = item_handle.clone();
-
-        if from != to {
-            // Close item from previous pane
-            from.update(cx, |from, cx| {
-                from.remove_item(item_ix, false, cx);
-            });
-        }
-
-        // This automatically removes duplicate items in the pane
-        Pane::add_item(
-            workspace,
-            &to,
-            item_handle,
-            true,
-            true,
-            Some(destination_index),
-            cx,
-        );
-
-        cx.focus(&to);
     }
 
     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
@@ -2124,11 +2055,9 @@ mod tests {
 
         // 1. Add with a destination index
         //   a. Add before the active item
-        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(
-                workspace,
-                &pane,
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
                 false,
                 false,
@@ -2139,11 +2068,9 @@ mod tests {
         assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
 
         //   b. Add after the active item
-        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(
-                workspace,
-                &pane,
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
                 false,
                 false,
@@ -2154,11 +2081,9 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
 
         //   c. Add at the end of the item list (including off the length)
-        set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(
-                workspace,
-                &pane,
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
                 false,
                 false,
@@ -2170,11 +2095,9 @@ mod tests {
 
         // 2. Add without a destination index
         //   a. Add with active item at the start of the item list
-        set_labeled_items(&workspace, &pane, ["A*", "B", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(
-                workspace,
-                &pane,
+        set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
                 false,
                 false,
@@ -2182,14 +2105,12 @@ mod tests {
                 cx,
             );
         });
-        set_labeled_items(&workspace, &pane, ["A", "D*", "B", "C"], cx);
+        set_labeled_items(&pane, ["A", "D*", "B", "C"], cx);
 
         //   b. Add with active item at the end of the item list
-        set_labeled_items(&workspace, &pane, ["A", "B", "C*"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(
-                workspace,
-                &pane,
+        set_labeled_items(&pane, ["A", "B", "C*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(
                 Box::new(cx.add_view(|_| TestItem::new().with_label("D"))),
                 false,
                 false,
@@ -2212,66 +2133,66 @@ mod tests {
 
         // 1. Add with a destination index
         //   1a. Add before the active item
-        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, d, false, false, Some(0), cx);
+        let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(d, false, false, Some(0), cx);
         });
         assert_item_labels(&pane, ["D*", "A", "B", "C"], cx);
 
         //   1b. Add after the active item
-        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, d, false, false, Some(2), cx);
+        let [_, _, _, d] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(d, false, false, Some(2), cx);
         });
         assert_item_labels(&pane, ["A", "B", "D*", "C"], cx);
 
         //   1c. Add at the end of the item list (including off the length)
-        let [a, _, _, _] = set_labeled_items(&workspace, &pane, ["A", "B*", "C", "D"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, a, false, false, Some(5), cx);
+        let [a, _, _, _] = set_labeled_items(&pane, ["A", "B*", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(a, false, false, Some(5), cx);
         });
         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
 
         //   1d. Add same item to active index
-        let [_, b, _] = set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, b, false, false, Some(1), cx);
+        let [_, b, _] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(b, false, false, Some(1), cx);
         });
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         //   1e. Add item to index after same item in last position
-        let [_, _, c] = set_labeled_items(&workspace, &pane, ["A", "B*", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, c, false, false, Some(2), cx);
+        let [_, _, c] = set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(c, false, false, Some(2), cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         // 2. Add without a destination index
         //   2a. Add with active item at the start of the item list
-        let [_, _, _, d] = set_labeled_items(&workspace, &pane, ["A*", "B", "C", "D"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, d, false, false, None, cx);
+        let [_, _, _, d] = set_labeled_items(&pane, ["A*", "B", "C", "D"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(d, false, false, None, cx);
         });
         assert_item_labels(&pane, ["A", "D*", "B", "C"], cx);
 
         //   2b. Add with active item at the end of the item list
-        let [a, _, _, _] = set_labeled_items(&workspace, &pane, ["A", "B", "C", "D*"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, a, false, false, None, cx);
+        let [a, _, _, _] = set_labeled_items(&pane, ["A", "B", "C", "D*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(a, false, false, None, cx);
         });
         assert_item_labels(&pane, ["B", "C", "D", "A*"], cx);
 
         //   2c. Add active item to active item at end of list
-        let [_, _, c] = set_labeled_items(&workspace, &pane, ["A", "B", "C*"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, c, false, false, None, cx);
+        let [_, _, c] = set_labeled_items(&pane, ["A", "B", "C*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(c, false, false, None, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         //   2d. Add active item to active item at start of list
-        let [a, _, _] = set_labeled_items(&workspace, &pane, ["A*", "B", "C"], cx);
-        workspace.update(cx, |workspace, cx| {
-            Pane::add_item(workspace, &pane, a, false, false, None, cx);
+        let [a, _, _] = set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.add_item(a, false, false, None, cx);
         });
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
     }
@@ -2287,97 +2208,56 @@ mod tests {
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         // singleton view
-        workspace.update(cx, |workspace, cx| {
+        pane.update(cx, |pane, cx| {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
                 .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)]);
 
-            Pane::add_item(
-                workspace,
-                &pane,
-                Box::new(cx.add_view(|_| item)),
-                false,
-                false,
-                None,
-                cx,
-            );
+            pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
         });
         assert_item_labels(&pane, ["buffer 1*"], cx);
 
         // new singleton view with the same project entry
-        workspace.update(cx, |workspace, cx| {
+        pane.update(cx, |pane, cx| {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 1")
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
-            Pane::add_item(
-                workspace,
-                &pane,
-                Box::new(cx.add_view(|_| item)),
-                false,
-                false,
-                None,
-                cx,
-            );
+            pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
         });
         assert_item_labels(&pane, ["buffer 1*"], cx);
 
         // new singleton view with different project entry
-        workspace.update(cx, |workspace, cx| {
+        pane.update(cx, |pane, cx| {
             let item = TestItem::new()
                 .with_singleton(true)
                 .with_label("buffer 2")
                 .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)]);
-
-            Pane::add_item(
-                workspace,
-                &pane,
-                Box::new(cx.add_view(|_| item)),
-                false,
-                false,
-                None,
-                cx,
-            );
+            pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
         });
         assert_item_labels(&pane, ["buffer 1", "buffer 2*"], cx);
 
         // new multibuffer view with the same project entry
-        workspace.update(cx, |workspace, cx| {
+        pane.update(cx, |pane, cx| {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1")
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
-            Pane::add_item(
-                workspace,
-                &pane,
-                Box::new(cx.add_view(|_| item)),
-                false,
-                false,
-                None,
-                cx,
-            );
+            pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
         });
         assert_item_labels(&pane, ["buffer 1", "buffer 2", "multibuffer 1*"], cx);
 
         // another multibuffer view with the same project entry
-        workspace.update(cx, |workspace, cx| {
+        pane.update(cx, |pane, cx| {
             let item = TestItem::new()
                 .with_singleton(false)
                 .with_label("multibuffer 1b")
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)]);
 
-            Pane::add_item(
-                workspace,
-                &pane,
-                Box::new(cx.add_view(|_| item)),
-                false,
-                false,
-                None,
-                cx,
-            );
+            pane.add_item(Box::new(cx.add_view(|_| item)), false, false, None, cx);
         });
         assert_item_labels(
             &pane,
@@ -2395,14 +2275,14 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        add_labeled_item(&workspace, &pane, "A", false, cx);
-        add_labeled_item(&workspace, &pane, "B", false, cx);
-        add_labeled_item(&workspace, &pane, "C", false, cx);
-        add_labeled_item(&workspace, &pane, "D", false, cx);
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
-        add_labeled_item(&workspace, &pane, "1", false, cx);
+        add_labeled_item(&pane, "1", false, cx);
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update(cx, |pane, cx| pane.close_active_item(&CloseActiveItem, cx))
@@ -2442,7 +2322,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
+        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_inactive_items(&CloseInactiveItems, cx)
@@ -2462,11 +2342,11 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        add_labeled_item(&workspace, &pane, "A", true, cx);
-        add_labeled_item(&workspace, &pane, "B", false, cx);
-        add_labeled_item(&workspace, &pane, "C", true, cx);
-        add_labeled_item(&workspace, &pane, "D", false, cx);
-        add_labeled_item(&workspace, &pane, "E", false, cx);
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
 
         pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
@@ -2485,7 +2365,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
+        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
@@ -2505,7 +2385,7 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        set_labeled_items(&workspace, &pane, ["A", "B", "C*", "D", "E"], cx);
+        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update(cx, |pane, cx| {
             pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
@@ -2525,9 +2405,9 @@ mod tests {
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        add_labeled_item(&workspace, &pane, "A", false, cx);
-        add_labeled_item(&workspace, &pane, "B", false, cx);
-        add_labeled_item(&workspace, &pane, "C", false, cx);
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx))
@@ -2546,41 +2426,26 @@ mod tests {
     }
 
     fn add_labeled_item(
-        workspace: &ViewHandle<Workspace>,
         pane: &ViewHandle<Pane>,
         label: &str,
         is_dirty: bool,
         cx: &mut TestAppContext,
     ) -> Box<ViewHandle<TestItem>> {
-        workspace.update(cx, |workspace, cx| {
+        pane.update(cx, |pane, cx| {
             let labeled_item =
                 Box::new(cx.add_view(|_| TestItem::new().with_label(label).with_dirty(is_dirty)));
-
-            Pane::add_item(
-                workspace,
-                pane,
-                labeled_item.clone(),
-                false,
-                false,
-                None,
-                cx,
-            );
-
+            pane.add_item(labeled_item.clone(), false, false, None, cx);
             labeled_item
         })
     }
 
     fn set_labeled_items<const COUNT: usize>(
-        workspace: &ViewHandle<Workspace>,
         pane: &ViewHandle<Pane>,
         labels: [&str; COUNT],
         cx: &mut TestAppContext,
     ) -> [Box<ViewHandle<TestItem>>; COUNT] {
-        pane.update(cx, |pane, _| {
+        pane.update(cx, |pane, cx| {
             pane.items.clear();
-        });
-
-        workspace.update(cx, |workspace, cx| {
             let mut active_item_index = 0;
 
             let mut index = 0;
@@ -2591,22 +2456,12 @@ mod tests {
                 }
 
                 let labeled_item = Box::new(cx.add_view(|_| TestItem::new().with_label(label)));
-                Pane::add_item(
-                    workspace,
-                    pane,
-                    labeled_item.clone(),
-                    false,
-                    false,
-                    None,
-                    cx,
-                );
+                pane.add_item(labeled_item.clone(), false, false, None, cx);
                 index += 1;
                 labeled_item
             });
 
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(active_item_index, false, false, cx)
-            });
+            pane.activate_item(active_item_index, false, false, cx);
 
             items
         })

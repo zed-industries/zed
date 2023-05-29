@@ -583,6 +583,7 @@ impl Workspace {
         let center_pane = cx.add_view(|cx| {
             Pane::new(
                 weak_handle.clone(),
+                project.clone(),
                 app_state.background_actions,
                 pane_history_timestamp.clone(),
                 cx,
@@ -1307,22 +1308,6 @@ impl Workspace {
         })
     }
 
-    pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
-        let workspace_root = self
-            .project()
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .abs_path();
-        let project_path = project_path.path.as_ref();
-
-        Some(if project_path == Path::new("") {
-            workspace_root.to_path_buf()
-        } else {
-            workspace_root.join(project_path)
-        })
-    }
-
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
         let mut paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -1588,6 +1573,7 @@ impl Workspace {
         let pane = cx.add_view(|cx| {
             Pane::new(
                 self.weak_handle(),
+                self.project.clone(),
                 self.app_state.background_actions,
                 self.pane_history_timestamp.clone(),
                 cx,
@@ -1607,7 +1593,7 @@ impl Workspace {
     ) -> bool {
         if let Some(center_pane) = self.last_active_center_pane.clone() {
             if let Some(center_pane) = center_pane.upgrade(cx) {
-                Pane::add_item(self, &center_pane, item, true, true, None, cx);
+                center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
                 true
             } else {
                 false
@@ -1618,8 +1604,8 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        let active_pane = self.active_pane().clone();
-        Pane::add_item(self, &active_pane, item, true, true, None, cx);
+        self.active_pane
+            .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
     }
 
     pub fn open_abs_path(
@@ -1669,13 +1655,10 @@ impl Workspace {
         });
 
         let task = self.load_path(path.into(), cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
-            let pane = pane
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("pane was closed"))?;
-            this.update(&mut cx, |this, cx| {
-                Pane::open_item(this, pane, project_entry_id, focus_item, cx, build_item)
+            pane.update(&mut cx, |pane, cx| {
+                pane.open_item(project_entry_id, focus_item, cx, build_item)
             })
         })
     }
@@ -1732,8 +1715,9 @@ impl Workspace {
 
     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
-            let pane = self.active_pane.clone();
-            Pane::add_item(self, &pane, Box::new(shared_screen), false, true, None, cx);
+            self.active_pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(shared_screen), false, true, None, cx)
+            });
         }
     }
 
@@ -1874,7 +1858,7 @@ impl Workspace {
         let item = pane.read(cx).active_item()?;
         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
             let new_pane = self.add_pane(cx);
-            Pane::add_item(self, &new_pane, clone, true, true, None, cx);
+            new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
             self.center.split(&pane, &new_pane, direction).unwrap();
             Some(new_pane)
         } else {
@@ -1896,7 +1880,7 @@ impl Workspace {
         let Some(from) = from.upgrade(cx) else { return; };
 
         let new_pane = self.add_pane(cx);
-        Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+        self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -1922,6 +1906,41 @@ impl Workspace {
             task.await?;
             Ok(())
         }))
+    }
+
+    pub fn move_item(
+        &mut self,
+        source: ViewHandle<Pane>,
+        destination: ViewHandle<Pane>,
+        item_id_to_move: usize,
+        destination_index: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let item_to_move = source
+            .read(cx)
+            .items()
+            .enumerate()
+            .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
+
+        if item_to_move.is_none() {
+            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+            return;
+        }
+        let (item_ix, item_handle) = item_to_move.unwrap();
+        let item_handle = item_handle.clone();
+
+        if source != destination {
+            // Close item from previous pane
+            source.update(cx, |source, cx| {
+                source.remove_item(item_ix, false, cx);
+            });
+        }
+
+        // This automatically removes duplicate items in the pane
+        destination.update(cx, |destination, cx| {
+            destination.add_item(item_handle, true, true, Some(destination_index), cx);
+            cx.focus_self();
+        });
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
@@ -2527,7 +2546,9 @@ impl Workspace {
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
             } else {
-                Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item.boxed_clone(), false, false, None, cx)
+                });
             }
 
             if pane_was_focused {

@@ -5264,6 +5264,20 @@ impl Project {
         Some(ProjectPath { worktree_id, path })
     }
 
+    pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
+        let workspace_root = self
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+        let project_path = project_path.path.as_ref();
+
+        Some(if project_path == Path::new("") {
+            workspace_root.to_path_buf()
+        } else {
+            workspace_root.join(project_path)
+        })
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(
