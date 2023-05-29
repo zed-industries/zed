@@ -1,5 +1,5 @@
 use super::DocumentFragment;
-use crate::Ordering;
+use crate::DenseIndex;
 use rope::TextSummary;
 
 impl sum_tree::Item for DocumentFragment {
@@ -13,7 +13,7 @@ impl sum_tree::Item for DocumentFragment {
 #[derive(Clone, Default, Debug)]
 pub struct DocumentFragmentSummary {
     size: TextSummary,
-    max_id: Ordering,
+    max_id: DenseIndex,
 }
 
 impl sum_tree::Summary for DocumentFragmentSummary {

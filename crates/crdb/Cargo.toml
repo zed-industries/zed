@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 sum_tree = { path = "../sum_tree" }
 rope = { path = "../rope" }
+
+parking_lot.workspace = true;
