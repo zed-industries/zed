@@ -183,7 +183,7 @@ pub fn handle_dropped_item<V: View>(
                             .zip(pane.upgrade(cx))
                         {
                             workspace.update(cx, |workspace, cx| {
-                                Pane::move_item(workspace, from, to, item_id, index, cx);
+                                workspace.move_item(from, to, item_id, index, cx);
                             })
                         }
                     });

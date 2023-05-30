@@ -4931,12 +4931,12 @@ impl Editor {
     }
 
     fn push_to_nav_history(
-        &self,
+        &mut self,
         cursor_anchor: Anchor,
         new_position: Option<Point>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(nav_history) = &self.nav_history {
+        if let Some(nav_history) = self.nav_history.as_mut() {
             let buffer = self.buffer.read(cx).read(cx);
             let cursor_position = cursor_anchor.to_point(&buffer);
             let scroll_state = self.scroll_manager.anchor();

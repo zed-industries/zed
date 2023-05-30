@@ -6608,7 +6608,7 @@ async fn test_basic_following(
     // When client A navigates back and forth, client B does so as well.
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_back(workspace, None, cx)
+            workspace.go_back(workspace.active_pane().downgrade(), cx)
         })
         .await
         .unwrap();
@@ -6619,7 +6619,7 @@ async fn test_basic_following(
 
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_back(workspace, None, cx)
+            workspace.go_back(workspace.active_pane().downgrade(), cx)
         })
         .await
         .unwrap();
@@ -6630,7 +6630,7 @@ async fn test_basic_following(
 
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_forward(workspace, None, cx)
+            workspace.go_forward(workspace.active_pane().downgrade(), cx)
         })
         .await
         .unwrap();

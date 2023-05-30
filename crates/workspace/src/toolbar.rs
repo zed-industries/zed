@@ -153,14 +153,13 @@ impl View for Toolbar {
                             let pane = pane.clone();
                             cx.window_context().defer(move |cx| {
                                 workspace.update(cx, |workspace, cx| {
-                                    Pane::go_back(workspace, Some(pane.clone()), cx)
-                                        .detach_and_log_err(cx);
+                                    workspace.go_back(pane.clone(), cx).detach_and_log_err(cx);
                                 });
                             })
                         }
                     }
                 },
-                super::GoBack { pane: None },
+                super::GoBack,
                 "Go Back",
                 cx,
             ));
@@ -182,14 +181,15 @@ impl View for Toolbar {
                             let pane = pane.clone();
                             cx.window_context().defer(move |cx| {
                                 workspace.update(cx, |workspace, cx| {
-                                    Pane::go_forward(workspace, Some(pane.clone()), cx)
+                                    workspace
+                                        .go_forward(pane.clone(), cx)
                                         .detach_and_log_err(cx);
                                 });
                             });
                         }
                     }
                 },
-                super::GoForward { pane: None },
+                super::GoForward,
                 "Go Forward",
                 cx,
             ));
