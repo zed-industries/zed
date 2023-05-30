@@ -117,6 +117,7 @@ pub fn init(cx: &mut AppContext) {
 
 #[derive(Debug)]
 pub enum Event {
+    AddItem { item: Box<dyn ItemHandle> },
     ActivateItem { local: bool },
     Remove,
     RemoveItem { item_id: usize },
@@ -497,7 +498,7 @@ impl Pane {
 
             self.activate_item(insertion_index, activate_pane, focus_item, cx);
         } else {
-            self.items.insert(insertion_index, item);
+            self.items.insert(insertion_index, item.clone());
             if insertion_index <= self.active_item_index {
                 self.active_item_index += 1;
             }
@@ -505,6 +506,8 @@ impl Pane {
             self.activate_item(insertion_index, activate_pane, focus_item, cx);
             cx.notify();
         }
+
+        cx.emit(Event::AddItem { item });
     }
 
     pub fn items_len(&self) -> usize {
@@ -1704,7 +1707,7 @@ impl NavHistory {
         }
         .pop_back();
         if entry.is_some() {
-            self.did_update(cx);
+            state.did_update(cx);
         }
         entry
     }
@@ -1760,16 +1763,7 @@ impl NavHistory {
                 });
             }
         }
-        self.did_update(cx);
-    }
-
-    pub fn did_update(&self, cx: &mut WindowContext) {
-        let state = self.0.borrow();
-        if let Some(pane) = state.pane.upgrade(cx) {
-            cx.defer(move |cx| {
-                pane.update(cx, |pane, cx| pane.history_updated(cx));
-            });
-        }
+        state.did_update(cx);
     }
 
     pub fn remove_item(&mut self, item_id: usize) {
@@ -1788,6 +1782,16 @@ impl NavHistory {
 
     pub fn path_for_item(&self, item_id: usize) -> Option<(ProjectPath, Option<PathBuf>)> {
         self.0.borrow().paths_by_item.get(&item_id).cloned()
+    }
+}
+
+impl NavHistoryState {
+    pub fn did_update(&self, cx: &mut WindowContext) {
+        if let Some(pane) = self.pane.upgrade(cx) {
+            cx.defer(move |cx| {
+                pane.update(cx, |pane, cx| pane.history_updated(cx));
+            });
+        }
     }
 }
 

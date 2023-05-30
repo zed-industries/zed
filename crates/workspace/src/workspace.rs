@@ -1926,6 +1926,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
             pane::Event::Split(direction) => {
                 self.split_pane(pane, *direction, cx);
             }
