@@ -1,23 +1,23 @@
 import chroma from "chroma-js"
 import { Meta } from "../common/colorScheme"
 import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "../common/atelier-common"
+import { metaCommon, name, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Estuary Dark`,
+        name: `${name} Estuary Light`,
         ...metaCommon,
         url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/estuary/",
     },
     colors: {
-        base00: "#22221b",
-        base01: "#302f27",
-        base02: "#5f5e4e",
-        base03: "#6c6b5a",
-        base04: "#878573",
-        base05: "#929181",
-        base06: "#e7e6df",
-        base07: "#f4f3ec",
+        base00: "#f4f3ec",
+        base01: "#e7e6df",
+        base02: "#929181",
+        base03: "#878573",
+        base04: "#6c6b5a",
+        base05: "#5f5e4e",
+        base06: "#302f27",
+        base07: "#22221b",
         base08: "#ba6236",
         base09: "#ae7313",
         base0A: "#a5980d",
@@ -36,18 +36,20 @@ const theme = (variant: Variant) => {
 
     return createColorScheme(
         meta.name,
-        false,
+        true,
         {
-            neutral: chroma.scale([
-                colors.base00,
-                colors.base01,
-                colors.base02,
-                colors.base03,
-                colors.base04,
-                colors.base05,
-                colors.base06,
-                colors.base07,
-            ]),
+            neutral: chroma.scale(
+                [
+                    colors.base00,
+                    colors.base01,
+                    colors.base02,
+                    colors.base03,
+                    colors.base04,
+                    colors.base05,
+                    colors.base06,
+                    colors.base07,
+                ].reverse()
+            ),
             red: colorRamp(chroma(colors.base08)),
             orange: colorRamp(chroma(colors.base09)),
             yellow: colorRamp(chroma(colors.base0A)),

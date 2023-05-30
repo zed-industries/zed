@@ -1,31 +1,31 @@
 import chroma from "chroma-js"
 import { Meta } from "../common/colorScheme"
 import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "../common/atelier-common"
+import { metaCommon, name, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Heath Dark`,
+        name: `${name} Forest Dark`,
         ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/heath/",
+        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/forest/",
     },
     colors: {
-        base00: "#1b181b",
-        base01: "#292329",
-        base02: "#695d69",
-        base03: "#776977",
-        base04: "#9e8f9e",
-        base05: "#ab9bab",
-        base06: "#d8cad8",
-        base07: "#f7f3f7",
-        base08: "#ca402b",
-        base09: "#a65926",
-        base0A: "#bb8a35",
-        base0B: "#918b3b",
-        base0C: "#159393",
-        base0D: "#516aec",
-        base0E: "#7b59c0",
-        base0F: "#cc33cc",
+        base00: "#1b1918",
+        base01: "#2c2421",
+        base02: "#68615e",
+        base03: "#766e6b",
+        base04: "#9c9491",
+        base05: "#a8a19f",
+        base06: "#e6e2e0",
+        base07: "#f1efee",
+        base08: "#f22c40",
+        base09: "#df5320",
+        base0A: "#c38418",
+        base0B: "#7b9726",
+        base0C: "#3d97b8",
+        base0D: "#407ee7",
+        base0E: "#6666ea",
+        base0F: "#c33ff3",
     },
 }
 

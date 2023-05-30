@@ -1,31 +1,31 @@
 import chroma from "chroma-js"
 import { Meta } from "../common/colorScheme"
 import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "../common/atelier-common"
+import { metaCommon, name, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Savanna Dark`,
+        name: `${name} Heath Dark`,
         ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/savanna/",
+        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/heath/",
     },
     colors: {
-        base00: "#171c19",
-        base01: "#232a25",
-        base02: "#526057",
-        base03: "#5f6d64",
-        base04: "#78877d",
-        base05: "#87928a",
-        base06: "#dfe7e2",
-        base07: "#ecf4ee",
-        base08: "#b16139",
-        base09: "#9f713c",
-        base0A: "#a07e3b",
-        base0B: "#489963",
-        base0C: "#1c9aa0",
-        base0D: "#478c90",
-        base0E: "#55859b",
-        base0F: "#867469",
+        base00: "#1b181b",
+        base01: "#292329",
+        base02: "#695d69",
+        base03: "#776977",
+        base04: "#9e8f9e",
+        base05: "#ab9bab",
+        base06: "#d8cad8",
+        base07: "#f7f3f7",
+        base08: "#ca402b",
+        base09: "#a65926",
+        base0A: "#bb8a35",
+        base0B: "#918b3b",
+        base0C: "#159393",
+        base0D: "#516aec",
+        base0E: "#7b59c0",
+        base0F: "#cc33cc",
     },
 }
 

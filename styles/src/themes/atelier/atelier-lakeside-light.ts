@@ -1,31 +1,31 @@
 import chroma from "chroma-js"
 import { Meta } from "../common/colorScheme"
 import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "../common/atelier-common"
+import { metaCommon, name, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Sulphurpool Light`,
+        name: `${name} Lakeside Light`,
         ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/sulphurpool/",
+        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/lakeside/",
     },
     colors: {
-        base00: "#f5f7ff",
-        base01: "#dfe2f1",
-        base02: "#979db4",
-        base03: "#898ea4",
-        base04: "#6b7394",
-        base05: "#5e6687",
-        base06: "#293256",
-        base07: "#202746",
-        base08: "#c94922",
-        base09: "#c76b29",
-        base0A: "#c08b30",
-        base0B: "#ac9739",
-        base0C: "#22a2c9",
-        base0D: "#3d8fd1",
-        base0E: "#6679cc",
-        base0F: "#9c637a",
+        base00: "#ebf8ff",
+        base01: "#c1e4f6",
+        base02: "#7ea2b4",
+        base03: "#7195a8",
+        base04: "#5a7b8c",
+        base05: "#516d7b",
+        base06: "#1f292e",
+        base07: "#161b1d",
+        base08: "#d22d72",
+        base09: "#935c25",
+        base0A: "#8a8a0f",
+        base0B: "#568c3b",
+        base0C: "#2d8f6f",
+        base0D: "#257fad",
+        base0E: "#6b6bb8",
+        base0F: "#b72dd2",
     },
 }
 

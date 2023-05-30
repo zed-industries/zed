@@ -1,31 +1,31 @@
 import chroma from "chroma-js"
 import { Meta } from "../common/colorScheme"
 import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "../common/atelier-common"
+import { metaCommon, name, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
     meta: {
-        name: `${name} Sulphurpool Dark`,
+        name: `${name} Savanna Dark`,
         ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/sulphurpool/",
+        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/savanna/",
     },
     colors: {
-        base00: "#202746",
-        base01: "#293256",
-        base02: "#5e6687",
-        base03: "#6b7394",
-        base04: "#898ea4",
-        base05: "#979db4",
-        base06: "#dfe2f1",
-        base07: "#f5f7ff",
-        base08: "#c94922",
-        base09: "#c76b29",
-        base0A: "#c08b30",
-        base0B: "#ac9739",
-        base0C: "#22a2c9",
-        base0D: "#3d8fd1",
-        base0E: "#6679cc",
-        base0F: "#9c637a",
+        base00: "#171c19",
+        base01: "#232a25",
+        base02: "#526057",
+        base03: "#5f6d64",
+        base04: "#78877d",
+        base05: "#87928a",
+        base06: "#dfe7e2",
+        base07: "#ecf4ee",
+        base08: "#b16139",
+        base09: "#9f713c",
+        base0A: "#a07e3b",
+        base0B: "#489963",
+        base0C: "#1c9aa0",
+        base0D: "#478c90",
+        base0E: "#55859b",
+        base0F: "#867469",
     },
 }
 
