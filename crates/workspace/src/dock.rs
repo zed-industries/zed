@@ -201,7 +201,7 @@ impl Dock {
         self.active_panel_index
     }
 
-    pub fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
+    pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
         if open != self.is_open {
             self.is_open = open;
             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
@@ -210,11 +210,6 @@ impl Dock {
 
             cx.notify();
         }
-    }
-
-    pub fn toggle_open(&mut self, cx: &mut ViewContext<Self>) {
-        self.set_open(!self.is_open, cx);
-        cx.notify();
     }
 
     pub fn set_panel_zoomed(

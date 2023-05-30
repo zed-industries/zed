@@ -1583,10 +1583,27 @@ impl Workspace {
             DockPosition::Bottom => &self.bottom_dock,
             DockPosition::Right => &self.right_dock,
         };
-        dock.update(cx, |dock, cx| {
-            let open = !dock.is_open();
-            dock.set_open(open, cx);
+        let focus_center = dock.update(cx, |dock, cx| {
+            let was_open = dock.is_open();
+            dock.set_open(!was_open, cx);
+
+            if let Some(active_panel) = dock.active_panel() {
+                if was_open {
+                    if active_panel.has_focus(cx) {
+                        return true;
+                    }
+                } else if active_panel.is_zoomed(cx) {
+                    cx.focus(active_panel.as_any());
+                }
+            }
+
+            false
         });
+
+        if focus_center {
+            cx.focus_self();
+        }
+
         cx.notify();
         self.serialize_workspace(cx);
     }
@@ -1639,15 +1656,13 @@ impl Workspace {
                             if panel.is_zoomed(cx) {
                                 dock.set_open(false, cx);
                             }
-                            true
+                            return true
                         } else {
                             dock.set_open(true, cx);
                             cx.focus(panel.as_any());
-                            false
                         }
-                    } else {
-                        false
                     }
+                    false
                 });
 
                 if focus_center {
@@ -4151,7 +4166,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_toggle_panel_focus(cx: &mut gpui::TestAppContext) {
+    async fn test_toggle_docks_and_panels(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
 
@@ -4191,6 +4206,28 @@ mod tests {
             assert!(!panel.has_focus(cx));
         });
 
+        // Close the dock
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+            assert!(!panel.is_zoomed(cx));
+            assert!(!panel.has_focus(cx));
+        });
+
+        // Open the dock
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(!panel.is_zoomed(cx));
+            assert!(!panel.has_focus(cx));
+        });
+
         // Focus and zoom panel
         panel.update(cx, |panel, cx| {
             cx.focus_self();
@@ -4222,6 +4259,30 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(cx));
+            assert!(panel.has_focus(cx));
+        });
+
+        // Close the dock while it is zoomed
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx)
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(cx));
+            assert!(workspace.zoomed.is_none());
+            assert!(!panel.has_focus(cx));
+        });
+
+        // Opening the dock, when it's zoomed, retains focus
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx)
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(cx));
+            assert!(workspace.zoomed.is_some());
             assert!(panel.has_focus(cx));
         });
     }
