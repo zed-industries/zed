@@ -295,13 +295,14 @@ impl Default for TextStyle {
                 .as_ref()
                 .expect("TextStyle::default can only be called within a call to with_font_cache");
 
-            let font_family_name = Arc::from("Courier");
-            let font_family_id = font_cache
-                .load_family(&[&font_family_name], &Default::default())
-                .unwrap();
+            let font_family_id = font_cache.known_existing_family();
             let font_id = font_cache
                 .select_font(font_family_id, &Default::default())
-                .unwrap();
+                .expect("did not have any font in system-provided family");
+            let font_family_name = font_cache
+                .family_name(font_family_id)
+                .expect("we loaded this family from the font cache, so this should work");
+
             Self {
                 color: Default::default(),
                 font_family_name,
