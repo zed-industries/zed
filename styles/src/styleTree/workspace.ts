@@ -119,12 +119,16 @@ export default function workspace(colorScheme: ColorScheme) {
             cursor: "Arrow",
         },
         zoomedBackground: {
-            padding: 10,
             cursor: "Arrow",
-            background: withOpacity(background(colorScheme.lowest), 0.5)
+            background: withOpacity(background(colorScheme.lowest), 0.85)
         },
-        zoomedForeground: {
+        zoomedPaneForeground: {
+            margin: 10,
             shadow: colorScheme.modalShadow,
+            border: border(colorScheme.highest, { overlay: true }),
+        },
+        zoomedPanelForeground: {
+            margin: 18,
             border: border(colorScheme.highest, { overlay: true }),
         },
         dock: {

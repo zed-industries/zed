@@ -89,18 +89,9 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Zoom Out", super::DecreaseBufferFontSize),
                 MenuItem::action("Reset Zoom", super::ResetBufferFontSize),
                 MenuItem::separator(),
-                MenuItem::action(
-                    "Toggle Left Dock",
-                    workspace::ToggleLeftDock { focus: false },
-                ),
-                MenuItem::action(
-                    "Toggle Right Dock",
-                    workspace::ToggleRightDock { focus: false },
-                ),
-                MenuItem::action(
-                    "Toggle Bottom Dock",
-                    workspace::ToggleBottomDock { focus: false },
-                ),
+                MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
+                MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
+                MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
                 MenuItem::submenu(Menu {
                     name: "Editor Layout",
                     items: vec![

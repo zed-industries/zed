@@ -373,30 +373,9 @@
         "workspace::ActivatePane",
         8
       ],
-      "cmd-b": [
-        "workspace::ToggleLeftDock",
-        { "focus": true }
-      ],
-      "cmd-shift-b": [
-        "workspace::ToggleLeftDock",
-        { "focus": false }
-      ],
-      "cmd-r": [
-        "workspace::ToggleRightDock",
-        { "focus": true }
-      ],
-      "cmd-shift-r": [
-        "workspace::ToggleRightDock",
-        { "focus": false }
-      ],
-      "cmd-j": [
-        "workspace::ToggleBottomDock",
-        { "focus": true }
-      ],
-      "cmd-shift-j": [
-        "workspace::ToggleBottomDock",
-        { "focus": false }
-      ],
+      "cmd-b": "workspace::ToggleLeftDock",
+      "cmd-r": "workspace::ToggleRightDock",
+      "cmd-j": "workspace::ToggleBottomDock",
       "cmd-shift-f": "workspace::NewSearch",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-k cmd-s": "zed::OpenKeymap",

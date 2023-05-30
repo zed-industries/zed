@@ -2,8 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
-    ToggleZoom, Workspace, WorkspaceSettings,
+    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewCenterTerminal, NewFile,
+    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -150,7 +150,6 @@ pub enum Event {
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<usize>,
-    is_active: bool,
     zoomed: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
@@ -255,7 +254,6 @@ impl Pane {
         Self {
             items: Vec::new(),
             activation_history: Vec::new(),
-            is_active: true,
             zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
@@ -321,15 +319,6 @@ impl Pane {
 
     pub(crate) fn workspace(&self) -> &WeakViewHandle<Workspace> {
         &self.workspace
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.is_active
-    }
-
-    pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
-        self.is_active = is_active;
-        cx.notify();
     }
 
     pub fn has_focus(&self) -> bool {
@@ -1219,7 +1208,7 @@ impl Pane {
                 AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::action("New File", NewFile),
-                    ContextMenuItem::action("New Terminal", NewTerminal),
+                    ContextMenuItem::action("New Terminal", NewCenterTerminal),
                     ContextMenuItem::action("New Search", NewSearch),
                 ],
                 cx,
@@ -1343,7 +1332,7 @@ impl Pane {
             None
         };
 
-        let pane_active = self.is_active;
+        let pane_active = self.has_focus;
 
         enum Tabs {}
         let mut row = Flex::row().scrollable::<Tabs>(1, autoscroll, cx);
@@ -1722,7 +1711,7 @@ impl View for Pane {
                         let mut tab_row = Flex::row()
                             .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
 
-                        if self.is_active {
+                        if self.has_focus {
                             let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
                             tab_row.add_child(
                                 (render_tab_bar_buttons)(self, cx)
@@ -1813,6 +1802,7 @@ impl View for Pane {
         if !self.has_focus {
             self.has_focus = true;
             cx.emit(Event::Focus);
+            cx.notify();
         }
 
         self.toolbar.update(cx, |toolbar, cx| {
@@ -1847,6 +1837,7 @@ impl View for Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(false, cx);
         });
+        cx.notify();
     }
 
     fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {
