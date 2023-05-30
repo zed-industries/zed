@@ -91,15 +91,15 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Left Dock",
-                    workspace::ToggleLeftDock { focus: false },
+                    workspace::ToggleLeftDock,
                 ),
                 MenuItem::action(
                     "Toggle Right Dock",
-                    workspace::ToggleRightDock { focus: false },
+                    workspace::ToggleRightDock,
                 ),
                 MenuItem::action(
                     "Toggle Bottom Dock",
-                    workspace::ToggleBottomDock { focus: false },
+                    workspace::ToggleBottomDock,
                 ),
                 MenuItem::submenu(Menu {
                     name: "Editor Layout",

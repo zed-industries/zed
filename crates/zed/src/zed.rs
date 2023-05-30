@@ -354,7 +354,7 @@ pub fn initialize_workspace(
                             .map_or(false, |entry| entry.is_dir())
                     })
             {
-                workspace.toggle_dock(project_panel_position, false, cx);
+                workspace.toggle_dock(project_panel_position, cx);
             }
 
             workspace.add_panel(terminal_panel, cx)

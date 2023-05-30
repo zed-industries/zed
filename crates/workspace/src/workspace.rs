@@ -103,24 +103,6 @@ pub trait Modal: View {
 #[derive(Clone, PartialEq)]
 pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
-#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
-pub struct ToggleLeftDock {
-    #[serde(default = "default_true")]
-    pub focus: bool,
-}
-
-#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
-pub struct ToggleBottomDock {
-    #[serde(default = "default_true")]
-    pub focus: bool,
-}
-
-#[derive(Copy, Clone, Default, Deserialize, PartialEq)]
-pub struct ToggleRightDock {
-    #[serde(default = "default_true")]
-    pub focus: bool,
-}
-
 actions!(
     workspace,
     [
@@ -143,15 +125,13 @@ actions!(
         Restart,
         Welcome,
         ToggleZoom,
+        ToggleLeftDock,
+        ToggleRightDock,
+        ToggleBottomDock,
     ]
 );
 
 actions!(zed, [OpenSettings]);
-
-impl_actions!(
-    workspace,
-    [ToggleLeftDock, ToggleBottomDock, ToggleRightDock]
-);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -268,14 +248,14 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(|workspace: &mut Workspace, _: &ActivateNextPane, cx| {
         workspace.activate_next_pane(cx)
     });
-    cx.add_action(|workspace: &mut Workspace, action: &ToggleLeftDock, cx| {
-        workspace.toggle_dock(DockPosition::Left, action.focus, cx);
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleLeftDock, cx| {
+        workspace.toggle_dock(DockPosition::Left, cx);
     });
-    cx.add_action(|workspace: &mut Workspace, action: &ToggleRightDock, cx| {
-        workspace.toggle_dock(DockPosition::Right, action.focus, cx);
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleRightDock, cx| {
+        workspace.toggle_dock(DockPosition::Right, cx);
     });
-    cx.add_action(|workspace: &mut Workspace, action: &ToggleBottomDock, cx| {
-        workspace.toggle_dock(DockPosition::Bottom, action.focus, cx);
+    cx.add_action(|workspace: &mut Workspace, _: &ToggleBottomDock, cx| {
+        workspace.toggle_dock(DockPosition::Bottom, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
     cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
@@ -1596,7 +1576,6 @@ impl Workspace {
     pub fn toggle_dock(
         &mut self,
         dock_side: DockPosition,
-        focus: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let dock = match dock_side {
@@ -1608,12 +1587,6 @@ impl Workspace {
             let open = !dock.is_open();
             dock.set_open(open, cx);
         });
-
-        if dock.read(cx).is_open() && focus {
-            cx.focus(dock);
-        } else {
-            cx.focus_self();
-        }
         cx.notify();
         self.serialize_workspace(cx);
     }
@@ -3599,10 +3572,6 @@ fn parse_pixel_position_env_var(value: &str) -> Option<Vector2F> {
     Some(vec2f(width as f32, height as f32))
 }
 
-fn default_true() -> bool {
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4187,7 +4156,7 @@ mod tests {
         let fs = FakeFs::new(cx.background());
 
         let project = Project::test(fs, [], cx).await;
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
 
         let panel = workspace.update(cx, |workspace, cx| {
             let panel = cx.add_view(|_| TestPanel::new(DockPosition::Right));
