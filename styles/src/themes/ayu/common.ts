@@ -1,8 +1,8 @@
 import { dark, light, mirage } from "ayu"
-import { ThemeSyntax } from "./syntax"
+import { ThemeSyntax } from "../common/syntax"
 import chroma from "chroma-js"
-import { colorRamp } from "./ramps"
-import { Meta } from "./colorScheme"
+import { colorRamp } from "../common/ramps"
+import { Meta } from "../common/colorScheme"
 
 export const ayu = {
     dark,

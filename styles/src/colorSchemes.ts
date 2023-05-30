@@ -4,7 +4,7 @@ import { ColorScheme, Meta } from "./themes/common/colorScheme"
 
 const THEMES_DIRECTORY = path.resolve(`${__dirname}/themes`)
 const STAFF_DIRECTORY = path.resolve(`${__dirname}/themes/staff`)
-const IGNORE_ITEMS = ["staff", "common", "template.ts"]
+const IGNORE_ITEMS = ["staff", "common", "common.ts"]
 const ACCEPT_EXTENSION = ".ts"
 
 function getAllTsFiles(directoryPath: string) {

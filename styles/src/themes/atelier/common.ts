@@ -1,4 +1,4 @@
-import { License, Meta, ThemeSyntax } from "./colorScheme"
+import { License, Meta, ThemeSyntax } from "../common/colorScheme"
 
 export interface Variant {
     meta: Meta

@@ -1,5 +1,5 @@
 import { createColorScheme } from "../common/ramps"
-import { ayu, meta as themeMeta, buildTheme } from "../common/ayu-common"
+import { ayu, meta as themeMeta, buildTheme } from "./common"
 
 export const meta = {
     ...themeMeta,
