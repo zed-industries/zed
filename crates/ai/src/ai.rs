@@ -172,25 +172,18 @@ impl Assistant {
         let assist_id = util::post_inc(&mut self.0.borrow_mut().next_completion_id);
         let assist_task = cx.spawn(|_, mut cx| {
             async move {
-                // TODO: We should have a get_string method on assets. This is repateated elsewhere.
-                let content = Assets::get("contexts/system.zmd").unwrap();
-                let mut system_message = std::str::from_utf8(content.data.as_ref())
-                    .unwrap()
-                    .to_string();
-
-                if let Ok(custom_system_message_path) =
-                    std::env::var("ZED_ASSISTANT_SYSTEM_PROMPT_PATH")
+                let system_message = if let Ok(custom_system_message_path) =
+                    std::env::var("ZED_SYSTEM_MESSAGE_PATH")
                 {
-                    system_message.push_str(
-                        "\n\nAlso consider the following user-defined system prompt:\n\n",
-                    );
-                    // TODO: Replace this with our file system trait object.
-                    system_message.push_str(
                         &cx.background()
                             .spawn(async move { fs::read_to_string(custom_system_message_path) })
-                            .await?,
-                    );
-                }
+                            .await?
+                } else {
+                    Assets::get("contexts/system.zmd").unwrap();
+                    std::str::from_utf8(content.data.as_ref())
+                        .unwrap()
+                        .to_string()
+                };
 
                 let stream = stream_completion(
                     api_key,
@@ -200,7 +193,7 @@ impl Assistant {
                         messages: vec![
                             RequestMessage {
                                 role: Role::System,
-                                content: system_message.to_string(),
+                                content: system_message,
                             },
                             RequestMessage {
                                 role: Role::User,
