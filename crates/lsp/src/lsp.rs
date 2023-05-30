@@ -388,6 +388,9 @@ impl LanguageServer {
                         resolve_support: None,
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
+                    inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                        refresh_support: Default::default(),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -428,6 +431,11 @@ impl LanguageServer {
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
                         ..Default::default()
+                    }),
+                    // TODO kb add the resolution at least
+                    inlay_hint: Some(InlayHintClientCapabilities {
+                        resolve_support: None,
+                        dynamic_registration: Some(false),
                     }),
                     ..Default::default()
                 }),

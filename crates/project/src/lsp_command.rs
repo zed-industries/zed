@@ -1,6 +1,7 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, Location, LocationLink, Project,
-    ProjectTransaction,
+    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
+    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
+    MarkupContent, Project, ProjectTransaction,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -124,6 +125,10 @@ pub(crate) struct OnTypeFormatting {
     pub trigger: String,
     pub options: FormattingOptions,
     pub push_to_history: bool,
+}
+
+pub(crate) struct InlayHints {
+    pub range: Range<Anchor>,
 }
 
 pub(crate) struct FormattingOptions {
@@ -1774,6 +1779,150 @@ impl LspCommand for OnTypeFormatting {
     ) -> Result<Option<Transaction>> {
         let Some(transaction) = message.transaction else { return Ok(None) };
         Ok(Some(language::proto::deserialize_transaction(transaction)?))
+    }
+
+    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {
+        message.buffer_id
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for InlayHints {
+    type Response = Vec<InlayHint>;
+    type LspRequest = lsp::InlayHintRequest;
+    type ProtoRequest = proto::OnTypeFormatting;
+
+    fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
+        let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else { return false };
+        match inlay_hint_provider {
+            lsp::OneOf::Left(enabled) => *enabled,
+            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
+                lsp::InlayHintServerCapabilities::Options(_) => true,
+                // TODO kb there could be dynamic registrations, resolve options
+                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
+            },
+        }
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::InlayHintParams {
+        lsp::InlayHintParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: lsp::Url::from_file_path(path).unwrap(),
+            },
+            range: range_to_lsp(self.range.to_point_utf16(buffer)),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::InlayHint>>,
+        _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        _: LanguageServerId,
+        cx: AsyncAppContext,
+    ) -> Result<Vec<InlayHint>> {
+        cx.read(|cx| {
+            let origin_buffer = buffer.read(cx);
+            Ok(message
+                .unwrap_or_default()
+                .into_iter()
+                .map(|lsp_hint| InlayHint {
+                    position: origin_buffer.anchor_after(
+                        origin_buffer
+                            .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left),
+                    ),
+                    label: match lsp_hint.label {
+                        lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
+                        lsp::InlayHintLabel::LabelParts(lsp_parts) => InlayHintLabel::LabelParts(
+                            lsp_parts
+                                .into_iter()
+                                .map(|label_part| InlayHintLabelPart {
+                                    value: label_part.value,
+                                    tooltip: label_part.tooltip.map(|tooltip| match tooltip {
+                                        lsp::InlayHintLabelPartTooltip::String(s) => {
+                                            InlayHintLabelPartTooltip::String(s)
+                                        }
+                                        lsp::InlayHintLabelPartTooltip::MarkupContent(
+                                            markup_content,
+                                        ) => InlayHintLabelPartTooltip::MarkupContent(
+                                            MarkupContent {
+                                                kind: format!("{:?}", markup_content.kind),
+                                                value: markup_content.value,
+                                            },
+                                        ),
+                                    }),
+                                    location: label_part.location.map(|lsp_location| {
+                                        let target_start = origin_buffer.clip_point_utf16(
+                                            point_from_lsp(lsp_location.range.start),
+                                            Bias::Left,
+                                        );
+                                        let target_end = origin_buffer.clip_point_utf16(
+                                            point_from_lsp(lsp_location.range.end),
+                                            Bias::Left,
+                                        );
+                                        Location {
+                                            buffer: buffer.clone(),
+                                            range: origin_buffer.anchor_after(target_start)
+                                                ..origin_buffer.anchor_before(target_end),
+                                        }
+                                    }),
+                                })
+                                .collect(),
+                        ),
+                    },
+                    kind: lsp_hint.kind.map(|kind| format!("{kind:?}")),
+                    tooltip: lsp_hint.tooltip.map(|tooltip| match tooltip {
+                        lsp::InlayHintTooltip::String(s) => InlayHintTooltip::String(s),
+                        lsp::InlayHintTooltip::MarkupContent(markup_content) => {
+                            InlayHintTooltip::MarkupContent(MarkupContent {
+                                kind: format!("{:?}", markup_content.kind),
+                                value: markup_content.value,
+                            })
+                        }
+                    }),
+                })
+                .collect())
+        })
+    }
+
+    fn to_proto(&self, _: u64, _: &Buffer) -> proto::OnTypeFormatting {
+        todo!("TODO kb")
+    }
+
+    async fn from_proto(
+        _: proto::OnTypeFormatting,
+        _: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self> {
+        todo!("TODO kb")
+    }
+
+    fn response_to_proto(
+        _: Vec<InlayHint>,
+        _: &mut Project,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::OnTypeFormattingResponse {
+        todo!("TODO kb")
+    }
+
+    async fn response_from_proto(
+        self,
+        _: proto::OnTypeFormattingResponse,
+        _: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Vec<InlayHint>> {
+        todo!("TODO kb")
     }
 
     fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {

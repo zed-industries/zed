@@ -2151,6 +2151,10 @@ impl Editor {
                 }
             }
 
+            if let Some(hints_task) = this.request_inlay_hints(cx) {
+                hints_task.detach_and_log_err(cx);
+            }
+
             if had_active_copilot_suggestion {
                 this.refresh_copilot_suggestions(true, cx);
                 if !this.has_active_copilot_suggestion(cx) {
@@ -2575,6 +2579,27 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    // TODO kb proper inlay hints handling
+    fn request_inlay_hints(&self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let project = self.project.as_ref()?;
+        let position = self.selections.newest_anchor().head();
+        let (buffer, _) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)?;
+
+        let end = buffer.read(cx).len();
+        let inlay_hints_task = project.update(cx, |project, cx| {
+            project.inlay_hints(buffer.clone(), 0..end, cx)
+        });
+
+        Some(cx.spawn(|_, _| async move {
+            let inlay_hints = inlay_hints_task.await?;
+            dbg!(inlay_hints);
+            Ok(())
+        }))
     }
 
     fn trigger_on_type_formatting(

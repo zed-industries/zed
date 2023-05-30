@@ -325,6 +325,45 @@ pub struct Location {
     pub range: Range<language::Anchor>,
 }
 
+#[derive(Debug)]
+pub struct InlayHint {
+    pub position: Anchor,
+    pub label: InlayHintLabel,
+    pub kind: Option<String>,
+    pub tooltip: Option<InlayHintTooltip>,
+}
+
+#[derive(Debug)]
+pub enum InlayHintLabel {
+    String(String),
+    LabelParts(Vec<InlayHintLabelPart>),
+}
+
+#[derive(Debug)]
+pub struct InlayHintLabelPart {
+    pub value: String,
+    pub tooltip: Option<InlayHintLabelPartTooltip>,
+    pub location: Option<Location>,
+}
+
+#[derive(Debug)]
+pub enum InlayHintTooltip {
+    String(String),
+    MarkupContent(MarkupContent),
+}
+
+#[derive(Debug)]
+pub enum InlayHintLabelPartTooltip {
+    String(String),
+    MarkupContent(MarkupContent),
+}
+
+#[derive(Debug)]
+pub struct MarkupContent {
+    pub kind: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct LocationLink {
     pub origin: Option<Location>,
@@ -4835,6 +4874,17 @@ impl Project {
             },
             cx,
         )
+    }
+
+    pub fn inlay_hints<T: ToOffset>(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        range: Range<T>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<InlayHint>>> {
+        let buffer = buffer_handle.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
+        self.request_lsp(buffer_handle, InlayHints { range }, cx)
     }
 
     #[allow(clippy::type_complexity)]
