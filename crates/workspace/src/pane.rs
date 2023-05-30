@@ -3,7 +3,7 @@ mod dragged_item_receiver;
 use super::{ItemHandle, SplitDirection};
 use crate::{
     item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
-    ToggleZoom, Workspace, WorkspaceSettings,
+    ToggleZoom, Workspace, WorkspaceSettings, NewCenterTerminal,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -131,7 +131,6 @@ pub enum Event {
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<usize>,
-    is_active: bool,
     zoomed: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
@@ -238,7 +237,6 @@ impl Pane {
         Self {
             items: Vec::new(),
             activation_history: Vec::new(),
-            is_active: true,
             zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
@@ -996,7 +994,7 @@ impl Pane {
                 AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::action("New File", NewFile),
-                    ContextMenuItem::action("New Terminal", NewTerminal),
+                    ContextMenuItem::action("New Terminal", NewCenterTerminal),
                     ContextMenuItem::action("New Search", NewSearch),
                 ],
                 cx,

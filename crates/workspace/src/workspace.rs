@@ -55,7 +55,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{atomic::AtomicUsize, Arc},
-    time::Duration,
+    time::Duration, rc::Rc,
 };
 
 use crate::{
@@ -119,6 +119,7 @@ actions!(
         ActivateNextPane,
         FollowNextCollaborator,
         NewTerminal,
+        NewCenterTerminal,
         ToggleTerminalFocus,
         NewSearch,
         Feedback,
@@ -1621,44 +1622,15 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
-    pub fn toggle_panel(
-        &mut self,
-        position: DockPosition,
-        panel_index: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let dock = match position {
-            DockPosition::Left => &mut self.left_dock,
-            DockPosition::Bottom => &mut self.bottom_dock,
-            DockPosition::Right => &mut self.right_dock,
-        };
-        let active_item = dock.update(cx, move |dock, cx| {
-            if dock.is_open() && dock.active_panel_index() == panel_index {
-                dock.set_open(false, cx);
-                None
-            } else {
-                dock.set_open(true, cx);
-                dock.activate_panel(panel_index, cx);
-                dock.visible_panel().cloned()
-            }
-        });
-
-        if let Some(active_item) = active_item {
-            if active_item.has_focus(cx) {
-                cx.focus_self();
-            } else {
-                cx.focus(active_item.as_any());
-            }
-        } else {
-            cx.focus_self();
-        }
-
-        self.serialize_workspace(cx);
-
-        cx.notify();
+    pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
+        self.show_or_hide_panel::<T>(cx, |_, _| true)?.as_any().clone().downcast()
     }
 
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_or_hide_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+    }
+
+    fn show_or_hide_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>, show: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool) -> Option<Rc<dyn PanelHandle>> {
         for (dock, position) in [
             self.left_dock.clone(),
             self.bottom_dock.clone(),
@@ -1676,21 +1648,24 @@ impl Workspace {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
                 let mut zoom_out = false;
-                dock.update(cx, |dock, cx| {
+                let panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, cx);
 
-                    if let Some(panel) = dock.active_panel().cloned() {
-                        if panel.has_focus(cx) {
+                    let panel = dock.active_panel().cloned();
+                    if let Some(panel) = panel.as_ref() {
+                        let should_show = show(&**panel, cx);
+                        if should_show {
+                            dock.set_open(true, cx);
+                            cx.focus(panel.as_any());
+                            zoom_out = true;
+                        } else {
                             if panel.is_zoomed(cx) {
                                 dock.set_open(false, cx);
                             }
                             focus_center = true;
-                        } else {
-                            dock.set_open(true, cx);
-                            cx.focus(panel.as_any());
-                            zoom_out = true;
                         }
                     }
+                    panel
                 });
 
                 if zoom_out {
@@ -1702,9 +1677,10 @@ impl Workspace {
 
                 self.serialize_workspace(cx);
                 cx.notify();
-                break;
+                return panel;
             }
         }
+        None
     }
 
     fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
