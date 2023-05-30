@@ -1945,11 +1945,7 @@ impl Workspace {
 
     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         if self.active_pane != pane {
-            self.active_pane
-                .update(cx, |pane, cx| pane.set_active(false, cx));
             self.active_pane = pane.clone();
-            self.active_pane
-                .update(cx, |pane, cx| pane.set_active(true, cx));
             self.status_bar.update(cx, |status_bar, cx| {
                 status_bar.set_active_pane(&self.active_pane, cx);
             });
@@ -2868,7 +2864,7 @@ impl Workspace {
                             })
                         })
                         .collect::<Vec<_>>(),
-                    pane.is_active(),
+                    pane.has_focus(),
                 )
             };
 
