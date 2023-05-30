@@ -14,6 +14,7 @@ use isahc::Request;
 use language::Buffer;
 use postage::prelude::Stream;
 use project::Project;
+use regex::Regex;
 use serde::Serialize;
 use smallvec::SmallVec;
 use std::{
@@ -46,6 +47,7 @@ pub fn init(cx: &mut AppContext) {
 #[derive(Serialize)]
 struct FeedbackRequestBody<'a> {
     feedback_text: &'a str,
+    email: Option<String>,
     metrics_id: Option<Arc<str>>,
     installation_id: Option<Arc<str>>,
     system_specs: SystemSpecs,
@@ -157,8 +159,18 @@ impl FeedbackEditor {
         let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
 
+        let re = Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b").unwrap();
+
+        let emails: Vec<&str> = re
+            .captures_iter(feedback_text)
+            .map(|capture| capture.get(0).unwrap().as_str())
+            .collect();
+
+        let email = emails.first().map(|e| e.to_string());
+
         let request = FeedbackRequestBody {
             feedback_text: &feedback_text,
+            email,
             metrics_id,
             installation_id,
             system_specs,
