@@ -2,53 +2,63 @@ import fs from "fs"
 import path from "path"
 import { ColorScheme, Meta } from "./themes/common/colorScheme"
 
-const colorSchemes: ColorScheme[] = []
-export default colorSchemes
+const THEMES_DIRECTORY = path.resolve(`${__dirname}/themes`)
+const STAFF_DIRECTORY = path.resolve(`${__dirname}/themes/staff`)
+const IGNORE_ITEMS = ["staff", "common", "template.ts"]
+const ACCEPT_EXTENSION = ".ts"
 
-const schemeMeta: Meta[] = []
-export { schemeMeta }
+function getAllTsFiles(directoryPath: string) {
+    const files = fs.readdirSync(directoryPath)
+    const fileList: string[] = []
 
-const staffColorSchemes: ColorScheme[] = []
-export { staffColorSchemes }
+    for (const file of files) {
+        if (!IGNORE_ITEMS.includes(file)) {
+            const filePath = path.join(directoryPath, file)
 
-const experimentalColorSchemes: ColorScheme[] = []
-export { experimentalColorSchemes }
-
-const themes_directory = path.resolve(`${__dirname}/themes`)
-
-function for_all_color_schemes_in(
-    themesPath: string,
-    callback: (module: any, path: string) => void
-) {
-    for (const fileName of fs.readdirSync(themesPath)) {
-        if (fileName == "template.ts") continue
-        const filePath = path.join(themesPath, fileName)
-
-        if (fs.statSync(filePath).isFile()) {
-            const colorScheme = require(filePath)
-            callback(colorScheme, path.basename(filePath))
+            if (fs.statSync(filePath).isDirectory()) {
+                fileList.push(...getAllTsFiles(filePath))
+            } else if (path.extname(file) === ACCEPT_EXTENSION) {
+                fileList.push(filePath)
+            }
         }
     }
+
+    return fileList
 }
 
-function fillColorSchemes(themesPath: string, colorSchemes: ColorScheme[]) {
-    for_all_color_schemes_in(themesPath, (colorScheme, _path) => {
+function getAllColorSchemes(directoryPath: string) {
+    const files = getAllTsFiles(directoryPath)
+    return files.map((filePath) => ({
+        colorScheme: require(filePath),
+        filePath: path.basename(filePath),
+    }))
+}
+
+function getColorSchemes(directoryPath: string) {
+    const colorSchemes: ColorScheme[] = []
+
+    for (const { colorScheme } of getAllColorSchemes(directoryPath)) {
         if (colorScheme.dark) colorSchemes.push(colorScheme.dark)
-        if (colorScheme.light) colorSchemes.push(colorScheme.light)
-    })
+        else if (colorScheme.light) colorSchemes.push(colorScheme.light)
+    }
+
+    return colorSchemes
 }
 
-fillColorSchemes(themes_directory, colorSchemes)
-fillColorSchemes(path.resolve(`${themes_directory}/staff`), staffColorSchemes)
+function getMeta(directoryPath: string) {
+    const meta: Meta[] = []
 
-function fillMeta(themesPath: string, meta: Meta[]) {
-    for_all_color_schemes_in(themesPath, (colorScheme, path) => {
+    for (const { colorScheme, filePath } of getAllColorSchemes(directoryPath)) {
         if (colorScheme.meta) {
             meta.push(colorScheme.meta)
         } else {
-            throw Error(`Public theme ${path} must have a meta field`)
+            throw Error(`Public theme ${filePath} must have a meta field`)
         }
-    })
+    }
+
+    return meta
 }
 
-fillMeta(themes_directory, schemeMeta)
+export const colorSchemes = getColorSchemes(THEMES_DIRECTORY)
+export const staffColorSchemes = getColorSchemes(STAFF_DIRECTORY)
+export const schemeMeta = getMeta(THEMES_DIRECTORY)
