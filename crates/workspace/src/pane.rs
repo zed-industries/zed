@@ -2,7 +2,7 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
+    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch,
     ToggleZoom, Workspace, WorkspaceSettings, NewCenterTerminal,
 };
 use anyhow::Result;

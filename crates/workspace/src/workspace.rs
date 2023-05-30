@@ -3270,37 +3270,42 @@ impl View for Workspace {
                                         enum ZoomBackground {}
                                         let zoomed = zoomed.upgrade(cx)?;
 
-                                        let mut background_style =
-                                            theme.workspace.zoomed_background;
+                                        let mut foreground_style;
                                         match self.zoomed_position {
                                             Some(DockPosition::Left) => {
-                                                background_style.padding.left = 0.;
-                                                background_style.padding.top = 0.;
-                                                background_style.padding.bottom = 0.;
-                                                background_style.padding.right *= 1.;
+                                                foreground_style =
+                                                    theme.workspace.zoomed_panel_foreground;
+                                                foreground_style.margin.left = 0.;
+                                                foreground_style.margin.top = 0.;
+                                                foreground_style.margin.bottom = 0.;
                                             }
                                             Some(DockPosition::Right) => {
-                                                background_style.padding.right = 0.;
-                                                background_style.padding.top = 0.;
-                                                background_style.padding.bottom = 0.;
-                                                background_style.padding.left *= 1.;
+                                                foreground_style =
+                                                    theme.workspace.zoomed_panel_foreground;
+                                                foreground_style.margin.right = 0.;
+                                                foreground_style.margin.top = 0.;
+                                                foreground_style.margin.bottom = 0.;
                                             }
                                             Some(DockPosition::Bottom) => {
-                                                background_style.padding.left = 0.;
-                                                background_style.padding.right = 0.;
-                                                background_style.padding.bottom = 0.;
-                                                background_style.padding.top *= 1.;
+                                                foreground_style =
+                                                    theme.workspace.zoomed_panel_foreground;
+                                                foreground_style.margin.left = 0.;
+                                                foreground_style.margin.right = 0.;
+                                                foreground_style.margin.bottom = 0.;
                                             }
-                                            None => {}
+                                            None => {
+                                                foreground_style =
+                                                    theme.workspace.zoomed_pane_foreground;
+                                            }
                                         }
 
                                         Some(
                                             ChildView::new(&zoomed, cx)
                                                 .contained()
-                                                .with_style(theme.workspace.zoomed_foreground)
+                                                .with_style(foreground_style)
                                                 .aligned()
                                                 .contained()
-                                                .with_style(background_style)
+                                                .with_style(theme.workspace.zoomed_background)
                                                 .mouse::<ZoomBackground>(0)
                                                 .capture_all()
                                                 .on_down(
