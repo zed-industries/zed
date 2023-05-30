@@ -79,12 +79,6 @@ export const meta: Meta = {
     author: "dempfi",
     license: {
         SPDX: "MIT",
-        license_text: {
-            https_url:
-                "https://raw.githubusercontent.com/dempfi/ayu/master/LICENSE",
-            license_checksum:
-                "e0af0e0d1754c18ca075649d42f5c6d9a60f8bdc03c20dfd97105f2253a94173",
-        },
     },
     url: "https://github.com/dempfi/ayu",
 }

@@ -32,12 +32,6 @@ export const meta: Meta = {
     author: "gessig",
     license: {
         SPDX: "MIT",
-        license_text: {
-            https_url:
-                "https://raw.githubusercontent.com/gessig/base16-sandcastle-scheme/master/LICENSE",
-            license_checksum:
-                "8399d44b4d935b60be9fee0a76d7cc9a817b4f3f11574c9d6d1e8fd57e72ffdc",
-        },
     },
     url: "https://github.com/gessig/base16-sandcastle-scheme",
 }

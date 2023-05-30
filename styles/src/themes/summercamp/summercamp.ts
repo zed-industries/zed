@@ -34,11 +34,5 @@ export const meta: Meta = {
     url: "https://github.com/zoefiri/base16-sc",
     license: {
         SPDX: "MIT",
-        license_text: {
-            https_url:
-                "https://raw.githubusercontent.com/zoefiri/base16-sc/master/LICENSE",
-            license_checksum:
-                "fadcc834b7eaf2943800956600e8aeea4b495ecf6490f4c4b6c91556a90accaf",
-        },
     },
 }
