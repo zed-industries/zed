@@ -19,11 +19,15 @@ use workspace::{
     pane, Pane, Workspace,
 };
 
-actions!(assistant, [NewContext, Assist, CancelLastAssist]);
+actions!(
+    assistant,
+    [NewContext, Assist, CancelLastAssist, QuoteSelection]
+);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(AssistantEditor::assist);
     cx.capture_action(AssistantEditor::cancel_last_assist);
+    cx.add_action(AssistantEditor::quote_selection);
 }
 
 pub enum AssistantPanelEvent {
@@ -135,6 +139,12 @@ impl View for AssistantPanel {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         ChildView::new(&self.pane, cx).into_any()
+    }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.pane);
+        }
     }
 }
 
@@ -361,7 +371,7 @@ impl AssistantEditor {
             editor.set_render_excerpt_header(
                 {
                     let assistant = assistant.clone();
-                    move |editor, params: editor::RenderExcerptHeaderParams, cx| {
+                    move |_editor, params: editor::RenderExcerptHeaderParams, cx| {
                         let style = &theme::current(cx).assistant;
                         if let Some(message) = assistant.read(cx).messages_by_id.get(&params.id) {
                             let sender = match message.role {
@@ -421,6 +431,71 @@ impl AssistantEditor {
             cx.propagate_action();
         }
     }
+
+    fn quote_selection(
+        workspace: &mut Workspace,
+        _: &QuoteSelection,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let Some(editor) = workspace.active_item(cx).and_then(|item| item.downcast::<Editor>()) else {
+            return;
+        };
+
+        let text = editor.read_with(cx, |editor, cx| {
+            let range = editor.selections.newest::<usize>(cx).range();
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let start_language = buffer.language_at(range.start);
+            let end_language = buffer.language_at(range.end);
+            let language_name = if start_language == end_language {
+                start_language.map(|language| language.name())
+            } else {
+                None
+            };
+            let language_name = language_name.as_deref().unwrap_or("").to_lowercase();
+
+            let selected_text = buffer.text_for_range(range).collect::<String>();
+            if selected_text.is_empty() {
+                None
+            } else {
+                Some(if language_name == "markdown" {
+                    selected_text
+                        .lines()
+                        .map(|line| format!("> {}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    format!("```{language_name}\n{selected_text}\n```")
+                })
+            }
+        });
+
+        // Activate the panel
+        if !panel.read(cx).has_focus(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        if let Some(text) = text {
+            panel.update(cx, |panel, cx| {
+                if let Some(assistant) = panel
+                    .pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<AssistantEditor>())
+                    .ok_or_else(|| anyhow!("no active context"))
+                    .log_err()
+                {
+                    assistant.update(cx, |assistant, cx| {
+                        assistant
+                            .editor
+                            .update(cx, |editor, cx| editor.insert(&text, cx))
+                    });
+                }
+            });
+        }
+    }
 }
 
 impl Entity for AssistantEditor {
@@ -439,6 +514,12 @@ impl View for AssistantEditor {
             .contained()
             .with_style(theme.container)
             .into_any()
+    }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.editor);
+        }
     }
 }
 

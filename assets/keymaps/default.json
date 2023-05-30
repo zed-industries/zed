@@ -199,7 +199,8 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
-      "escape": "assistant::CancelLastAssist"
+      "escape": "assistant::CancelLastAssist",
+      "cmd-?": "assistant::QuoteSelection"
     }
   },
   {

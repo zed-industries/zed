@@ -184,6 +184,12 @@ impl Dock {
             .map_or(false, |panel| panel.has_focus(cx))
     }
 
+    pub fn panel<T: Panel>(&self) -> Option<ViewHandle<T>> {
+        self.panel_entries
+            .iter()
+            .find_map(|entry| entry.panel.as_any().clone().downcast())
+    }
+
     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
         self.panel_entries
             .iter()
