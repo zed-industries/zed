@@ -38,7 +38,7 @@ use workspace::{
     notifications::NotifyResultExt,
     pane, register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub use terminal::TerminalSettings;
@@ -66,9 +66,9 @@ pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
     terminal::init(cx);
 
-    cx.add_action(TerminalView::deploy);
-
     register_deserializable_item::<TerminalView>(cx);
+
+    cx.add_action(TerminalView::deploy);
 
     //Useful terminal views
     cx.add_action(TerminalView::send_text);
@@ -101,7 +101,7 @@ impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,
-        _: &workspace::NewTerminal,
+        _: &NewCenterTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
         let strategy = settings::get::<TerminalSettings>(cx);
