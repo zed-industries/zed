@@ -34,7 +34,7 @@ impl View for FeedbackInfoText {
         Flex::row()
             .with_child(
                 Text::new(
-                    "We read whatever you submit here. For issues and discussions, visit the ",
+                    "Share your feedback. Include your email for replies. For issues and discussions, visit the ",
                     theme.feedback.info_text_default.text.clone(),
                 )
                 .with_soft_wrap(false)
@@ -60,7 +60,7 @@ impl View for FeedbackInfoText {
                 }),
             )
             .with_child(
-                Text::new(" on GitHub.", theme.feedback.info_text_default.text.clone())
+                Text::new(".", theme.feedback.info_text_default.text.clone())
                     .with_soft_wrap(false)
                     .aligned(),
             )

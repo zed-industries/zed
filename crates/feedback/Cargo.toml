@@ -16,6 +16,7 @@ editor = { path = "../editor" }
 language = { path = "../language" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
+regex.workspace = true
 search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
