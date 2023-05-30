@@ -359,6 +359,21 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Add or remove a set of local settings via a JSON string.
+    pub fn clear_local_settings(&mut self, root_id: usize, cx: &AppContext) -> Result<()> {
+        eprintln!("clearing local settings {root_id}");
+        self.local_deserialized_settings
+            .retain(|k, _| k.0 != root_id);
+        self.recompute_values(Some((root_id, "".as_ref())), cx)?;
+        Ok(())
+    }
+
+    pub fn local_settings(&self, root_id: usize) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
+        self.local_deserialized_settings
+            .range((root_id, Path::new("").into())..(root_id + 1, Path::new("").into()))
+            .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
+    }
+
     pub fn json_schema(
         &self,
         schema_params: &SettingsJsonSchemaParams,

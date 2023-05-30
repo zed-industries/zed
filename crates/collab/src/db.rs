@@ -16,6 +16,7 @@ mod worktree_diagnostic_summary;
 mod worktree_entry;
 mod worktree_repository;
 mod worktree_repository_statuses;
+mod worktree_settings_file;
 
 use crate::executor::Executor;
 use crate::{Error, Result};
@@ -1494,6 +1495,7 @@ impl Database {
                         updated_repositories: Default::default(),
                         removed_repositories: Default::default(),
                         diagnostic_summaries: Default::default(),
+                        settings_files: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
                         completed_scan_id: db_worktree.completed_scan_id as u64,
                     };
@@ -1637,6 +1639,25 @@ impl Database {
                         name: language_server.name,
                     })
                     .collect::<Vec<_>>();
+
+                {
+                    let mut db_settings_files = worktree_settings_file::Entity::find()
+                        .filter(worktree_settings_file::Column::ProjectId.eq(project_id))
+                        .stream(&*tx)
+                        .await?;
+                    while let Some(db_settings_file) = db_settings_files.next().await {
+                        let db_settings_file = db_settings_file?;
+                        if let Some(worktree) = worktrees
+                            .iter_mut()
+                            .find(|w| w.id == db_settings_file.worktree_id as u64)
+                        {
+                            worktree.settings_files.push(WorktreeSettingsFile {
+                                path: db_settings_file.path,
+                                content: db_settings_file.content,
+                            });
+                        }
+                    }
+                }
 
                 let mut collaborators = project
                     .find_related(project_collaborator::Entity)
@@ -2637,6 +2658,58 @@ impl Database {
         .await
     }
 
+    pub async fn update_worktree_settings(
+        &self,
+        update: &proto::UpdateWorktreeSettings,
+        connection: ConnectionId,
+    ) -> Result<RoomGuard<Vec<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        let room_id = self.room_id_for_project(project_id).await?;
+        self.room_transaction(room_id, |tx| async move {
+            // Ensure the update comes from the host.
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            if project.host_connection()? != connection {
+                return Err(anyhow!("can't update a project hosted by someone else"))?;
+            }
+
+            if let Some(content) = &update.content {
+                worktree_settings_file::Entity::insert(worktree_settings_file::ActiveModel {
+                    project_id: ActiveValue::Set(project_id),
+                    worktree_id: ActiveValue::Set(update.worktree_id as i64),
+                    path: ActiveValue::Set(update.path.clone()),
+                    content: ActiveValue::Set(content.clone()),
+                })
+                .on_conflict(
+                    OnConflict::columns([
+                        worktree_settings_file::Column::ProjectId,
+                        worktree_settings_file::Column::WorktreeId,
+                        worktree_settings_file::Column::Path,
+                    ])
+                    .update_column(worktree_settings_file::Column::Content)
+                    .to_owned(),
+                )
+                .exec(&*tx)
+                .await?;
+            } else {
+                worktree_settings_file::Entity::delete(worktree_settings_file::ActiveModel {
+                    project_id: ActiveValue::Set(project_id),
+                    worktree_id: ActiveValue::Set(update.worktree_id as i64),
+                    path: ActiveValue::Set(update.path.clone()),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+            }
+
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            Ok(connection_ids)
+        })
+        .await
+    }
+
     pub async fn join_project(
         &self,
         project_id: ProjectId,
@@ -2707,6 +2780,7 @@ impl Database {
                             entries: Default::default(),
                             repository_entries: Default::default(),
                             diagnostic_summaries: Default::default(),
+                            settings_files: Default::default(),
                             scan_id: db_worktree.scan_id as u64,
                             completed_scan_id: db_worktree.completed_scan_id as u64,
                         },
@@ -2815,6 +2889,25 @@ impl Database {
                                 error_count: db_summary.error_count as u32,
                                 warning_count: db_summary.warning_count as u32,
                             });
+                    }
+                }
+            }
+
+            // Populate worktree settings files
+            {
+                let mut db_settings_files = worktree_settings_file::Entity::find()
+                    .filter(worktree_settings_file::Column::ProjectId.eq(project_id))
+                    .stream(&*tx)
+                    .await?;
+                while let Some(db_settings_file) = db_settings_files.next().await {
+                    let db_settings_file = db_settings_file?;
+                    if let Some(worktree) =
+                        worktrees.get_mut(&(db_settings_file.worktree_id as u64))
+                    {
+                        worktree.settings_files.push(WorktreeSettingsFile {
+                            path: db_settings_file.path,
+                            content: db_settings_file.content,
+                        });
                     }
                 }
             }
@@ -3482,6 +3575,7 @@ pub struct RejoinedWorktree {
     pub updated_repositories: Vec<proto::RepositoryEntry>,
     pub removed_repositories: Vec<u64>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
+    pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
 }
@@ -3537,8 +3631,15 @@ pub struct Worktree {
     pub entries: Vec<proto::Entry>,
     pub repository_entries: BTreeMap<u64, proto::RepositoryEntry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
+    pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
+}
+
+#[derive(Debug)]
+pub struct WorktreeSettingsFile {
+    pub path: String,
+    pub content: String,
 }
 
 #[cfg(test)]

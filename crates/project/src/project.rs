@@ -462,6 +462,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
+        client.add_model_message_handler(Self::handle_update_worktree_settings);
         client.add_model_request_handler(Self::handle_create_project_entry);
         client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_copy_project_entry);
@@ -1105,6 +1106,21 @@ impl Project {
                 .log_err();
         }
 
+        let store = cx.global::<SettingsStore>();
+        for worktree in self.worktrees(cx) {
+            let worktree_id = worktree.read(cx).id().to_proto();
+            for (path, content) in store.local_settings(worktree.id()) {
+                self.client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                    })
+                    .log_err();
+            }
+        }
+
         let (updates_tx, mut updates_rx) = mpsc::unbounded();
         let client = self.client.clone();
         self.client_state = Some(ProjectClientState::Local {
@@ -1217,6 +1233,14 @@ impl Project {
         message_id: u32,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            for worktree in &self.worktrees {
+                store
+                    .clear_local_settings(worktree.handle_id(), cx)
+                    .log_err();
+            }
+        });
+
         self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
@@ -4888,8 +4912,12 @@ impl Project {
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
 
-        cx.observe_release(worktree, |this, worktree, cx| {
+        let handle_id = worktree.id();
+        cx.observe_release(worktree, move |this, worktree, cx| {
             let _ = this.remove_worktree(worktree.id(), cx);
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.clear_local_settings(handle_id, cx).log_err()
+            });
         })
         .detach();
 
@@ -5174,14 +5202,16 @@ impl Project {
         .detach();
     }
 
-    pub fn update_local_worktree_settings(
+    fn update_local_worktree_settings(
         &mut self,
         worktree: &ModelHandle<Worktree>,
         changes: &UpdatedEntriesSet,
         cx: &mut ModelContext<Self>,
     ) {
+        let project_id = self.remote_id();
         let worktree_id = worktree.id();
         let worktree = worktree.read(cx).as_local().unwrap();
+        let remote_worktree_id = worktree.id();
 
         let mut settings_contents = Vec::new();
         for (path, _, change) in changes.iter() {
@@ -5195,10 +5225,7 @@ impl Project {
                 let removed = *change == PathChange::Removed;
                 let abs_path = worktree.absolutize(path);
                 settings_contents.push(async move {
-                    anyhow::Ok((
-                        settings_dir,
-                        (!removed).then_some(fs.load(&abs_path).await?),
-                    ))
+                    (settings_dir, (!removed).then_some(fs.load(&abs_path).await))
                 });
             }
         }
@@ -5207,19 +5234,30 @@ impl Project {
             return;
         }
 
+        let client = self.client.clone();
         cx.spawn_weak(move |_, mut cx| async move {
-            let settings_contents = futures::future::join_all(settings_contents).await;
+            let settings_contents: Vec<(Arc<Path>, _)> =
+                futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
                 cx.update_global::<SettingsStore, _, _>(|store, cx| {
-                    for entry in settings_contents {
-                        if let Some((directory, file_content)) = entry.log_err() {
-                            store
-                                .set_local_settings(
-                                    worktree_id,
-                                    directory,
-                                    file_content.as_ref().map(String::as_str),
-                                    cx,
-                                )
+                    for (directory, file_content) in settings_contents {
+                        let file_content = file_content.and_then(|content| content.log_err());
+                        store
+                            .set_local_settings(
+                                worktree_id,
+                                directory.clone(),
+                                file_content.as_ref().map(String::as_str),
+                                cx,
+                            )
+                            .log_err();
+                        if let Some(remote_id) = project_id {
+                            client
+                                .send(proto::UpdateWorktreeSettings {
+                                    project_id: remote_id,
+                                    worktree_id: remote_worktree_id.to_proto(),
+                                    path: directory.to_string_lossy().into_owned(),
+                                    content: file_content,
+                                })
                                 .log_err();
                         }
                     }
@@ -5461,6 +5499,30 @@ impl Project {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload);
+                });
+            }
+            Ok(())
+        })
+    }
+
+    async fn handle_update_worktree_settings(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+                cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                    store
+                        .set_local_settings(
+                            worktree.id(),
+                            PathBuf::from(&envelope.payload.path).into(),
+                            envelope.payload.content.as_ref().map(String::as_str),
+                            cx,
+                        )
+                        .log_err();
                 });
             }
             Ok(())
@@ -6557,8 +6619,8 @@ impl Project {
         }
 
         self.metadata_changed(cx);
-        for (id, _) in old_worktrees_by_id {
-            cx.emit(Event::WorktreeRemoved(id));
+        for id in old_worktrees_by_id.keys() {
+            cx.emit(Event::WorktreeRemoved(*id));
         }
 
         Ok(())
@@ -6926,6 +6988,13 @@ impl WorktreeHandle {
         match self {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(cx),
+        }
+    }
+
+    pub fn handle_id(&self) -> usize {
+        match self {
+            WorktreeHandle::Strong(handle) => handle.id(),
+            WorktreeHandle::Weak(handle) => handle.id(),
         }
     }
 }

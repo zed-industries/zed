@@ -132,6 +132,8 @@ message Envelope {
 
         OnTypeFormatting on_type_formatting = 111;
         OnTypeFormattingResponse on_type_formatting_response = 112;
+
+        UpdateWorktreeSettings update_worktree_settings = 113;
     }
 }
 
@@ -337,6 +339,13 @@ message UpdateWorktree {
     uint64 scan_id = 8;
     bool is_last_update = 9;
     string abs_path = 10;
+}
+
+message UpdateWorktreeSettings {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    optional string content = 4;
 }
 
 message CreateProjectEntry {
