@@ -361,13 +361,18 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
-                    did_change_watched_files: Some(DynamicRegistrationClientCapabilities {
+                    did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                         dynamic_registration: Some(true),
+                        relative_pattern_support: Some(true),
                     }),
                     did_change_configuration: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
                     workspace_folders: Some(true),
+                    symbol: Some(WorkspaceSymbolClientCapabilities {
+                        resolve_support: None,
+                        ..WorkspaceSymbolClientCapabilities::default()
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -849,10 +854,12 @@ impl FakeLanguageServer {
         T: request::Request,
         T::Result: 'static + Send,
     {
+        self.server.executor.start_waiting();
         self.server.request::<T>(params).await
     }
 
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
+        self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 

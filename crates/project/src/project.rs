@@ -40,6 +40,7 @@ use language::{
     PendingLanguageServer, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
 };
+use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -1459,7 +1460,7 @@ impl Project {
         };
 
         cx.foreground().spawn(async move {
-            pump_loading_buffer_reciever(loading_watch)
+            wait_for_loading_buffer(loading_watch)
                 .await
                 .map_err(|error| anyhow!("{}", error))
         })
@@ -3017,10 +3018,12 @@ impl Project {
                     if let Some(worktree) = worktree.upgrade(cx) {
                         let worktree = worktree.read(cx);
                         if let Some(abs_path) = worktree.abs_path().to_str() {
-                            if let Some(suffix) = watcher
-                                .glob_pattern
-                                .strip_prefix(abs_path)
-                                .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
+                            if let Some(suffix) = match &watcher.glob_pattern {
+                                lsp::GlobPattern::String(s) => s,
+                                lsp::GlobPattern::Relative(rp) => &rp.pattern,
+                            }
+                            .strip_prefix(abs_path)
+                            .and_then(|s| s.strip_prefix(std::path::MAIN_SEPARATOR))
                             {
                                 if let Some(glob) = Glob::new(suffix).log_err() {
                                     builders
@@ -3218,7 +3221,7 @@ impl Project {
     ) -> Result<(), anyhow::Error> {
         let (worktree, relative_path) = self
             .find_local_worktree(&abs_path, cx)
-            .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+            .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -3759,7 +3762,7 @@ impl Project {
                         let worktree_abs_path = worktree.abs_path().clone();
                         requests.push(
                             server
-                                .request::<lsp::request::WorkspaceSymbol>(
+                                .request::<lsp::request::WorkspaceSymbolRequest>(
                                     lsp::WorkspaceSymbolParams {
                                         query: query.to_string(),
                                         ..Default::default()
@@ -3767,12 +3770,32 @@ impl Project {
                                 )
                                 .log_err()
                                 .map(move |response| {
+                                    let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                            flat_responses.into_iter().map(|lsp_symbol| {
+                                                (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                            }).collect::<Vec<_>>()
+                                        }
+                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                                let location = match lsp_symbol.location {
+                                                    lsp::OneOf::Left(location) => location,
+                                                    lsp::OneOf::Right(_) => {
+                                                        error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                        return None
+                                                    }
+                                                };
+                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                            }).collect::<Vec<_>>()
+                                        }
+                                    }).unwrap_or_default();
+
                                     (
                                         adapter,
                                         language,
                                         worktree_id,
                                         worktree_abs_path,
-                                        response.unwrap_or_default(),
+                                        lsp_symbols,
                                     )
                                 }),
                         );
@@ -3794,53 +3817,54 @@ impl Project {
                         adapter_language,
                         source_worktree_id,
                         worktree_abs_path,
-                        response,
+                        lsp_symbols,
                     ) in responses
                     {
-                        symbols.extend(response.into_iter().flatten().filter_map(|lsp_symbol| {
-                            let abs_path = lsp_symbol.location.uri.to_file_path().ok()?;
-                            let mut worktree_id = source_worktree_id;
-                            let path;
-                            if let Some((worktree, rel_path)) =
-                                this.find_local_worktree(&abs_path, cx)
-                            {
-                                worktree_id = worktree.read(cx).id();
-                                path = rel_path;
-                            } else {
-                                path = relativize_path(&worktree_abs_path, &abs_path);
-                            }
-
-                            let project_path = ProjectPath {
-                                worktree_id,
-                                path: path.into(),
-                            };
-                            let signature = this.symbol_signature(&project_path);
-                            let adapter_language = adapter_language.clone();
-                            let language = this
-                                .languages
-                                .language_for_file(&project_path.path, None)
-                                .unwrap_or_else(move |_| adapter_language);
-                            let language_server_name = adapter.name.clone();
-                            Some(async move {
-                                let language = language.await;
-                                let label = language
-                                    .label_for_symbol(&lsp_symbol.name, lsp_symbol.kind)
-                                    .await;
-
-                                Symbol {
-                                    language_server_name,
-                                    source_worktree_id,
-                                    path: project_path,
-                                    label: label.unwrap_or_else(|| {
-                                        CodeLabel::plain(lsp_symbol.name.clone(), None)
-                                    }),
-                                    kind: lsp_symbol.kind,
-                                    name: lsp_symbol.name,
-                                    range: range_from_lsp(lsp_symbol.location.range),
-                                    signature,
+                        symbols.extend(lsp_symbols.into_iter().filter_map(
+                            |(symbol_name, symbol_kind, symbol_location)| {
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let mut worktree_id = source_worktree_id;
+                                let path;
+                                if let Some((worktree, rel_path)) =
+                                    this.find_local_worktree(&abs_path, cx)
+                                {
+                                    worktree_id = worktree.read(cx).id();
+                                    path = rel_path;
+                                } else {
+                                    path = relativize_path(&worktree_abs_path, &abs_path);
                                 }
-                            })
-                        }));
+
+                                let project_path = ProjectPath {
+                                    worktree_id,
+                                    path: path.into(),
+                                };
+                                let signature = this.symbol_signature(&project_path);
+                                let adapter_language = adapter_language.clone();
+                                let language = this
+                                    .languages
+                                    .language_for_file(&project_path.path, None)
+                                    .unwrap_or_else(move |_| adapter_language);
+                                let language_server_name = adapter.name.clone();
+                                Some(async move {
+                                    let language = language.await;
+                                    let label =
+                                        language.label_for_symbol(&symbol_name, symbol_kind).await;
+
+                                    Symbol {
+                                        language_server_name,
+                                        source_worktree_id,
+                                        path: project_path,
+                                        label: label.unwrap_or_else(|| {
+                                            CodeLabel::plain(symbol_name.clone(), None)
+                                        }),
+                                        kind: symbol_kind,
+                                        name: symbol_name,
+                                        range: range_from_lsp(symbol_location.range),
+                                        signature,
+                                    }
+                                })
+                            },
+                        ));
                     }
                     symbols
                 });
@@ -4847,7 +4871,7 @@ impl Project {
         if worktree.read(cx).is_local() {
             cx.subscribe(worktree, |this, worktree, event, cx| match event {
                 worktree::Event::UpdatedEntries(changes) => {
-                    this.update_local_worktree_buffers(&worktree, &changes, cx);
+                    this.update_local_worktree_buffers(&worktree, changes, cx);
                     this.update_local_worktree_language_servers(&worktree, changes, cx);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
@@ -4881,13 +4905,13 @@ impl Project {
     fn update_local_worktree_buffers(
         &mut self,
         worktree_handle: &ModelHandle<Worktree>,
-        changes: &HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
 
         let mut renamed_buffers = Vec::new();
-        for (path, entry_id) in changes.keys() {
+        for (path, entry_id, _) in changes {
             let worktree_id = worktree_handle.read(cx).id();
             let project_path = ProjectPath {
                 worktree_id,
@@ -4993,7 +5017,7 @@ impl Project {
     fn update_local_worktree_language_servers(
         &mut self,
         worktree_handle: &ModelHandle<Worktree>,
-        changes: &HashMap<(Arc<Path>, ProjectEntryId), PathChange>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut ModelContext<Self>,
     ) {
         if changes.is_empty() {
@@ -5024,23 +5048,21 @@ impl Project {
                         let params = lsp::DidChangeWatchedFilesParams {
                             changes: changes
                                 .iter()
-                                .filter_map(|((path, _), change)| {
-                                    if watched_paths.is_match(&path) {
-                                        Some(lsp::FileEvent {
-                                            uri: lsp::Url::from_file_path(abs_path.join(path))
-                                                .unwrap(),
-                                            typ: match change {
-                                                PathChange::Added => lsp::FileChangeType::CREATED,
-                                                PathChange::Removed => lsp::FileChangeType::DELETED,
-                                                PathChange::Updated
-                                                | PathChange::AddedOrUpdated => {
-                                                    lsp::FileChangeType::CHANGED
-                                                }
-                                            },
-                                        })
-                                    } else {
-                                        None
+                                .filter_map(|(path, _, change)| {
+                                    if !watched_paths.is_match(&path) {
+                                        return None;
                                     }
+                                    let typ = match change {
+                                        PathChange::Loaded => return None,
+                                        PathChange::Added => lsp::FileChangeType::CREATED,
+                                        PathChange::Removed => lsp::FileChangeType::DELETED,
+                                        PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                        PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
+                                    };
+                                    Some(lsp::FileEvent {
+                                        uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                        typ,
+                                    })
                                 })
                                 .collect(),
                         };
@@ -5059,98 +5081,102 @@ impl Project {
     fn update_local_worktree_buffers_git_repos(
         &mut self,
         worktree_handle: ModelHandle<Worktree>,
-        repos: &HashMap<Arc<Path>, LocalRepositoryEntry>,
+        changed_repos: &UpdatedGitRepositoriesSet,
         cx: &mut ModelContext<Self>,
     ) {
         debug_assert!(worktree_handle.read(cx).is_local());
 
-        // Setup the pending buffers
+        // Identify the loading buffers whose containing repository that has changed.
         let future_buffers = self
             .loading_buffers_by_path
             .iter()
-            .filter_map(|(path, receiver)| {
-                let path = &path.path;
-                let (work_directory, repo) = repos
-                    .iter()
-                    .find(|(work_directory, _)| path.starts_with(work_directory))?;
-
-                let repo_relative_path = path.strip_prefix(work_directory).log_err()?;
-
+            .filter_map(|(project_path, receiver)| {
+                if project_path.worktree_id != worktree_handle.read(cx).id() {
+                    return None;
+                }
+                let path = &project_path.path;
+                changed_repos.iter().find(|(work_dir, change)| {
+                    path.starts_with(work_dir) && change.git_dir_changed
+                })?;
                 let receiver = receiver.clone();
-                let repo_ptr = repo.repo_ptr.clone();
-                let repo_relative_path = repo_relative_path.to_owned();
+                let path = path.clone();
                 Some(async move {
-                    pump_loading_buffer_reciever(receiver)
+                    wait_for_loading_buffer(receiver)
                         .await
                         .ok()
-                        .map(|buffer| (buffer, repo_relative_path, repo_ptr))
+                        .map(|buffer| (buffer, path))
                 })
             })
-            .collect::<FuturesUnordered<_>>()
-            .filter_map(|result| async move {
-                let (buffer_handle, repo_relative_path, repo_ptr) = result?;
+            .collect::<FuturesUnordered<_>>();
 
-                let lock = repo_ptr.lock();
-                lock.load_index_text(&repo_relative_path)
-                    .map(|diff_base| (diff_base, buffer_handle))
-            });
+        // Identify the current buffers whose containing repository has changed.
+        let current_buffers = self
+            .opened_buffers
+            .values()
+            .filter_map(|buffer| {
+                let buffer = buffer.upgrade(cx)?;
+                let file = File::from_dyn(buffer.read(cx).file())?;
+                if file.worktree != worktree_handle {
+                    return None;
+                }
+                let path = file.path();
+                changed_repos.iter().find(|(work_dir, change)| {
+                    path.starts_with(work_dir) && change.git_dir_changed
+                })?;
+                Some((buffer, path.clone()))
+            })
+            .collect::<Vec<_>>();
 
-        let update_diff_base_fn = update_diff_base(self);
-        cx.spawn(|_, mut cx| async move {
-            let diff_base_tasks = cx
+        if future_buffers.len() + current_buffers.len() == 0 {
+            return;
+        }
+
+        let remote_id = self.remote_id();
+        let client = self.client.clone();
+        cx.spawn_weak(move |_, mut cx| async move {
+            // Wait for all of the buffers to load.
+            let future_buffers = future_buffers.collect::<Vec<_>>().await;
+
+            // Reload the diff base for every buffer whose containing git repository has changed.
+            let snapshot =
+                worktree_handle.read_with(&cx, |tree, _| tree.as_local().unwrap().snapshot());
+            let diff_bases_by_buffer = cx
                 .background()
-                .spawn(future_buffers.collect::<Vec<_>>())
+                .spawn(async move {
+                    future_buffers
+                        .into_iter()
+                        .filter_map(|e| e)
+                        .chain(current_buffers)
+                        .filter_map(|(buffer, path)| {
+                            let (work_directory, repo) =
+                                snapshot.repository_and_work_directory_for_path(&path)?;
+                            let repo = snapshot.get_local_repo(&repo)?;
+                            let relative_path = path.strip_prefix(&work_directory).ok()?;
+                            let base_text = repo.repo_ptr.lock().load_index_text(&relative_path);
+                            Some((buffer, base_text))
+                        })
+                        .collect::<Vec<_>>()
+                })
                 .await;
 
-            for (diff_base, buffer) in diff_base_tasks.into_iter() {
-                update_diff_base_fn(Some(diff_base), buffer, &mut cx);
+            // Assign the new diff bases on all of the buffers.
+            for (buffer, diff_base) in diff_bases_by_buffer {
+                let buffer_id = buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_diff_base(diff_base.clone(), cx);
+                    buffer.remote_id()
+                });
+                if let Some(project_id) = remote_id {
+                    client
+                        .send(proto::UpdateDiffBase {
+                            project_id,
+                            buffer_id,
+                            diff_base,
+                        })
+                        .log_err();
+                }
             }
         })
         .detach();
-
-        // And the current buffers
-        for (_, buffer) in &self.opened_buffers {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                let file = match File::from_dyn(buffer.read(cx).file()) {
-                    Some(file) => file,
-                    None => continue,
-                };
-                if file.worktree != worktree_handle {
-                    continue;
-                }
-
-                let path = file.path().clone();
-
-                let worktree = worktree_handle.read(cx);
-
-                let (work_directory, repo) = match repos
-                    .iter()
-                    .find(|(work_directory, _)| path.starts_with(work_directory))
-                {
-                    Some(repo) => repo.clone(),
-                    None => continue,
-                };
-
-                let relative_repo = match path.strip_prefix(work_directory).log_err() {
-                    Some(relative_repo) => relative_repo.to_owned(),
-                    None => continue,
-                };
-
-                drop(worktree);
-
-                let update_diff_base_fn = update_diff_base(self);
-                let git_ptr = repo.repo_ptr.clone();
-                let diff_base_task = cx
-                    .background()
-                    .spawn(async move { git_ptr.lock().load_index_text(&relative_repo) });
-
-                cx.spawn(|_, mut cx| async move {
-                    let diff_base = diff_base_task.await;
-                    update_diff_base_fn(diff_base, buffer, &mut cx);
-                })
-                .detach();
-            }
-        }
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
@@ -5236,6 +5262,20 @@ impl Project {
         let worktree_id = worktree.id();
         let path = worktree.entry_for_id(entry_id)?.path.clone();
         Some(ProjectPath { worktree_id, path })
+    }
+
+    pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
+        let workspace_root = self
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+        let project_path = project_path.path.as_ref();
+
+        Some(if project_path == Path::new("") {
+            workspace_root.to_path_buf()
+        } else {
+            workspace_root.join(project_path)
+        })
     }
 
     // RPC message handlers
@@ -5848,7 +5888,7 @@ impl Project {
 
         this.update(&mut cx, |this, cx| {
             let Some(guest_id) = envelope.original_sender_id else {
-                log::error!("missing original_sender_id on SynchronizeBuffers request");
+                error!("missing original_sender_id on SynchronizeBuffers request");
                 return;
             };
 
@@ -7072,7 +7112,7 @@ impl Item for Buffer {
     }
 }
 
-async fn pump_loading_buffer_reciever(
+async fn wait_for_loading_buffer(
     mut receiver: postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
 ) -> Result<ModelHandle<Buffer>, Arc<anyhow::Error>> {
     loop {
@@ -7083,28 +7123,5 @@ async fn pump_loading_buffer_reciever(
             }
         }
         receiver.next().await;
-    }
-}
-
-fn update_diff_base(
-    project: &Project,
-) -> impl Fn(Option<String>, ModelHandle<Buffer>, &mut AsyncAppContext) {
-    let remote_id = project.remote_id();
-    let client = project.client().clone();
-    move |diff_base, buffer, cx| {
-        let buffer_id = buffer.update(cx, |buffer, cx| {
-            buffer.set_diff_base(diff_base.clone(), cx);
-            buffer.remote_id()
-        });
-
-        if let Some(project_id) = remote_id {
-            client
-                .send(proto::UpdateDiffBase {
-                    project_id,
-                    buffer_id: buffer_id as u64,
-                    diff_base,
-                })
-                .log_err();
-        }
     }
 }

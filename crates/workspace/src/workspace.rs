@@ -278,6 +278,19 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.toggle_dock(DockPosition::Bottom, action.focus, cx);
     });
     cx.add_action(Workspace::activate_pane_at_index);
+    cx.add_action(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
+        workspace.reopen_closed_item(cx).detach();
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
+        workspace
+            .go_back(workspace.active_pane().downgrade(), cx)
+            .detach();
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
+        workspace
+            .go_forward(workspace.active_pane().downgrade(), cx)
+            .detach();
+    });
 
     cx.add_action(|_: &mut Workspace, _: &install_cli::Install, cx| {
         cx.spawn(|workspace, mut cx| async move {
@@ -583,6 +596,7 @@ impl Workspace {
         let center_pane = cx.add_view(|cx| {
             Pane::new(
                 weak_handle.clone(),
+                project.clone(),
                 app_state.background_actions,
                 pane_history_timestamp.clone(),
                 cx,
@@ -946,21 +960,30 @@ impl Workspace {
         &self,
         limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<ProjectPath> {
-        let mut history: HashMap<ProjectPath, usize> = HashMap::default();
+    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+        let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
+        let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
         for pane in &self.panes {
             let pane = pane.read(cx);
             pane.nav_history()
-                .for_each_entry(cx, |entry, project_path| {
+                .for_each_entry(cx, |entry, (project_path, fs_path)| {
+                    if let Some(fs_path) = &fs_path {
+                        abs_paths_opened
+                            .entry(fs_path.clone())
+                            .or_default()
+                            .insert(project_path.clone());
+                    }
                     let timestamp = entry.timestamp;
                     match history.entry(project_path) {
                         hash_map::Entry::Occupied(mut entry) => {
-                            if &timestamp > entry.get() {
-                                entry.insert(timestamp);
+                            let (old_fs_path, old_timestamp) = entry.get();
+                            if &timestamp > old_timestamp {
+                                assert_eq!(&fs_path, old_fs_path, "Inconsistent nav history");
+                                entry.insert((fs_path, timestamp));
                             }
                         }
                         hash_map::Entry::Vacant(entry) => {
-                            entry.insert(timestamp);
+                            entry.insert((fs_path, timestamp));
                         }
                     }
                 });
@@ -968,11 +991,135 @@ impl Workspace {
 
         history
             .into_iter()
-            .sorted_by_key(|(_, timestamp)| *timestamp)
-            .map(|(project_path, _)| project_path)
+            .sorted_by_key(|(_, (_, timestamp))| *timestamp)
+            .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
+            .filter(|(history_path, abs_path)| {
+                let latest_project_path_opened = abs_path
+                    .as_ref()
+                    .and_then(|abs_path| abs_paths_opened.get(abs_path))
+                    .and_then(|project_paths| {
+                        project_paths
+                            .iter()
+                            .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
+                    });
+
+                match latest_project_path_opened {
+                    Some(latest_project_path_opened) => latest_project_path_opened == history_path,
+                    None => true,
+                }
+            })
             .take(limit.unwrap_or(usize::MAX))
             .collect()
+    }
+
+    fn navigate_history(
+        &mut self,
+        pane: WeakViewHandle<Pane>,
+        mode: NavigationMode,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let to_load = if let Some(pane) = pane.upgrade(cx) {
+            cx.focus(&pane);
+
+            pane.update(cx, |pane, cx| {
+                loop {
+                    // Retrieve the weak item handle from the history.
+                    let entry = pane.nav_history_mut().pop(mode, cx)?;
+
+                    // If the item is still present in this pane, then activate it.
+                    if let Some(index) = entry
+                        .item
+                        .upgrade(cx)
+                        .and_then(|v| pane.index_for_item(v.as_ref()))
+                    {
+                        let prev_active_item_index = pane.active_item_index();
+                        pane.nav_history_mut().set_mode(mode);
+                        pane.activate_item(index, true, true, cx);
+                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
+
+                        let mut navigated = prev_active_item_index != pane.active_item_index();
+                        if let Some(data) = entry.data {
+                            navigated |= pane.active_item()?.navigate(data, cx);
+                        }
+
+                        if navigated {
+                            break None;
+                        }
+                    }
+                    // If the item is no longer present in this pane, then retrieve its
+                    // project path in order to reopen it.
+                    else {
+                        break pane
+                            .nav_history()
+                            .path_for_item(entry.item.id())
+                            .map(|(project_path, _)| (project_path, entry));
+                    }
+                }
+            })
+        } else {
+            None
+        };
+
+        if let Some((project_path, entry)) = to_load {
+            // If the item was no longer present, then load it again from its previous path.
+            let task = self.load_path(project_path, cx);
+            cx.spawn(|workspace, mut cx| async move {
+                let task = task.await;
+                let mut navigated = false;
+                if let Some((project_entry_id, build_item)) = task.log_err() {
+                    let prev_active_item_id = pane.update(&mut cx, |pane, _| {
+                        pane.nav_history_mut().set_mode(mode);
+                        pane.active_item().map(|p| p.id())
+                    })?;
+
+                    pane.update(&mut cx, |pane, cx| {
+                        let item = pane.open_item(project_entry_id, true, cx, build_item);
+                        navigated |= Some(item.id()) != prev_active_item_id;
+                        pane.nav_history_mut().set_mode(NavigationMode::Normal);
+                        if let Some(data) = entry.data {
+                            navigated |= item.navigate(data, cx);
+                        }
+                    })?;
+                }
+
+                if !navigated {
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            Self::navigate_history(workspace, pane, mode, cx)
+                        })?
+                        .await?;
+                }
+
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
+    }
+
+    pub fn go_back(
+        &mut self,
+        pane: WeakViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history(pane, NavigationMode::GoingBack, cx)
+    }
+
+    pub fn go_forward(
+        &mut self,
+        pane: WeakViewHandle<Pane>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history(pane, NavigationMode::GoingForward, cx)
+    }
+
+    pub fn reopen_closed_item(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
+        self.navigate_history(
+            self.active_pane().downgrade(),
+            NavigationMode::ReopeningClosedItem,
+            cx,
+        )
     }
 
     pub fn client(&self) -> &Client {
@@ -1548,6 +1695,7 @@ impl Workspace {
         let pane = cx.add_view(|cx| {
             Pane::new(
                 self.weak_handle(),
+                self.project.clone(),
                 self.app_state.background_actions,
                 self.pane_history_timestamp.clone(),
                 cx,
@@ -1567,7 +1715,7 @@ impl Workspace {
     ) -> bool {
         if let Some(center_pane) = self.last_active_center_pane.clone() {
             if let Some(center_pane) = center_pane.upgrade(cx) {
-                Pane::add_item(self, &center_pane, item, true, true, None, cx);
+                center_pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
                 true
             } else {
                 false
@@ -1578,8 +1726,38 @@ impl Workspace {
     }
 
     pub fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        let active_pane = self.active_pane().clone();
-        Pane::add_item(self, &active_pane, item, true, true, None, cx);
+        self.active_pane
+            .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+    }
+
+    pub fn open_abs_path(
+        &mut self,
+        abs_path: PathBuf,
+        visible: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        cx.spawn(|workspace, mut cx| async move {
+            let open_paths_task_result = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_paths(vec![abs_path.clone()], visible, cx)
+                })
+                .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
+                .await;
+            anyhow::ensure!(
+                open_paths_task_result.len() == 1,
+                "open abs path {abs_path:?} task returned incorrect number of results"
+            );
+            match open_paths_task_result
+                .into_iter()
+                .next()
+                .expect("ensured single task result")
+            {
+                Some(open_result) => {
+                    open_result.with_context(|| format!("open abs path {abs_path:?} task join"))
+                }
+                None => anyhow::bail!("open abs path {abs_path:?} task returned None"),
+            }
+        })
     }
 
     pub fn open_path(
@@ -1599,13 +1777,10 @@ impl Workspace {
         });
 
         let task = self.load_path(path.into(), cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
-            let pane = pane
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("pane was closed"))?;
-            this.update(&mut cx, |this, cx| {
-                Pane::open_item(this, pane, project_entry_id, focus_item, cx, build_item)
+            pane.update(&mut cx, |pane, cx| {
+                pane.open_item(project_entry_id, focus_item, cx, build_item)
             })
         })
     }
@@ -1662,8 +1837,9 @@ impl Workspace {
 
     pub fn open_shared_screen(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
         if let Some(shared_screen) = self.shared_screen_for_peer(peer_id, &self.active_pane, cx) {
-            let pane = self.active_pane.clone();
-            Pane::add_item(self, &pane, Box::new(shared_screen), false, true, None, cx);
+            self.active_pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(shared_screen), false, true, None, cx)
+            });
         }
     }
 
@@ -1750,6 +1926,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            pane::Event::AddItem { item } => item.added_to_pane(self, pane, cx),
             pane::Event::Split(direction) => {
                 self.split_pane(pane, *direction, cx);
             }
@@ -1804,7 +1981,7 @@ impl Workspace {
         let item = pane.read(cx).active_item()?;
         let maybe_pane_handle = if let Some(clone) = item.clone_on_split(self.database_id(), cx) {
             let new_pane = self.add_pane(cx);
-            Pane::add_item(self, &new_pane, clone, true, true, None, cx);
+            new_pane.update(cx, |pane, cx| pane.add_item(clone, true, true, None, cx));
             self.center.split(&pane, &new_pane, direction).unwrap();
             Some(new_pane)
         } else {
@@ -1826,7 +2003,7 @@ impl Workspace {
         let Some(from) = from.upgrade(cx) else { return; };
 
         let new_pane = self.add_pane(cx);
-        Pane::move_item(self, from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
+        self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -1852,6 +2029,41 @@ impl Workspace {
             task.await?;
             Ok(())
         }))
+    }
+
+    pub fn move_item(
+        &mut self,
+        source: ViewHandle<Pane>,
+        destination: ViewHandle<Pane>,
+        item_id_to_move: usize,
+        destination_index: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let item_to_move = source
+            .read(cx)
+            .items()
+            .enumerate()
+            .find(|(_, item_handle)| item_handle.id() == item_id_to_move);
+
+        if item_to_move.is_none() {
+            log::warn!("Tried to move item handle which was not in `from` pane. Maybe tab was closed during drop");
+            return;
+        }
+        let (item_ix, item_handle) = item_to_move.unwrap();
+        let item_handle = item_handle.clone();
+
+        if source != destination {
+            // Close item from previous pane
+            source.update(cx, |source, cx| {
+                source.remove_item(item_ix, false, cx);
+            });
+        }
+
+        // This automatically removes duplicate items in the pane
+        destination.update(cx, |destination, cx| {
+            destination.add_item(item_handle, true, true, Some(destination_index), cx);
+            cx.focus_self();
+        });
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
@@ -2457,7 +2669,9 @@ impl Workspace {
             if let Some(index) = pane.update(cx, |pane, _| pane.index_for_item(item.as_ref())) {
                 pane.update(cx, |pane, cx| pane.activate_item(index, false, false, cx));
             } else {
-                Pane::add_item(self, &pane, item.boxed_clone(), false, false, None, cx);
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item.boxed_clone(), false, false, None, cx)
+                });
             }
 
             if pane_was_focused {
@@ -3946,9 +4160,7 @@ mod tests {
         });
 
         workspace
-            .update(cx, |workspace, cx| {
-                Pane::go_back(workspace, Some(pane.downgrade()), cx)
-            })
+            .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
             .await
             .unwrap();
 

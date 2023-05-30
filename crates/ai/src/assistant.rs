@@ -10,7 +10,7 @@ use gpui::{
     WindowContext,
 };
 use isahc::{http::StatusCode, Request, RequestExt};
-use language::{language_settings::SoftWrap, Buffer, Language, LanguageRegistry};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use std::{io, sync::Arc};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -36,7 +36,7 @@ pub enum AssistantPanelEvent {
 pub struct AssistantPanel {
     width: Option<f32>,
     pane: ViewHandle<Pane>,
-    workspace: WeakViewHandle<Workspace>,
+    languages: Arc<LanguageRegistry>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -52,6 +52,7 @@ impl AssistantPanel {
                     let pane = cx.add_view(|cx| {
                         let mut pane = Pane::new(
                             workspace.weak_handle(),
+                            workspace.project().clone(),
                             workspace.app_state().background_actions,
                             Default::default(),
                             cx,
@@ -98,7 +99,7 @@ impl AssistantPanel {
 
                     Self {
                         pane,
-                        workspace: workspace.weak_handle(),
+                        languages: workspace.app_state().languages.clone(),
                         width: None,
                         _subscriptions: subscriptions,
                     }
@@ -177,28 +178,11 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            let workspace = self.workspace.clone();
-            let pane = self.pane.clone();
             let focus = self.has_focus(cx);
-            cx.spawn(|_, mut cx| async move {
-                let markdown = workspace
-                    .read_with(&cx, |workspace, _| {
-                        workspace
-                            .app_state()
-                            .languages
-                            .language_for_name("Markdown")
-                    })?
-                    .await?;
-                workspace.update(&mut cx, |workspace, cx| {
-                    let editor = Box::new(cx.add_view(|cx| {
-                        AssistantEditor::new(markdown, workspace.app_state().languages.clone(), cx)
-                    }));
-                    Pane::add_item(workspace, &pane, editor, true, focus, None, cx);
-                })?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            let editor = cx.add_view(|cx| AssistantEditor::new(self.languages.clone(), cx));
+            self.pane.update(cx, |pane, cx| {
+                pane.add_item(Box::new(editor), true, focus, None, cx)
+            });
         }
     }
 
@@ -238,7 +222,6 @@ struct Assistant {
     messages_by_id: HashMap<ExcerptId, Message>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    markdown: Arc<Language>,
     language_registry: Arc<LanguageRegistry>,
 }
 
@@ -247,18 +230,13 @@ impl Entity for Assistant {
 }
 
 impl Assistant {
-    fn new(
-        markdown: Arc<Language>,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self {
             buffer: cx.add_model(|_| MultiBuffer::new(0)),
             messages: Default::default(),
             messages_by_id: Default::default(),
             completion_count: Default::default(),
             pending_completions: Default::default(),
-            markdown,
             language_registry,
         };
         this.push_message(Role::User, cx);
@@ -323,7 +301,18 @@ impl Assistant {
     fn push_message(&mut self, role: Role, cx: &mut ModelContext<Self>) -> Message {
         let content = cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
-            buffer.set_language(Some(self.markdown.clone()), cx);
+            let markdown = self.language_registry.language_for_name("Markdown");
+            cx.spawn_weak(|buffer, mut cx| async move {
+                let markdown = markdown.await?;
+                let buffer = buffer
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_language(Some(markdown), cx)
+                });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
             buffer.set_language_registry(self.language_registry.clone());
             buffer
         });
@@ -363,12 +352,8 @@ struct AssistantEditor {
 }
 
 impl AssistantEditor {
-    fn new(
-        markdown: Arc<Language>,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let assistant = cx.add_model(|cx| Assistant::new(markdown, language_registry, cx));
+    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
+        let assistant = cx.add_model(|cx| Assistant::new(language_registry, cx));
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(assistant.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);

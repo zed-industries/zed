@@ -50,6 +50,7 @@ impl TerminalPanel {
             let window_id = cx.window_id();
             let mut pane = Pane::new(
                 workspace.weak_handle(),
+                workspace.project().clone(),
                 workspace.app_state().background_actions,
                 Default::default(),
                 cx,
@@ -176,8 +177,9 @@ impl TerminalPanel {
                 (panel, pane, items)
             })?;
 
+            let pane = pane.downgrade();
             let items = futures::future::join_all(items).await;
-            workspace.update(&mut cx, |workspace, cx| {
+            pane.update(&mut cx, |pane, cx| {
                 let active_item_id = serialized_panel
                     .as_ref()
                     .and_then(|panel| panel.active_item_id);
@@ -185,17 +187,15 @@ impl TerminalPanel {
                 for item in items {
                     if let Some(item) = item.log_err() {
                         let item_id = item.id();
-                        Pane::add_item(workspace, &pane, Box::new(item), false, false, None, cx);
+                        pane.add_item(Box::new(item), false, false, None, cx);
                         if Some(item_id) == active_item_id {
-                            active_ix = Some(pane.read(cx).items_len() - 1);
+                            active_ix = Some(pane.items_len() - 1);
                         }
                     }
                 }
 
                 if let Some(active_ix) = active_ix {
-                    pane.update(cx, |pane, cx| {
-                        pane.activate_item(active_ix, false, false, cx)
-                    });
+                    pane.activate_item(active_ix, false, false, cx)
                 }
             })?;
 
@@ -240,8 +240,10 @@ impl TerminalPanel {
                         Box::new(cx.add_view(|cx| {
                             TerminalView::new(terminal, workspace.database_id(), cx)
                         }));
-                    let focus = pane.read(cx).has_focus();
-                    Pane::add_item(workspace, &pane, terminal, true, focus, None, cx);
+                    pane.update(cx, |pane, cx| {
+                        let focus = pane.has_focus();
+                        pane.add_item(terminal, true, focus, None, cx);
+                    });
                 }
             })?;
             this.update(&mut cx, |this, cx| this.serialize(cx))?;

@@ -120,8 +120,8 @@ pub fn menus() -> Vec<Menu<'static>> {
         Menu {
             name: "Go",
             items: vec![
-                MenuItem::action("Back", workspace::GoBack { pane: None }),
-                MenuItem::action("Forward", workspace::GoForward { pane: None }),
+                MenuItem::action("Back", workspace::GoBack),
+                MenuItem::action("Forward", workspace::GoForward),
                 MenuItem::separator(),
                 MenuItem::action("Go to File", file_finder::Toggle),
                 MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),

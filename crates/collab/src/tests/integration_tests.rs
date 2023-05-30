@@ -5010,19 +5010,21 @@ async fn test_project_symbols(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::WorkspaceSymbol, _, _>(|_, _| async move {
-        #[allow(deprecated)]
-        Ok(Some(vec![lsp::SymbolInformation {
-            name: "TWO".into(),
-            location: lsp::Location {
-                uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
-                range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+    fake_language_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
+        Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
+            #[allow(deprecated)]
+            lsp::SymbolInformation {
+                name: "TWO".into(),
+                location: lsp::Location {
+                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                },
+                kind: lsp::SymbolKind::CONSTANT,
+                tags: None,
+                container_name: None,
+                deprecated: None,
             },
-            kind: lsp::SymbolKind::CONSTANT,
-            tags: None,
-            container_name: None,
-            deprecated: None,
-        }]))
+        ])))
     });
 
     // Request the definition of a symbol as the guest.
@@ -6606,7 +6608,7 @@ async fn test_basic_following(
     // When client A navigates back and forth, client B does so as well.
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_back(workspace, None, cx)
+            workspace.go_back(workspace.active_pane().downgrade(), cx)
         })
         .await
         .unwrap();
@@ -6617,7 +6619,7 @@ async fn test_basic_following(
 
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_back(workspace, None, cx)
+            workspace.go_back(workspace.active_pane().downgrade(), cx)
         })
         .await
         .unwrap();
@@ -6628,7 +6630,7 @@ async fn test_basic_following(
 
     workspace_a
         .update(cx_a, |workspace, cx| {
-            workspace::Pane::go_forward(workspace, None, cx)
+            workspace.go_forward(workspace.active_pane().downgrade(), cx)
         })
         .await
         .unwrap();

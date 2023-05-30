@@ -1,5 +1,5 @@
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -230,7 +230,7 @@ impl SerializedPane {
     pub async fn deserialize_to(
         &self,
         project: &ModelHandle<Project>,
-        pane_handle: &WeakViewHandle<Pane>,
+        pane: &WeakViewHandle<Pane>,
         workspace_id: WorkspaceId,
         workspace: &WeakViewHandle<Workspace>,
         cx: &mut AsyncAppContext,
@@ -239,7 +239,7 @@ impl SerializedPane {
         let mut active_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            let item_handle = pane_handle
+            let item_handle = pane
                 .update(cx, |_, cx| {
                     if let Some(deserializer) = cx.global::<ItemDeserializers>().get(&item.kind) {
                         deserializer(project, workspace.clone(), workspace_id, item.item_id, cx)
@@ -256,13 +256,9 @@ impl SerializedPane {
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
-                workspace.update(cx, |workspace, cx| {
-                    let pane_handle = pane_handle
-                        .upgrade(cx)
-                        .ok_or_else(|| anyhow!("pane was dropped"))?;
-                    Pane::add_item(workspace, &pane_handle, item_handle, true, true, None, cx);
-                    anyhow::Ok(())
-                })??;
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(item_handle.clone(), true, true, None, cx);
+                })?;
             }
 
             if item.active {
@@ -271,7 +267,7 @@ impl SerializedPane {
         }
 
         if let Some(active_item_index) = active_item_index {
-            pane_handle.update(cx, |pane, cx| {
+            pane.update(cx, |pane, cx| {
                 pane.activate_item(active_item_index, false, false, cx);
             })?;
         }

@@ -434,7 +434,9 @@ impl<T: Entity> ModelHandle<T> {
             Duration::from_secs(1)
         };
 
+        let executor = cx.background().clone();
         async move {
+            executor.start_waiting();
             let notification = crate::util::timeout(duration, rx.next())
                 .await
                 .expect("next notification timed out");

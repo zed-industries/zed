@@ -667,7 +667,7 @@ mod tests {
     use util::http::FakeHttpClient;
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, Pane, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -1492,7 +1492,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1501,7 +1501,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1510,7 +1510,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1519,7 +1519,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1529,7 +1529,7 @@ mod tests {
 
         // Go back one more time and ensure we don't navigate past the first item in the history.
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1538,7 +1538,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_forward(w, None, cx))
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1547,7 +1547,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_forward(w, None, cx))
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1565,7 +1565,7 @@ mod tests {
         .await
         .unwrap();
         workspace
-            .update(cx, |w, cx| Pane::go_forward(w, None, cx))
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1574,7 +1574,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_forward(w, None, cx))
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1583,7 +1583,7 @@ mod tests {
         );
 
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1605,7 +1605,7 @@ mod tests {
             .await
             .unwrap();
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1613,7 +1613,7 @@ mod tests {
             (file1.clone(), DisplayPoint::new(10, 0), 0.)
         );
         workspace
-            .update(cx, |w, cx| Pane::go_forward(w, None, cx))
+            .update(cx, |w, cx| w.go_forward(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1657,7 +1657,7 @@ mod tests {
             })
         });
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1665,7 +1665,7 @@ mod tests {
             (file1.clone(), DisplayPoint::new(2, 0), 0.)
         );
         workspace
-            .update(cx, |w, cx| Pane::go_back(w, None, cx))
+            .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
             .unwrap();
         assert_eq!(
@@ -1770,81 +1770,97 @@ mod tests {
         // Reopen all the closed items, ensuring they are reopened in the same order
         // in which they were closed.
         workspace
-            .update(cx, Pane::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(cx, Pane::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update(cx, Pane::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(cx, Pane::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening past the last closed item is a no-op.
         workspace
-            .update(cx, Pane::reopen_closed_item)
+            .update(cx, Workspace::reopen_closed_item)
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening closed items doesn't interfere with navigation history.
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         workspace
-            .update(cx, |workspace, cx| Pane::go_back(workspace, None, cx))
+            .update(cx, |workspace, cx| {
+                workspace.go_back(workspace.active_pane().downgrade(), cx)
+            })
             .await
             .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
