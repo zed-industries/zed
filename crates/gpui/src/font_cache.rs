@@ -25,8 +25,9 @@ struct Family {
 pub struct FontCache(RwLock<FontCacheState>);
 
 pub struct FontCacheState {
-    fonts: Arc<dyn platform::FontSystem>,
+    font_system: Arc<dyn platform::FontSystem>,
     families: Vec<Family>,
+    default_family: Option<FamilyId>,
     font_selections: HashMap<FamilyId, HashMap<Properties, FontId>>,
     metrics: HashMap<FontId, Metrics>,
     wrapper_pool: HashMap<(FontId, OrderedFloat<f32>), Vec<LineWrapper>>,
@@ -42,8 +43,9 @@ unsafe impl Send for FontCache {}
 impl FontCache {
     pub fn new(fonts: Arc<dyn platform::FontSystem>) -> Self {
         Self(RwLock::new(FontCacheState {
-            fonts,
+            font_system: fonts,
             families: Default::default(),
+            default_family: None,
             font_selections: Default::default(),
             metrics: Default::default(),
             wrapper_pool: Default::default(),
@@ -73,14 +75,14 @@ impl FontCache {
 
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
 
-            if let Ok(font_ids) = state.fonts.load_family(name, features) {
+            if let Ok(font_ids) = state.font_system.load_family(name, features) {
                 if font_ids.is_empty() {
                     continue;
                 }
 
                 let family_id = FamilyId(state.families.len());
                 for font_id in &font_ids {
-                    if state.fonts.glyph_for_char(*font_id, 'm').is_none() {
+                    if state.font_system.glyph_for_char(*font_id, 'm').is_none() {
                         return Err(anyhow!("font must contain a glyph for the 'm' character"));
                     }
                 }
@@ -99,6 +101,31 @@ impl FontCache {
         ))
     }
 
+    /// Returns an arbitrary font family that is available on the system.
+    pub fn known_existing_family(&self) -> FamilyId {
+        if let Some(family_id) = self.0.read().default_family {
+            return family_id;
+        }
+
+        let default_family = self
+            .load_family(
+                &["Courier", "Helvetica", "Arial", "Verdana"],
+                &Default::default(),
+            )
+            .unwrap_or_else(|_| {
+                let all_family_names = self.0.read().font_system.all_families();
+                let all_family_names: Vec<_> = all_family_names
+                    .iter()
+                    .map(|string| string.as_str())
+                    .collect();
+                self.load_family(&all_family_names, &Default::default())
+                    .expect("could not load any default font family")
+            });
+
+        self.0.write().default_family = Some(default_family);
+        default_family
+    }
+
     pub fn default_font(&self, family_id: FamilyId) -> FontId {
         self.select_font(family_id, &Properties::default()).unwrap()
     }
@@ -115,7 +142,7 @@ impl FontCache {
             let mut inner = RwLockUpgradableReadGuard::upgrade(inner);
             let family = &inner.families[family_id.0];
             let font_id = inner
-                .fonts
+                .font_system
                 .select_font(&family.font_ids, properties)
                 .unwrap_or(family.font_ids[0]);
 
@@ -137,7 +164,7 @@ impl FontCache {
         if let Some(metrics) = state.metrics.get(&font_id) {
             f(metrics)
         } else {
-            let metrics = state.fonts.font_metrics(font_id);
+            let metrics = state.font_system.font_metrics(font_id);
             let metric = f(&metrics);
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
             state.metrics.insert(font_id, metrics);
@@ -157,8 +184,11 @@ impl FontCache {
         let bounds;
         {
             let state = self.0.read();
-            glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
-            bounds = state.fonts.typographic_bounds(font_id, glyph_id).unwrap();
+            glyph_id = state.font_system.glyph_for_char(font_id, 'm').unwrap();
+            bounds = state
+                .font_system
+                .typographic_bounds(font_id, glyph_id)
+                .unwrap();
         }
         bounds.width() * self.em_scale(font_id, font_size)
     }
@@ -168,8 +198,8 @@ impl FontCache {
         let advance;
         {
             let state = self.0.read();
-            glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
-            advance = state.fonts.advance(font_id, glyph_id).unwrap();
+            glyph_id = state.font_system.glyph_for_char(font_id, 'm').unwrap();
+            advance = state.font_system.advance(font_id, glyph_id).unwrap();
         }
         advance.x() * self.em_scale(font_id, font_size)
     }
@@ -214,7 +244,7 @@ impl FontCache {
             .or_default();
         let wrapper = wrappers
             .pop()
-            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, state.fonts.clone()));
+            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, state.font_system.clone()));
         LineWrapperHandle {
             wrapper: Some(wrapper),
             font_cache: self.clone(),

@@ -343,6 +343,7 @@ pub enum RasterizationOptions {
 
 pub trait FontSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
+    fn all_families(&self) -> Vec<String>;
     fn load_family(&self, name: &str, features: &FontFeatures) -> anyhow::Result<Vec<FontId>>;
     fn select_font(
         &self,
