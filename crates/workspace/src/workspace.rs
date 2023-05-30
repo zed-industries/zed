@@ -901,7 +901,7 @@ impl Workspace {
 
                         was_visible = dock.is_open()
                             && dock
-                                .active_panel()
+                                .visible_panel()
                                 .map_or(false, |active_panel| active_panel.id() == panel.id());
                         dock.remove_panel(&panel, cx);
                     });
@@ -1636,7 +1636,7 @@ impl Workspace {
             } else {
                 dock.set_open(true, cx);
                 dock.activate_panel(panel_index, cx);
-                dock.active_panel().cloned()
+                dock.visible_panel().cloned()
             }
         });
 
@@ -1658,17 +1658,27 @@ impl Workspace {
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
-                let active_item = dock.update(cx, |dock, cx| {
-                    dock.set_open(true, cx);
+                let focus_center = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, cx);
-                    dock.active_panel().cloned()
-                });
-                if let Some(active_item) = active_item {
-                    if active_item.has_focus(cx) {
-                        cx.focus_self();
+
+                    if let Some(panel) = dock.active_panel().cloned() {
+                        if panel.has_focus(cx) {
+                            if panel.is_zoomed(cx) {
+                                dock.set_open(false, cx);
+                            }
+                            true
+                        } else {
+                            dock.set_open(true, cx);
+                            cx.focus(panel.as_any());
+                            false
+                        }
                     } else {
-                        cx.focus(active_item.as_any());
+                        false
                     }
+                });
+
+                if focus_center {
+                    cx.focus_self();
                 }
 
                 self.serialize_workspace(cx);
@@ -2835,7 +2845,7 @@ impl Workspace {
         fn build_serialized_docks(this: &Workspace, cx: &AppContext) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
-            let left_active_panel = left_dock.active_panel().and_then(|panel| {
+            let left_active_panel = left_dock.visible_panel().and_then(|panel| {
                 Some(
                     cx.view_ui_name(panel.as_any().window_id(), panel.id())?
                         .to_string(),
@@ -2844,7 +2854,7 @@ impl Workspace {
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
-            let right_active_panel = right_dock.active_panel().and_then(|panel| {
+            let right_active_panel = right_dock.visible_panel().and_then(|panel| {
                 Some(
                     cx.view_ui_name(panel.as_any().window_id(), panel.id())?
                         .to_string(),
@@ -2853,7 +2863,7 @@ impl Workspace {
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
-            let bottom_active_panel = bottom_dock.active_panel().and_then(|panel| {
+            let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
                 Some(
                     cx.view_ui_name(panel.as_any().window_id(), panel.id())?
                         .to_string(),
@@ -3035,7 +3045,7 @@ impl Workspace {
             DockPosition::Right => &self.right_dock,
             DockPosition::Bottom => &self.bottom_dock,
         };
-        let active_panel = dock.read(cx).active_panel()?;
+        let active_panel = dock.read(cx).visible_panel()?;
         let element = if Some(active_panel.id()) == self.zoomed.as_ref().map(|zoomed| zoomed.id()) {
             dock.read(cx).render_placeholder(cx)
         } else {
@@ -4172,6 +4182,82 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_toggle_panel_focus(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background());
+
+        let project = Project::test(fs, [], cx).await;
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::test_new(project, cx));
+
+        let panel = workspace.update(cx, |workspace, cx| {
+            let panel = cx.add_view(|_| TestPanel::new(DockPosition::Right));
+            workspace.add_panel(panel.clone(), cx);
+
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+
+            panel
+        });
+
+        // Transfer focus from center to panel
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(!panel.is_zoomed(cx));
+            assert!(panel.has_focus(cx));
+        });
+
+        // Transfer focus from panel to center
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(!panel.is_zoomed(cx));
+            assert!(!panel.has_focus(cx));
+        });
+
+        // Focus and zoom panel
+        panel.update(cx, |panel, cx| {
+            cx.focus_self();
+            panel.set_zoomed(true, cx)
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(cx));
+            assert!(panel.has_focus(cx));
+        });
+
+        // Transfer focus to the center closes the dock
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(cx));
+            assert!(!panel.has_focus(cx));
+        });
+
+        // Transfering focus back to the panel keeps it zoomed
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(panel.is_zoomed(cx));
+            assert!(panel.has_focus(cx));
+        });
+    }
+
+    #[gpui::test]
     async fn test_panels(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background());
@@ -4194,7 +4280,7 @@ mod tests {
 
             let left_dock = workspace.left_dock();
             assert_eq!(
-                left_dock.read(cx).active_panel().unwrap().id(),
+                left_dock.read(cx).visible_panel().unwrap().id(),
                 panel_1.id()
             );
             assert_eq!(
@@ -4204,7 +4290,12 @@ mod tests {
 
             left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
             assert_eq!(
-                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                workspace
+                    .right_dock()
+                    .read(cx)
+                    .visible_panel()
+                    .unwrap()
+                    .id(),
                 panel_2.id()
             );
 
@@ -4220,10 +4311,10 @@ mod tests {
             // Since panel_1 was visible on the left, it should now be visible now that it's been moved to the right.
             // Since it was the only panel on the left, the left dock should now be closed.
             assert!(!workspace.left_dock().read(cx).is_open());
-            assert!(workspace.left_dock().read(cx).active_panel().is_none());
+            assert!(workspace.left_dock().read(cx).visible_panel().is_none());
             let right_dock = workspace.right_dock();
             assert_eq!(
-                right_dock.read(cx).active_panel().unwrap().id(),
+                right_dock.read(cx).visible_panel().unwrap().id(),
                 panel_1.id()
             );
             assert_eq!(right_dock.read(cx).active_panel_size(cx).unwrap(), 1337.);
@@ -4238,7 +4329,12 @@ mod tests {
             // And the right dock is unaffected in it's displaying of panel_1
             assert!(workspace.right_dock().read(cx).is_open());
             assert_eq!(
-                workspace.right_dock().read(cx).active_panel().unwrap().id(),
+                workspace
+                    .right_dock()
+                    .read(cx)
+                    .visible_panel()
+                    .unwrap()
+                    .id(),
                 panel_1.id()
             );
         });
@@ -4253,7 +4349,7 @@ mod tests {
             let left_dock = workspace.left_dock();
             assert!(left_dock.read(cx).is_open());
             assert_eq!(
-                left_dock.read(cx).active_panel().unwrap().id(),
+                left_dock.read(cx).visible_panel().unwrap().id(),
                 panel_1.id()
             );
             assert_eq!(left_dock.read(cx).active_panel_size(cx).unwrap(), 1337.);
@@ -4287,7 +4383,7 @@ mod tests {
             let left_dock = workspace.left_dock();
             assert!(left_dock.read(cx).is_open());
             assert_eq!(
-                left_dock.read(cx).active_panel().unwrap().id(),
+                left_dock.read(cx).visible_panel().unwrap().id(),
                 panel_1.id()
             );
             assert!(panel_1.is_focused(cx));
@@ -4301,7 +4397,7 @@ mod tests {
             let left_dock = workspace.left_dock();
             assert!(left_dock.read(cx).is_open());
             assert_eq!(
-                left_dock.read(cx).active_panel().unwrap().id(),
+                left_dock.read(cx).visible_panel().unwrap().id(),
                 panel_1.id()
             );
         });
