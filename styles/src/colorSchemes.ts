@@ -1,11 +1,12 @@
 import fs from "fs"
 import path from "path"
-import { ColorScheme, Meta } from "./themes/common/colorScheme"
+import { ColorScheme, MetaAndLicense } from "./themes/common/colorScheme"
 
 const THEMES_DIRECTORY = path.resolve(`${__dirname}/themes`)
 const STAFF_DIRECTORY = path.resolve(`${__dirname}/themes/staff`)
 const IGNORE_ITEMS = ["staff", "common", "common.ts"]
 const ACCEPT_EXTENSION = ".ts"
+const LICENSE_FILE_NAME = "LICENSE"
 
 function getAllTsFiles(directoryPath: string) {
     const files = fs.readdirSync(directoryPath)
@@ -30,7 +31,9 @@ function getAllColorSchemes(directoryPath: string) {
     const files = getAllTsFiles(directoryPath)
     return files.map((filePath) => ({
         colorScheme: require(filePath),
-        filePath: path.basename(filePath),
+        filePath,
+        fileName: path.basename(filePath),
+        licenseFile: `${path.dirname(filePath)}/${LICENSE_FILE_NAME}`,
     }))
 }
 
@@ -45,15 +48,27 @@ function getColorSchemes(directoryPath: string) {
     return colorSchemes
 }
 
-function getMeta(directoryPath: string) {
-    const meta: Meta[] = []
+function getMetaAndLicense(directoryPath: string) {
+    const meta: MetaAndLicense[] = []
 
-    for (const { colorScheme, filePath } of getAllColorSchemes(directoryPath)) {
-        if (colorScheme.meta) {
-            meta.push(colorScheme.meta)
-        } else {
+    for (const { colorScheme, filePath, licenseFile } of getAllColorSchemes(
+        directoryPath
+    )) {
+        const licenseExists = fs.existsSync(licenseFile)
+        if (!licenseExists) {
+            throw Error(
+                `Public theme should have a LICENSE file ${licenseFile}`
+            )
+        }
+
+        if (!colorScheme.meta) {
             throw Error(`Public theme ${filePath} must have a meta field`)
         }
+
+        meta.push({
+            meta: colorScheme.meta,
+            licenseFile,
+        })
     }
 
     return meta
@@ -61,4 +76,4 @@ function getMeta(directoryPath: string) {
 
 export const colorSchemes = getColorSchemes(THEMES_DIRECTORY)
 export const staffColorSchemes = getColorSchemes(STAFF_DIRECTORY)
-export const schemeMeta = getMeta(THEMES_DIRECTORY)
+export const schemeMeta = getMetaAndLicense(THEMES_DIRECTORY)
