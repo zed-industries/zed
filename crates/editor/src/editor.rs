@@ -70,7 +70,10 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use parking_lot::RwLock;
+use project::{
+    FormatTrigger, InlayHint, Location, LocationLink, Project, ProjectPath, ProjectTransaction,
+};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -87,7 +90,10 @@ use std::{
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::Path,
-    sync::Arc,
+    sync::{
+        atomic::{self, AtomicUsize},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
@@ -535,6 +541,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
+    inlay_hints: Arc<InlayHintState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1151,6 +1158,47 @@ impl CopilotState {
     }
 }
 
+#[derive(Debug, Default)]
+struct InlayHintState {
+    hints: RwLock<Vec<InlayHint>>,
+    last_updated_timestamp: AtomicUsize,
+    hints_generation: AtomicUsize,
+}
+
+impl InlayHintState {
+    pub fn new_timestamp(&self) -> usize {
+        self.hints_generation
+            .fetch_add(1, atomic::Ordering::Release)
+            + 1
+    }
+
+    pub fn read(&self) -> Vec<InlayHint> {
+        self.hints.read().clone()
+    }
+
+    pub fn update_if_newer(&self, new_hints: Vec<InlayHint>, new_timestamp: usize) {
+        let last_updated_timestamp = self.last_updated_timestamp.load(atomic::Ordering::Acquire);
+        if last_updated_timestamp < new_timestamp {
+            let mut guard = self.hints.write();
+            match self.last_updated_timestamp.compare_exchange(
+                last_updated_timestamp,
+                new_timestamp,
+                atomic::Ordering::AcqRel,
+                atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => *guard = new_hints,
+                Err(other_value) => {
+                    if other_value < new_timestamp {
+                        self.last_updated_timestamp
+                            .store(new_timestamp, atomic::Ordering::Release);
+                        *guard = new_hints;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
@@ -1340,6 +1388,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
+            inlay_hints: Arc::new(InlayHintState::default()),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1366,6 +1415,8 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
+        // this.update_inlay_hints(cx);
+
         this
     }
 
@@ -2151,10 +2202,6 @@ impl Editor {
                 }
             }
 
-            if let Some(hints_task) = this.request_inlay_hints(cx) {
-                hints_task.detach_and_log_err(cx);
-            }
-
             if had_active_copilot_suggestion {
                 this.refresh_copilot_suggestions(true, cx);
                 if !this.has_active_copilot_suggestion(cx) {
@@ -2581,25 +2628,45 @@ impl Editor {
         }
     }
 
-    // TODO kb proper inlay hints handling
-    fn request_inlay_hints(&self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let project = self.project.as_ref()?;
+    fn update_inlay_hints(&self, cx: &mut ViewContext<Self>) {
+        if self.mode != EditorMode::Full {
+            return;
+        }
         let position = self.selections.newest_anchor().head();
-        let (buffer, _) = self
+        let Some((buffer, _)) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(position.clone(), cx)?;
+            .text_anchor_for_position(position.clone(), cx) else { return };
 
-        let end = buffer.read(cx).len();
-        let inlay_hints_task = project.update(cx, |project, cx| {
-            project.inlay_hints(buffer.clone(), 0..end, cx)
-        });
+        let generator_buffer = buffer.clone();
+        let inlay_hints_storage = Arc::clone(&self.inlay_hints);
+        // TODO kb should this come from external things like transaction counter instead?
+        // This way we can reuse tasks result for the same timestamp? The counter has to be global among all buffer changes & other reloads.
+        let new_timestamp = self.inlay_hints.new_timestamp();
 
-        Some(cx.spawn(|_, _| async move {
-            let inlay_hints = inlay_hints_task.await?;
-            dbg!(inlay_hints);
-            Ok(())
-        }))
+        // TODO kb this would not work until the language server is ready, how to wait for it?
+        // TODO kb waiting before the server starts and handling workspace/inlayHint/refresh commands is kind of orthogonal?
+        // need to be able to not to start new tasks, if current one is running on the same state already.
+        cx.spawn(|editor, mut cx| async move {
+            let task = editor.update(&mut cx, |editor, cx| {
+                editor.project.as_ref().map(|project| {
+                    project.update(cx, |project, cx| {
+                        // TODO kb use visible_lines as a range instead?
+                        let end = generator_buffer.read(cx).len();
+                        project.inlay_hints(generator_buffer, 0..end, cx)
+                    })
+                })
+            })?;
+
+            if let Some(task) = task {
+                // TODO kb contexts everywhere
+                let new_hints = task.await?;
+                inlay_hints_storage.update_if_newer(new_hints, new_timestamp);
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn trigger_on_type_formatting(
@@ -6640,7 +6707,10 @@ impl Editor {
     ) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx);
         update(self, cx);
-        self.end_transaction_at(Instant::now(), cx)
+        let transaction_id = self.end_transaction_at(Instant::now(), cx);
+        // TODO kb is this the right idea? Maybe instead we should react on `BufferEvent::Edited`?
+        self.update_inlay_hints(cx);
+        transaction_id
     }
 
     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {

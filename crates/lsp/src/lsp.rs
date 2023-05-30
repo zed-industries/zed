@@ -389,7 +389,7 @@ impl LanguageServer {
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
-                        refresh_support: Default::default(),
+                        refresh_support: Some(true),
                     }),
                     ..Default::default()
                 }),

@@ -325,7 +325,7 @@ pub struct Location {
     pub range: Range<language::Anchor>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InlayHint {
     pub position: Anchor,
     pub label: InlayHintLabel,
@@ -333,32 +333,32 @@ pub struct InlayHint {
     pub tooltip: Option<InlayHintTooltip>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InlayHintLabel {
     String(String),
     LabelParts(Vec<InlayHintLabelPart>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
     pub location: Option<Location>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InlayHintTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InlayHintLabelPartTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MarkupContent {
     pub kind: String,
     pub value: String,
@@ -2809,6 +2809,24 @@ impl Project {
                 }
             })
             .detach();
+
+            language_server
+                .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
+                    dbg!("!!!!!!!!!!!!!!");
+                    let this = this.downgrade();
+                    move |params, cx| async move {
+                        // TODO kb: trigger an event, to call on every open editor
+                        // TODO kb does not get called now, why?
+                        dbg!("@@@@@@@@@@@@@@@@@@@@@@@@@@");
+
+                        let _this = this
+                            .upgrade(&cx)
+                            .ok_or_else(|| anyhow!("project dropped"))?;
+                        dbg!(params);
+                        Ok(())
+                    }
+                })
+                .detach();
 
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token.clone();
