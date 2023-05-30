@@ -503,13 +503,21 @@ impl View for PanelButtons {
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(MouseButton::Left, {
+                                let tooltip_action =
+                                    tooltip_action.as_ref().map(|action| action.boxed_clone());
                                 move |_, this, cx| {
-                                    if let Some(workspace) = this.workspace.upgrade(cx) {
-                                        cx.window_context().defer(move |cx| {
-                                            workspace.update(cx, |workspace, cx| {
-                                                workspace.toggle_panel(dock_position, panel_ix, cx)
-                                            });
-                                        });
+                                    if let Some(tooltip_action) = &tooltip_action {
+                                        let window_id = cx.window_id();
+                                        let view_id = this.workspace.id();
+                                        let tooltip_action = tooltip_action.boxed_clone();
+                                        cx.spawn(|_, mut cx| async move {
+                                            cx.dispatch_action(
+                                                window_id,
+                                                view_id,
+                                                &*tooltip_action,
+                                            )
+                                            .ok();
+                                        }).detach();
                                     }
                                 }
                             })
