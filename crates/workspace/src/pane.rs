@@ -2,8 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch,
-    ToggleZoom, Workspace, WorkspaceSettings, NewCenterTerminal,
+    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewCenterTerminal, NewFile,
+    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};

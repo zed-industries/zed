@@ -517,7 +517,8 @@ impl View for PanelButtons {
                                                 &*tooltip_action,
                                             )
                                             .ok();
-                                        }).detach();
+                                        })
+                                        .detach();
                                     }
                                 }
                             })

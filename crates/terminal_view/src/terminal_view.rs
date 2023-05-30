@@ -38,7 +38,7 @@ use workspace::{
     notifications::NotifyResultExt,
     pane, register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    Pane, ToolbarItemLocation, Workspace, WorkspaceId, NewCenterTerminal,
+    NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub use terminal::TerminalSettings;

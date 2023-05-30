@@ -220,15 +220,16 @@ impl TerminalPanel {
         }
     }
 
-
-    fn new_terminal(workspace: &mut Workspace, _: &workspace::NewTerminal, cx: &mut ViewContext<Workspace>) {
+    fn new_terminal(
+        workspace: &mut Workspace,
+        _: &workspace::NewTerminal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let Some(this) = workspace.focus_panel::<Self>(cx) else {
             return;
         };
 
-        this.update(cx, |this, cx| {
-            this.add_terminal(cx)
-        })
+        this.update(cx, |this, cx| this.add_terminal(cx))
     }
 
     fn add_terminal(&mut self, cx: &mut ViewContext<Self>) {

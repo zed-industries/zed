@@ -53,9 +53,10 @@ use std::{
     cmp, env,
     future::Future,
     path::{Path, PathBuf},
+    rc::Rc,
     str,
     sync::{atomic::AtomicUsize, Arc},
-    time::Duration, rc::Rc,
+    time::Duration,
 };
 
 use crate::{
@@ -1623,14 +1624,21 @@ impl Workspace {
     }
 
     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
-        self.show_or_hide_panel::<T>(cx, |_, _| true)?.as_any().clone().downcast()
+        self.show_or_hide_panel::<T>(cx, |_, _| true)?
+            .as_any()
+            .clone()
+            .downcast()
     }
 
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
         self.show_or_hide_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
     }
 
-    fn show_or_hide_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>, show: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool) -> Option<Rc<dyn PanelHandle>> {
+    fn show_or_hide_panel<T: Panel>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        show: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+    ) -> Option<Rc<dyn PanelHandle>> {
         for (dock, position) in [
             self.left_dock.clone(),
             self.bottom_dock.clone(),
