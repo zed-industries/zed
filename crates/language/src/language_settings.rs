@@ -19,21 +19,16 @@ pub fn language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
-    settings::get_local::<AllLanguageSettings>(
-        file.map(|f| (f.worktree_id(), f.path().as_ref())),
-        cx,
-    )
-    .language(language.map(|l| l.name()).as_deref())
+    let language_name = language.map(|l| l.name());
+    all_language_settings(file, cx).language(language_name.as_deref())
 }
 
 pub fn all_language_settings<'a>(
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
-    settings::get_local::<AllLanguageSettings>(
-        file.map(|f| (f.worktree_id(), f.path().as_ref())),
-        cx,
-    )
+    let location = file.map(|f| (f.worktree_id(), f.path().as_ref()));
+    settings::get_local(location, cx)
 }
 
 #[derive(Debug, Clone)]
