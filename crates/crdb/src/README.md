@@ -16,7 +16,7 @@ Documents in a context can be associated with metadata. If a document is associa
 
 #### Conversations are also documents
 
-Contexts can also be associated with conversations, which are special documents that embed other documents that represent messages. Messages are embedded via a mechanism called *transclusion*, which will be discussed further below.
+Contexts can also be associated with conversations, which are special documents that embed other documents that represent messages. Messages are embedded via a mechanism called *portals*, which will be discussed further below.
 
 ### Contexts occupy a hierarchical namespace
 
@@ -30,18 +30,43 @@ For example, at genesis, zed.dev will contain the following channels:
     - Users we've worked with.
 #zed/zed
     - This contains the actual source code for Zed.
-
-
-
-
-https://zed.dev/zed -> The #zed channel.
-https://zed.dev/zed/insiders -> The #zed/insiders channel.
-
+    - It also has a conversation where potential contributors can engage with us and each other.
+#zed/zed/debugger
+    - A subcontext of zed/zed where we talk about and eventually implement a debugger. Associated with a different branch of zed/zed where the debugger is being built, but could also have multiple branches. Branches and contexts are independent.
 
 ## Versions
 
-Our current buffer CRDT represents versions with version vectors. Every collaborator is assigned a unique replica id, and for each collaborator that has ever participated, there is an entry in the version vector mapping their replica id to an operation count.
+Our goal is for each context to allow an arbitrary number of branches to be created, where each branch can be edited independently from other branches. Synchronization between branches can be deferred to a time of the user's choosing, like Git, or branches can be kept in sync in real time. Every branch is associated with a version.
 
-With CRDB, our goal is to expand from an individual buffer to collections of multiple documents called *contexts*. Each context allows an arbitrary number of branches to be created, and each branch can be edited independently from other branches, with synchronization between branches performed at a time of the user's choosing, much like Git.
+A version identifies a subset of all operations that have been performed in a context. If we start from an empty context and applied the operations in this subset in any causally valid order, we arrive at the unique state of the context described by the version.
 
-This raises some concerns about using vectors to represent versions, as the size of the vectors will grow linearly in the number of branches, even if portions of the vectors
+We use versions to query the database. Since we're storing every operation, it isn't feasible to always load every operation in a context into a given replica.
+
+Instead, we can query the database to return a snapshot of how it appears at a specific version. To do that, given the sequence of fragments, we need to efficiently query all fragments within that sequence that are visible at a given version.
+
+* We want to exclude fragments from subsequent and concurrent versions.
+* We want to include fragments introduced before the given version, but only those that are still visible.
+
+We maintain a B-tree index for all fragments.
+
+When querying this B-tree, we only want to descend into subtrees that contain at least one fragment whose insertion causally precedes the target version. But based on our hypothesis that hidden fragments will tend to cluster, we want to avoid descending into nodes for which all the fragments in question are invisible at the current version.
+
+To support descending into nodes that contain operations from a current version, we index the minimal set of concurrent versions that causally precede all fragments in each subtree. Put another way: If a node only contains fragments that were concurrent or subsequent to our target version, we can skip it.
+
+How can we skip nodes that only contain fragments that were hidden before our version?
+
+Here's an idea I'm still thinking through:
+
+For each subtree, we maintain the following version sets in its summary:
+
+I'm wondering if the fragment summary can contain a history of versions at which the first fragment in the sequence appears or the last fragment in the sequence is hidden.
+
+Then, when combining fragments, we combine these summaries, producing a new history in which the first fragment is introduced or all fragments are hidden. Assuming we have this summary, we can use it to determine if a node contains any visible fragments in a given version.
+
+But not quite sure how to produce this summary yet.
+
+For one fragment, every time it becomes hidden or visible we would add an entry to this history. How do we combine two histories?
+           v0          v1          v2          v3
+History A: show first, hide last
+History B:                         show first, hide last
+Combined:  v0: show first, v1: hide last, v2: show first, v3: hide last
