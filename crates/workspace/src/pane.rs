@@ -541,7 +541,6 @@ impl Pane {
         cx.spawn(|_, mut cx| async move { notify_of_new_dock(&workspace_handle, &mut cx) })
             .detach();
 
-
         if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {

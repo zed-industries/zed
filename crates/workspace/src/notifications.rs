@@ -163,9 +163,10 @@ pub mod simple_message_notification {
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
+        fonts::TextStyle,
         impl_actions,
         platform::{CursorStyle, MouseButton},
-        AnyElement, AppContext, Element, Entity, View, ViewContext, fonts::TextStyle,
+        AnyElement, AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;
@@ -224,8 +225,9 @@ pub mod simple_message_notification {
             }
         }
 
-        pub fn new_element(message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>) -> MessageNotification
-        {
+        pub fn new_element(
+            message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
+        ) -> MessageNotification {
             Self {
                 message: NotificationMessage::Element(message),
                 on_click: None,
@@ -279,7 +281,8 @@ pub mod simple_message_notification {
                 .with_child(
                     Flex::row()
                         .with_child(
-                            message.contained()
+                            message
+                                .contained()
                                 .with_style(theme.message.container)
                                 .aligned()
                                 .top()

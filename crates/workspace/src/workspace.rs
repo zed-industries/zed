@@ -3198,13 +3198,8 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
     if workspace
         .read_with(cx, |workspace, cx| {
             let version = cx.global::<ZedVersion>().0;
-            if !version.contains("0.88")
-                && !version.contains("0.89")
-                && !version.contains("0.90")
-                && !version.contains("0.91")
-                && !version.contains("0.92")
-            {
-                return true;
+            if version.contains("0.91") {
+                panic!("Please remove the dock key binding change notification");
             }
             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
         })
@@ -3251,8 +3246,6 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
     workspace
         .update(cx, |workspace, cx| {
             workspace.show_notification_once(2, cx, |cx| {
-
-
                 cx.add_view(|_| {
                     MessageNotification::new_element(|text, _| {
                         Text::new(
@@ -3274,9 +3267,6 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
                         })
                         .into_any()
                     })
-                    // MessageNotification::new_(
-                    //     "Looking for the dock? Try 'ctrl-`'!\n'shift-escape' now zooms your pane",
-                    // )
                     .with_click_message("Read more about the new panel system")
                     .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
                 })
