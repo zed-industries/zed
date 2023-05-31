@@ -94,6 +94,9 @@ export default function tabBar(colorScheme: ColorScheme) {
             hover: {
                 color: foreground(layer, "hovered"),
             },
+            active: {
+                color: foreground(layer, "accent"),
+            }
         },
         paneButtonContainer: {
             background: tab.background,

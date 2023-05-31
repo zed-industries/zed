@@ -894,18 +894,24 @@ impl Workspace {
                         }
                     });
                 } else if T::should_zoom_in_on_event(event) {
-                    this.zoom_out(cx);
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
                     if panel.has_focus(cx) {
                         this.zoomed = Some(panel.downgrade().into_any());
                         this.zoomed_position = Some(panel.read(cx).position(cx));
                     }
                 } else if T::should_zoom_out_on_event(event) {
-                    this.zoom_out(cx);
+                    dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
+                    if this.zoomed_position == Some(prev_position) {
+                        this.zoomed = None;
+                        this.zoomed_position = None;
+                    }
+                    cx.notify();
                 } else if T::is_focus_event(event) {
+                    let position = panel.read(cx).position(cx);
+                    this.dismiss_zoomed_items_to_reveal(Some(position), cx);
                     if panel.is_zoomed(cx) {
                         this.zoomed = Some(panel.downgrade().into_any());
-                        this.zoomed_position = Some(panel.read(cx).position(cx));
+                        this.zoomed_position = Some(position);
                     } else {
                         this.zoomed = None;
                         this.zoomed_position = None;
@@ -1485,7 +1491,7 @@ impl Workspace {
             DockPosition::Right => &self.right_dock,
         };
         let mut focus_center = false;
-        let mut zoom_out = false;
+        let mut reveal_dock = false;
         dock.update(cx, |dock, cx| {
             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
             let was_visible = dock.is_open() && !other_is_zoomed;
@@ -1500,14 +1506,15 @@ impl Workspace {
                     if active_panel.is_zoomed(cx) {
                         cx.focus(active_panel.as_any());
                     }
-                    zoom_out = true;
+                    reveal_dock = true;
                 }
             }
         });
 
-        if zoom_out {
-            self.zoom_out_everything_except(dock_side, cx);
+        if reveal_dock {
+            self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
         }
+
         if focus_center {
             cx.focus_self();
         }
@@ -1516,62 +1523,49 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
+    /// Transfer focus to the panel of the given type.
     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
-        self.show_or_hide_panel::<T>(cx, |_, _| true)?
+        self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
             .as_any()
             .clone()
             .downcast()
     }
 
+    /// Focus the panel of the given type if it isn't already focused. If it is
+    /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        self.show_or_hide_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
     }
 
-    fn show_or_hide_panel<T: Panel>(
+    /// Focus or unfocus the given panel type, depending on the given callback.
+    fn focus_or_unfocus_panel<T: Panel>(
         &mut self,
         cx: &mut ViewContext<Self>,
-        show: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+        should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
     ) -> Option<Rc<dyn PanelHandle>> {
-        for (dock, position) in [
-            self.left_dock.clone(),
-            self.bottom_dock.clone(),
-            self.right_dock.clone(),
-        ]
-        .into_iter()
-        .zip(
-            [
-                DockPosition::Left,
-                DockPosition::Bottom,
-                DockPosition::Right,
-            ]
-            .into_iter(),
-        ) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
-                let mut zoom_out = false;
+                let mut reveal_dock = false;
                 let panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, cx);
 
                     let panel = dock.active_panel().cloned();
                     if let Some(panel) = panel.as_ref() {
-                        let should_show = show(&**panel, cx);
-                        if should_show {
+                        if should_focus(&**panel, cx) {
                             dock.set_open(true, cx);
                             cx.focus(panel.as_any());
-                            zoom_out = true;
+                            reveal_dock = true;
                         } else {
-                            if panel.is_zoomed(cx) {
-                                dock.set_open(false, cx);
-                            }
+                            // if panel.is_zoomed(cx) {
+                            //     dock.set_open(false, cx);
+                            // }
                             focus_center = true;
                         }
                     }
                     panel
                 });
 
-                if zoom_out {
-                    self.zoom_out_everything_except(position, cx);
-                }
                 if focus_center {
                     cx.focus_self();
                 }
@@ -1598,28 +1592,38 @@ impl Workspace {
         cx.notify();
     }
 
-    fn zoom_out_everything_except(
+    fn dismiss_zoomed_items_to_reveal(
         &mut self,
-        except_position: DockPosition,
+        dock_to_reveal: Option<DockPosition>,
         cx: &mut ViewContext<Self>,
     ) {
+        // If a center pane is zoomed, unzoom it.
         for pane in &self.panes {
-            pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+            if pane != &self.active_pane {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+            }
         }
 
-        if except_position != DockPosition::Left {
-            self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        // If another dock is zoomed, hide it.
+        let mut focus_center = false;
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+            dock.update(cx, |dock, cx| {
+                if Some(dock.position()) != dock_to_reveal {
+                    if let Some(panel) = dock.active_panel() {
+                        if panel.is_zoomed(cx) {
+                            focus_center |= panel.has_focus(cx);
+                            dock.set_open(false, cx);
+                        }
+                    }
+                }
+            });
         }
 
-        if except_position != DockPosition::Bottom {
-            self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        if focus_center {
+            cx.focus_self();
         }
 
-        if except_position != DockPosition::Right {
-            self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        }
-
-        if self.zoomed_position != Some(except_position) {
+        if self.zoomed_position != dock_to_reveal {
             self.zoomed = None;
             self.zoomed_position = None;
         }
@@ -1831,6 +1835,7 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
+        self.dismiss_zoomed_items_to_reveal(None, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into_any());
         } else {
@@ -1891,7 +1896,6 @@ impl Workspace {
             }
             pane::Event::ZoomIn => {
                 if pane == self.active_pane {
-                    self.zoom_out(cx);
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                     if pane.read(cx).has_focus() {
                         self.zoomed = Some(pane.downgrade().into_any());
@@ -1900,7 +1904,13 @@ impl Workspace {
                     cx.notify();
                 }
             }
-            pane::Event::ZoomOut => self.zoom_out(cx),
+            pane::Event::ZoomOut => {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+                if self.zoomed_position.is_none() {
+                    self.zoomed = None;
+                }
+                cx.notify();
+            }
         }
 
         self.serialize_workspace(cx);
@@ -3134,32 +3144,36 @@ impl View for Workspace {
                                         enum ZoomBackground {}
                                         let zoomed = zoomed.upgrade(cx)?;
 
-                                        let mut foreground_style;
-                                        match self.zoomed_position {
-                                            Some(DockPosition::Left) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.left = 0.;
-                                                foreground_style.margin.top = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            Some(DockPosition::Right) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.right = 0.;
-                                                foreground_style.margin.top = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            Some(DockPosition::Bottom) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.left = 0.;
-                                                foreground_style.margin.right = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            None => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_pane_foreground;
+                                        let mut foreground_style =
+                                            theme.workspace.zoomed_pane_foreground;
+                                        if let Some(zoomed_dock_position) = self.zoomed_position {
+                                            foreground_style =
+                                                theme.workspace.zoomed_panel_foreground;
+                                            let margin = foreground_style.margin.top;
+                                            let border = foreground_style.border.top;
+
+                                            // Only include a margin and border on the opposite side.
+                                            foreground_style.margin.top = 0.;
+                                            foreground_style.margin.left = 0.;
+                                            foreground_style.margin.bottom = 0.;
+                                            foreground_style.margin.right = 0.;
+                                            foreground_style.border.top = false;
+                                            foreground_style.border.left = false;
+                                            foreground_style.border.bottom = false;
+                                            foreground_style.border.right = false;
+                                            match zoomed_dock_position {
+                                                DockPosition::Left => {
+                                                    foreground_style.margin.right = margin;
+                                                    foreground_style.border.right = border;
+                                                }
+                                                DockPosition::Right => {
+                                                    foreground_style.margin.left = margin;
+                                                    foreground_style.border.left = border;
+                                                }
+                                                DockPosition::Bottom => {
+                                                    foreground_style.margin.top = margin;
+                                                    foreground_style.border.top = border;
+                                                }
                                             }
                                         }
 
