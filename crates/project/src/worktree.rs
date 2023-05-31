@@ -677,19 +677,16 @@ impl Worktree {
             Worktree::Remote(worktree) => worktree.abs_path.clone(),
         }
     }
+
+    pub fn root_file(&self, cx: &mut ModelContext<Self>) -> Option<Arc<File>> {
+        let entry = self.root_entry()?;
+        Some(File::for_entry(entry.clone(), cx.handle()))
+    }
 }
 
 impl LocalWorktree {
     pub fn contains_abs_path(&self, path: &Path) -> bool {
         path.starts_with(&self.abs_path)
-    }
-
-    fn absolutize(&self, path: &Path) -> PathBuf {
-        if path.file_name().is_some() {
-            self.abs_path.join(path)
-        } else {
-            self.abs_path.to_path_buf()
-        }
     }
 
     pub(crate) fn load_buffer(
@@ -1544,6 +1541,14 @@ impl Snapshot {
         &self.abs_path
     }
 
+    pub fn absolutize(&self, path: &Path) -> PathBuf {
+        if path.file_name().is_some() {
+            self.abs_path.join(path)
+        } else {
+            self.abs_path.to_path_buf()
+        }
+    }
+
     pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
         self.entries_by_id.get(&entry_id, &()).is_some()
     }
@@ -2383,6 +2388,10 @@ impl language::File for File {
             .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name))
     }
 
+    fn worktree_id(&self) -> usize {
+        self.worktree.id()
+    }
+
     fn is_deleted(&self) -> bool {
         self.is_deleted
     }
@@ -2447,6 +2456,17 @@ impl language::LocalFile for File {
 }
 
 impl File {
+    pub fn for_entry(entry: Entry, worktree: ModelHandle<Worktree>) -> Arc<Self> {
+        Arc::new(Self {
+            worktree,
+            path: entry.path.clone(),
+            mtime: entry.mtime,
+            entry_id: entry.id,
+            is_local: true,
+            is_deleted: false,
+        })
+    }
+
     pub fn from_proto(
         proto: rpc::proto::File,
         worktree: ModelHandle<Worktree>,
@@ -2507,7 +2527,7 @@ pub enum EntryKind {
     File(CharBag),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PathChange {
     /// A filesystem entry was was created.
     Added,

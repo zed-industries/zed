@@ -135,7 +135,10 @@ impl LspAdapter for JsonLspAdapter {
                     },
                     "schemas": [
                         {
-                            "fileMatch": [schema_file_match(&paths::SETTINGS)],
+                            "fileMatch": [
+                                schema_file_match(&paths::SETTINGS),
+                                &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                            ],
                             "schema": settings_schema,
                         },
                         {

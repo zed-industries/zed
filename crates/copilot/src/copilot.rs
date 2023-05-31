@@ -318,7 +318,7 @@ impl Copilot {
     fn enable_or_disable_copilot(&mut self, cx: &mut ModelContext<Copilot>) {
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        if all_language_settings(cx).copilot_enabled(None, None) {
+        if all_language_settings(None, cx).copilot_enabled(None, None) {
             if matches!(self.server, CopilotServer::Disabled) {
                 let start_task = cx
                     .spawn({
@@ -785,10 +785,7 @@ impl Copilot {
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
-        let settings = language_settings(
-            buffer.language_at(position).map(|l| l.name()).as_deref(),
-            cx,
-        );
+        let settings = language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx);
         let tab_size = settings.tab_size;
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
@@ -1174,6 +1171,10 @@ mod tests {
 
         fn to_proto(&self) -> rpc::proto::File {
             unimplemented!()
+        }
+
+        fn worktree_id(&self) -> usize {
+            0
         }
     }
 

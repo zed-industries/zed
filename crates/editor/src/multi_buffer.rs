@@ -1377,8 +1377,14 @@ impl MultiBuffer {
         point: T,
         cx: &'a AppContext,
     ) -> &'a LanguageSettings {
-        let language = self.language_at(point, cx);
-        language_settings(language.map(|l| l.name()).as_deref(), cx)
+        let mut language = None;
+        let mut file = None;
+        if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
+            let buffer = buffer.read(cx);
+            language = buffer.language_at(offset);
+            file = buffer.file();
+        }
+        language_settings(language.as_ref(), file, cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
@@ -2785,9 +2791,13 @@ impl MultiBufferSnapshot {
         point: T,
         cx: &'a AppContext,
     ) -> &'a LanguageSettings {
-        self.point_to_buffer_offset(point)
-            .map(|(buffer, offset)| buffer.settings_at(offset, cx))
-            .unwrap_or_else(|| language_settings(None, cx))
+        let mut language = None;
+        let mut file = None;
+        if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
+            language = buffer.language_at(offset);
+            file = buffer.file();
+        }
+        language_settings(language, file, cx)
     }
 
     pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {
