@@ -93,22 +93,25 @@ Fundamental operations:
 
 - [ ] Efficient cloning and storage
 - [x] Partial ordering
-- [ ] Operation id generation given a branch id, which can also be used to fork by supplying a new branch id.
+- [x] Operation id generation given a branch id, which can also be used to fork by supplying a new branch id.
 - [ ] Join: Given two versions, produce a version that is >= both.
 - [ ] Meet: Given two versions, produce a version that is <= both.
 
 The version graph is actually a CRDT.
 
 ```rust
-#[derive(Default)]
+struct Db {
+    versions: OrderedMap<OperationId, Version>,
+}
+
 struct Version {
-    maximal_operations: Sequence<OperationId>,
+    maximal_operations: SmallVec<[OperationId; 2]>,
     operations: Sequence<OperationId>,
 }
 
 struct OperationId {
     branch_id: BranchId,
-    operation_count: OperationCount,
+    time: LamportTime,
 }
 
 impl PartialOrd for Version {
@@ -126,8 +129,67 @@ impl PartialOrd for Version {
 }
 
 impl Version {
-    fn operation(&mut self, branch: BranchId) -> OperationId {
+    pub fn observe(&mut self, operation: BranchId) {
+        let operation_count = if let Some(prev_count) = self.operations.get(&branch) {
+            let operation_count = prev_count + 1;
+            self.operations.insert(branch, operation_count);
+            operation_count
+        } else {
+            self.operations.insert(branch, 1);
+            1
+        };
 
+        OperationId {
+            branch,
+            operation_count,
+        }
     }
+
+    /// Return a version that is >= both self and other.
+    pub fn join(&self, other: &Self) -> Self {
+        match self.partial_cmp(other) {
+            Some(Ordering::Equal) | Some(Ordering::Greater) => self.clone(),
+            Some(Ordering::Less) => other.clone(),
+            None => {
+                // merge the operations and maximal operations
+                // remove redundancy in maximal operations
+            }
+        }
+    }
+
+    /// Return a version that is <= both self and other.
+    pub fn meet(&self, other: &Self) -> Self {
+        match self.partial_cmp(other) {
+            Some(Ordering::Equal) | Some(Ordering::Greater) => other.clone(),
+            Some(Ordering::Less) => self.clone(),
+            None => {
+                // intersect the operations
+                // the maximal operation is the operation with the max lamport time
+            }
+        }
+    }
+}
+
+
+#[test]
+fn test_operations() {
+    let branch_1 = todo!();
+    let branch_2 = todo!();
+
+    let mut version_a = Version::default();
+    let mut version_b = version_a.clone();
+    version_a.operation()
+    version_b.operation()
+    let met_version = version_a.meet(&version_b);
+
+    assert!(met_version <= version_a);
+    assert!(met_version <= version_b);
+}
+
+fn receive_op(&mut self, operation: &Operation) {
+    let version = self.versions.observe(&operation.parents, operation.id)
+
+    Fragment::new(self.version.clone());
+
 }
 ```
