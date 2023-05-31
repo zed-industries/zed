@@ -268,6 +268,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         0,
                         "icons/plus_12.svg",
+                        false,
                         Some(("New...".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_new_menu(cx),
@@ -277,6 +278,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         1,
                         "icons/split_12.svg",
+                        false,
                         Some(("Split Pane".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_split_menu(cx),
@@ -290,6 +292,7 @@ impl Pane {
                         } else {
                             "icons/maximize_8.svg"
                         },
+                        pane.is_zoomed(),
                         Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
@@ -1401,6 +1404,7 @@ impl Pane {
     pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
         index: usize,
         icon: &'static str,
+        active: bool,
         tooltip: Option<(String, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F,
@@ -1410,7 +1414,7 @@ impl Pane {
 
         let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
             let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
-            let style = theme.pane_button.style_for(mouse_state, false);
+            let style = theme.pane_button.style_for(mouse_state, active);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()
