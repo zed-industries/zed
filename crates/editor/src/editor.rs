@@ -1178,6 +1178,7 @@ impl InlayHintState {
 
     pub fn update_if_newer(&self, new_hints: Vec<InlayHint>, new_timestamp: usize) {
         let last_updated_timestamp = self.last_updated_timestamp.load(atomic::Ordering::Acquire);
+        dbg!(last_updated_timestamp, new_timestamp, new_hints.len());
         if last_updated_timestamp < new_timestamp {
             let mut guard = self.hints.write();
             match self.last_updated_timestamp.compare_exchange(
@@ -1330,12 +1331,22 @@ impl Editor {
         let soft_wrap_mode_override =
             (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
 
-        let mut project_subscription = None;
+        let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full && buffer.read(cx).is_singleton() {
             if let Some(project) = project.as_ref() {
-                project_subscription = Some(cx.observe(project, |_, _, cx| {
+                project_subscriptions.push(cx.observe(project, |_, _, cx| {
                     cx.emit(Event::TitleChanged);
-                }))
+                }));
+                project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
+                    match event {
+                        project::Event::LanguageServerReady(_) => {
+                            dbg!("@@@@@@@@@@@@@ ReceiveD event");
+                            editor.update_inlay_hints(cx);
+                        }
+                        _ => {}
+                    };
+                    cx.notify()
+                }));
             }
         }
 
@@ -1399,9 +1410,7 @@ impl Editor {
             ],
         };
 
-        if let Some(project_subscription) = project_subscription {
-            this._subscriptions.push(project_subscription);
-        }
+        this._subscriptions.extend(project_subscriptions);
 
         this.end_selection(cx);
         this.scroll_manager.show_scrollbar(cx);
@@ -1415,8 +1424,6 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
-        // this.update_inlay_hints(cx);
-
         this
     }
 
@@ -2644,14 +2651,12 @@ impl Editor {
         // This way we can reuse tasks result for the same timestamp? The counter has to be global among all buffer changes & other reloads.
         let new_timestamp = self.inlay_hints.new_timestamp();
 
-        // TODO kb this would not work until the language server is ready, how to wait for it?
         // TODO kb waiting before the server starts and handling workspace/inlayHint/refresh commands is kind of orthogonal?
         // need to be able to not to start new tasks, if current one is running on the same state already.
         cx.spawn(|editor, mut cx| async move {
             let task = editor.update(&mut cx, |editor, cx| {
                 editor.project.as_ref().map(|project| {
                     project.update(cx, |project, cx| {
-                        // TODO kb use visible_lines as a range instead?
                         let end = generator_buffer.read(cx).len();
                         project.inlay_hints(generator_buffer, 0..end, cx)
                     })
@@ -6707,10 +6712,7 @@ impl Editor {
     ) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), cx);
         update(self, cx);
-        let transaction_id = self.end_transaction_at(Instant::now(), cx);
-        // TODO kb is this the right idea? Maybe instead we should react on `BufferEvent::Edited`?
-        self.update_inlay_hints(cx);
-        transaction_id
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
@@ -7190,7 +7192,7 @@ impl Editor {
         event: &multi_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        match event {
+        let update_inlay_hints = match event {
             multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
@@ -7198,30 +7200,62 @@ impl Editor {
                     self.update_visible_copilot_suggestion(cx);
                 }
                 cx.emit(Event::BufferEdited);
+                true
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
                 predecessor,
                 excerpts,
-            } => cx.emit(Event::ExcerptsAdded {
-                buffer: buffer.clone(),
-                predecessor: *predecessor,
-                excerpts: excerpts.clone(),
-            }),
-            multi_buffer::Event::ExcerptsRemoved { ids } => {
-                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() })
+            } => {
+                cx.emit(Event::ExcerptsAdded {
+                    buffer: buffer.clone(),
+                    predecessor: *predecessor,
+                    excerpts: excerpts.clone(),
+                });
+                // TODO kb wrong?
+                false
             }
-            multi_buffer::Event::Reparsed => cx.emit(Event::Reparsed),
-            multi_buffer::Event::DirtyChanged => cx.emit(Event::DirtyChanged),
-            multi_buffer::Event::Saved => cx.emit(Event::Saved),
-            multi_buffer::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
-            multi_buffer::Event::Reloaded => cx.emit(Event::TitleChanged),
-            multi_buffer::Event::DiffBaseChanged => cx.emit(Event::DiffBaseChanged),
-            multi_buffer::Event::Closed => cx.emit(Event::Closed),
+            multi_buffer::Event::ExcerptsRemoved { ids } => {
+                cx.emit(Event::ExcerptsRemoved { ids: ids.clone() });
+                false
+            }
+            multi_buffer::Event::Reparsed => {
+                cx.emit(Event::Reparsed);
+                true
+            }
+            multi_buffer::Event::DirtyChanged => {
+                cx.emit(Event::DirtyChanged);
+                true
+            }
+            multi_buffer::Event::Saved => {
+                cx.emit(Event::Saved);
+                false
+            }
+            multi_buffer::Event::FileHandleChanged => {
+                cx.emit(Event::TitleChanged);
+                true
+            }
+            multi_buffer::Event::Reloaded => {
+                cx.emit(Event::TitleChanged);
+                true
+            }
+            multi_buffer::Event::DiffBaseChanged => {
+                cx.emit(Event::DiffBaseChanged);
+                true
+            }
+            multi_buffer::Event::Closed => {
+                cx.emit(Event::Closed);
+                false
+            }
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
+                false
             }
-            _ => {}
+            _ => true,
+        };
+
+        if update_inlay_hints {
+            self.update_inlay_hints(cx);
         }
     }
 

@@ -254,6 +254,7 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, String),
+    LanguageServerReady(LanguageServerId),
     Notification(String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
@@ -2814,15 +2815,18 @@ impl Project {
                 .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
                     dbg!("!!!!!!!!!!!!!!");
                     let this = this.downgrade();
-                    move |params, cx| async move {
-                        // TODO kb: trigger an event, to call on every open editor
+                    move |params, mut cx| async move {
                         // TODO kb does not get called now, why?
-                        dbg!("@@@@@@@@@@@@@@@@@@@@@@@@@@");
+                        dbg!("#########################");
 
-                        let _this = this
+                        let this = this
                             .upgrade(&cx)
                             .ok_or_else(|| anyhow!("project dropped"))?;
                         dbg!(params);
+                        this.update(&mut cx, |_, cx| {
+                            dbg!("@@@@@@@@@@@@@ SENT event");
+                            cx.emit(Event::LanguageServerReady(server_id));
+                        });
                         Ok(())
                     }
                 })
@@ -5477,41 +5481,39 @@ impl Project {
 
         let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
-            if let Some(server) = self.language_servers.get(server_id) {
-                if let LanguageServerState::Running {
-                    server,
-                    watched_paths,
-                    ..
-                } = server
-                {
-                    if let Some(watched_paths) = watched_paths.get(&worktree_id) {
-                        let params = lsp::DidChangeWatchedFilesParams {
-                            changes: changes
-                                .iter()
-                                .filter_map(|(path, _, change)| {
-                                    if !watched_paths.is_match(&path) {
-                                        return None;
-                                    }
-                                    let typ = match change {
-                                        PathChange::Loaded => return None,
-                                        PathChange::Added => lsp::FileChangeType::CREATED,
-                                        PathChange::Removed => lsp::FileChangeType::DELETED,
-                                        PathChange::Updated => lsp::FileChangeType::CHANGED,
-                                        PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
-                                    };
-                                    Some(lsp::FileEvent {
-                                        uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
-                                        typ,
-                                    })
+            if let Some(LanguageServerState::Running {
+                server,
+                watched_paths,
+                ..
+            }) = self.language_servers.get(server_id)
+            {
+                if let Some(watched_paths) = watched_paths.get(&worktree_id) {
+                    let params = lsp::DidChangeWatchedFilesParams {
+                        changes: changes
+                            .iter()
+                            .filter_map(|(path, _, change)| {
+                                if !watched_paths.is_match(&path) {
+                                    return None;
+                                }
+                                let typ = match change {
+                                    PathChange::Loaded => return None,
+                                    PathChange::Added => lsp::FileChangeType::CREATED,
+                                    PathChange::Removed => lsp::FileChangeType::DELETED,
+                                    PathChange::Updated => lsp::FileChangeType::CHANGED,
+                                    PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
+                                };
+                                Some(lsp::FileEvent {
+                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                    typ,
                                 })
-                                .collect(),
-                        };
+                            })
+                            .collect(),
+                    };
 
-                        if !params.changes.is_empty() {
-                            server
-                                .notify::<lsp::notification::DidChangeWatchedFiles>(params)
-                                .log_err();
-                        }
+                    if !params.changes.is_empty() {
+                        server
+                            .notify::<lsp::notification::DidChangeWatchedFiles>(params)
+                            .log_err();
                     }
                 }
             }
@@ -7385,10 +7387,9 @@ impl Project {
         self.language_server_ids_for_buffer(buffer, cx)
             .into_iter()
             .filter_map(|server_id| {
-                let server = self.language_servers.get(&server_id)?;
                 if let LanguageServerState::Running {
                     adapter, server, ..
-                } = server
+                } = self.language_servers.get(&server_id)?
                 {
                     Some((adapter, server))
                 } else {

@@ -1819,9 +1819,9 @@ impl LineWithInvisibles {
             cx,
         );
 
-        // TODO kb bad: cloning happens very frequently, check the timestamp first
+        // TODO kb bad: syscalls + cloning happen very frequently, check the timestamp first
         let new_hints = editor.inlay_hints.read();
-        // dbg!(new_hints);
+        dbg!(new_hints.last());
 
         self.draw_invisibles(
             &selection_ranges,
