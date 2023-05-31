@@ -3197,10 +3197,6 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
 
     if workspace
         .read_with(cx, |workspace, cx| {
-            let version = cx.global::<ZedVersion>().0;
-            if version.contains("0.91") {
-                panic!("Please remove the dock key binding change notification");
-            }
             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
         })
         .unwrap_or(false)
