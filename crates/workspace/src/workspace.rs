@@ -60,7 +60,7 @@ use std::{
 };
 
 use crate::{
-    notifications::simple_message_notification::MessageNotification,
+    notifications::{simple_message_notification::MessageNotification, NotificationTracker},
     persistence::model::{
         DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
     },
@@ -81,7 +81,7 @@ use serde::Deserialize;
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
 use util::{async_iife, paths, ResultExt};
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
@@ -3056,6 +3056,87 @@ async fn open_items(
     opened_items
 }
 
+fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
+    const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
+    const MESSAGE_ID: usize = 2;
+
+    if workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+        })
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    if db::kvp::KEY_VALUE_STORE
+        .read_kvp(NEW_DOCK_HINT_KEY)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        if !workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+            })
+            .unwrap_or(false)
+        {
+            cx.update(|cx| {
+                cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
+                    let entry = tracker
+                        .entry(TypeId::of::<MessageNotification>())
+                        .or_default();
+                    if !entry.contains(&MESSAGE_ID) {
+                        entry.push(MESSAGE_ID);
+                    }
+                });
+            });
+        }
+
+        return;
+    }
+
+    cx.spawn(|_| async move {
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
+            .await
+            .ok();
+    })
+    .detach();
+
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.show_notification_once(2, cx, |cx| {
+                cx.add_view(|_| {
+                    MessageNotification::new_element(|text, _| {
+                        Text::new(
+                            "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
+                            text,
+                        )
+                        .with_custom_runs(vec![26..32, 34..46], |_, bounds, scene, cx| {
+                            let code_span_background_color = settings::get::<ThemeSettings>(cx)
+                                .theme
+                                .editor
+                                .document_highlight_read_background;
+
+                            scene.push_quad(gpui::Quad {
+                                bounds,
+                                background: Some(code_span_background_color),
+                                border: Default::default(),
+                                corner_radius: 2.0,
+                            })
+                        })
+                        .into_any()
+                    })
+                    .with_click_message("Read more about the new panel system")
+                    .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
+                })
+            })
+        })
+        .ok();
+}
+
 fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
@@ -3072,7 +3153,7 @@ fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut Asy
             } else {
                 let backup_path = (*db::BACKUP_DB_PATH).read();
                 if let Some(backup_path) = backup_path.clone() {
-                    workspace.show_notification_once(0, cx, move |cx| {
+                    workspace.show_notification_once(1, cx, move |cx| {
                         cx.add_view(move |_| {
                             MessageNotification::new(format!(
                                 "Database file was corrupted. Old database backed up to {}",
