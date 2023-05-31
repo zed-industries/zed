@@ -1705,8 +1705,8 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         // If a center pane is zoomed, unzoom it.
-        if except_position.is_some() {
-            for pane in &self.panes {
+        for pane in &self.panes {
+            if pane != &self.active_pane {
                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
             }
         }
