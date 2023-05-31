@@ -3199,9 +3199,14 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
         .read_with(cx, |workspace, cx| {
             let version = ZED_APP_VERSION
                 .or_else(|| cx.platform().app_version().ok())
-                .map(|v| v.to_string()).unwrap_or_default();
+                .map(|v| v.to_string())
+                .unwrap_or_default();
 
-            if !version.contains("0.88") || !version.contains("0.89") || !version.contains("0.90") || !version.contains("0.91") {
+            if !version.contains("0.88")
+                || !version.contains("0.89")
+                || !version.contains("0.90")
+                || !version.contains("0.91")
+            {
                 return true;
             }
 
