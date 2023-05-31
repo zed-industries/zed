@@ -31,6 +31,10 @@ export default function tabBar(colorScheme: ColorScheme) {
         iconClose: foreground(layer, "variant"),
         iconCloseActive: foreground(layer, "hovered"),
 
+        // Zoom Icons
+        iconZoom: foreground(layer, "variant"),
+        iconZoomActive: foreground(layer, "accent"),
+
         // Indicators
         iconConflict: foreground(layer, "warning"),
         iconDirty: foreground(layer, "accent"),
