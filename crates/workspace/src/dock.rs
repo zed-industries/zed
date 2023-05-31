@@ -175,6 +175,10 @@ impl Dock {
         }
     }
 
+    pub fn position(&self) -> DockPosition {
+        self.position
+    }
+
     pub fn is_open(&self) -> bool {
         self.is_open
     }
@@ -472,11 +476,22 @@ impl View for PanelButtons {
         Flex::row()
             .with_children(panels.into_iter().enumerate().map(
                 |(panel_ix, (view, context_menu))| {
-                    let (tooltip, tooltip_action) = view.icon_tooltip(cx);
+                    let is_active = is_open && panel_ix == active_ix;
+                    let (tooltip, tooltip_action) = if is_active {
+                        (
+                            format!("Close {} dock", dock_position.to_label()),
+                            Some(match dock_position {
+                                DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
+                                DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
+                                DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+                            }),
+                        )
+                    } else {
+                        view.icon_tooltip(cx)
+                    };
                     Stack::new()
                         .with_child(
                             MouseEventHandler::<Self, _>::new(panel_ix, cx, |state, cx| {
-                                let is_active = is_open && panel_ix == active_ix;
                                 let style = button_style.style_for(state, is_active);
                                 Flex::row()
                                     .with_child(
