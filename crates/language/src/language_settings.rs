@@ -16,7 +16,7 @@ pub fn init(cx: &mut AppContext) {
 
 pub fn language_settings<'a>(
     language: Option<&str>,
-    file: Option<&dyn File>,
+    file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
     settings::get_local::<AllLanguageSettings>(
@@ -27,7 +27,7 @@ pub fn language_settings<'a>(
 }
 
 pub fn all_language_settings<'a>(
-    file: Option<&dyn File>,
+    file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
     settings::get_local::<AllLanguageSettings>(

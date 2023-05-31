@@ -678,16 +678,9 @@ impl Worktree {
         }
     }
 
-    pub fn root_file(&self, cx: &mut ModelContext<Self>) -> Option<File> {
+    pub fn root_file(&self, cx: &mut ModelContext<Self>) -> Option<Arc<File>> {
         let entry = self.root_entry()?;
-        Some(File {
-            worktree: cx.handle(),
-            path: entry.path.clone(),
-            mtime: entry.mtime,
-            entry_id: entry.id,
-            is_local: self.is_local(),
-            is_deleted: false,
-        })
+        Some(File::for_entry(entry.clone(), cx.handle()))
     }
 }
 
@@ -2463,15 +2456,15 @@ impl language::LocalFile for File {
 }
 
 impl File {
-    pub fn for_entry(entry: Entry, worktree: ModelHandle<Worktree>) -> Self {
-        Self {
+    pub fn for_entry(entry: Entry, worktree: ModelHandle<Worktree>) -> Arc<Self> {
+        Arc::new(Self {
             worktree,
             path: entry.path.clone(),
             mtime: entry.mtime,
             entry_id: entry.id,
             is_local: true,
             is_deleted: false,
-        }
+        })
     }
 
     pub fn from_proto(

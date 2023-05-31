@@ -1382,7 +1382,7 @@ impl MultiBuffer {
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
             let buffer = buffer.read(cx);
             language = buffer.language_at(offset).map(|l| l.name());
-            file = buffer.file().map(|f| f.as_ref());
+            file = buffer.file();
         }
         language_settings(language.as_deref(), file, cx)
     }
@@ -2795,7 +2795,7 @@ impl MultiBufferSnapshot {
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             language = buffer.language_at(offset).map(|l| l.name());
-            file = buffer.file().map(|f| f.as_ref());
+            file = buffer.file();
         }
         language_settings(language.as_deref(), file, cx)
     }

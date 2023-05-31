@@ -787,7 +787,7 @@ impl Copilot {
         let position = position.to_point_utf16(buffer);
         let settings = language_settings(
             buffer.language_at(position).map(|l| l.name()).as_deref(),
-            buffer.file().map(|f| f.as_ref()),
+            buffer.file(),
             cx,
         );
         let tab_size = settings.tab_size;

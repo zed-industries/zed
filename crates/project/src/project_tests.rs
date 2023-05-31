@@ -99,18 +99,22 @@ async fn test_managing_project_specific_settings(
 
         let settings_a = language_settings(
             None,
-            Some(&File::for_entry(
-                tree.entry_for_path("a/a.rs").unwrap().clone(),
-                worktree.clone(),
-            )),
+            Some(
+                &(File::for_entry(
+                    tree.entry_for_path("a/a.rs").unwrap().clone(),
+                    worktree.clone(),
+                ) as _),
+            ),
             cx,
         );
         let settings_b = language_settings(
             None,
-            Some(&File::for_entry(
-                tree.entry_for_path("b/b.rs").unwrap().clone(),
-                worktree.clone(),
-            )),
+            Some(
+                &(File::for_entry(
+                    tree.entry_for_path("b/b.rs").unwrap().clone(),
+                    worktree.clone(),
+                ) as _),
+            ),
             cx,
         );
 

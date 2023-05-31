@@ -693,12 +693,14 @@ impl Project {
         for buffer in self.opened_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
-                if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
-                {
+                if let Some((file, language)) = buffer.file().zip(buffer.language()) {
                     let settings =
                         language_settings(Some(language.name().as_ref()), Some(file), cx);
                     if settings.enable_language_server {
-                        language_servers_to_start.push((file.worktree.clone(), language.clone()));
+                        if let Some(file) = File::from_dyn(Some(file)) {
+                            language_servers_to_start
+                                .push((file.worktree.clone(), language.clone()));
+                        }
                     }
                 }
             }
@@ -714,10 +716,10 @@ impl Project {
             });
             if let Some(language) = language {
                 let worktree = self.worktree_for_id(*worktree_id, cx);
-                let file = worktree.and_then(|tree| tree.update(cx, |tree, cx| tree.root_file(cx)));
-                // let settings =
-                //     language_settings(Some(language.name().as_ref()), Some(file), cx);
-                if !language_settings(Some(&language.name()), file.as_ref().map(|f| f as _), cx)
+                let file = worktree.and_then(|tree| {
+                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
+                });
+                if !language_settings(Some(&language.name()), file.as_ref(), cx)
                     .enable_language_server
                 {
                     language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
@@ -2362,8 +2364,8 @@ impl Project {
             Some(&language.name()),
             worktree
                 .update(cx, |tree, cx| tree.root_file(cx))
-                .as_ref()
-                .map(|f| f as _),
+                .map(|f| f as _)
+                .as_ref(),
             cx,
         )
         .enable_language_server
@@ -3464,12 +3466,7 @@ impl Project {
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
                     let settings = buffer.read_with(&cx, |buffer, cx| {
                         let language_name = buffer.language().map(|language| language.name());
-                        language_settings(
-                            language_name.as_deref(),
-                            buffer.file().map(|f| f.as_ref()),
-                            cx,
-                        )
-                        .clone()
+                        language_settings(language_name.as_deref(), buffer.file(), cx).clone()
                     });
 
                     let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -4481,10 +4478,9 @@ impl Project {
         let (position, tab_size) = buffer.read_with(cx, |buffer, cx| {
             let position = position.to_point_utf16(buffer);
             let language_name = buffer.language_at(position).map(|l| l.name());
-            let file = buffer.file().map(|f| f.as_ref());
             (
                 position,
-                language_settings(language_name.as_deref(), file, cx).tab_size,
+                language_settings(language_name.as_deref(), buffer.file(), cx).tab_size,
             )
         });
         self.request_lsp(

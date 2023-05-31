@@ -1717,8 +1717,7 @@ impl LspCommand for OnTypeFormatting {
 
         let tab_size = buffer.read_with(&cx, |buffer, cx| {
             let language_name = buffer.language().map(|language| language.name());
-            let file = buffer.file().map(|f| f.as_ref());
-            language_settings(language_name.as_deref(), file, cx).tab_size
+            language_settings(language_name.as_deref(), buffer.file(), cx).tab_size
         });
 
         Ok(Self {

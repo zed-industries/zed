@@ -1808,11 +1808,7 @@ impl BufferSnapshot {
 
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
         let language_name = self.language_at(position).map(|language| language.name());
-        let settings = language_settings(
-            language_name.as_deref(),
-            self.file().map(|f| f.as_ref()),
-            cx,
-        );
+        let settings = language_settings(language_name.as_deref(), self.file(), cx);
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2139,7 +2135,7 @@ impl BufferSnapshot {
         let language = self.language_at(position);
         language_settings(
             language.map(|l| l.name()).as_deref(),
-            self.file.as_ref().map(AsRef::as_ref),
+            self.file.as_ref(),
             cx,
         )
     }

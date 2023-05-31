@@ -3211,7 +3211,7 @@ impl Editor {
         let language_name = snapshot
             .language_at(location)
             .map(|language| language.name());
-        let settings = all_language_settings(file.map(|f| f.as_ref() as _), cx);
+        let settings = all_language_settings(file, cx);
         settings.copilot_enabled(language_name.as_deref(), file.map(|f| f.path().as_ref()))
     }
 
@@ -7093,8 +7093,7 @@ impl Editor {
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-        let copilot_enabled =
-            all_language_settings(file.map(|f| f.as_ref()), cx).copilot_enabled(None, None);
+        let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
