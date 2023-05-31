@@ -1474,8 +1474,9 @@ impl Snapshot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn status_for_file(&self, path: impl Into<PathBuf>) -> Option<GitFileStatus> {
+        let path = path.into();
         self.entries_by_path
-            .get(&PathKey(Arc::from(path.into())), &())
+            .get(&PathKey(Arc::from(path)), &())
             .and_then(|entry| entry.git_status)
     }
 
@@ -1929,25 +1930,25 @@ impl LocalSnapshot {
         if self.git_repositories.get(&work_dir_id).is_none() {
             let repo = fs.open_repo(abs_path.as_path())?;
             let work_directory = RepositoryWorkDirectory(work_dir.clone());
-            let scan_id = self.scan_id;
 
             let repo_lock = repo.lock();
 
             self.repository_entries.insert(
-                work_directory,
+                work_directory.clone(),
                 RepositoryEntry {
                     work_directory: work_dir_id.into(),
                     branch: repo_lock.branch_name().map(Into::into),
-                    // TODO: statuses
-                    // statuses: repo_lock.statuses().unwrap_or_default(),
                 },
             );
+
+            self.scan_statuses(repo_lock.deref(), &work_directory);
+
             drop(repo_lock);
 
             self.git_repositories.insert(
                 work_dir_id,
                 LocalRepositoryEntry {
-                    git_dir_scan_id: scan_id,
+                    git_dir_scan_id: 0,
                     repo_ptr: repo,
                     git_dir_path: parent_path.clone(),
                 },
@@ -1955,6 +1956,23 @@ impl LocalSnapshot {
         }
 
         Some(())
+    }
+
+    fn scan_statuses(&mut self, repo_ptr: &dyn GitRepository, work_directory: &RepositoryWorkDirectory) {
+        let statuses = repo_ptr.statuses().unwrap_or_default();
+        for (repo_path, status) in statuses.iter() {
+            let Some(entry) = self.entry_for_path(&work_directory.0.join(repo_path)) else {
+                continue;
+            };
+
+            let mut entry = entry.clone();
+            entry.git_status = Some(*status);
+
+            // TODO statuses
+            // Bubble
+
+            self.entries_by_path.insert_or_replace(entry, &());
+        }
     }
 
     fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
@@ -3114,8 +3132,15 @@ impl BackgroundScanner {
                 if repo.git_dir_scan_id == scan_id {
                     return None;
                 }
+
                 (*entry_id, repo.repo_ptr.to_owned())
             };
+            /*
+            1. Populate dir, initializes the git repo
+            2. Sometimes, we get a file event inside the .git repo, before it's initializaed
+            In both cases, we should end up with an initialized repo and a full status scan
+
+            */
 
             let work_dir = snapshot
                 .entry_for_id(entry_id)
@@ -3136,20 +3161,8 @@ impl BackgroundScanner {
                     entry.branch = branch.map(Into::into);
                 });
 
-            let statuses = repo.statuses().unwrap_or_default();
-            for (repo_path, status) in statuses.iter() {
-                let Some(entry) = snapshot.entry_for_path(&work_dir.0.join(repo_path)) else {
-                    continue;
-                };
 
-                let mut entry = entry.clone();
-                entry.git_status = Some(*status);
-
-                // TODO statuses
-                // Bubble
-
-                snapshot.entries_by_path.insert_or_replace(entry, &());
-            }
+            snapshot.scan_statuses(repo.deref(), &work_dir);
         } else {
             if snapshot
                 .entry_for_path(&path)
@@ -4945,7 +4958,7 @@ mod tests {
 
         // TODO: Stream statuses UPDATE THIS TO CHECK BUBBLIBG BEHAVIOR
         #[gpui::test]
-        async fn test_git_status(cx: &mut TestAppContext) {
+        async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
             const IGNORE_RULE: &'static str = "**/target";
 
             let root = temp_tree(json!({
@@ -4982,6 +4995,7 @@ mod tests {
             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
 
+
             const A_TXT: &'static str = "a.txt";
             const B_TXT: &'static str = "b.txt";
             const E_TXT: &'static str = "c/d/e.txt";
@@ -5001,6 +5015,7 @@ mod tests {
             std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
 
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             // Check that the right git state is observed on startup
             tree.read_with(cx, |tree, _cx| {
@@ -5027,6 +5042,7 @@ mod tests {
             git_add(Path::new(B_TXT), &repo);
             git_commit("Committing modified and added", &repo);
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             // Check that repo only changes are tracked
             tree.read_with(cx, |tree, _cx| {
@@ -5044,6 +5060,7 @@ mod tests {
             std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
             std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             // Check that more complex repo changes are tracked
             tree.read_with(cx, |tree, _cx| {
@@ -5076,6 +5093,7 @@ mod tests {
             git_commit("Committing modified git ignore", &repo);
 
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             let mut renamed_dir_name = "first_directory/second_directory";
             const RENAMED_FILE: &'static str = "rf.txt";
@@ -5088,6 +5106,7 @@ mod tests {
             .unwrap();
 
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
@@ -5107,6 +5126,7 @@ mod tests {
             .unwrap();
 
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
