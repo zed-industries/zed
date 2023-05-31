@@ -679,7 +679,7 @@ impl Worktree {
     }
 
     pub fn root_file(&self, cx: &mut ModelContext<Self>) -> Option<File> {
-        let entry = self.entry_for_path("")?;
+        let entry = self.root_entry()?;
         Some(File {
             worktree: cx.handle(),
             path: entry.path.clone(),

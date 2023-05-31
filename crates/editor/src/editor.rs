@@ -3207,12 +3207,12 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        let path = snapshot.file_at(location).map(|file| file.path().as_ref());
+        let file = snapshot.file_at(location);
         let language_name = snapshot
             .language_at(location)
             .map(|language| language.name());
-        let settings = all_language_settings(cx);
-        settings.copilot_enabled(language_name.as_deref(), path)
+        let settings = all_language_settings(file.map(|f| f.as_ref() as _), cx);
+        settings.copilot_enabled(language_name.as_deref(), file.map(|f| f.path().as_ref()))
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
@@ -7076,11 +7076,13 @@ impl Editor {
         };
 
         // If None, we are in a file without an extension
-        let file_extension = file_extension.or(self
+        let file = self
             .buffer
             .read(cx)
             .as_singleton()
-            .and_then(|b| b.read(cx).file())
+            .and_then(|b| b.read(cx).file());
+        let file_extension = file_extension.or(file
+            .as_ref()
             .and_then(|file| Path::new(file.file_name(cx)).extension())
             .and_then(|e| e.to_str())
             .map(|a| a.to_string()));
@@ -7091,7 +7093,8 @@ impl Editor {
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-        let copilot_enabled = all_language_settings(cx).copilot_enabled(None, None);
+        let copilot_enabled =
+            all_language_settings(file.map(|f| f.as_ref()), cx).copilot_enabled(None, None);
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)

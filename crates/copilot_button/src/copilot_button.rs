@@ -9,7 +9,10 @@ use gpui::{
     AnyElement, AppContext, AsyncAppContext, Element, Entity, MouseState, Subscription, View,
     ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use language::language_settings::{self, all_language_settings, AllLanguageSettings};
+use language::{
+    language_settings::{self, all_language_settings, AllLanguageSettings},
+    File,
+};
 use settings::{update_settings_file, SettingsStore};
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
@@ -27,7 +30,7 @@ pub struct CopilotButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
     language: Option<Arc<str>>,
-    path: Option<Arc<Path>>,
+    file: Option<Arc<dyn File>>,
     fs: Arc<dyn Fs>,
 }
 
@@ -41,7 +44,7 @@ impl View for CopilotButton {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let all_language_settings = &all_language_settings(cx);
+        let all_language_settings = all_language_settings(None, cx);
         if !all_language_settings.copilot.feature_enabled {
             return Empty::new().into_any();
         }
@@ -165,7 +168,7 @@ impl CopilotButton {
             editor_subscription: None,
             editor_enabled: None,
             language: None,
-            path: None,
+            file: None,
             fs,
         }
     }
@@ -212,9 +215,9 @@ impl CopilotButton {
 
         let settings = settings::get::<AllLanguageSettings>(cx);
 
-        if let Some(path) = self.path.as_ref() {
-            let path_enabled = settings.copilot_enabled_for_path(path);
-            let path = path.clone();
+        if let Some(file) = &self.file {
+            let path = file.path().clone();
+            let path_enabled = settings.copilot_enabled_for_path(&path);
             menu_options.push(ContextMenuItem::handler(
                 format!(
                     "{} Suggestions for This Path",
@@ -279,14 +282,16 @@ impl CopilotButton {
         let language_name = snapshot
             .language_at(suggestion_anchor)
             .map(|language| language.name());
-        let path = snapshot.file_at(suggestion_anchor).map(|file| file.path());
+        let file = snapshot.file_at(suggestion_anchor).cloned();
 
         self.editor_enabled = Some(
-            all_language_settings(cx)
-                .copilot_enabled(language_name.as_deref(), path.map(|p| p.as_ref())),
+            all_language_settings(self.file.as_ref().map(|f| f.as_ref()), cx).copilot_enabled(
+                language_name.as_deref(),
+                file.as_ref().map(|file| file.path().as_ref()),
+            ),
         );
         self.language = language_name;
-        self.path = path.cloned();
+        self.file = file;
 
         cx.notify()
     }
@@ -363,14 +368,15 @@ async fn configure_disabled_globs(
 }
 
 fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions = all_language_settings(cx).copilot_enabled(None, None);
+    let show_copilot_suggestions = all_language_settings(None, cx).copilot_enabled(None, None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
         file.defaults.show_copilot_suggestions = Some((!show_copilot_suggestions).into())
     });
 }
 
 fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
-    let show_copilot_suggestions = all_language_settings(cx).copilot_enabled(Some(&language), None);
+    let show_copilot_suggestions =
+        all_language_settings(None, cx).copilot_enabled(Some(&language), None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
         file.languages
             .entry(language)

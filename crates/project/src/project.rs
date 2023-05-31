@@ -28,7 +28,7 @@ use gpui::{
     ModelHandle, Task, WeakModelHandle,
 };
 use language::{
-    language_settings::{all_language_settings, language_settings, FormatOnSave, Formatter},
+    language_settings::{language_settings, FormatOnSave, Formatter},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
@@ -689,18 +689,15 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let settings = all_language_settings(cx);
-
         let mut language_servers_to_start = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
                 if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
                 {
-                    if settings
-                        .language(Some(&language.name()))
-                        .enable_language_server
-                    {
+                    let settings =
+                        language_settings(Some(language.name().as_ref()), Some(file), cx);
+                    if settings.enable_language_server {
                         language_servers_to_start.push((file.worktree.clone(), language.clone()));
                     }
                 }
@@ -708,18 +705,22 @@ impl Project {
         }
 
         let mut language_servers_to_stop = Vec::new();
-        for language in self.languages.to_vec() {
-            for lsp_adapter in language.lsp_adapters() {
-                if !settings
-                    .language(Some(&language.name()))
+        let languages = self.languages.to_vec();
+        for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
+            let language = languages.iter().find(|l| {
+                l.lsp_adapters()
+                    .iter()
+                    .any(|adapter| &adapter.name == started_lsp_name)
+            });
+            if let Some(language) = language {
+                let worktree = self.worktree_for_id(*worktree_id, cx);
+                let file = worktree.and_then(|tree| tree.update(cx, |tree, cx| tree.root_file(cx)));
+                // let settings =
+                //     language_settings(Some(language.name().as_ref()), Some(file), cx);
+                if !language_settings(Some(&language.name()), file.as_ref().map(|f| f as _), cx)
                     .enable_language_server
                 {
-                    let lsp_name = &lsp_adapter.name;
-                    for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
-                        if lsp_name == started_lsp_name {
-                            language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
-                        }
-                    }
+                    language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
                 }
             }
         }

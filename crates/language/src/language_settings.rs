@@ -26,8 +26,14 @@ pub fn language_settings<'a>(
     .language(language)
 }
 
-pub fn all_language_settings<'a>(cx: &'a AppContext) -> &'a AllLanguageSettings {
-    settings::get::<AllLanguageSettings>(cx)
+pub fn all_language_settings<'a>(
+    file: Option<&dyn File>,
+    cx: &'a AppContext,
+) -> &'a AllLanguageSettings {
+    settings::get_local::<AllLanguageSettings>(
+        file.map(|f| (f.worktree_id(), f.path().as_ref())),
+        cx,
+    )
 }
 
 #[derive(Debug, Clone)]
