@@ -2,8 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewCenterTerminal, NewFile,
-    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
+    item::WeakItemHandle, notify_of_new_dock, toolbar::Toolbar, AutosaveSetting, Item,
+    NewCenterTerminal, NewFile, NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -539,6 +539,11 @@ impl Pane {
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        // Potentially warn the user of the new keybinding
+        let workspace_handle = self.workspace().clone();
+        cx.spawn(|_, mut cx| async move { notify_of_new_dock(&workspace_handle, &mut cx) })
+            .detach();
+
         if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {
