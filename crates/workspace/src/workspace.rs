@@ -19,7 +19,7 @@ use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore,
+    Client, TypedEnvelope, UserStore, ZED_APP_VERSION,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -83,7 +83,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, channel::ZedVersion, paths, ResultExt};
+use util::{async_iife, paths, ResultExt};
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -3197,6 +3197,14 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
 
     if workspace
         .read_with(cx, |workspace, cx| {
+            let version = ZED_APP_VERSION
+                .or_else(|| cx.platform().app_version().ok())
+                .map(|v| v.to_string()).unwrap_or_default();
+
+            if !version.contains("0.88") || !version.contains("0.89") || !version.contains("0.90") || !version.contains("0.91") {
+                return true;
+            }
+
             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
         })
         .unwrap_or(false)
