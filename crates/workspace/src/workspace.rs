@@ -19,7 +19,7 @@ use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore, ZED_APP_VERSION,
+    Client, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -3197,19 +3197,6 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
 
     if workspace
         .read_with(cx, |workspace, cx| {
-            let version = ZED_APP_VERSION
-                .or_else(|| cx.platform().app_version().ok())
-                .map(|v| v.to_string())
-                .unwrap_or_default();
-
-            if !version.contains("0.88")
-                && !version.contains("0.89")
-                && !version.contains("0.90")
-                && !version.contains("0.91")
-            {
-                return true;
-            }
-
             workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
         })
         .unwrap_or(false)
