@@ -2,6 +2,8 @@ use std::env;
 
 use lazy_static::lazy_static;
 
+pub struct ZedVersion(pub &'static str);
+
 lazy_static! {
     pub static ref RELEASE_CHANNEL_NAME: String = if cfg!(debug_assertions) {
         env::var("ZED_RELEASE_CHANNEL")

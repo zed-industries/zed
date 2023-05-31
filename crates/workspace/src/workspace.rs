@@ -19,7 +19,7 @@ use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore,
+    Client, TypedEnvelope, UserStore, ZED_APP_VERSION,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -83,7 +83,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::Theme;
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, paths, ResultExt};
+use util::{async_iife, channel::ZedVersion, paths, ResultExt};
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -3190,6 +3190,60 @@ async fn open_items(
     opened_items
 }
 
+fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
+    const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
+
+    if workspace
+        .read_with(cx, |workspace, cx| {
+            let version = cx.global::<ZedVersion>().0;
+            if !version.contains("0.88")
+                && !version.contains("0.89")
+                && !version.contains("0.90")
+                && !version.contains("0.91")
+                && !version.contains("0.92")
+            {
+                return true;
+            }
+            workspace.has_shown_notification_once::<MessageNotification>(2, cx)
+        })
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    if db::kvp::KEY_VALUE_STORE
+        .read_kvp(NEW_DOCK_HINT_KEY)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return;
+    }
+
+    cx.spawn(|_| async move {
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
+            .await
+            .ok();
+    })
+    .detach();
+
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.show_notification_once(2, cx, |cx| {
+                cx.add_view(|_| {
+                    MessageNotification::new(
+                        "Looking for the dock? Try 'ctrl-`'!\n'shift-escape' now zooms your pane",
+                    )
+                    .with_click_message("Click to read more about the new panel system")
+                    .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
+                })
+            })
+        })
+        .ok();
+}
+
 fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
@@ -3206,7 +3260,7 @@ fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut Asy
             } else {
                 let backup_path = (*db::BACKUP_DB_PATH).read();
                 if let Some(backup_path) = backup_path.clone() {
-                    workspace.show_notification_once(0, cx, move |cx| {
+                    workspace.show_notification_once(1, cx, move |cx| {
                         cx.add_view(move |_| {
                             MessageNotification::new(format!(
                                 "Database file was corrupted. Old database backed up to {}",

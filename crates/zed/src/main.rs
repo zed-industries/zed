@@ -119,6 +119,7 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
+        cx.set_global(util::channel::ZedVersion(env!("CARGO_PKG_VERSION")));
 
         #[cfg(debug_assertions)]
         cx.set_global(StaffMode(true));
