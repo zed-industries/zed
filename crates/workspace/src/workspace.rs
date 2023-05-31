@@ -1701,7 +1701,7 @@ impl Workspace {
 
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
-        except_position: Option<DockPosition>,
+        dock_to_reveal: Option<DockPosition>,
         cx: &mut ViewContext<Self>,
     ) {
         // If a center pane is zoomed, unzoom it.
@@ -1715,7 +1715,7 @@ impl Workspace {
         let mut focus_center = false;
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             dock.update(cx, |dock, cx| {
-                if Some(dock.position()) != except_position {
+                if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
                         if panel.is_zoomed(cx) {
                             focus_center |= panel.has_focus(cx);
@@ -1730,7 +1730,7 @@ impl Workspace {
             cx.focus_self();
         }
 
-        if self.zoomed_position != except_position {
+        if self.zoomed_position != dock_to_reveal {
             self.zoomed = None;
             self.zoomed_position = None;
         }
