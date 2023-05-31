@@ -40,6 +40,8 @@ Our goal is for each context to allow an arbitrary number of branches to be crea
 
 A version identifies a subset of all operations that have been performed in a context. If we start from an empty context and applied the operations in this subset in any causally valid order, we arrive at the unique state of the context described by the version.
 
+### How we use versions
+
 We use versions to query the database. Since we're storing every operation, it isn't feasible to always load every operation in a context into a given replica.
 
 Instead, we can query the database to return a snapshot of how it appears at a specific version. To do that, given the sequence of fragments, we need to efficiently query all fragments within that sequence that are visible at a given version.
@@ -66,7 +68,66 @@ Then, when combining fragments, we combine these summaries, producing a new hist
 But not quite sure how to produce this summary yet.
 
 For one fragment, every time it becomes hidden or visible we would add an entry to this history. How do we combine two histories?
+
+We just need to preserve the intent of these events. In this case, we concatenate the histories.
+
            v0          v1          v2          v3
 History A: show first, hide last
 History B:                         show first, hide last
 Combined:  v0: show first, v1: hide last, v2: show first, v3: hide last
+
+           v0          v1          v2          v3
+History A: show first, hide last
+History B:                         show first, hide last
+Combined:  v0: show first, v1: hide last, v2: show first, v3: hide last
+
+### How we represent versions
+
+A version represents a subset of operations in a context.
+
+This can be represented as a set of operation ids, where each operation id is a pair of a branch id and an operation count on that branch. To save space, we include only the maximal operation id for each branch, assuming all operations on that branch with lesser ids are included in the subset.
+
+We also associate versions with a set of maximal operation ids. If version B contains all of version A's maximal operation ids, then we know version B is a superset of version A without further examination.
+
+Fundamental operations:
+
+- [ ] Efficient cloning and storage
+- [x] Partial ordering
+- [ ] Operation id generation given a branch id, which can also be used to fork by supplying a new branch id.
+- [ ] Join: Given two versions, produce a version that is >= both.
+- [ ] Meet: Given two versions, produce a version that is <= both.
+
+The version graph is actually a CRDT.
+
+```rust
+#[derive(Default)]
+struct Version {
+    maximal_operations: Sequence<OperationId>,
+    operations: Sequence<OperationId>,
+}
+
+struct OperationId {
+    branch_id: BranchId,
+    operation_count: OperationCount,
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.maximal_operations == other.maximal_operations {
+            Some(Ordering::Equal)
+        } else if self.maximal_operations.all(|op_id| other.contains(&op_id)) {
+            Some(Ordering::Less)
+        } else if other.maximal_operations.all(|op_id| self.contains(&op_id)) {
+            Some(Ordering::Greater)
+        } else {
+            None
+        }
+    }
+}
+
+impl Version {
+    fn operation(&mut self, branch: BranchId) -> OperationId {
+
+    }
+}
+```
