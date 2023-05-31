@@ -2763,8 +2763,7 @@ async fn test_git_status_sync(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let snapshot = worktree.read(cx).snapshot();
-        let root_entry = snapshot.root_git_entry().unwrap();
-        assert_eq!(root_entry.status_for_file(&snapshot, file), status);
+        assert_eq!(snapshot.status_for_file(file), status);
     }
 
     // Smoke test status reading

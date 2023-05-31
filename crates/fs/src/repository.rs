@@ -1,6 +1,7 @@
 use anyhow::Result;
 use collections::HashMap;
 use parking_lot::Mutex;
+use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -195,6 +196,26 @@ pub enum GitFileStatus {
     Added,
     Modified,
     Conflict,
+}
+
+impl GitFileStatus {
+    pub fn from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
+        git_status.and_then(|status| {
+            proto::GitStatus::from_i32(status).map(|status| match status {
+                proto::GitStatus::Added => GitFileStatus::Added,
+                proto::GitStatus::Modified => GitFileStatus::Modified,
+                proto::GitStatus::Conflict => GitFileStatus::Conflict,
+            })
+        })
+    }
+
+    pub fn to_proto(self) -> i32 {
+        match self {
+            GitFileStatus::Added => proto::GitStatus::Added as i32,
+            GitFileStatus::Modified => proto::GitStatus::Modified as i32,
+            GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]

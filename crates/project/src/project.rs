@@ -5095,9 +5095,9 @@ impl Project {
                     return None;
                 }
                 let path = &project_path.path;
-                changed_repos.iter().find(|(work_dir, change)| {
-                    path.starts_with(work_dir) && change.git_dir_changed
-                })?;
+                changed_repos
+                    .iter()
+                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 let receiver = receiver.clone();
                 let path = path.clone();
                 Some(async move {
@@ -5120,9 +5120,9 @@ impl Project {
                     return None;
                 }
                 let path = file.path();
-                changed_repos.iter().find(|(work_dir, change)| {
-                    path.starts_with(work_dir) && change.git_dir_changed
-                })?;
+                changed_repos
+                    .iter()
+                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 Some((buffer, path.clone()))
             })
             .collect::<Vec<_>>();
