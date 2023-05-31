@@ -175,6 +175,10 @@ impl Dock {
         }
     }
 
+    pub fn position(&self) -> DockPosition {
+        self.position
+    }
+
     pub fn is_open(&self) -> bool {
         self.is_open
     }
