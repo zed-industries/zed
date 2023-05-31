@@ -1734,8 +1734,11 @@ dependencies = [
 name = "crdb"
 version = "0.1.0"
 dependencies = [
+ "parking_lot 0.11.2",
  "rope",
+ "smallvec",
  "sum_tree",
+ "uuid 1.3.2",
 ]
 
 [[package]]
@@ -7943,6 +7946,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dad5567ad0cf5b760e5665964bec1b47dfd077ba8a2544b513f3556d3d239a2"
 dependencies = [
  "getrandom 0.2.9",
+ "rand 0.8.5",
  "serde",
 ]
 

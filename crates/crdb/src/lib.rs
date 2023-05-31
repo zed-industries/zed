@@ -1,3 +1,4 @@
+mod clock;
 mod document_fragment;
 mod insertion_subrange;
 mod version_graph;
@@ -5,11 +6,16 @@ mod version_vector;
 
 /// An efficiently-editable an cloneable chunk of text.
 use rope::Rope;
-use std::{cmp::Reverse, ops::Range};
+use std::{
+    cmp::Reverse,
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
 /// These names seem more descriptive. Perhaps we should consider renaming these
 /// within the sum_tree crate?
 type OrderedMap<K, T> = sum_tree::TreeMap<K, T>;
+type OrderedSet<K> = sum_tree::TreeSet<K>;
 type Sequence<T> = sum_tree::SumTree<T>;
 
 /// All the state in the system.
@@ -72,6 +78,7 @@ struct DocumentFragmentId {
 }
 
 /// Documents are identified with their creation operation in a context.
+#[derive(Clone, Default, Debug)]
 pub struct DocumentId {
     // OperationId alone would be sufficient for uniqueness, but adding the
     // context id groups documents in the same context together in the sequence.

@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sum_tree = { path = "../sum_tree" }
 rope = { path = "../rope" }
+sum_tree = { path = "../sum_tree" }
 
-parking_lot.workspace = true;
+parking_lot.workspace = true
+smallvec.workspace = true
+uuid = { version = "1.3", features = ["v4", "fast-rng"] }
