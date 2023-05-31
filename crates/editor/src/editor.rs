@@ -3208,11 +3208,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let file = snapshot.file_at(location);
-        let language_name = snapshot
-            .language_at(location)
-            .map(|language| language.name());
+        let language = snapshot.language_at(location);
         let settings = all_language_settings(file, cx);
-        settings.copilot_enabled(language_name.as_deref(), file.map(|f| f.path().as_ref()))
+        settings.copilot_enabled(language, file.map(|f| f.path().as_ref()))
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {

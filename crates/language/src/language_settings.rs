@@ -1,4 +1,4 @@
-use crate::File;
+use crate::{File, Language};
 use anyhow::Result;
 use collections::HashMap;
 use globset::GlobMatcher;
@@ -15,7 +15,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub fn language_settings<'a>(
-    language: Option<&str>,
+    language: Option<&Arc<Language>>,
     file: Option<&Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
@@ -23,7 +23,7 @@ pub fn language_settings<'a>(
         file.map(|f| (f.worktree_id(), f.path().as_ref())),
         cx,
     )
-    .language(language)
+    .language(language.map(|l| l.name()).as_deref())
 }
 
 pub fn all_language_settings<'a>(
@@ -170,7 +170,7 @@ impl AllLanguageSettings {
             .any(|glob| glob.is_match(path))
     }
 
-    pub fn copilot_enabled(&self, language_name: Option<&str>, path: Option<&Path>) -> bool {
+    pub fn copilot_enabled(&self, language: Option<&Arc<Language>>, path: Option<&Path>) -> bool {
         if !self.copilot.feature_enabled {
             return false;
         }
@@ -181,7 +181,8 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language_name).show_copilot_suggestions
+        self.language(language.map(|l| l.name()).as_deref())
+            .show_copilot_suggestions
     }
 }
 

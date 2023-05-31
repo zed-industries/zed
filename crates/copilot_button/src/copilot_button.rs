@@ -11,7 +11,7 @@ use gpui::{
 };
 use language::{
     language_settings::{self, all_language_settings, AllLanguageSettings},
-    File,
+    File, Language,
 };
 use settings::{update_settings_file, SettingsStore};
 use std::{path::Path, sync::Arc};
@@ -29,7 +29,7 @@ pub struct CopilotButton {
     popup_menu: ViewHandle<ContextMenu>,
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
-    language: Option<Arc<str>>,
+    language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     fs: Arc<dyn Fs>,
 }
@@ -200,14 +200,13 @@ impl CopilotButton {
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
-            let language_enabled =
-                language_settings::language_settings(Some(language.as_ref()), None, cx)
-                    .show_copilot_suggestions;
+            let language_enabled = language_settings::language_settings(Some(&language), None, cx)
+                .show_copilot_suggestions;
             menu_options.push(ContextMenuItem::handler(
                 format!(
                     "{} Suggestions for {}",
                     if language_enabled { "Hide" } else { "Show" },
-                    language
+                    language.name()
                 ),
                 move |cx| toggle_copilot_for_language(language.clone(), fs.clone(), cx),
             ));
@@ -279,18 +278,14 @@ impl CopilotButton {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
-        let language_name = snapshot
-            .language_at(suggestion_anchor)
-            .map(|language| language.name());
+        let language = snapshot.language_at(suggestion_anchor);
         let file = snapshot.file_at(suggestion_anchor).cloned();
 
         self.editor_enabled = Some(
-            all_language_settings(self.file.as_ref(), cx).copilot_enabled(
-                language_name.as_deref(),
-                file.as_ref().map(|file| file.path().as_ref()),
-            ),
+            all_language_settings(self.file.as_ref(), cx)
+                .copilot_enabled(language, file.as_ref().map(|file| file.path().as_ref())),
         );
-        self.language = language_name;
+        self.language = language.cloned();
         self.file = file;
 
         cx.notify()
@@ -374,12 +369,12 @@ fn toggle_copilot_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     });
 }
 
-fn toggle_copilot_for_language(language: Arc<str>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
+fn toggle_copilot_for_language(language: Arc<Language>, fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_copilot_suggestions =
         all_language_settings(None, cx).copilot_enabled(Some(&language), None);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file| {
         file.languages
-            .entry(language)
+            .entry(language.name())
             .or_default()
             .show_copilot_suggestions = Some(!show_copilot_suggestions);
     });

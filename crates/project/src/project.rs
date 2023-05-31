@@ -694,8 +694,7 @@ impl Project {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
                 if let Some((file, language)) = buffer.file().zip(buffer.language()) {
-                    let settings =
-                        language_settings(Some(language.name().as_ref()), Some(file), cx);
+                    let settings = language_settings(Some(language), Some(file), cx);
                     if settings.enable_language_server {
                         if let Some(file) = File::from_dyn(Some(file)) {
                             language_servers_to_start
@@ -719,9 +718,7 @@ impl Project {
                 let file = worktree.and_then(|tree| {
                     tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
                 });
-                if !language_settings(Some(&language.name()), file.as_ref(), cx)
-                    .enable_language_server
-                {
+                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
                     language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
                 }
             }
@@ -2361,7 +2358,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if !language_settings(
-            Some(&language.name()),
+            Some(&language),
             worktree
                 .update(cx, |tree, cx| tree.root_file(cx))
                 .map(|f| f as _)
@@ -3465,8 +3462,7 @@ impl Project {
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
                     let settings = buffer.read_with(&cx, |buffer, cx| {
-                        let language_name = buffer.language().map(|language| language.name());
-                        language_settings(language_name.as_deref(), buffer.file(), cx).clone()
+                        language_settings(buffer.language(), buffer.file(), cx).clone()
                     });
 
                     let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -4477,10 +4473,10 @@ impl Project {
     ) -> Task<Result<Option<Transaction>>> {
         let (position, tab_size) = buffer.read_with(cx, |buffer, cx| {
             let position = position.to_point_utf16(buffer);
-            let language_name = buffer.language_at(position).map(|l| l.name());
             (
                 position,
-                language_settings(language_name.as_deref(), buffer.file(), cx).tab_size,
+                language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx)
+                    .tab_size,
             )
         });
         self.request_lsp(
