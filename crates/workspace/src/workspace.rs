@@ -3203,9 +3203,9 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
                 .unwrap_or_default();
 
             if !version.contains("0.88")
-                || !version.contains("0.89")
-                || !version.contains("0.90")
-                || !version.contains("0.91")
+                && !version.contains("0.89")
+                && !version.contains("0.90")
+                && !version.contains("0.91")
             {
                 return true;
             }
