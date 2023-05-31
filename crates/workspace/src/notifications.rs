@@ -33,7 +33,7 @@ impl From<&dyn NotificationHandle> for AnyViewHandle {
     }
 }
 
-struct NotificationTracker {
+pub(crate) struct NotificationTracker {
     notifications_sent: HashMap<TypeId, Vec<usize>>,
 }
 
@@ -65,8 +65,7 @@ impl Workspace {
         id: usize,
         cx: &ViewContext<Self>,
     ) -> bool {
-        cx
-            .global::<NotificationTracker>()
+        cx.global::<NotificationTracker>()
             .get(&TypeId::of::<V>())
             .map(|ids| ids.contains(&id))
             .unwrap_or(false)
@@ -78,8 +77,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> ViewHandle<V>,
     ) {
-        if !self.has_shown_notification_once::<V>(id, cx)
-        {
+        if !self.has_shown_notification_once::<V>(id, cx) {
             cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
                 let entry = tracker.entry(TypeId::of::<V>()).or_default();
                 entry.push(id);
@@ -167,7 +165,7 @@ pub mod simple_message_notification {
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
         impl_actions,
         platform::{CursorStyle, MouseButton},
-        AppContext, Element, Entity, View, ViewContext,
+        AnyElement, AppContext, Element, Entity, View, ViewContext, fonts::TextStyle,
     };
     use menu::Cancel;
     use serde::Deserialize;
@@ -195,8 +193,13 @@ pub mod simple_message_notification {
         )
     }
 
+    enum NotificationMessage {
+        Text(Cow<'static, str>),
+        Element(fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>),
+    }
+
     pub struct MessageNotification {
-        message: Cow<'static, str>,
+        message: NotificationMessage,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<Cow<'static, str>>,
     }
@@ -215,7 +218,16 @@ pub mod simple_message_notification {
             S: Into<Cow<'static, str>>,
         {
             Self {
-                message: message.into(),
+                message: NotificationMessage::Text(message.into()),
+                on_click: None,
+                click_message: None,
+            }
+        }
+
+        pub fn new_element(message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>) -> MessageNotification
+        {
+            Self {
+                message: NotificationMessage::Element(message),
                 on_click: None,
                 click_message: None,
             }
@@ -254,7 +266,12 @@ pub mod simple_message_notification {
             enum MessageNotificationTag {}
 
             let click_message = self.click_message.clone();
-            let message = self.message.clone();
+            let message = match &self.message {
+                NotificationMessage::Text(text) => {
+                    Text::new(text.to_owned(), theme.message.text.clone()).into_any()
+                }
+                NotificationMessage::Element(e) => e(theme.message.text.clone(), cx),
+            };
             let on_click = self.on_click.clone();
             let has_click_action = on_click.is_some();
 
@@ -262,8 +279,7 @@ pub mod simple_message_notification {
                 .with_child(
                     Flex::row()
                         .with_child(
-                            Text::new(message, theme.message.text.clone())
-                                .contained()
+                            message.contained()
                                 .with_style(theme.message.container)
                                 .aligned()
                                 .top()
