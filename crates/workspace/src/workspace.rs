@@ -3288,32 +3288,36 @@ impl View for Workspace {
                                         enum ZoomBackground {}
                                         let zoomed = zoomed.upgrade(cx)?;
 
-                                        let mut foreground_style;
-                                        match self.zoomed_position {
-                                            Some(DockPosition::Left) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.left = 0.;
-                                                foreground_style.margin.top = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            Some(DockPosition::Right) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.right = 0.;
-                                                foreground_style.margin.top = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            Some(DockPosition::Bottom) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.left = 0.;
-                                                foreground_style.margin.right = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            None => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_pane_foreground;
+                                        let mut foreground_style =
+                                            theme.workspace.zoomed_pane_foreground;
+                                        if let Some(zoomed_dock_position) = self.zoomed_position {
+                                            foreground_style =
+                                                theme.workspace.zoomed_panel_foreground;
+                                            let margin = foreground_style.margin.top;
+                                            let border = foreground_style.border.top;
+
+                                            // Only include a margin and border on the opposite side.
+                                            foreground_style.margin.top = 0.;
+                                            foreground_style.margin.left = 0.;
+                                            foreground_style.margin.bottom = 0.;
+                                            foreground_style.margin.right = 0.;
+                                            foreground_style.border.top = false;
+                                            foreground_style.border.left = false;
+                                            foreground_style.border.bottom = false;
+                                            foreground_style.border.right = false;
+                                            match zoomed_dock_position {
+                                                DockPosition::Left => {
+                                                    foreground_style.margin.right = margin;
+                                                    foreground_style.border.right = border;
+                                                }
+                                                DockPosition::Right => {
+                                                    foreground_style.margin.left = margin;
+                                                    foreground_style.border.left = border;
+                                                }
+                                                DockPosition::Bottom => {
+                                                    foreground_style.margin.top = margin;
+                                                    foreground_style.border.top = border;
+                                                }
                                             }
                                         }
 
