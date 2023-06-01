@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use gpui::AppContext;
 use lazy_static::lazy_static;
@@ -84,13 +84,24 @@ pub struct SettingsJsonSchemaParams<'a> {
 }
 
 /// A set of strongly-typed setting values defined via multiple JSON files.
-#[derive(Default)]
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    default_deserialized_settings: Option<serde_json::Value>,
-    user_deserialized_settings: Option<serde_json::Value>,
+    default_deserialized_settings: serde_json::Value,
+    user_deserialized_settings: serde_json::Value,
     local_deserialized_settings: BTreeMap<Arc<Path>, serde_json::Value>,
     tab_size_callback: Option<(TypeId, Box<dyn Fn(&dyn Any) -> Option<usize>>)>,
+}
+
+impl Default for SettingsStore {
+    fn default() -> Self {
+        SettingsStore {
+            setting_values: Default::default(),
+            default_deserialized_settings: serde_json::json!({}),
+            user_deserialized_settings: serde_json::json!({}),
+            local_deserialized_settings: Default::default(),
+            tab_size_callback: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -136,27 +147,24 @@ impl SettingsStore {
             local_values: Vec::new(),
         }));
 
-        if let Some(default_settings) = &self.default_deserialized_settings {
-            if let Some(default_settings) = setting_value
-                .deserialize_setting(default_settings)
+        if let Some(default_settings) = setting_value
+            .deserialize_setting(&self.default_deserialized_settings)
+            .log_err()
+        {
+            let mut user_values_stack = Vec::new();
+
+            if let Some(user_settings) = setting_value
+                .deserialize_setting(&self.user_deserialized_settings)
                 .log_err()
             {
-                let mut user_values_stack = Vec::new();
+                user_values_stack = vec![user_settings];
+            }
 
-                if let Some(user_settings) = &self.user_deserialized_settings {
-                    if let Some(user_settings) =
-                        setting_value.deserialize_setting(user_settings).log_err()
-                    {
-                        user_values_stack = vec![user_settings];
-                    }
-                }
-
-                if let Some(setting) = setting_value
-                    .load_setting(&default_settings, &user_values_stack, cx)
-                    .log_err()
-                {
-                    setting_value.set_global_value(setting);
-                }
+            if let Some(setting) = setting_value
+                .load_setting(&default_settings, &user_values_stack, cx)
+                .log_err()
+            {
+                setting_value.set_global_value(setting);
             }
         }
     }
@@ -189,9 +197,7 @@ impl SettingsStore {
     /// This is only for debugging and reporting. For user-facing functionality,
     /// use the typed setting interface.
     pub fn untyped_user_settings(&self) -> &serde_json::Value {
-        self.user_deserialized_settings
-            .as_ref()
-            .unwrap_or(&serde_json::Value::Null)
+        &self.user_deserialized_settings
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -213,11 +219,7 @@ impl SettingsStore {
         cx: &AppContext,
         update: impl FnOnce(&mut T::FileContent),
     ) {
-        if self.user_deserialized_settings.is_none() {
-            self.set_user_settings("{}", cx).unwrap();
-        }
-        let old_text =
-            serde_json::to_string(self.user_deserialized_settings.as_ref().unwrap()).unwrap();
+        let old_text = serde_json::to_string(&self.user_deserialized_settings).unwrap();
         let new_text = self.new_text_for_update::<T>(old_text, update);
         self.set_user_settings(&new_text, cx).unwrap();
     }
@@ -250,11 +252,7 @@ impl SettingsStore {
             .setting_values
             .get(&setting_type_id)
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
-            .deserialize_setting(
-                self.user_deserialized_settings
-                    .as_ref()
-                    .expect("no user settings loaded"),
-            )
+            .deserialize_setting(&self.user_deserialized_settings)
             .unwrap_or_else(|e| {
                 panic!(
                     "could not deserialize setting type {} from user settings: {}",
@@ -323,10 +321,14 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &AppContext,
     ) -> Result<()> {
-        self.default_deserialized_settings =
-            Some(parse_json_with_comments(default_settings_content)?);
-        self.recompute_values(None, cx)?;
-        Ok(())
+        let settings: serde_json::Value = parse_json_with_comments(default_settings_content)?;
+        if settings.is_object() {
+            self.default_deserialized_settings = settings;
+            self.recompute_values(None, cx)?;
+            Ok(())
+        } else {
+            Err(anyhow!("settings must be an object"))
+        }
     }
 
     /// Set the user settings via a JSON string.
@@ -335,9 +337,14 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &AppContext,
     ) -> Result<()> {
-        self.user_deserialized_settings = Some(parse_json_with_comments(user_settings_content)?);
-        self.recompute_values(None, cx)?;
-        Ok(())
+        let settings: serde_json::Value = parse_json_with_comments(user_settings_content)?;
+        if settings.is_object() {
+            self.user_deserialized_settings = settings;
+            self.recompute_values(None, cx)?;
+            Ok(())
+        } else {
+            Err(anyhow!("settings must be an object"))
+        }
     }
 
     /// Add or remove a set of local settings via a JSON string.
@@ -443,65 +450,63 @@ impl SettingsStore {
         let mut user_settings_stack = Vec::<DeserializedSetting>::new();
         let mut paths_stack = Vec::<Option<&Path>>::new();
         for setting_value in self.setting_values.values_mut() {
-            if let Some(default_settings) = &self.default_deserialized_settings {
-                let default_settings = setting_value.deserialize_setting(default_settings)?;
+            let default_settings =
+                setting_value.deserialize_setting(&self.default_deserialized_settings)?;
 
-                user_settings_stack.clear();
-                paths_stack.clear();
+            user_settings_stack.clear();
+            paths_stack.clear();
 
-                if let Some(user_settings) = &self.user_deserialized_settings {
-                    if let Some(user_settings) =
-                        setting_value.deserialize_setting(user_settings).log_err()
-                    {
-                        user_settings_stack.push(user_settings);
-                        paths_stack.push(None);
+            if let Some(user_settings) = setting_value
+                .deserialize_setting(&self.user_deserialized_settings)
+                .log_err()
+            {
+                user_settings_stack.push(user_settings);
+                paths_stack.push(None);
+            }
+
+            // If the global settings file changed, reload the global value for the field.
+            if changed_local_path.is_none() {
+                if let Some(value) = setting_value
+                    .load_setting(&default_settings, &user_settings_stack, cx)
+                    .log_err()
+                {
+                    setting_value.set_global_value(value);
+                }
+            }
+
+            // Reload the local values for the setting.
+            for (path, local_settings) in &self.local_deserialized_settings {
+                // Build a stack of all of the local values for that setting.
+                while let Some(prev_path) = paths_stack.last() {
+                    if let Some(prev_path) = prev_path {
+                        if !path.starts_with(prev_path) {
+                            paths_stack.pop();
+                            user_settings_stack.pop();
+                            continue;
+                        }
                     }
+                    break;
                 }
 
-                // If the global settings file changed, reload the global value for the field.
-                if changed_local_path.is_none() {
+                if let Some(local_settings) =
+                    setting_value.deserialize_setting(&local_settings).log_err()
+                {
+                    paths_stack.push(Some(path.as_ref()));
+                    user_settings_stack.push(local_settings);
+
+                    // If a local settings file changed, then avoid recomputing local
+                    // settings for any path outside of that directory.
+                    if changed_local_path.map_or(false, |changed_local_path| {
+                        !path.starts_with(changed_local_path)
+                    }) {
+                        continue;
+                    }
+
                     if let Some(value) = setting_value
                         .load_setting(&default_settings, &user_settings_stack, cx)
                         .log_err()
                     {
-                        setting_value.set_global_value(value);
-                    }
-                }
-
-                // Reload the local values for the setting.
-                for (path, local_settings) in &self.local_deserialized_settings {
-                    // Build a stack of all of the local values for that setting.
-                    while let Some(prev_path) = paths_stack.last() {
-                        if let Some(prev_path) = prev_path {
-                            if !path.starts_with(prev_path) {
-                                paths_stack.pop();
-                                user_settings_stack.pop();
-                                continue;
-                            }
-                        }
-                        break;
-                    }
-
-                    if let Some(local_settings) =
-                        setting_value.deserialize_setting(&local_settings).log_err()
-                    {
-                        paths_stack.push(Some(path.as_ref()));
-                        user_settings_stack.push(local_settings);
-
-                        // If a local settings file changed, then avoid recomputing local
-                        // settings for any path outside of that directory.
-                        if changed_local_path.map_or(false, |changed_local_path| {
-                            !path.starts_with(changed_local_path)
-                        }) {
-                            continue;
-                        }
-
-                        if let Some(value) = setting_value
-                            .load_setting(&default_settings, &user_settings_stack, cx)
-                            .log_err()
-                        {
-                            setting_value.set_local_value(path.clone(), value);
-                        }
+                        setting_value.set_local_value(path.clone(), value);
                     }
                 }
             }
