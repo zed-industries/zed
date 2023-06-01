@@ -199,6 +199,24 @@ pub enum GitFileStatus {
 }
 
 impl GitFileStatus {
+    pub fn merge(
+        this: Option<GitFileStatus>,
+        other: Option<GitFileStatus>,
+    ) -> Option<GitFileStatus> {
+        match (this, other) {
+            (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
+                Some(GitFileStatus::Conflict)
+            }
+            (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
+                Some(GitFileStatus::Modified)
+            }
+            (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
+                Some(GitFileStatus::Added)
+            }
+            _ => None,
+        }
+    }
+
     pub fn from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
         git_status.and_then(|status| {
             proto::GitStatus::from_i32(status).map(|status| match status {

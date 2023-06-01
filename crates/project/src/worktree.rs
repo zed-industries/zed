@@ -1958,20 +1958,32 @@ impl LocalSnapshot {
         Some(())
     }
 
-    fn scan_statuses(&mut self, repo_ptr: &dyn GitRepository, work_directory: &RepositoryWorkDirectory) {
+    fn scan_statuses(
+        &mut self,
+        repo_ptr: &dyn GitRepository,
+        work_directory: &RepositoryWorkDirectory,
+    ) {
         let statuses = repo_ptr.statuses().unwrap_or_default();
+        let mut edits = vec![];
         for (repo_path, status) in statuses.iter() {
-            let Some(entry) = self.entry_for_path(&work_directory.0.join(repo_path)) else {
+            self.set_git_status(&work_directory.0.join(repo_path), Some(*status), &mut edits);
+        }
+        self.entries_by_path.edit(edits, &());
+    }
+
+    fn set_git_status(
+        &self,
+        path: &Path,
+        status: Option<GitFileStatus>,
+        edits: &mut Vec<Edit<Entry>>,
+    ) {
+        for path in path.ancestors() {
+            let Some(entry) = self.entry_for_path(path) else {
                 continue;
             };
-
             let mut entry = entry.clone();
-            entry.git_status = Some(*status);
-
-            // TODO statuses
-            // Bubble
-
-            self.entries_by_path.insert_or_replace(entry, &());
+            entry.git_status = GitFileStatus::merge(entry.git_status, status);
+            edits.push(Edit::Insert(entry))
         }
     }
 
@@ -3161,7 +3173,6 @@ impl BackgroundScanner {
                     entry.branch = branch.map(Into::into);
                 });
 
-
             snapshot.scan_statuses(repo.deref(), &work_dir);
         } else {
             if snapshot
@@ -3185,13 +3196,13 @@ impl BackgroundScanner {
                 return None;
             }
 
-            for mut entry in snapshot
+            let mut edits = vec![];
+
+            for path in snapshot
                 .descendent_entries(false, false, path)
-                .cloned()
-                .collect::<Vec<_>>()
-                .into_iter()
+                .map(|entry| &entry.path)
             {
-                let Some(repo_path) = repo.work_directory.relativize(snapshot, &entry.path) else {
+                let Some(repo_path) = repo.work_directory.relativize(snapshot, &path) else {
                     continue;
                 };
 
@@ -3199,11 +3210,10 @@ impl BackgroundScanner {
                     continue;
                 };
 
-                entry.git_status = Some(status);
-                snapshot.entries_by_path.insert_or_replace(entry, &());
-                // TODO statuses
-                // Bubble
+                snapshot.set_git_status(&path, Some(status), &mut edits);
             }
+
+            snapshot.entries_by_path.edit(edits, &());
         }
 
         Some(())
@@ -4995,7 +5005,6 @@ mod tests {
             cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
                 .await;
 
-
             const A_TXT: &'static str = "a.txt";
             const B_TXT: &'static str = "b.txt";
             const E_TXT: &'static str = "c/d/e.txt";
@@ -5012,8 +5021,6 @@ mod tests {
             git_add(Path::new(DOTGITIGNORE), &repo);
             git_commit("Initial commit", &repo);
 
-            std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
-
             tree.flush_fs_events(cx).await;
             deterministic.run_until_parked();
 
@@ -5025,10 +5032,6 @@ mod tests {
                 assert_eq!(dir.0.as_ref(), Path::new("project"));
 
                 assert_eq!(
-                    snapshot.status_for_file(project_path.join(A_TXT)),
-                    Some(GitFileStatus::Modified)
-                );
-                assert_eq!(
                     snapshot.status_for_file(project_path.join(B_TXT)),
                     Some(GitFileStatus::Added)
                 );
@@ -5036,6 +5039,36 @@ mod tests {
                     snapshot.status_for_file(project_path.join(F_TXT)),
                     Some(GitFileStatus::Added)
                 );
+
+                // Check stateful bubbling works
+                assert_eq!(
+                    snapshot.status_for_file(project_path),
+                    Some(GitFileStatus::Added)
+                );
+
+                assert_eq!(snapshot.status_for_file(""), Some(GitFileStatus::Added));
+            });
+
+            std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
+
+            tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
+
+            tree.read_with(cx, |tree, _cx| {
+                let snapshot = tree.snapshot();
+
+                assert_eq!(
+                    snapshot.status_for_file(project_path.join(A_TXT)),
+                    Some(GitFileStatus::Modified)
+                );
+
+                // Check stateful bubbling works, modified overrules added
+                assert_eq!(
+                    snapshot.status_for_file(project_path),
+                    Some(GitFileStatus::Modified)
+                );
+
+                assert_eq!(snapshot.status_for_file(""), Some(GitFileStatus::Modified));
             });
 
             git_add(Path::new(A_TXT), &repo);
@@ -5052,6 +5085,17 @@ mod tests {
                     snapshot.status_for_file(project_path.join(F_TXT)),
                     Some(GitFileStatus::Added)
                 );
+
+                assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
+                assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
+
+                // Check bubbling
+                assert_eq!(
+                    snapshot.status_for_file(project_path),
+                    Some(GitFileStatus::Added)
+                );
+
+                assert_eq!(snapshot.status_for_file(""), Some(GitFileStatus::Added));
             });
 
             git_reset(0, &repo);
@@ -5075,6 +5119,23 @@ mod tests {
                     snapshot.status_for_file(project_path.join(E_TXT)),
                     Some(GitFileStatus::Modified)
                 );
+
+                // Check status bubbling
+                assert_eq!(
+                    snapshot.status_for_file(project_path.join(Path::new(E_TXT).parent().unwrap())),
+                    Some(GitFileStatus::Modified)
+                );
+                assert_eq!(
+                    snapshot.status_for_file(
+                        project_path.join(Path::new(E_TXT).parent().unwrap().parent().unwrap())
+                    ),
+                    Some(GitFileStatus::Modified)
+                );
+                assert_eq!(
+                    snapshot.status_for_file(project_path),
+                    Some(GitFileStatus::Modified)
+                );
+
                 assert_eq!(
                     snapshot.status_for_file(project_path.join(F_TXT)),
                     Some(GitFileStatus::Added)
@@ -5132,7 +5193,11 @@ mod tests {
                 let snapshot = tree.snapshot();
 
                 assert_eq!(
-                    snapshot.status_for_file(Path::new(renamed_dir_name).join(RENAMED_FILE)),
+                    snapshot.status_for_file(
+                        project_path
+                            .join(Path::new(renamed_dir_name))
+                            .join(RENAMED_FILE)
+                    ),
                     Some(GitFileStatus::Added)
                 );
             });
