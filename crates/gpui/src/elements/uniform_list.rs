@@ -36,7 +36,7 @@ struct StateInner {
     scroll_to: Option<ScrollTarget>,
 }
 
-pub struct LayoutState<V: View> {
+pub struct UniformListLayoutState<V: View> {
     scroll_max: f32,
     item_height: f32,
     items: Vec<AnyElement<V>>,
@@ -152,7 +152,7 @@ impl<V: View> UniformList<V> {
 }
 
 impl<V: View> Element<V> for UniformList<V> {
-    type LayoutState = LayoutState<V>;
+    type LayoutState = UniformListLayoutState<V>;
     type PaintState = ();
 
     fn layout(
@@ -169,7 +169,7 @@ impl<V: View> Element<V> for UniformList<V> {
 
         let no_items = (
             constraint.min,
-            LayoutState {
+            UniformListLayoutState {
                 item_height: 0.,
                 scroll_max: 0.,
                 items: Default::default(),
@@ -263,7 +263,7 @@ impl<V: View> Element<V> for UniformList<V> {
 
         (
             size,
-            LayoutState {
+            UniformListLayoutState {
                 item_height,
                 scroll_max,
                 items,
