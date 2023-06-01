@@ -55,14 +55,21 @@ pub fn watch_config_file(
         .spawn(async move {
             let events = fs.watch(&path, Duration::from_millis(100)).await;
             futures::pin_mut!(events);
+
+            let contents = fs.load(&path).await.unwrap_or_default();
+            if tx.unbounded_send(contents).is_err() {
+                return;
+            }
+
             loop {
+                if events.next().await.is_none() {
+                    break;
+                }
+
                 if let Ok(contents) = fs.load(&path).await {
                     if !tx.unbounded_send(contents).is_ok() {
                         break;
                     }
-                }
-                if events.next().await.is_none() {
-                    break;
                 }
             }
         })
