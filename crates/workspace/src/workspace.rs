@@ -1705,7 +1705,7 @@ impl Workspace {
     ) {
         // If a center pane is zoomed, unzoom it.
         for pane in &self.panes {
-            if pane != &self.active_pane {
+            if pane != &self.active_pane || dock_to_reveal.is_some() {
                 pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
             }
         }
@@ -4351,6 +4351,12 @@ mod tests {
             panel
         });
 
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update(cx, |pane, cx| {
+            let item = cx.add_view(|_| TestItem::new());
+            pane.add_item(Box::new(item), true, true, None, cx);
+        });
+
         // Transfer focus from center to panel
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_panel_focus::<TestPanel>(cx);
@@ -4451,6 +4457,25 @@ mod tests {
             assert!(panel.is_zoomed(cx));
             assert!(workspace.zoomed.is_some());
             assert!(panel.has_focus(cx));
+        });
+
+        // Unzoom and close the panel, zoom the active pane.
+        panel.update(cx, |panel, cx| panel.set_zoomed(false, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx)
+        });
+        pane.update(cx, |pane, cx| pane.toggle_zoom(&Default::default(), cx));
+
+        // Opening a dock unzooms the pane.
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx)
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = pane.read(cx);
+            assert!(!pane.is_zoomed());
+            assert!(pane.has_focus());
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(workspace.zoomed.is_none());
         });
     }
 
