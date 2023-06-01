@@ -974,9 +974,8 @@ impl Workspace {
                     let timestamp = entry.timestamp;
                     match history.entry(project_path) {
                         hash_map::Entry::Occupied(mut entry) => {
-                            let (old_fs_path, old_timestamp) = entry.get();
+                            let (_, old_timestamp) = entry.get();
                             if &timestamp > old_timestamp {
-                                assert_eq!(&fs_path, old_fs_path, "Inconsistent nav history");
                                 entry.insert((fs_path, timestamp));
                             }
                         }
