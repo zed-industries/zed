@@ -1,13 +1,11 @@
 mod clock;
 mod document_fragment;
 mod insertion_subrange;
-mod version_graph;
-mod version_vector;
+mod version;
 
 /// An efficiently-editable an cloneable chunk of text.
 use rope::Rope;
 use std::{
-    cmp::Reverse,
     ops::Range,
     sync::{Arc, Mutex},
 };
@@ -98,7 +96,6 @@ struct InsertionSubrange {
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct OperationId {
     branch: BranchId,
-    op_count: OperationCount,
     time: LamportTime,
 }
 

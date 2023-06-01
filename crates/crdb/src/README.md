@@ -51,51 +51,50 @@ Instead, we can query the database to return a snapshot of how it appears at a s
 
 We maintain a B-tree index for all fragments.
 
-When querying this B-tree, we only want to descend into subtrees that contain at least one fragment whose insertion causally precedes the target version. But based on our hypothesis that hidden fragments will tend to cluster, we want to avoid descending into nodes for which all the fragments in question are invisible at the current version.
+When querying this B-tree, we only want to descend into subtrees that contain at least one fragment whose appearance causally precedes the target version. If a node only contains fragments that were concurrent or subsequent to our target version, we can skip it. To support this, we store the minimal version that causally precedes all fragments in a given subtree on the subtree's summary.
 
-To support descending into nodes that contain operations from a current version, we index the minimal set of concurrent versions that causally precede all fragments in each subtree. Put another way: If a node only contains fragments that were concurrent or subsequent to our target version, we can skip it.
+Once a fragment appears, it can also disappear due to being deleted or undone. We want to avoid descending into nodes of a tree whose fragments appeared prior to our target version, but all of which have since become hidden.
 
-How can we skip nodes that only contain fragments that were hidden before our version?
+To support this, we make a number of decisions. First, we avoid ever reintroducing a fragment once it has been hidden. If we undo an operation that hid a fragment, we will introduce a new fragment pointing at the same insertion, but with an id associated with the undo.
 
-Here's an idea I'm still thinking through:
+For each hidden fragment, we'll maintain an optional minimal version at which that fragment was hidden. When summarizing fragments that are all hidden, we'll maintain a minimal version at which all the fragments were hidden. If not all fragments in the summary are hidden, this version won't exist.
 
-For each subtree, we maintain the following version sets in its summary:
+When deciding whether to descend into a subtree, we will check if all of its fragments became hidden in some version. If that version precedes our target version, we can skip that subtree.
 
-I'm wondering if the fragment summary can contain a history of versions at which the first fragment in the sequence appears or the last fragment in the sequence is hidden.
+### Required operations on version vectors
 
-Then, when combining fragments, we combine these summaries, producing a new history in which the first fragment is introduced or all fragments are hidden. Assuming we have this summary, we can use it to determine if a node contains any visible fragments in a given version.
+#### Insertion
 
-But not quite sure how to produce this summary yet.
+Versions represent a set of operation ids, and we advance to a new version by inserting an operation id, where each operation id is associated with a branch id.
 
-For one fragment, every time it becomes hidden or visible we would add an entry to this history. How do we combine two histories?
+#### Partial ordering
 
-We just need to preserve the intent of these events. In this case, we concatenate the histories.
+Versions also represent causality. If version B contains a superset of operations in version A, then it can be considered to be greater than version A. That is, B represents a state that is after A.
 
-           v0          v1          v2          v3
-History A: show first, hide last
-History B:                         show first, hide last
-Combined:  v0: show first, v1: hide last, v2: show first, v3: hide last
+If versions A and B represent concurrent operations, then the result of their comparison is `None`.
 
-           v0          v1          v2          v3
-History A: show first, hide last
-History B:                         show first, hide last
-Combined:  v0: show first, v1: hide last, v2: show first, v3: hide last
+#### Join
 
-### How we represent versions
+*Joining* two arbitrary versions A and B produces a version C such that C is considered to be greater than both A and B. Joining produces a version that descends from A and B in the causality graph.
 
-A version represents a subset of operations in a context.
+#### Meet
 
-This can be represented as a set of operation ids, where each operation id is a pair of a branch id and an operation count on that branch. To save space, we include only the maximal operation id for each branch, assuming all operations on that branch with lesser ids are included in the subset.
+*Meeting* two arbitrary versions A and B produces a version C such that A and B are considered to both be greater than C. Meeting produces a version representing A and B's common ancestor in the causality graph.
 
-We also associate versions with a set of maximal operation ids. If version B contains all of version A's maximal operation ids, then we know version B is a superset of version A without further examination.
+#### Clone
 
-Fundamental operations:
+Since we'll use versions in a copy-on-write B-tree, they must be efficiently cloned.
 
-- [ ] Efficient cloning and storage
-- [x] Partial ordering
-- [x] Operation id generation given a branch id, which can also be used to fork by supplying a new branch id.
-- [ ] Join: Given two versions, produce a version that is >= both.
-- [ ] Meet: Given two versions, produce a version that is <= both.
+### Representing version vectors
+
+Versions must support efficient implementations of the operations described above, plus efficient storage.
+
+Each operation id combines a branch id with a Lamport timestamp derived from a Lamport clock that is maintained for each branch. We use Lamport timestamps instead of per-branch sequence numbers to allow operation ids to be ordered with respect to causality, which we use in the meet implementation.
+
+Versions represent a subset of operations by mapping branch ids to the maximum Lamport timestamp for that branch in that version.
+
+Versions also maintain a set of maximal operation ids, such that if version B contains all the maximal operation ids of A, then we know that version B happens before version A without further examination. This set represents the set of concurrent operations for which no causally subsequent operations exist in the set of operations represented by the version.
+
 
 The version graph is actually a CRDT.
 
@@ -105,8 +104,13 @@ struct Db {
 }
 
 struct Version {
-    maximal_operations: SmallVec<[OperationId; 2]>,
-    operations: Sequence<OperationId>,
+    /// A set of concurrent operations that causally dominate all
+    /// other operations in this version.
+    maximal_operations: SmallVec<[OperationId; 2]>, // TODO: Is this the right data type
+
+    /// The maximum Lamport time observed for every branch in this
+    /// version
+    operations: OrderedMap<BranchId, LamportTime>,
 }
 
 struct OperationId {
