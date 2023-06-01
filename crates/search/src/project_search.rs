@@ -248,7 +248,7 @@ impl Item for ProjectSearchView {
             .is_empty()
             .not()
             .then(|| query_text.into())
-            .or_else(|| Some("Project search".into()))
+            .or_else(|| Some("Project Search".into()))
     }
 
     fn act_as_type<'a>(
