@@ -23,6 +23,20 @@ export default function assistant(colorScheme: ColorScheme) {
         margin: { top: 2, left: 8 },
         ...text(layer, "sans", "default", { size: "2xs" }),
       },
+      remaining_tokens: {
+        padding: 4,
+        margin: { right: 16, top: 4 },
+        background: background(layer, "on"),
+        cornerRadius: 4,
+        ...text(layer, "sans", "positive", { size: "xs" }),
+      },
+      no_remaining_tokens: {
+        padding: 4,
+        margin: { right: 16, top: 4 },
+        background: background(layer, "on"),
+        cornerRadius: 4,
+        ...text(layer, "sans", "negative", { size: "xs" }),
+      },
       apiKeyEditor: {
           background: background(layer, "on"),
           cornerRadius: 6,

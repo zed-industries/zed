@@ -10,7 +10,7 @@ pub mod items;
 mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
-mod multi_buffer;
+pub mod multi_buffer;
 mod persistence;
 pub mod scroll;
 pub mod selections_collection;

@@ -16,7 +16,8 @@ use gpui::{
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use settings::SettingsStore;
-use std::{cell::Cell, io, rc::Rc, sync::Arc};
+use std::{cell::Cell, io, rc::Rc, sync::Arc, time::Duration};
+use tiktoken_rs::model::get_context_size;
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -398,7 +399,12 @@ struct Assistant {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     languages: Arc<LanguageRegistry>,
+    model: String,
+    token_count: Option<usize>,
+    max_token_count: usize,
+    pending_token_count: Task<Option<()>>,
     api_key: Rc<Cell<Option<String>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Entity for Assistant {
@@ -411,17 +417,76 @@ impl Assistant {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let model = "gpt-3.5-turbo";
+        let buffer = cx.add_model(|_| MultiBuffer::new(0));
         let mut this = Self {
-            buffer: cx.add_model(|_| MultiBuffer::new(0)),
             messages: Default::default(),
             messages_by_id: Default::default(),
             completion_count: Default::default(),
             pending_completions: Default::default(),
             languages: language_registry,
+            token_count: None,
+            max_token_count: get_context_size(model),
+            pending_token_count: Task::ready(None),
+            model: model.into(),
+            _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             api_key,
+            buffer,
         };
         this.push_message(Role::User, cx);
+        this.count_remaining_tokens(cx);
         this
+    }
+
+    fn handle_buffer_event(
+        &mut self,
+        _: ModelHandle<MultiBuffer>,
+        event: &editor::multi_buffer::Event,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            editor::multi_buffer::Event::ExcerptsAdded { .. }
+            | editor::multi_buffer::Event::ExcerptsRemoved { .. }
+            | editor::multi_buffer::Event::Edited => self.count_remaining_tokens(cx),
+            _ => {}
+        }
+    }
+
+    fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
+        let messages = self
+            .messages
+            .iter()
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: message.content.read(cx).text(),
+                name: None,
+            })
+            .collect::<Vec<_>>();
+        let model = self.model.clone();
+        self.pending_token_count = cx.spawn(|this, mut cx| {
+            async move {
+                cx.background().timer(Duration::from_millis(200)).await;
+                let token_count = cx
+                    .background()
+                    .spawn(async move { tiktoken_rs::num_tokens_from_messages(&model, &messages) })
+                    .await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.token_count = Some(token_count);
+                    cx.notify()
+                });
+                anyhow::Ok(())
+            }
+            .log_err()
+        });
+    }
+
+    fn remaining_tokens(&self) -> Option<isize> {
+        Some(self.max_token_count as isize - self.token_count? as isize)
     }
 
     fn assist(&mut self, cx: &mut ModelContext<Self>) {
@@ -434,7 +499,7 @@ impl Assistant {
             })
             .collect();
         let request = OpenAIRequest {
-            model: "gpt-3.5-turbo".into(),
+            model: self.model.clone(),
             messages,
             stream: true,
         };
@@ -530,6 +595,7 @@ struct PendingCompletion {
 struct AssistantEditor {
     assistant: ModelHandle<Assistant>,
     editor: ViewHandle<Editor>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AssistantEditor {
@@ -590,7 +656,11 @@ impl AssistantEditor {
             );
             editor
         });
-        Self { assistant, editor }
+        Self {
+            _subscriptions: vec![cx.observe(&assistant, |_, _, cx| cx.notify())],
+            assistant,
+            editor,
+        }
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
@@ -684,10 +754,34 @@ impl View for AssistantEditor {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = &theme::current(cx).assistant;
+        let remaining_tokens = self
+            .assistant
+            .read(cx)
+            .remaining_tokens()
+            .map(|remaining_tokens| {
+                let remaining_tokens_style = if remaining_tokens <= 0 {
+                    &theme.no_remaining_tokens
+                } else {
+                    &theme.remaining_tokens
+                };
+                Label::new(
+                    remaining_tokens.to_string(),
+                    remaining_tokens_style.text.clone(),
+                )
+                .contained()
+                .with_style(remaining_tokens_style.container)
+                .aligned()
+                .top()
+                .right()
+            });
 
-        ChildView::new(&self.editor, cx)
-            .contained()
-            .with_style(theme.container)
+        Stack::new()
+            .with_child(
+                ChildView::new(&self.editor, cx)
+                    .contained()
+                    .with_style(theme.container),
+            )
+            .with_children(remaining_tokens)
             .into_any()
     }
 

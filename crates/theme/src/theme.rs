@@ -976,6 +976,8 @@ pub struct AssistantStyle {
     pub sent_at: ContainedText,
     pub user_sender: ContainedText,
     pub assistant_sender: ContainedText,
+    pub remaining_tokens: ContainedText,
+    pub no_remaining_tokens: ContainedText,
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
 }
