@@ -16,7 +16,6 @@ pub struct AssistantSettings {
     pub dock: AssistantDockPosition,
     pub default_width: f32,
     pub default_height: f32,
-    pub openai_api_key: Option<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -24,7 +23,6 @@ pub struct AssistantSettingsContent {
     pub dock: Option<AssistantDockPosition>,
     pub default_width: Option<f32>,
     pub default_height: Option<f32>,
-    pub openai_api_key: Option<String>,
 }
 
 impl Setting for AssistantSettings {

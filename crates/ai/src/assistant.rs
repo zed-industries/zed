@@ -16,7 +16,7 @@ use gpui::{
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use settings::SettingsStore;
-use std::{io, sync::Arc};
+use std::{cell::Cell, io, rc::Rc, sync::Arc};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -24,7 +24,12 @@ use workspace::{
     pane, Pane, Workspace,
 };
 
-actions!(assistant, [NewContext, Assist, QuoteSelection, ToggleFocus]);
+const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
+
+actions!(
+    assistant,
+    [NewContext, Assist, QuoteSelection, ToggleFocus, ResetKey]
+);
 
 pub fn init(cx: &mut AppContext) {
     settings::register::<AssistantSettings>(cx);
@@ -41,6 +46,7 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(AssistantEditor::cancel_last_assist);
     cx.add_action(AssistantEditor::quote_selection);
     cx.add_action(AssistantPanel::save_api_key);
+    cx.add_action(AssistantPanel::reset_api_key);
 }
 
 pub enum AssistantPanelEvent {
@@ -55,7 +61,9 @@ pub struct AssistantPanel {
     width: Option<f32>,
     height: Option<f32>,
     pane: ViewHandle<Pane>,
-    api_key_editor: ViewHandle<Editor>,
+    api_key: Rc<Cell<Option<String>>>,
+    api_key_editor: Option<ViewHandle<Editor>>,
+    has_read_credentials: bool,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
@@ -124,19 +132,12 @@ impl AssistantPanel {
                             .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
                         pane
                     });
+
                     let mut this = Self {
                         pane,
-                        api_key_editor: cx.add_view(|cx| {
-                            let mut editor = Editor::single_line(
-                                Some(Arc::new(|theme| theme.assistant.api_key_editor.clone())),
-                                cx,
-                            );
-                            editor.set_placeholder_text(
-                                "sk-000000000000000000000000000000000000000000000000",
-                                cx,
-                            );
-                            editor
-                        }),
+                        api_key: Rc::new(Cell::new(None)),
+                        api_key_editor: None,
+                        has_read_credentials: false,
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
                         width: None,
@@ -145,9 +146,6 @@ impl AssistantPanel {
                     };
 
                     let mut old_dock_position = this.position(cx);
-                    let mut old_openai_api_key = settings::get::<AssistantSettings>(cx)
-                        .openai_api_key
-                        .clone();
                     this._subscriptions = vec![
                         cx.observe(&this.pane, |_, _, cx| cx.notify()),
                         cx.subscribe(&this.pane, Self::handle_pane_event),
@@ -156,17 +154,6 @@ impl AssistantPanel {
                             if new_dock_position != old_dock_position {
                                 old_dock_position = new_dock_position;
                                 cx.emit(AssistantPanelEvent::DockPositionChanged);
-                            }
-
-                            let new_openai_api_key = settings::get::<AssistantSettings>(cx)
-                                .openai_api_key
-                                .clone();
-                            if old_openai_api_key != new_openai_api_key {
-                                old_openai_api_key = new_openai_api_key;
-                                if this.has_focus(cx) {
-                                    cx.focus_self();
-                                }
-                                cx.notify();
                             }
                         }),
                     ];
@@ -194,22 +181,49 @@ impl AssistantPanel {
 
     fn add_context(&mut self, cx: &mut ViewContext<Self>) {
         let focus = self.has_focus(cx);
-        let editor = cx.add_view(|cx| AssistantEditor::new(self.languages.clone(), cx));
+        let editor = cx
+            .add_view(|cx| AssistantEditor::new(self.api_key.clone(), self.languages.clone(), cx));
         self.pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(editor), true, focus, None, cx)
         });
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx);
-        if !api_key.is_empty() {
-            settings::update_settings_file::<AssistantSettings>(
-                self.fs.clone(),
-                cx,
-                move |settings| settings.openai_api_key = Some(api_key),
-            );
+        if let Some(api_key) = self
+            .api_key_editor
+            .as_ref()
+            .map(|editor| editor.read(cx).text(cx))
+        {
+            if !api_key.is_empty() {
+                cx.platform()
+                    .write_credentials(OPENAI_API_URL, "Bearer", api_key.as_bytes())
+                    .log_err();
+                self.api_key.set(Some(api_key));
+                self.api_key_editor.take();
+                cx.focus_self();
+                cx.notify();
+            }
         }
     }
+
+    fn reset_api_key(&mut self, _: &ResetKey, cx: &mut ViewContext<Self>) {
+        cx.platform().delete_credentials(OPENAI_API_URL).log_err();
+        self.api_key.take();
+        self.api_key_editor = Some(build_api_key_editor(cx));
+        cx.focus_self();
+        cx.notify();
+    }
+}
+
+fn build_api_key_editor(cx: &mut ViewContext<AssistantPanel>) -> ViewHandle<Editor> {
+    cx.add_view(|cx| {
+        let mut editor = Editor::single_line(
+            Some(Arc::new(|theme| theme.assistant.api_key_editor.clone())),
+            cx,
+        );
+        editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
+        editor
+    })
 }
 
 impl Entity for AssistantPanel {
@@ -223,10 +237,7 @@ impl View for AssistantPanel {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let style = &theme::current(cx).assistant;
-        if settings::get::<AssistantSettings>(cx)
-            .openai_api_key
-            .is_none()
-        {
+        if let Some(api_key_editor) = self.api_key_editor.as_ref() {
             Flex::column()
                 .with_child(
                     Text::new(
@@ -236,7 +247,7 @@ impl View for AssistantPanel {
                     .aligned(),
                 )
                 .with_child(
-                    ChildView::new(&self.api_key_editor, cx)
+                    ChildView::new(api_key_editor, cx)
                         .contained()
                         .with_style(style.api_key_editor.container)
                         .aligned(),
@@ -252,13 +263,10 @@ impl View for AssistantPanel {
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
-            if settings::get::<AssistantSettings>(cx)
-                .openai_api_key
-                .is_some()
-            {
-                cx.focus(&self.pane);
+            if let Some(api_key_editor) = self.api_key_editor.as_ref() {
+                cx.focus(api_key_editor);
             } else {
-                cx.focus(&self.api_key_editor);
+                cx.focus(&self.pane);
             }
         }
     }
@@ -323,8 +331,30 @@ impl Panel for AssistantPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.pane.read(cx).items_len() == 0 {
-            self.add_context(cx);
+        if active {
+            if self.api_key.clone().take().is_none() && !self.has_read_credentials {
+                self.has_read_credentials = true;
+                let api_key = if let Some((_, api_key)) = cx
+                    .platform()
+                    .read_credentials(OPENAI_API_URL)
+                    .log_err()
+                    .flatten()
+                {
+                    String::from_utf8(api_key).log_err()
+                } else {
+                    None
+                };
+                if let Some(api_key) = api_key {
+                    self.api_key.set(Some(api_key));
+                } else if self.api_key_editor.is_none() {
+                    self.api_key_editor = Some(build_api_key_editor(cx));
+                    cx.notify();
+                }
+            }
+
+            if self.pane.read(cx).items_len() == 0 {
+                self.add_context(cx);
+            }
         }
     }
 
@@ -349,7 +379,11 @@ impl Panel for AssistantPanel {
     }
 
     fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).has_focus() || self.api_key_editor.is_focused(cx)
+        self.pane.read(cx).has_focus()
+            || self
+                .api_key_editor
+                .as_ref()
+                .map_or(false, |editor| editor.is_focused(cx))
     }
 
     fn is_focus_event(event: &Self::Event) -> bool {
@@ -364,6 +398,7 @@ struct Assistant {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     languages: Arc<LanguageRegistry>,
+    api_key: Rc<Cell<Option<String>>>,
 }
 
 impl Entity for Assistant {
@@ -371,7 +406,11 @@ impl Entity for Assistant {
 }
 
 impl Assistant {
-    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(
+        api_key: Rc<Cell<Option<String>>>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let mut this = Self {
             buffer: cx.add_model(|_| MultiBuffer::new(0)),
             messages: Default::default(),
@@ -379,6 +418,7 @@ impl Assistant {
             completion_count: Default::default(),
             pending_completions: Default::default(),
             languages: language_registry,
+            api_key,
         };
         this.push_message(Role::User, cx);
         this
@@ -399,10 +439,7 @@ impl Assistant {
             stream: true,
         };
 
-        if let Some(api_key) = settings::get::<AssistantSettings>(cx)
-            .openai_api_key
-            .clone()
-        {
+        if let Some(api_key) = self.api_key.clone().take() {
             let stream = stream_completion(api_key, cx.background().clone(), request);
             let response = self.push_message(Role::Assistant, cx);
             self.push_message(Role::User, cx);
@@ -496,8 +533,12 @@ struct AssistantEditor {
 }
 
 impl AssistantEditor {
-    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
-        let assistant = cx.add_model(|cx| Assistant::new(language_registry, cx));
+    fn new(
+        api_key: Rc<Cell<Option<String>>>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let assistant = cx.add_model(|cx| Assistant::new(api_key, language_registry, cx));
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(assistant.read(cx).buffer.clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
@@ -685,7 +726,7 @@ async fn stream_completion(
     let (tx, rx) = futures::channel::mpsc::unbounded::<Result<OpenAIResponseStreamEvent>>();
 
     let json_data = serde_json::to_string(&request)?;
-    let mut response = Request::post("https://api.openai.com/v1/chat/completions")
+    let mut response = Request::post(format!("{OPENAI_API_URL}/chat/completions"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .body(json_data)?

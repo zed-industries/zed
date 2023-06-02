@@ -87,9 +87,7 @@
       // Default width when the assistant is docked to the left or right.
       "default_width": 450,
       // Default height when the assistant is docked to the bottom.
-      "default_height": 320,
-      // OpenAI API key.
-      "openai_api_key": null
+      "default_height": 320
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
