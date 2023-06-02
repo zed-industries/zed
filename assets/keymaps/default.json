@@ -262,6 +262,12 @@
           "replace_newest": true
         }
       ],
+      "cmd-k ctrl-cmd-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": true
+        }
+      ],
       "cmd-k cmd-i": "editor::Hover",
       "cmd-/": [
         "editor::ToggleComments",
