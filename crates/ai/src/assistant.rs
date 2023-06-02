@@ -1,8 +1,12 @@
-use crate::{OpenAIRequest, OpenAIResponseStreamEvent, RequestMessage, Role};
+use crate::{
+    assistant_settings::{AssistantDockPosition, AssistantSettings},
+    OpenAIRequest, OpenAIResponseStreamEvent, RequestMessage, Role,
+};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use editor::{Editor, ExcerptId, ExcerptRange, MultiBuffer};
+use fs::Fs;
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use gpui::{
     actions, elements::*, executor::Background, Action, AppContext, AsyncAppContext, Entity,
@@ -11,6 +15,7 @@ use gpui::{
 };
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
+use settings::SettingsStore;
 use std::{io, sync::Arc};
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -22,6 +27,7 @@ use workspace::{
 actions!(assistant, [NewContext, Assist, QuoteSelection, ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
+    settings::register::<AssistantSettings>(cx);
     cx.add_action(
         |workspace: &mut Workspace, _: &NewContext, cx: &mut ViewContext<Workspace>| {
             if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
@@ -41,12 +47,15 @@ pub enum AssistantPanelEvent {
     ZoomOut,
     Focus,
     Close,
+    DockPositionChanged,
 }
 
 pub struct AssistantPanel {
     width: Option<f32>,
+    height: Option<f32>,
     pane: ViewHandle<Pane>,
     languages: Arc<LanguageRegistry>,
+    fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -113,17 +122,40 @@ impl AssistantPanel {
                             .update(cx, |toolbar, cx| toolbar.add_item(buffer_search_bar, cx));
                         pane
                     });
-                    let subscriptions = vec![
-                        cx.observe(&pane, |_, _, cx| cx.notify()),
-                        cx.subscribe(&pane, Self::handle_pane_event),
-                    ];
-
-                    Self {
+                    let mut this = Self {
                         pane,
                         languages: workspace.app_state().languages.clone(),
+                        fs: workspace.app_state().fs.clone(),
                         width: None,
-                        _subscriptions: subscriptions,
-                    }
+                        height: None,
+                        _subscriptions: Default::default(),
+                    };
+
+                    let mut old_dock_position = this.position(cx);
+                    let mut old_openai_api_key = settings::get::<AssistantSettings>(cx)
+                        .openai_api_key
+                        .clone();
+                    this._subscriptions = vec![
+                        cx.observe(&this.pane, |_, _, cx| cx.notify()),
+                        cx.subscribe(&this.pane, Self::handle_pane_event),
+                        cx.observe_global::<SettingsStore, _>(move |this, cx| {
+                            let new_dock_position = this.position(cx);
+                            if new_dock_position != old_dock_position {
+                                old_dock_position = new_dock_position;
+                                cx.emit(AssistantPanelEvent::DockPositionChanged);
+                            }
+
+                            let new_openai_api_key = settings::get::<AssistantSettings>(cx)
+                                .openai_api_key
+                                .clone();
+                            if old_openai_api_key != new_openai_api_key {
+                                old_openai_api_key = new_openai_api_key;
+                                cx.notify();
+                            }
+                        }),
+                    ];
+
+                    this
                 })
             })
         })
@@ -174,24 +206,44 @@ impl View for AssistantPanel {
 }
 
 impl Panel for AssistantPanel {
-    fn position(&self, _: &WindowContext) -> DockPosition {
-        DockPosition::Right
+    fn position(&self, cx: &WindowContext) -> DockPosition {
+        match settings::get::<AssistantSettings>(cx).dock {
+            AssistantDockPosition::Left => DockPosition::Left,
+            AssistantDockPosition::Bottom => DockPosition::Bottom,
+            AssistantDockPosition::Right => DockPosition::Right,
+        }
     }
 
-    fn position_is_valid(&self, position: DockPosition) -> bool {
-        matches!(position, DockPosition::Right)
+    fn position_is_valid(&self, _: DockPosition) -> bool {
+        true
     }
 
-    fn set_position(&mut self, _: DockPosition, _: &mut ViewContext<Self>) {
-        // TODO!
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<AssistantSettings>(self.fs.clone(), cx, move |settings| {
+            let dock = match position {
+                DockPosition::Left => AssistantDockPosition::Left,
+                DockPosition::Bottom => AssistantDockPosition::Bottom,
+                DockPosition::Right => AssistantDockPosition::Right,
+            };
+            settings.dock = Some(dock);
+        });
     }
 
-    fn size(&self, _: &WindowContext) -> f32 {
-        self.width.unwrap_or(480.)
+    fn size(&self, cx: &WindowContext) -> f32 {
+        let settings = settings::get::<AssistantSettings>(cx);
+        match self.position(cx) {
+            DockPosition::Left | DockPosition::Right => {
+                self.width.unwrap_or_else(|| settings.default_width)
+            }
+            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+        }
     }
 
     fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
-        self.width = Some(size);
+        match self.position(cx) {
+            DockPosition::Left | DockPosition::Right => self.width = Some(size),
+            DockPosition::Bottom => self.height = Some(size),
+        }
         cx.notify();
     }
 
@@ -225,9 +277,8 @@ impl Panel for AssistantPanel {
         ("Assistant Panel".into(), Some(Box::new(ToggleFocus)))
     }
 
-    fn should_change_position_on_event(_: &Self::Event) -> bool {
-        // TODO!
-        false
+    fn should_change_position_on_event(event: &Self::Event) -> bool {
+        matches!(event, AssistantPanelEvent::DockPositionChanged)
     }
 
     fn should_activate_on_event(_: &Self::Event) -> bool {
@@ -289,7 +340,10 @@ impl Assistant {
             stream: true,
         };
 
-        if let Some(api_key) = std::env::var("OPENAI_API_KEY").log_err() {
+        if let Some(api_key) = settings::get::<AssistantSettings>(cx)
+            .openai_api_key
+            .clone()
+        {
             let stream = stream_completion(api_key, cx.background().clone(), request);
             let response = self.push_message(Role::Assistant, cx);
             self.push_message(Role::User, cx);

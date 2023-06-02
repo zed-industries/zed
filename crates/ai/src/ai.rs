@@ -1,4 +1,5 @@
 pub mod assistant;
+mod assistant_settings;
 
 pub use assistant::AssistantPanel;
 use gpui::{actions, AppContext};
