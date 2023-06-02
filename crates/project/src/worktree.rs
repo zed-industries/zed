@@ -36,6 +36,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use sha2::digest::typenum::private::IsLessPrivate;
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -1671,6 +1672,7 @@ impl Snapshot {
     }
 
     pub fn statuses_for_directories(&self, paths: &[&Path]) -> Vec<GitFileStatus> {
+        todo!();
         // ["/a/b", "a/b/c", "a/b/d", "j"]
 
         // Path stack:
@@ -1976,66 +1978,17 @@ impl LocalSnapshot {
         path: &Path,
     ) {
         let mut edits = vec![];
-        let prefer_repo = work_directory.0.deref() == path;
-
-        for path in self
-            .descendent_entries(false, false, path)
-            .map(|entry| &entry.path)
-        {
-            let Ok(repo_path) = path.strip_prefix(&work_directory.0) else {
+        for mut entry in self.descendent_entries(false, false, path).cloned() {
+            let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
                 continue;
             };
-
-            self.set_git_status(
-                &path,
-                repo_ptr.status(&RepoPath(repo_path.into())),
-                prefer_repo,
-                &mut edits,
-            );
+            let git_file_status = repo_ptr.status(&RepoPath(repo_path.into()));
+            let status = git_file_status;
+            entry.git_status = status;
+            edits.push(Edit::Insert(entry));
         }
 
-        // let statuses = repo_ptr.statuses().unwrap_or_default();
         self.entries_by_path.edit(edits, &());
-    }
-
-    fn set_git_status(
-        &self,
-        path: &Path,
-        status: Option<GitFileStatus>,
-        prefer_repo: bool,
-        edits: &mut Vec<Edit<Entry>>,
-    ) {
-        for path in path.ancestors() {
-            dbg!(path);
-
-            let search = edits.binary_search_by_key(&path, |edit| match edit {
-                Edit::Insert(item) => &item.path,
-                _ => unreachable!(),
-            });
-
-            match search {
-                Ok(idx) => match &mut edits[idx] {
-                    Edit::Insert(item) => {
-                        item.git_status = GitFileStatus::merge(item.git_status, status, prefer_repo)
-                    }
-                    _ => unreachable!(),
-                },
-                Err(idx) => {
-                    let Some(entry) = self.entry_for_path(path) else {
-                        continue;
-                    };
-
-                    let mut entry = entry.clone();
-                    entry.git_status = dbg!(GitFileStatus::merge(
-                        dbg!(entry.git_status),
-                        status,
-                        prefer_repo
-                    ));
-
-                    edits.insert(idx, Edit::Insert(entry))
-                }
-            }
-        }
     }
 
     fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
@@ -2126,10 +2079,6 @@ impl BackgroundScannerState {
                 .insert(abs_parent_path, (ignore, false));
         }
 
-        if parent_path.file_name() == Some(&DOT_GIT) {
-            self.snapshot.build_repo(parent_path, fs);
-        }
-
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
 
@@ -2148,6 +2097,10 @@ impl BackgroundScannerState {
             .entries_by_path
             .edit(entries_by_path_edits, &());
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
+
+        if parent_path.file_name() == Some(&DOT_GIT) {
+            self.snapshot.build_repo(parent_path, fs);
+        }
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -2443,29 +2396,6 @@ impl File {
             Some(self.entry_id)
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-struct GitStatuses {
-    added: usize,
-    modified: usize,
-    conflict: usize,
-}
-
-impl GitStatuses {
-    fn status(&self) -> Option<GitFileStatus> {
-        if self.conflict > 0 {
-            Some(GitFileStatus::Conflict)
-        } else if self.modified > 0 {
-            Some(GitFileStatus::Modified)
-        } else if self.added > 0 {
-            Some(GitFileStatus::Added)
-        } else {
-            None
-        }
-    }
-
-    fn add_status(&self, status: Option<GitFileStatus>) {}
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -5105,16 +5035,6 @@ mod tests {
                     snapshot.status_for_file(project_path.join(F_TXT)),
                     Some(GitFileStatus::Added)
                 );
-
-                dbg!(snapshot.entries(false).collect::<Vec<_>>());
-
-                // Check stateful bubbling works
-                assert_eq!(
-                    snapshot.status_for_file(dbg!(project_path)),
-                    Some(GitFileStatus::Added)
-                );
-
-                assert_eq!(snapshot.status_for_file(""), Some(GitFileStatus::Added));
             });
 
             std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
@@ -5129,14 +5049,6 @@ mod tests {
                     snapshot.status_for_file(project_path.join(A_TXT)),
                     Some(GitFileStatus::Modified)
                 );
-
-                // Check stateful bubbling works, modified overrules added
-                assert_eq!(
-                    snapshot.status_for_file(project_path),
-                    Some(GitFileStatus::Modified)
-                );
-
-                assert_eq!(snapshot.status_for_file(""), Some(GitFileStatus::Modified));
             });
 
             git_add(Path::new(A_TXT), &repo);
@@ -5145,7 +5057,6 @@ mod tests {
             tree.flush_fs_events(cx).await;
             deterministic.run_until_parked();
 
-            dbg!(git_status(&repo));
             // Check that repo only changes are tracked
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
@@ -5155,18 +5066,8 @@ mod tests {
                     Some(GitFileStatus::Added)
                 );
 
-                dbg!(snapshot.entries(false).collect::<Vec<_>>());
-
                 assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
                 assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
-
-                // Check bubbling
-                assert_eq!(
-                    snapshot.status_for_file(project_path),
-                    Some(GitFileStatus::Added)
-                );
-
-                assert_eq!(snapshot.status_for_file(""), Some(GitFileStatus::Added));
             });
 
             git_reset(0, &repo);
@@ -5189,27 +5090,6 @@ mod tests {
                 assert_eq!(
                     snapshot.status_for_file(project_path.join(E_TXT)),
                     Some(GitFileStatus::Modified)
-                );
-
-                // Check status bubbling
-                assert_eq!(
-                    snapshot.status_for_file(project_path.join(Path::new(E_TXT).parent().unwrap())),
-                    Some(GitFileStatus::Modified)
-                );
-                assert_eq!(
-                    snapshot.status_for_file(
-                        project_path.join(Path::new(E_TXT).parent().unwrap().parent().unwrap())
-                    ),
-                    Some(GitFileStatus::Modified)
-                );
-                assert_eq!(
-                    snapshot.status_for_file(project_path),
-                    Some(GitFileStatus::Modified)
-                );
-
-                assert_eq!(
-                    snapshot.status_for_file(project_path.join(F_TXT)),
-                    Some(GitFileStatus::Added)
                 );
             });
 
