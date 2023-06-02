@@ -623,22 +623,6 @@ impl<T: Setting> AnySettingValue for SettingValue<T> {
     }
 }
 
-// impl Debug for SettingsStore {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         return f
-//             .debug_struct("SettingsStore")
-//             .field(
-//                 "setting_value_sets_by_type",
-//                 &self
-//                     .setting_values
-//                     .values()
-//                     .map(|set| (set.setting_type_name(), set))
-//                     .collect::<HashMap<_, _>>(),
-//             )
-//             .finish_non_exhaustive();
-//     }
-// }
-
 fn update_value_in_json_text<'a>(
     text: &mut String,
     key_path: &mut Vec<&'a str>,
@@ -681,6 +665,10 @@ fn update_value_in_json_text<'a>(
             key_path.pop();
         }
     } else if old_value != new_value {
+        let mut new_value = new_value.clone();
+        if let Some(new_object) = new_value.as_object_mut() {
+            new_object.retain(|_, v| !v.is_null());
+        }
         let (range, replacement) =
             replace_value_in_json_text(text, &key_path, tab_size, &new_value);
         text.replace_range(range.clone(), &replacement);
@@ -692,7 +680,7 @@ fn replace_value_in_json_text(
     text: &str,
     key_path: &[&str],
     tab_size: usize,
-    new_value: impl Serialize,
+    new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
     const LANGUAGE_OVERRIDES: &'static str = "language_overrides";
     const LANGUAGES: &'static str = "languages";
@@ -1039,24 +1027,32 @@ mod tests {
             r#"{
                 "languages": {
                     "JSON": {
-                        "is_enabled": true
+                        "language_setting_1": true
                     }
                 }
             }"#
             .unindent(),
             |settings| {
-                settings.languages.get_mut("JSON").unwrap().is_enabled = false;
                 settings
                     .languages
-                    .insert("Rust".into(), LanguageSettingEntry { is_enabled: true });
+                    .get_mut("JSON")
+                    .unwrap()
+                    .language_setting_1 = Some(false);
+                settings.languages.insert(
+                    "Rust".into(),
+                    LanguageSettingEntry {
+                        language_setting_2: Some(true),
+                        ..Default::default()
+                    },
+                );
             },
             r#"{
                 "languages": {
                     "Rust": {
-                        "is_enabled": true
+                        "language_setting_2": true
                     },
                     "JSON": {
-                        "is_enabled": false
+                        "language_setting_1": false
                     }
                 }
             }"#
@@ -1109,6 +1105,23 @@ mod tests {
         check_settings_update::<UserSettings>(
             &mut store,
             r#""#.unindent(),
+            |settings| settings.age = Some(37),
+            r#"{
+                "user": {
+                    "age": 37
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update::<UserSettings>(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
             |settings| settings.age = Some(37),
             r#"{
                 "user": {
@@ -1247,9 +1260,10 @@ mod tests {
         languages: HashMap<String, LanguageSettingEntry>,
     }
 
-    #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+    #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
     struct LanguageSettingEntry {
-        is_enabled: bool,
+        language_setting_1: Option<bool>,
+        language_setting_2: Option<bool>,
     }
 
     impl Setting for LanguageSettings {
