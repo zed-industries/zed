@@ -377,7 +377,7 @@ struct Panic {
     os_name: String,
     os_version: Option<String>,
     architecture: String,
-    time: u128,
+    panicked_on: u128,
 }
 
 #[derive(Serialize)]
@@ -428,7 +428,7 @@ fn init_panic_hook(app: &App) {
                 .ok()
                 .map(|os_version| os_version.to_string()),
             architecture: env::consts::ARCH.into(),
-            time: SystemTime::now()
+            panicked_on: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
