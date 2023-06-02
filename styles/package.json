@@ -5,7 +5,8 @@
     "main": "index.js",
     "scripts": {
         "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts"
+        "build-licenses": "ts-node ./src/buildLicenses.ts",
+        "compile": "tsc"
     },
     "author": "",
     "license": "ISC",
