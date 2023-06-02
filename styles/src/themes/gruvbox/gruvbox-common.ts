@@ -1,8 +1,20 @@
 import chroma from "chroma-js"
-import { Meta, ThemeSyntax } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import {
+    Meta,
+    colorRamp,
+    createColorScheme,
+    ThemeSyntax,
+    ThemeAppearance,
+} from "../common"
 
-const name = "Gruvbox"
+export const meta: Meta = {
+    name: "Gruvbox",
+    license: {
+        SPDX: "MIT", // "MIT/X11"
+    },
+    author: "morhetz <morhetz@gmail.com>",
+    url: "https://github.com/morhetz/gruvbox",
+}
 
 const color = {
     dark0_hard: "#1d2021",
@@ -233,7 +245,13 @@ const buildVariant = (variant: Variant) => {
         title: { color: colors.green },
     }
 
-    return createColorScheme(name, isLight, ramps, syntax)
+    return createColorScheme({
+        name,
+        author: meta.author,
+        appearance: variant.appearance as ThemeAppearance,
+        inputColor: ramps,
+        override: { syntax },
+    })
 }
 
 // Variants
@@ -243,12 +261,3 @@ export const darkSoft = buildVariant(variant[2])
 export const lightHard = buildVariant(variant[3])
 export const lightDefault = buildVariant(variant[4])
 export const lightSoft = buildVariant(variant[5])
-
-export const meta: Meta = {
-    name,
-    license: {
-        SPDX: "MIT", // "MIT/X11"
-    },
-    author: "morhetz <morhetz@gmail.com>",
-    url: "https://github.com/morhetz/gruvbox",
-}

@@ -1,6 +1,5 @@
 import chroma from "chroma-js"
-import { Meta } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import { Meta, colorRamp, createColorScheme, ThemeAppearance } from "../common"
 import { metaCommon, name, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
@@ -34,10 +33,11 @@ const syntax = buildSyntax(variant)
 const theme = (variant: Variant) => {
     const { meta, colors } = variant
 
-    return createColorScheme(
-        meta.name,
-        true,
-        {
+    return createColorScheme({
+        name: meta.name,
+        author: meta.author,
+        appearance: ThemeAppearance.Light,
+        inputColor:{
             neutral: chroma.scale(
                 [
                     colors.base00,
@@ -59,7 +59,7 @@ const theme = (variant: Variant) => {
             violet: colorRamp(chroma(colors.base0E)),
             magenta: colorRamp(chroma(colors.base0F)),
         },
-        syntax
+        override: { syntax },}
     )
 }
 

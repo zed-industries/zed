@@ -1,7 +1,12 @@
 import chroma from "chroma-js"
 import { fontWeights } from "../../common"
-import { Meta, ThemeSyntax } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import {
+    Meta,
+    colorRamp,
+    createColorScheme,
+    ThemeSyntax,
+    ThemeAppearance,
+} from "../common"
 
 const name = "One Light"
 
@@ -66,8 +71,6 @@ const syntax: ThemeSyntax = {
     variant: { color: color.blue },
 }
 
-export const light = createColorScheme(name, true, ramps, syntax)
-
 export const meta: Meta = {
     name,
     author: "simurai",
@@ -76,3 +79,11 @@ export const meta: Meta = {
     },
     url: "https://github.com/atom/atom/tree/master/packages/one-light-ui",
 }
+
+export const light = createColorScheme({
+    name: meta.name,
+    author: meta.author,
+    appearance: ThemeAppearance.Light,
+    inputColor: ramps,
+    override: { syntax },
+})

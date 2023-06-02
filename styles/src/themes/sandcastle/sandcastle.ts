@@ -1,6 +1,5 @@
 import chroma from "chroma-js"
-import { Meta } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import { Meta, colorRamp, createColorScheme, ThemeAppearance } from "../common"
 
 const name = "Sandcastle"
 
@@ -25,8 +24,6 @@ const ramps = {
     magenta: colorRamp(chroma("#a87322")),
 }
 
-export const dark = createColorScheme(name, false, ramps)
-
 export const meta: Meta = {
     name,
     author: "gessig",
@@ -35,3 +32,11 @@ export const meta: Meta = {
     },
     url: "https://github.com/gessig/base16-sandcastle-scheme",
 }
+
+export const dark = createColorScheme({
+    name: meta.name,
+    author: meta.author,
+    appearance: ThemeAppearance.Dark,
+    inputColor: ramps,
+    override: { syntax: {} },
+})

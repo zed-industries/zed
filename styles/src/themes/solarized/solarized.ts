@@ -1,6 +1,5 @@
 import chroma from "chroma-js"
-import { Meta as Metadata } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import { Meta, colorRamp, createColorScheme, ThemeAppearance } from "../common"
 
 const name = "Solarized"
 
@@ -27,10 +26,7 @@ const ramps = {
     magenta: colorRamp(chroma("#d33682")),
 }
 
-export const dark = createColorScheme(`${name} Dark`, false, ramps)
-export const light = createColorScheme(`${name} Light`, true, ramps)
-
-export const meta: Metadata = {
+export const meta: Meta = {
     name,
     author: "Ethan Schoonover",
     license: {
@@ -38,3 +34,19 @@ export const meta: Metadata = {
     },
     url: "https://github.com/altercation/solarized",
 }
+
+export const dark = createColorScheme({
+    name: `${name} Dark`,
+    author: meta.author,
+    appearance: ThemeAppearance.Dark,
+    inputColor: ramps,
+    override: { syntax: {} },
+})
+
+export const light = createColorScheme({
+    name: `${name} Light`,
+    author: meta.author,
+    appearance: ThemeAppearance.Light,
+    inputColor: ramps,
+    override: { syntax: {} },
+})

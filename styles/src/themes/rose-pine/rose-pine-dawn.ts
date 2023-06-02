@@ -1,6 +1,5 @@
 import chroma from "chroma-js"
-import { Meta } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import { Meta, colorRamp, createColorScheme, ThemeAppearance } from "../common"
 
 const name = "Rosé Pine Dawn"
 
@@ -27,8 +26,6 @@ const ramps = {
     magenta: colorRamp(chroma("#79549F")),
 }
 
-export const light = createColorScheme(name, true, ramps)
-
 export const meta: Meta = {
     name,
     author: "edunfelt",
@@ -37,3 +34,11 @@ export const meta: Meta = {
     },
     url: "https://github.com/edunfelt/base16-rose-pine-scheme",
 }
+
+export const light = createColorScheme({
+    name: meta.name,
+    author: meta.author,
+    appearance: ThemeAppearance.Light,
+    inputColor: ramps,
+    override: { syntax: {} },
+})
