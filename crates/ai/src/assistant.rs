@@ -19,9 +19,18 @@ use workspace::{
     pane, Pane, Workspace,
 };
 
-actions!(assistant, [NewContext, Assist, QuoteSelection]);
+actions!(assistant, [NewContext, Assist, QuoteSelection, ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
+    cx.add_action(
+        |workspace: &mut Workspace, _: &NewContext, cx: &mut ViewContext<Workspace>| {
+            if let Some(this) = workspace.panel::<AssistantPanel>(cx) {
+                this.update(cx, |this, cx| this.add_context(cx))
+            }
+
+            workspace.focus_panel::<AssistantPanel>(cx);
+        },
+    );
     cx.add_action(AssistantEditor::assist);
     cx.capture_action(AssistantEditor::cancel_last_assist);
     cx.add_action(AssistantEditor::quote_selection);
@@ -49,7 +58,8 @@ impl AssistantPanel {
         cx.spawn(|mut cx| async move {
             // TODO: deserialize state.
             workspace.update(&mut cx, |workspace, cx| {
-                cx.add_view(|cx| {
+                cx.add_view::<Self, _>(|cx| {
+                    let weak_self = cx.weak_handle();
                     let pane = cx.add_view(|cx| {
                         let mut pane = Pane::new(
                             workspace.weak_handle(),
@@ -62,6 +72,7 @@ impl AssistantPanel {
                         pane.set_can_navigate(false, cx);
                         pane.on_can_drop(move |_, _| false);
                         pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
+                            let weak_self = weak_self.clone();
                             Flex::row()
                                 .with_child(Pane::render_tab_bar_button(
                                     0,
@@ -69,7 +80,14 @@ impl AssistantPanel {
                                     false,
                                     Some(("New Context".into(), Some(Box::new(NewContext)))),
                                     cx,
-                                    move |_, _| todo!(),
+                                    move |_, cx| {
+                                        let weak_self = weak_self.clone();
+                                        cx.window_context().defer(move |cx| {
+                                            if let Some(this) = weak_self.upgrade(cx) {
+                                                this.update(cx, |this, cx| this.add_context(cx));
+                                            }
+                                        })
+                                    },
                                     None,
                                 ))
                                 .with_child(Pane::render_tab_bar_button(
@@ -124,6 +142,14 @@ impl AssistantPanel {
             pane::Event::Remove => cx.emit(AssistantPanelEvent::Close),
             _ => {}
         }
+    }
+
+    fn add_context(&mut self, cx: &mut ViewContext<Self>) {
+        let focus = self.has_focus(cx);
+        let editor = cx.add_view(|cx| AssistantEditor::new(self.languages.clone(), cx));
+        self.pane.update(cx, |pane, cx| {
+            pane.add_item(Box::new(editor), true, focus, None, cx)
+        });
     }
 }
 
@@ -187,11 +213,7 @@ impl Panel for AssistantPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            let focus = self.has_focus(cx);
-            let editor = cx.add_view(|cx| AssistantEditor::new(self.languages.clone(), cx));
-            self.pane.update(cx, |pane, cx| {
-                pane.add_item(Box::new(editor), true, focus, None, cx)
-            });
+            self.add_context(cx);
         }
     }
 
@@ -200,7 +222,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
-        ("Assistant Panel".into(), None)
+        ("Assistant Panel".into(), Some(Box::new(ToggleFocus)))
     }
 
     fn should_change_position_on_event(_: &Self::Event) -> bool {
@@ -231,7 +253,7 @@ struct Assistant {
     messages_by_id: HashMap<ExcerptId, Message>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    language_registry: Arc<LanguageRegistry>,
+    languages: Arc<LanguageRegistry>,
 }
 
 impl Entity for Assistant {
@@ -246,7 +268,7 @@ impl Assistant {
             messages_by_id: Default::default(),
             completion_count: Default::default(),
             pending_completions: Default::default(),
-            language_registry,
+            languages: language_registry,
         };
         this.push_message(Role::User, cx);
         this
@@ -310,7 +332,7 @@ impl Assistant {
     fn push_message(&mut self, role: Role, cx: &mut ModelContext<Self>) -> Message {
         let content = cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
-            let markdown = self.language_registry.language_for_name("Markdown");
+            let markdown = self.languages.language_for_name("Markdown");
             cx.spawn_weak(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
                 let buffer = buffer
@@ -322,7 +344,7 @@ impl Assistant {
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
-            buffer.set_language_registry(self.language_registry.clone());
+            buffer.set_language_registry(self.languages.clone());
             buffer
         });
         let excerpt_id = self.buffer.update(cx, |buffer, cx| {

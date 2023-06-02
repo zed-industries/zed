@@ -235,6 +235,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
             workspace.toggle_panel_focus::<TerminalPanel>(cx);
         },
     );
+    cx.add_action(
+        |workspace: &mut Workspace,
+         _: &ai::assistant::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        },
+    );
     cx.add_global_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &NewWindow, cx: &mut AppContext| {

@@ -1,9 +1,8 @@
-mod assistant;
-
-use gpui::{actions, AppContext};
-use serde::{Deserialize, Serialize};
+pub mod assistant;
 
 pub use assistant::AssistantPanel;
+use gpui::{actions, AppContext};
+use serde::{Deserialize, Serialize};
 
 actions!(ai, [Assist]);
 
