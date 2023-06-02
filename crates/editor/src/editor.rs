@@ -548,6 +548,7 @@ pub struct EditorSnapshot {
 struct SelectionHistoryEntry {
     selections: Arc<[Selection<Anchor>]>,
     select_next_state: Option<SelectNextState>,
+    select_prev_state: Option<SelectNextState>,
     add_selections_state: Option<AddSelectionsState>,
 }
 
@@ -5697,6 +5698,7 @@ impl Editor {
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
             self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
+            self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::newest(), cx);
         }
@@ -5709,6 +5711,7 @@ impl Editor {
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
             self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
+            self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::newest(), cx);
         }
@@ -6486,6 +6489,7 @@ impl Editor {
         self.selection_history.push(SelectionHistoryEntry {
             selections: self.selections.disjoint_anchors(),
             select_next_state: self.select_next_state.clone(),
+            select_prev_state: self.select_prev_state.clone(),
             add_selections_state: self.add_selections_state.clone(),
         });
     }
