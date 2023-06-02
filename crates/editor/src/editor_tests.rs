@@ -3108,6 +3108,57 @@ async fn test_select_next(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_previous_word_boundary(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("abc\nˇabc abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
+
+    cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+    cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
+
+    cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\n«abcˇ»");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+}
+
+#[gpui::test]
+async fn test_select_previous_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+
+    cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+
+    cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+    cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+}
+#[gpui::test]
 async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
