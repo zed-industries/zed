@@ -497,11 +497,6 @@ pub fn split_worktree_update(
         .map(|repo| (repo.work_directory_id, repo))
         .collect::<HashMap<_, _>>();
 
-    // Maintain a list of inflight repositories
-    // Every time we send a repository's work directory, stick it in the list of in-flight repositories
-    // Every go of the loop, drain each in-flight repository's statuses
-    // Until we have no more data
-
     iter::from_fn(move || {
         if done_files {
             return None;

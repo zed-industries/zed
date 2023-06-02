@@ -789,7 +789,7 @@ async fn apply_client_operation(
                 if client.fs.metadata(&dot_git_dir).await?.is_none() {
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
-                client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
+                client.fs.set_index_for_repo(&dot_git_dir, &contents);
             }
             GitOperation::WriteGitBranch {
                 repo_path,
@@ -810,7 +810,7 @@ async fn apply_client_operation(
                 if client.fs.metadata(&dot_git_dir).await?.is_none() {
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
-                client.fs.set_branch_name(&dot_git_dir, new_branch).await;
+                client.fs.set_branch_name(&dot_git_dir, new_branch);
             }
             GitOperation::WriteGitStatuses {
                 repo_path,
@@ -840,8 +840,7 @@ async fn apply_client_operation(
 
                 client
                     .fs
-                    .set_status_for_repo(&dot_git_dir, statuses.as_slice())
-                    .await;
+                    .set_status_for_repo(&dot_git_dir, statuses.as_slice());
             }
         },
     }

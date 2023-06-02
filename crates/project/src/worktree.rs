@@ -36,7 +36,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use sha2::digest::typenum::private::IsLessPrivate;
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -46,7 +45,7 @@ use std::{
     fmt,
     future::Future,
     mem,
-    ops::{Deref, DerefMut},
+    ops::{AddAssign, Deref, DerefMut, Sub},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -1455,7 +1454,7 @@ impl Snapshot {
     fn delete_entry(&mut self, entry_id: ProjectEntryId) -> Option<Arc<Path>> {
         let removed_entry = self.entries_by_id.remove(&entry_id, &())?;
         self.entries_by_path = {
-            let mut cursor = self.entries_by_path.cursor();
+            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
             let mut new_entries_by_path =
                 cursor.slice(&TraversalTarget::Path(&removed_entry.path), Bias::Left, &());
             while let Some(entry) = cursor.item() {
@@ -1671,16 +1670,60 @@ impl Snapshot {
         })
     }
 
-    pub fn statuses_for_directories(&self, paths: &[&Path]) -> Vec<GitFileStatus> {
-        todo!();
-        // ["/a/b", "a/b/c", "a/b/d", "j"]
+    pub fn statuses_for_paths(&self, paths: &[&Path]) -> Vec<Option<GitFileStatus>> {
+        let mut cursor = self
+            .entries_by_path
+            .cursor::<(TraversalProgress, GitStatuses)>();
+        let mut paths = paths.iter().peekable();
+        let mut path_stack = Vec::<(&Path, usize, GitStatuses)>::new();
+        let mut result = Vec::new();
 
-        // Path stack:
-        // If path has descendents following it, push to stack: ["a/b"]
-        // Figure out a/b/c
-        // Figure out a/b/d
-        // Once no more descendants, pop the stack:
-        // Figure out a/b
+        loop {
+            let next_path = paths.peek();
+            let containing_path = path_stack.last();
+
+            let mut entry_to_finish = None;
+            let mut path_to_start = None;
+            match (containing_path, next_path) {
+                (Some((containing_path, _, _)), Some(next_path)) => {
+                    if next_path.starts_with(containing_path) {
+                        path_to_start = paths.next();
+                    } else {
+                        entry_to_finish = path_stack.pop();
+                    }
+                }
+                (None, Some(_)) => path_to_start = paths.next(),
+                (Some(_), None) => entry_to_finish = path_stack.pop(),
+                (None, None) => break,
+            }
+
+            if let Some((containing_path, result_ix, prev_statuses)) = entry_to_finish {
+                cursor.seek_forward(
+                    &TraversalTarget::PathSuccessor(containing_path),
+                    Bias::Left,
+                    &(),
+                );
+
+                let statuses = cursor.start().1 - prev_statuses;
+
+                result[result_ix] = if statuses.conflict > 0 {
+                    Some(GitFileStatus::Conflict)
+                } else if statuses.modified > 0 {
+                    Some(GitFileStatus::Modified)
+                } else if statuses.added > 0 {
+                    Some(GitFileStatus::Added)
+                } else {
+                    None
+                };
+            }
+            if let Some(path_to_start) = path_to_start {
+                cursor.seek_forward(&TraversalTarget::Path(path_to_start), Bias::Left, &());
+                path_stack.push((path_to_start, result.len(), cursor.start().1));
+                result.push(None);
+            }
+        }
+
+        return result;
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
@@ -1953,8 +1996,6 @@ impl LocalSnapshot {
                     branch: repo_lock.branch_name().map(Into::into),
                 },
             );
-
-            self.scan_statuses(repo_lock.deref(), &work_directory, &work_directory.0);
 
             drop(repo_lock);
 
@@ -2492,12 +2533,23 @@ impl sum_tree::Item for Entry {
             visible_file_count = 0;
         }
 
+        let mut statuses = GitStatuses::default();
+        match self.git_status {
+            Some(status) => match status {
+                GitFileStatus::Added => statuses.added = 1,
+                GitFileStatus::Modified => statuses.modified = 1,
+                GitFileStatus::Conflict => statuses.conflict = 1,
+            },
+            None => {}
+        }
+
         EntrySummary {
             max_path: self.path.clone(),
             count: 1,
             visible_count,
             file_count,
             visible_file_count,
+            statuses,
         }
     }
 }
@@ -2517,9 +2569,7 @@ pub struct EntrySummary {
     visible_count: usize,
     file_count: usize,
     visible_file_count: usize,
-    // git_modified_count: usize,
-    // git_added_count: usize,
-    // git_conflict_count: usize,
+    statuses: GitStatuses,
 }
 
 impl Default for EntrySummary {
@@ -2530,6 +2580,7 @@ impl Default for EntrySummary {
             visible_count: 0,
             file_count: 0,
             visible_file_count: 0,
+            statuses: Default::default(),
         }
     }
 }
@@ -2543,6 +2594,7 @@ impl sum_tree::Summary for EntrySummary {
         self.visible_count += rhs.visible_count;
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
+        self.statuses += rhs.statuses;
     }
 }
 
@@ -2761,7 +2813,7 @@ impl BackgroundScanner {
 
             if let Some(paths) = paths {
                 for path in paths {
-                    self.reload_repo_for_file_path(&path, &mut *snapshot, self.fs.as_ref());
+                    self.reload_git_status(&path, &mut *snapshot, self.fs.as_ref());
                 }
             }
 
@@ -3131,7 +3183,7 @@ impl BackgroundScanner {
         Some(())
     }
 
-    fn reload_repo_for_file_path(
+    fn reload_git_status(
         &self,
         path: &Path,
         snapshot: &mut LocalSnapshot,
@@ -3158,12 +3210,6 @@ impl BackgroundScanner {
 
                 (*entry_id, repo.repo_ptr.to_owned())
             };
-            /*
-            1. Populate dir, initializes the git repo
-            2. Sometimes, we get a file event inside the .git repo, before it's initializaed
-            In both cases, we should end up with an initialized repo and a full status scan
-
-            */
 
             let work_dir = snapshot
                 .entry_for_id(entry_id)
@@ -3575,6 +3621,39 @@ impl<'a> Default for TraversalProgress<'a> {
     }
 }
 
+#[derive(Clone, Debug, Default, Copy)]
+struct GitStatuses {
+    added: usize,
+    modified: usize,
+    conflict: usize,
+}
+
+impl AddAssign for GitStatuses {
+    fn add_assign(&mut self, rhs: Self) {
+        self.added += rhs.added;
+        self.modified += rhs.modified;
+        self.conflict += rhs.conflict;
+    }
+}
+
+impl Sub for GitStatuses {
+    type Output = GitStatuses;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        GitStatuses {
+            added: self.added - rhs.added,
+            modified: self.modified - rhs.modified,
+            conflict: self.conflict - rhs.conflict,
+        }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for GitStatuses {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        *self += summary.statuses
+    }
+}
+
 pub struct Traversal<'a> {
     cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
     include_ignored: bool,
@@ -3673,6 +3752,14 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
                 &cursor_location.count(*include_dirs, *include_ignored),
             ),
         }
+    }
+}
+
+impl<'a, 'b> SeekTarget<'a, EntrySummary, (TraversalProgress<'a>, GitStatuses)>
+    for TraversalTarget<'b>
+{
+    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
+        self.cmp(&cursor_location.0, &())
     }
 }
 
@@ -4962,7 +5049,6 @@ mod tests {
             });
         }
 
-        // TODO: Stream statuses UPDATE THIS TO CHECK BUBBLIBG BEHAVIOR
         #[gpui::test]
         async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
             const IGNORE_RULE: &'static str = "**/target";
@@ -5152,6 +5238,84 @@ mod tests {
                     Some(GitFileStatus::Added)
                 );
             });
+        }
+
+        #[gpui::test]
+        async fn test_statuses_for_paths(cx: &mut TestAppContext) {
+            let fs = FakeFs::new(cx.background());
+            fs.insert_tree(
+                "/root",
+                json!({
+                    ".git": {},
+                    "a": {
+                        "b": {
+                            "c1.txt": "",
+                            "c2.txt": "",
+                        },
+                        "d": {
+                            "e1.txt": "",
+                            "e2.txt": "",
+                            "e3.txt": "",
+                        }
+                    },
+                    "f": {
+                        "no-status.txt": ""
+                    },
+                    "g": {
+                        "h1.txt": "",
+                        "h2.txt": ""
+                    },
+
+                }),
+            )
+            .await;
+
+            let http_client = FakeHttpClient::with_404_response();
+            let client = cx.read(|cx| Client::new(http_client, cx));
+            let tree = Worktree::local(
+                client,
+                Path::new("/root"),
+                true,
+                fs.clone(),
+                Default::default(),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+
+            cx.foreground().run_until_parked();
+
+            fs.set_status_for_repo(
+                &Path::new("/root/.git"),
+                &[
+                    (Path::new("a/b/c1.txt"), GitFileStatus::Added),
+                    (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
+                    (Path::new("g/h2.txt"), GitFileStatus::Conflict),
+                ],
+            );
+
+            cx.foreground().run_until_parked();
+
+            let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+            assert_eq!(
+                snapshot.statuses_for_paths(&[
+                    Path::new(""),
+                    Path::new("a"),
+                    Path::new("a/b"),
+                    Path::new("a/d"),
+                    Path::new("f"),
+                    Path::new("g"),
+                ]),
+                &[
+                    Some(GitFileStatus::Conflict),
+                    Some(GitFileStatus::Modified),
+                    Some(GitFileStatus::Added),
+                    Some(GitFileStatus::Modified),
+                    None,
+                    Some(GitFileStatus::Conflict),
+                ]
+            )
         }
 
         #[track_caller]

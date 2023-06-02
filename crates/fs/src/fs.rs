@@ -639,11 +639,11 @@ impl FakeFs {
         }
     }
 
-    pub async fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
+    pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
         self.with_git_state(dot_git, |state| state.branch_name = branch.map(Into::into))
     }
 
-    pub async fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
+    pub fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
         self.with_git_state(dot_git, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
@@ -654,7 +654,7 @@ impl FakeFs {
         });
     }
 
-    pub async fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitFileStatus)]) {
+    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitFileStatus)]) {
         self.with_git_state(dot_git, |state| {
             state.worktree_statuses.clear();
             state.worktree_statuses.extend(
