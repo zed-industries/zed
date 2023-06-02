@@ -179,7 +179,11 @@ impl Rope {
     }
 
     pub fn bytes_in_range(&self, range: Range<usize>) -> Bytes {
-        Bytes::new(self, range)
+        Bytes::new(self, range, false)
+    }
+
+    pub fn reversed_bytes_in_range(&self, range: Range<usize>) -> Bytes {
+        Bytes::new(self, range, true)
     }
 
     pub fn chunks(&self) -> Chunks {
@@ -579,22 +583,41 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct Bytes<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
+    reversed: bool,
 }
 
 impl<'a> Bytes<'a> {
-    pub fn new(rope: &'a Rope, range: Range<usize>) -> Self {
+    pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
         let mut chunks = rope.chunks.cursor();
-        chunks.seek(&range.start, Bias::Right, &());
-        Self { chunks, range }
+        if reversed {
+            chunks.seek(&range.end, Bias::Left, &());
+        } else {
+            chunks.seek(&range.start, Bias::Right, &());
+        }
+        Self {
+            chunks,
+            range,
+            reversed,
+        }
     }
 
     pub fn peek(&self) -> Option<&'a [u8]> {
         let chunk = self.chunks.item()?;
+        log::error!("peeking");
+        if self.reversed && self.range.start >= self.chunks.end(&()) {
+            log::error!(
+                "Leaving because we're reversed and {} >= {}",
+                self.range.start,
+                self.chunks.end(&())
+            );
+            return None;
+        }
+        log::error!("peeking 2");
         let chunk_start = *self.chunks.start();
         if self.range.end <= chunk_start {
             return None;
         }
-
+        log::error!("peeking3");
         let start = self.range.start.saturating_sub(chunk_start);
         let end = self.range.end - chunk_start;
         Some(&chunk.0.as_bytes()[start..chunk.0.len().min(end)])
@@ -607,7 +630,11 @@ impl<'a> Iterator for Bytes<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let result = self.peek();
         if result.is_some() {
-            self.chunks.next(&());
+            if self.reversed {
+                self.chunks.prev(&());
+            } else {
+                self.chunks.next(&());
+            }
         }
         result
     }
@@ -617,10 +644,23 @@ impl<'a> io::Read for Bytes<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Some(chunk) = self.peek() {
             let len = cmp::min(buf.len(), chunk.len());
-            buf[..len].copy_from_slice(&chunk[..len]);
-            self.range.start += len;
+            if self.reversed {
+                buf[..len].copy_from_slice(&chunk[chunk.len() - len..]);
+                buf[..len].reverse();
+                log::error!("buffer contents: {:?}", &buf[..len]);
+                self.range.end -= len;
+            } else {
+                buf[..len].copy_from_slice(&chunk[..len]);
+                log::error!("buffer contents: {:?}", &buf[..len]);
+                self.range.start += len;
+            }
+
             if len == chunk.len() {
-                self.chunks.next(&());
+                if self.reversed {
+                    self.chunks.prev(&());
+                } else {
+                    self.chunks.next(&());
+                }
             }
             Ok(len)
         } else {

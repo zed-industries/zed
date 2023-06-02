@@ -111,6 +111,12 @@ pub struct SelectNext {
     pub replace_newest: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct SelectPrevious {
+    #[serde(default)]
+    pub replace_newest: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
@@ -272,6 +278,7 @@ impl_actions!(
     editor,
     [
         SelectNext,
+        SelectPrevious,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
@@ -367,6 +374,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::add_selection_above);
     cx.add_action(Editor::add_selection_below);
     cx.add_action(Editor::select_next);
+    cx.add_action(Editor::select_previous);
     cx.add_action(Editor::toggle_comments);
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
@@ -5169,6 +5177,7 @@ impl Editor {
                         s.insert_range(next_selected_range);
                     });
                 } else {
+                    log::error!("Nothing to do in forward state");
                     select_next_state.done = true;
                 }
             }
@@ -5209,6 +5218,127 @@ impl Editor {
                     done: false,
                 });
                 self.select_next(action, cx);
+            }
+        }
+    }
+
+    pub fn select_previous(&mut self, action: &SelectPrevious, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let mut selections = self.selections.all::<usize>(cx);
+        log::error!("selections {:?}", selections.len());
+        if let Some(mut select_next_state) = self.select_next_state.take() {
+            let query = &select_next_state.query;
+            if !select_next_state.done {
+                let first_selection = selections.iter().min_by_key(|s| s.id).unwrap();
+                let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
+                let mut next_selected_range = None;
+                log::error!("first selection {:?}", first_selection);
+                log::error!("last selection {:?}", last_selection);
+                log::error!(
+                    "matching in {:?} and {:?}",
+                    0..last_selection.start,
+                    first_selection.end..buffer.len()
+                );
+                // When we're iterating matches backwards, the oldest match will actually be the furthest one in the buffer.
+                let bytes_after_first_selection =
+                    buffer.reversed_bytes_in_range(first_selection.end..buffer.len());
+                let bytes_before_last_selection =
+                    buffer.reversed_bytes_in_range(0..last_selection.start);
+                let query_matches = query
+                    .stream_find_iter(bytes_before_last_selection)
+                    .map(|result| (last_selection.start, result))
+                    .chain(
+                        query
+                            .stream_find_iter(bytes_after_first_selection)
+                            .map(|result| (buffer.len() - 1, result)),
+                    );
+                for (end_offset, query_match) in query_matches {
+                    let query_match = query_match.unwrap(); // can only fail due to I/O
+                    log::error!(
+                        "aho returned: {:?} for {} start: {} end: {}",
+                        query_match,
+                        end_offset,
+                        query_match.start(),
+                        query_match.end(),
+                    );
+                    log::error!(
+                        "end_offset: {} end: {} start: {}",
+                        end_offset,
+                        query_match.end(),
+                        query_match.start()
+                    );
+                    let offset_range =
+                        end_offset - query_match.end()..end_offset - query_match.start();
+                    log::error!("range for select_previous {:?}", offset_range);
+                    let display_range = offset_range.start.to_display_point(&display_map)
+                        ..offset_range.end.to_display_point(&display_map);
+
+                    if !select_next_state.wordwise
+                        || (!movement::is_inside_word(&display_map, display_range.start)
+                            && !movement::is_inside_word(&display_map, display_range.end))
+                    {
+                        next_selected_range = Some(offset_range);
+                        break;
+                    }
+                }
+
+                if let Some(next_selected_range) = next_selected_range {
+                    log::error!("next selected range: {:?}", next_selected_range);
+                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
+                    self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                        if action.replace_newest {
+                            s.delete(s.newest_anchor().id);
+                        }
+                        s.insert_range(next_selected_range);
+                    });
+                } else {
+                    select_next_state.done = true;
+                    log::error!("Nothing to do here");
+                }
+            }
+
+            self.select_next_state = Some(select_next_state);
+        } else if selections.len() == 1 {
+            let selection = selections.last_mut().unwrap();
+            if selection.start == selection.end {
+                let word_range = movement::surrounding_word(
+                    &display_map,
+                    selection.start.to_display_point(&display_map),
+                );
+                selection.start = word_range.start.to_offset(&display_map, Bias::Left);
+                selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                selection.goal = SelectionGoal::None;
+                selection.reversed = false;
+
+                let query = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .collect::<String>();
+                let query = query.chars().rev().collect::<String>();
+                log::error!("query lololo '{}'", query);
+                let select_state = SelectNextState {
+                    query: AhoCorasick::new_auto_configured(&[query]),
+                    wordwise: true,
+                    done: false,
+                };
+                self.unfold_ranges([selection.start..selection.end], false, true, cx);
+                self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                    s.select(selections);
+                });
+                self.select_next_state = Some(select_state);
+            } else {
+                let query = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .collect::<String>();
+                let query = query.chars().rev().collect::<String>();
+                log::error!("query '{}'", query);
+                self.select_next_state = Some(SelectNextState {
+                    query: AhoCorasick::new_auto_configured(&[query]),
+                    wordwise: false,
+                    done: false,
+                });
+                self.select_previous(action, cx);
             }
         }
     }

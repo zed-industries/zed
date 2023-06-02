@@ -1967,6 +1967,35 @@ impl MultiBufferSnapshot {
         } else {
             None
         };
+        log::error!("chunk: {:?}", chunk);
+        MultiBufferBytes {
+            range,
+            excerpts,
+            excerpt_bytes,
+            chunk,
+        }
+    }
+
+    pub fn reversed_bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpts = self.excerpts.cursor::<usize>();
+        excerpts.seek(&range.end, Bias::Left, &());
+
+        let mut chunk = &[][..];
+        let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
+            log::error!(
+                "reversed bytes in range: {:?}",
+                range.start - excerpts.start()..range.end - excerpts.start()
+            );
+            let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
+                range.start - excerpts.start()..range.end - excerpts.start(),
+            );
+            chunk = excerpt_bytes.next().unwrap_or(&[][..]);
+            log::error!("chunk: {:?}", chunk);
+            Some(excerpt_bytes)
+        } else {
+            None
+        };
 
         MultiBufferBytes {
             range,
@@ -3402,6 +3431,26 @@ impl Excerpt {
             0
         };
         let content_bytes = self.buffer.bytes_in_range(bytes_start..bytes_end);
+
+        ExcerptBytes {
+            content_bytes,
+            footer_height,
+        }
+    }
+
+    fn reversed_bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
+        let content_start = self.range.context.start.to_offset(&self.buffer);
+        let bytes_start = content_start + range.start;
+        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
+        let footer_height = if self.has_trailing_newline
+            && range.start <= self.text_summary.len
+            && range.end > self.text_summary.len
+        {
+            1
+        } else {
+            0
+        };
+        let content_bytes = self.buffer.reversed_bytes_in_range(bytes_start..bytes_end);
 
         ExcerptBytes {
             content_bytes,
