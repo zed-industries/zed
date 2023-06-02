@@ -1,5 +1,5 @@
 import { ColorScheme } from "../themes/common/colorScheme"
-import { text, border } from "./components"
+import { text, border, background } from "./components"
 import editor from "./editor"
 
 export default function assistant(colorScheme: ColorScheme) {
@@ -22,6 +22,26 @@ export default function assistant(colorScheme: ColorScheme) {
       sent_at: {
         margin: { top: 2, left: 8 },
         ...text(layer, "sans", "default", { size: "2xs" }),
+      },
+      apiKeyEditor: {
+          background: background(layer, "on"),
+          cornerRadius: 6,
+          text: text(layer, "mono", "on"),
+          placeholderText: text(layer, "mono", "on", "disabled", {
+              size: "xs",
+          }),
+          selection: colorScheme.players[0],
+          border: border(layer, "on"),
+          padding: {
+              bottom: 4,
+              left: 8,
+              right: 8,
+              top: 4,
+          },
+      },
+      apiKeyPrompt: {
+        padding: 10,
+        ...text(layer, "sans", "default", { size: "xs" }),
       }
     }
 }

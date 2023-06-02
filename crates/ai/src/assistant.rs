@@ -40,6 +40,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(AssistantEditor::assist);
     cx.capture_action(AssistantEditor::cancel_last_assist);
     cx.add_action(AssistantEditor::quote_selection);
+    cx.add_action(AssistantPanel::save_api_key);
 }
 
 pub enum AssistantPanelEvent {
@@ -54,6 +55,7 @@ pub struct AssistantPanel {
     width: Option<f32>,
     height: Option<f32>,
     pane: ViewHandle<Pane>,
+    api_key_editor: ViewHandle<Editor>,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
@@ -124,6 +126,17 @@ impl AssistantPanel {
                     });
                     let mut this = Self {
                         pane,
+                        api_key_editor: cx.add_view(|cx| {
+                            let mut editor = Editor::single_line(
+                                Some(Arc::new(|theme| theme.assistant.api_key_editor.clone())),
+                                cx,
+                            );
+                            editor.set_placeholder_text(
+                                "sk-000000000000000000000000000000000000000000000000",
+                                cx,
+                            );
+                            editor
+                        }),
                         languages: workspace.app_state().languages.clone(),
                         fs: workspace.app_state().fs.clone(),
                         width: None,
@@ -150,6 +163,9 @@ impl AssistantPanel {
                                 .clone();
                             if old_openai_api_key != new_openai_api_key {
                                 old_openai_api_key = new_openai_api_key;
+                                if this.has_focus(cx) {
+                                    cx.focus_self();
+                                }
                                 cx.notify();
                             }
                         }),
@@ -183,6 +199,17 @@ impl AssistantPanel {
             pane.add_item(Box::new(editor), true, focus, None, cx)
         });
     }
+
+    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        let api_key = self.api_key_editor.read(cx).text(cx);
+        if !api_key.is_empty() {
+            settings::update_settings_file::<AssistantSettings>(
+                self.fs.clone(),
+                cx,
+                move |settings| settings.openai_api_key = Some(api_key),
+            );
+        }
+    }
 }
 
 impl Entity for AssistantPanel {
@@ -195,12 +222,44 @@ impl View for AssistantPanel {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        ChildView::new(&self.pane, cx).into_any()
+        let style = &theme::current(cx).assistant;
+        if settings::get::<AssistantSettings>(cx)
+            .openai_api_key
+            .is_none()
+        {
+            Flex::column()
+                .with_child(
+                    Text::new(
+                        "Paste your OpenAI API key and press Enter to use the assistant",
+                        style.api_key_prompt.text.clone(),
+                    )
+                    .aligned(),
+                )
+                .with_child(
+                    ChildView::new(&self.api_key_editor, cx)
+                        .contained()
+                        .with_style(style.api_key_editor.container)
+                        .aligned(),
+                )
+                .contained()
+                .with_style(style.api_key_prompt.container)
+                .aligned()
+                .into_any()
+        } else {
+            ChildView::new(&self.pane, cx).into_any()
+        }
     }
 
     fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
-            cx.focus(&self.pane);
+            if settings::get::<AssistantSettings>(cx)
+                .openai_api_key
+                .is_some()
+            {
+                cx.focus(&self.pane);
+            } else {
+                cx.focus(&self.api_key_editor);
+            }
         }
     }
 }
@@ -290,7 +349,7 @@ impl Panel for AssistantPanel {
     }
 
     fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.pane.read(cx).has_focus()
+        self.pane.read(cx).has_focus() || self.api_key_editor.is_focused(cx)
     }
 
     fn is_focus_event(event: &Self::Event) -> bool {

@@ -109,6 +109,7 @@ dependencies = [
  "gpui",
  "isahc",
  "language",
+ "menu",
  "schemars",
  "search",
  "serde",

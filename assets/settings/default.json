@@ -85,7 +85,7 @@
       // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
       "dock": "right",
       // Default width when the assistant is docked to the left or right.
-      "default_width": 480,
+      "default_width": 450,
       // Default height when the assistant is docked to the bottom.
       "default_height": 320,
       // OpenAI API key.

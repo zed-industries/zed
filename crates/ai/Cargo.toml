@@ -15,6 +15,7 @@ editor = { path = "../editor" }
 fs = { path = "../fs" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+menu = { path = "../menu" }
 search = { path = "../search" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
