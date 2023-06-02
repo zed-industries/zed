@@ -3783,9 +3783,9 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
 impl<'a> ReversedMultiBufferBytes<'a> {
     fn consume(&mut self, len: usize) {
         self.range.end -= len;
-        let end_offset = self.chunk.len().checked_sub(len);
+        self.chunk = &self.chunk[..self.chunk.len() - len];
 
-        if !self.range.is_empty() && end_offset == Some(0) {
+        if !self.range.is_empty() && self.chunk.is_empty() {
             if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
                 self.chunk = chunk;
             } else {
@@ -3797,10 +3797,6 @@ impl<'a> ReversedMultiBufferBytes<'a> {
                     self.excerpt_bytes = Some(excerpt_bytes);
                 }
             }
-        } else if let Some(end_offset) = end_offset {
-            self.chunk = &self.chunk[..end_offset];
-        } else {
-            unreachable!()
         }
     }
 }
