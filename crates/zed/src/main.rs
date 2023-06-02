@@ -70,10 +70,7 @@ fn main() {
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
 
-    let app_version = ZED_APP_VERSION
-        .or_else(|| app.platform().app_version().ok())
-        .map_or("dev".to_string(), |v| v.to_string());
-    init_panic_hook(app_version);
+    init_panic_hook(&app);
 
     app.background();
 
@@ -376,19 +373,29 @@ struct Panic {
     backtrace: Vec<String>,
     // TODO
     // stripped_backtrace: String,
-    time: u128,
+    release_channel: String,
+    os_name: String,
+    os_version: Option<String>,
+    architecture: String,
+    panicked_on: u128,
 }
 
 #[derive(Serialize)]
 struct PanicRequest {
     panic: Panic,
+    // TODO: Move to Panic struct, as app_version - requires changing zed.dev
     version: String,
     token: String,
 }
 
-fn init_panic_hook(app_version: String) {
+fn init_panic_hook(app: &App) {
     let is_pty = stdout_is_a_pty();
+    let platform = app.platform();
+
     panic::set_hook(Box::new(move |info| {
+        let app_version = ZED_APP_VERSION
+            .or_else(|| platform.app_version().ok())
+            .map_or("dev".to_string(), |v| v.to_string());
         let backtrace = Backtrace::new();
 
         let thread = thread::current();
@@ -414,7 +421,14 @@ fn init_panic_hook(app_version: String) {
                 .map(|line| line.to_string())
                 .collect(),
             // modified_backtrace: None,
-            time: SystemTime::now()
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            os_name: platform.os_name().into(),
+            os_version: platform
+                .os_version()
+                .ok()
+                .map(|os_version| os_version.to_string()),
+            architecture: env::consts::ARCH.into(),
+            panicked_on: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
