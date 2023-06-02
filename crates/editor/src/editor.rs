@@ -22,11 +22,11 @@ pub mod test;
 
 use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
-use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use clock::{Global, ReplicaId};
+use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -64,6 +64,7 @@ use language::{
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
 };
+use log::error;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
@@ -90,10 +91,7 @@ use std::{
     num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::Path,
-    sync::{
-        atomic::{self, AtomicUsize},
-        Arc,
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
@@ -1159,43 +1157,53 @@ impl CopilotState {
 }
 
 #[derive(Debug, Default)]
-struct InlayHintState {
-    hints: RwLock<Vec<InlayHint>>,
-    last_updated_timestamp: AtomicUsize,
-    hints_generation: AtomicUsize,
-}
+struct InlayHintState(RwLock<(HashMap<usize, Global>, Vec<InlayHint>)>);
 
 impl InlayHintState {
-    pub fn new_timestamp(&self) -> usize {
-        self.hints_generation
-            .fetch_add(1, atomic::Ordering::Release)
-            + 1
+    fn read(&self) -> Vec<InlayHint> {
+        self.0.read().1.clone()
     }
 
-    pub fn read(&self) -> Vec<InlayHint> {
-        self.hints.read().clone()
+    fn is_newer(&self, timestamp: &HashMap<usize, Global>) -> bool {
+        let current_timestamp = self.0.read().0.clone();
+        Self::first_timestamp_newer(timestamp, &current_timestamp)
     }
 
-    pub fn update_if_newer(&self, new_hints: Vec<InlayHint>, new_timestamp: usize) {
-        let last_updated_timestamp = self.last_updated_timestamp.load(atomic::Ordering::Acquire);
-        dbg!(last_updated_timestamp, new_timestamp, new_hints.len());
-        if last_updated_timestamp < new_timestamp {
-            let mut guard = self.hints.write();
-            match self.last_updated_timestamp.compare_exchange(
-                last_updated_timestamp,
-                new_timestamp,
-                atomic::Ordering::AcqRel,
-                atomic::Ordering::Acquire,
-            ) {
-                Ok(_) => *guard = new_hints,
-                Err(other_value) => {
-                    if other_value < new_timestamp {
-                        self.last_updated_timestamp
-                            .store(new_timestamp, atomic::Ordering::Release);
-                        *guard = new_hints;
+    fn update_if_newer(&self, new_hints: Vec<InlayHint>, new_timestamp: HashMap<usize, Global>) {
+        let mut guard = self.0.write();
+        if Self::first_timestamp_newer(&new_timestamp, &guard.0) {
+            guard.0 = new_timestamp;
+            guard.1 = new_hints;
+        }
+    }
+
+    fn first_timestamp_newer(
+        first: &HashMap<usize, Global>,
+        second: &HashMap<usize, Global>,
+    ) -> bool {
+        if first.is_empty() {
+            false
+        } else if second.is_empty() {
+            true
+        } else {
+            let mut first_newer = false;
+            let mut second_has_extra_buffers = false;
+            for (buffer_id, first_version) in first {
+                match second.get(buffer_id) {
+                    None => {
+                        second_has_extra_buffers = true;
+                    }
+                    Some(second_version) => {
+                        if second_version.changed_since(&first_version) {
+                            return false;
+                        } else if first_version.changed_since(&second_version) {
+                            first_newer = true;
+                        }
                     }
                 }
             }
+
+            first_newer || !second_has_extra_buffers
         }
     }
 }
@@ -1340,7 +1348,7 @@ impl Editor {
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     match event {
                         project::Event::ReloadInlayHints => {
-                            editor.update_inlay_hints(cx);
+                            editor.try_update_inlay_hints(cx);
                         }
                         _ => {}
                     };
@@ -1930,7 +1938,7 @@ impl Editor {
                 s.set_pending(pending, mode);
             });
         } else {
-            log::error!("update_selection dispatched with no pending selection");
+            error!("update_selection dispatched with no pending selection");
             return;
         }
 
@@ -2634,43 +2642,64 @@ impl Editor {
         }
     }
 
-    fn update_inlay_hints(&self, cx: &mut ViewContext<Self>) {
+    fn try_update_inlay_hints(&self, cx: &mut ViewContext<Self>) {
         if self.mode != EditorMode::Full {
             return;
         }
-        let position = self.selections.newest_anchor().head();
-        let Some((buffer, _)) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(position.clone(), cx) else { return };
 
-        let generator_buffer = buffer.clone();
+        let mut hint_fetch_tasks = Vec::new();
+        let new_timestamp = self.buffer().read(cx).all_buffers().into_iter().fold(
+            HashMap::default(),
+            |mut buffer_versions, new_buffer| {
+                let new_buffer_version = new_buffer.read(cx).version();
+                match buffer_versions.entry(new_buffer.id()) {
+                    hash_map::Entry::Occupied(mut entry) => {
+                        let entry_version = entry.get();
+                        if new_buffer_version.changed_since(&entry_version) {
+                            entry.insert(new_buffer_version);
+                        }
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(new_buffer_version);
+                    }
+                }
+
+                hint_fetch_tasks.push(cx.spawn(|editor, mut cx| async move {
+                    let task = editor
+                        .update(&mut cx, |editor, cx| {
+                            editor.project.as_ref().map(|project| {
+                                project.update(cx, |project, cx| {
+                                    let end = new_buffer.read(cx).len();
+                                    project.inlay_hints(new_buffer, 0..end, cx)
+                                })
+                            })
+                        })
+                        .context("inlay hints fecth task spawn")?;
+
+                    match task {
+                        Some(task) => Ok(task.await.context("inlay hints fetch task await")?),
+                        None => anyhow::Ok(Vec::new()),
+                    }
+                }));
+
+                buffer_versions
+            },
+        );
+
         let inlay_hints_storage = Arc::clone(&self.inlay_hints);
-        // TODO kb should this come from external things like transaction counter instead?
-        // This way we can reuse tasks result for the same timestamp? The counter has to be global among all buffer changes & other reloads.
-        let new_timestamp = self.inlay_hints.new_timestamp();
-
-        // TODO kb waiting before the server starts and handling workspace/inlayHint/refresh commands is kind of orthogonal?
-        // need to be able to not to start new tasks, if current one is running on the same state already.
-        cx.spawn(|editor, mut cx| async move {
-            let task = editor.update(&mut cx, |editor, cx| {
-                editor.project.as_ref().map(|project| {
-                    project.update(cx, |project, cx| {
-                        let end = generator_buffer.read(cx).len();
-                        project.inlay_hints(generator_buffer, 0..end, cx)
-                    })
-                })
-            })?;
-
-            if let Some(task) = task {
-                // TODO kb contexts everywhere
-                let new_hints = task.await?;
+        if inlay_hints_storage.is_newer(&new_timestamp) {
+            cx.spawn(|_, _| async move {
+                let mut new_hints = Vec::new();
+                for task_result in futures::future::join_all(hint_fetch_tasks).await {
+                    match task_result {
+                        Ok(task_hints) => new_hints.extend(task_hints),
+                        Err(e) => error!("Failed to update hints for buffer: {e:#}"),
+                    }
+                }
                 inlay_hints_storage.update_if_newer(new_hints, new_timestamp);
-            }
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            })
+            .detach();
+        }
     }
 
     fn trigger_on_type_formatting(
@@ -6737,7 +6766,7 @@ impl Editor {
             if let Some((_, end_selections)) = self.selection_history.transaction_mut(tx_id) {
                 *end_selections = Some(self.selections.disjoint_anchors());
             } else {
-                log::error!("unexpectedly ended a transaction that wasn't started by this editor");
+                error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
 
             cx.emit(Event::Edited);
@@ -7254,7 +7283,7 @@ impl Editor {
         };
 
         if update_inlay_hints {
-            self.update_inlay_hints(cx);
+            self.try_update_inlay_hints(cx);
         }
     }
 
