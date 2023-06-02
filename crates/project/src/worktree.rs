@@ -1941,7 +1941,7 @@ impl LocalSnapshot {
                 },
             );
 
-            self.scan_statuses(repo_lock.deref(), &work_directory);
+            self.scan_statuses(repo_lock.deref(), &work_directory, &work_directory.0);
 
             drop(repo_lock);
 
@@ -1962,12 +1962,28 @@ impl LocalSnapshot {
         &mut self,
         repo_ptr: &dyn GitRepository,
         work_directory: &RepositoryWorkDirectory,
+        path: &Path,
     ) {
-        let statuses = repo_ptr.statuses().unwrap_or_default();
         let mut edits = vec![];
-        for (repo_path, status) in statuses.iter() {
-            self.set_git_status(&work_directory.0.join(repo_path), Some(*status), &mut edits);
+
+        for path in self
+            .descendent_entries(false, false, path)
+            .map(|entry| &entry.path)
+        {
+            dbg!("******Starting scan*******");
+            dbg!(path);
+            let Ok(repo_path) = path.strip_prefix(&work_directory.0) else {
+                continue;
+            };
+
+            self.set_git_status(
+                &path,
+                dbg!(repo_ptr.status(&RepoPath(repo_path.into()))),
+                &mut edits,
+            );
         }
+
+        // let statuses = repo_ptr.statuses().unwrap_or_default();
         self.entries_by_path.edit(edits, &());
     }
 
@@ -1978,12 +1994,31 @@ impl LocalSnapshot {
         edits: &mut Vec<Edit<Entry>>,
     ) {
         for path in path.ancestors() {
-            let Some(entry) = self.entry_for_path(path) else {
-                continue;
-            };
-            let mut entry = entry.clone();
-            entry.git_status = GitFileStatus::merge(entry.git_status, status);
-            edits.push(Edit::Insert(entry))
+            dbg!(path);
+
+            let search = edits.binary_search_by_key(&path, |edit| match edit {
+                Edit::Insert(item) => &item.path,
+                _ => unreachable!(),
+            });
+
+            match search {
+                Ok(idx) => match &mut edits[idx] {
+                    Edit::Insert(item) => {
+                        item.git_status = GitFileStatus::merge(item.git_status, status)
+                    }
+                    _ => unreachable!(),
+                },
+                Err(idx) => {
+                    let Some(entry) = self.entry_for_path(path) else {
+                        continue;
+                    };
+
+                    let mut entry = entry.clone();
+                    entry.git_status = dbg!(GitFileStatus::merge(dbg!(entry.git_status), status));
+
+                    edits.insert(idx, Edit::Insert(entry))
+                }
+            }
         }
     }
 
@@ -3173,7 +3208,7 @@ impl BackgroundScanner {
                     entry.branch = branch.map(Into::into);
                 });
 
-            snapshot.scan_statuses(repo.deref(), &work_dir);
+            snapshot.scan_statuses(repo.deref(), &work_dir, &work_dir.0);
         } else {
             if snapshot
                 .entry_for_path(&path)
@@ -3184,7 +3219,7 @@ impl BackgroundScanner {
             }
 
             let repo = snapshot.repository_for_path(&path)?;
-
+            let work_directory = &repo.work_directory(snapshot)?;
             let work_dir_id = repo.work_directory.clone();
             let (local_repo, git_dir_scan_id) =
                 snapshot.git_repositories.update(&work_dir_id, |entry| {
@@ -3196,24 +3231,9 @@ impl BackgroundScanner {
                 return None;
             }
 
-            let mut edits = vec![];
+            let repo_ptr = local_repo.lock();
 
-            for path in snapshot
-                .descendent_entries(false, false, path)
-                .map(|entry| &entry.path)
-            {
-                let Some(repo_path) = repo.work_directory.relativize(snapshot, &path) else {
-                    continue;
-                };
-
-                let Some(status) = local_repo.lock().status(&repo_path) else {
-                    continue;
-                };
-
-                snapshot.set_git_status(&path, Some(status), &mut edits);
-            }
-
-            snapshot.entries_by_path.edit(edits, &());
+            snapshot.scan_statuses(repo_ptr.deref(), &work_directory, path);
         }
 
         Some(())
@@ -5040,9 +5060,11 @@ mod tests {
                     Some(GitFileStatus::Added)
                 );
 
+                dbg!(snapshot.entries(false).collect::<Vec<_>>());
+
                 // Check stateful bubbling works
                 assert_eq!(
-                    snapshot.status_for_file(project_path),
+                    snapshot.status_for_file(dbg!(project_path)),
                     Some(GitFileStatus::Added)
                 );
 
@@ -5077,6 +5099,7 @@ mod tests {
             tree.flush_fs_events(cx).await;
             deterministic.run_until_parked();
 
+            dbg!(git_status(&repo));
             // Check that repo only changes are tracked
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();

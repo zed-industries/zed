@@ -237,7 +237,7 @@ impl GitFileStatus {
 }
 
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(PathBuf);
+pub struct RepoPath(pub PathBuf);
 
 impl RepoPath {
     pub fn new(path: PathBuf) -> Self {
