@@ -111,6 +111,12 @@ pub struct SelectNext {
     pub replace_newest: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct SelectPrevious {
+    #[serde(default)]
+    pub replace_newest: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
@@ -272,6 +278,7 @@ impl_actions!(
     editor,
     [
         SelectNext,
+        SelectPrevious,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
@@ -367,6 +374,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::add_selection_above);
     cx.add_action(Editor::add_selection_below);
     cx.add_action(Editor::select_next);
+    cx.add_action(Editor::select_previous);
     cx.add_action(Editor::toggle_comments);
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
@@ -484,6 +492,7 @@ pub struct Editor {
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
+    select_prev_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
@@ -539,6 +548,7 @@ pub struct EditorSnapshot {
 struct SelectionHistoryEntry {
     selections: Arc<[Selection<Anchor>]>,
     select_next_state: Option<SelectNextState>,
+    select_prev_state: Option<SelectNextState>,
     add_selections_state: Option<AddSelectionsState>,
 }
 
@@ -1286,6 +1296,7 @@ impl Editor {
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
+            select_prev_state: None,
             selection_history: Default::default(),
             autoclose_regions: Default::default(),
             snippet_stack: Default::default(),
@@ -1507,6 +1518,7 @@ impl Editor {
         let buffer = &display_map.buffer_snapshot;
         self.add_selections_state = None;
         self.select_next_state = None;
+        self.select_prev_state = None;
         self.select_larger_syntax_node_stack.clear();
         self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
         self.snippet_stack
@@ -5213,6 +5225,101 @@ impl Editor {
         }
     }
 
+    pub fn select_previous(&mut self, action: &SelectPrevious, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let mut selections = self.selections.all::<usize>(cx);
+        if let Some(mut select_prev_state) = self.select_prev_state.take() {
+            let query = &select_prev_state.query;
+            if !select_prev_state.done {
+                let first_selection = selections.iter().min_by_key(|s| s.id).unwrap();
+                let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
+                let mut next_selected_range = None;
+                // When we're iterating matches backwards, the oldest match will actually be the furthest one in the buffer.
+                let bytes_before_last_selection =
+                    buffer.reversed_bytes_in_range(0..last_selection.start);
+                let bytes_after_first_selection =
+                    buffer.reversed_bytes_in_range(first_selection.end..buffer.len());
+                let query_matches = query
+                    .stream_find_iter(bytes_before_last_selection)
+                    .map(|result| (last_selection.start, result))
+                    .chain(
+                        query
+                            .stream_find_iter(bytes_after_first_selection)
+                            .map(|result| (buffer.len(), result)),
+                    );
+                for (end_offset, query_match) in query_matches {
+                    let query_match = query_match.unwrap(); // can only fail due to I/O
+                    let offset_range =
+                        end_offset - query_match.end()..end_offset - query_match.start();
+                    let display_range = offset_range.start.to_display_point(&display_map)
+                        ..offset_range.end.to_display_point(&display_map);
+
+                    if !select_prev_state.wordwise
+                        || (!movement::is_inside_word(&display_map, display_range.start)
+                            && !movement::is_inside_word(&display_map, display_range.end))
+                    {
+                        next_selected_range = Some(offset_range);
+                        break;
+                    }
+                }
+
+                if let Some(next_selected_range) = next_selected_range {
+                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
+                    self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                        if action.replace_newest {
+                            s.delete(s.newest_anchor().id);
+                        }
+                        s.insert_range(next_selected_range);
+                    });
+                } else {
+                    select_prev_state.done = true;
+                }
+            }
+
+            self.select_prev_state = Some(select_prev_state);
+        } else if selections.len() == 1 {
+            let selection = selections.last_mut().unwrap();
+            if selection.start == selection.end {
+                let word_range = movement::surrounding_word(
+                    &display_map,
+                    selection.start.to_display_point(&display_map),
+                );
+                selection.start = word_range.start.to_offset(&display_map, Bias::Left);
+                selection.end = word_range.end.to_offset(&display_map, Bias::Left);
+                selection.goal = SelectionGoal::None;
+                selection.reversed = false;
+
+                let query = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .collect::<String>();
+                let query = query.chars().rev().collect::<String>();
+                let select_state = SelectNextState {
+                    query: AhoCorasick::new_auto_configured(&[query]),
+                    wordwise: true,
+                    done: false,
+                };
+                self.unfold_ranges([selection.start..selection.end], false, true, cx);
+                self.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                    s.select(selections);
+                });
+                self.select_prev_state = Some(select_state);
+            } else {
+                let query = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .collect::<String>();
+                let query = query.chars().rev().collect::<String>();
+                self.select_prev_state = Some(SelectNextState {
+                    query: AhoCorasick::new_auto_configured(&[query]),
+                    wordwise: false,
+                    done: false,
+                });
+                self.select_previous(action, cx);
+            }
+        }
+    }
+
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
@@ -5586,6 +5693,7 @@ impl Editor {
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
             self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
+            self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::newest(), cx);
         }
@@ -5598,6 +5706,7 @@ impl Editor {
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
             self.change_selections(None, cx, |s| s.select_anchors(entry.selections.to_vec()));
             self.select_next_state = entry.select_next_state;
+            self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
             self.request_autoscroll(Autoscroll::newest(), cx);
         }
@@ -6375,6 +6484,7 @@ impl Editor {
         self.selection_history.push(SelectionHistoryEntry {
             selections: self.selections.disjoint_anchors(),
             select_next_state: self.select_next_state.clone(),
+            select_prev_state: self.select_prev_state.clone(),
             add_selections_state: self.add_selections_state.clone(),
         });
     }

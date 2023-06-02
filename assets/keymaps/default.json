@@ -250,8 +250,20 @@
           "replace_newest": false
         }
       ],
+      "ctrl-cmd-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ],
       "cmd-k cmd-d": [
         "editor::SelectNext",
+        {
+          "replace_newest": true
+        }
+      ],
+      "cmd-k ctrl-cmd-d": [
+        "editor::SelectPrevious",
         {
           "replace_newest": true
         }

@@ -196,6 +196,13 @@ pub struct MultiBufferBytes<'a> {
     chunk: &'a [u8],
 }
 
+pub struct ReversedMultiBufferBytes<'a> {
+    range: Range<usize>,
+    excerpts: Cursor<'a, Excerpt, usize>,
+    excerpt_bytes: Option<ExcerptBytes<'a>>,
+    chunk: &'a [u8],
+}
+
 struct ExcerptChunks<'a> {
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
@@ -1967,8 +1974,34 @@ impl MultiBufferSnapshot {
         } else {
             None
         };
-
         MultiBufferBytes {
+            range,
+            excerpts,
+            excerpt_bytes,
+            chunk,
+        }
+    }
+
+    pub fn reversed_bytes_in_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> ReversedMultiBufferBytes {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpts = self.excerpts.cursor::<usize>();
+        excerpts.seek(&range.end, Bias::Left, &());
+
+        let mut chunk = &[][..];
+        let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
+            let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
+                range.start - excerpts.start()..range.end - excerpts.start(),
+            );
+            chunk = excerpt_bytes.next().unwrap_or(&[][..]);
+            Some(excerpt_bytes)
+        } else {
+            None
+        };
+
+        ReversedMultiBufferBytes {
             range,
             excerpts,
             excerpt_bytes,
@@ -3409,6 +3442,26 @@ impl Excerpt {
         }
     }
 
+    fn reversed_bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
+        let content_start = self.range.context.start.to_offset(&self.buffer);
+        let bytes_start = content_start + range.start;
+        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
+        let footer_height = if self.has_trailing_newline
+            && range.start <= self.text_summary.len
+            && range.end > self.text_summary.len
+        {
+            1
+        } else {
+            0
+        };
+        let content_bytes = self.buffer.reversed_bytes_in_range(bytes_start..bytes_end);
+
+        ExcerptBytes {
+            content_bytes,
+            footer_height,
+        }
+    }
+
     fn clip_anchor(&self, text_anchor: text::Anchor) -> text::Anchor {
         if text_anchor
             .cmp(&self.range.context.start, &self.buffer)
@@ -3727,6 +3780,38 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     }
 }
 
+impl<'a> ReversedMultiBufferBytes<'a> {
+    fn consume(&mut self, len: usize) {
+        self.range.end -= len;
+        self.chunk = &self.chunk[..self.chunk.len() - len];
+
+        if !self.range.is_empty() && self.chunk.is_empty() {
+            if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
+                self.chunk = chunk;
+            } else {
+                self.excerpts.next(&());
+                if let Some(excerpt) = self.excerpts.item() {
+                    let mut excerpt_bytes =
+                        excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
+                    self.chunk = excerpt_bytes.next().unwrap();
+                    self.excerpt_bytes = Some(excerpt_bytes);
+                }
+            }
+        }
+    }
+}
+
+impl<'a> io::Read for ReversedMultiBufferBytes<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = cmp::min(buf.len(), self.chunk.len());
+        buf[..len].copy_from_slice(&self.chunk[..len]);
+        buf[..len].reverse();
+        if len > 0 {
+            self.consume(len);
+        }
+        Ok(len)
+    }
+}
 impl<'a> Iterator for ExcerptBytes<'a> {
     type Item = &'a [u8];
 
