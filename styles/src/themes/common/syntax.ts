@@ -4,7 +4,7 @@ import { ColorScheme } from "./colorScheme"
 import chroma from "chroma-js"
 
 export interface SyntaxHighlightStyle {
-    color: string
+    color?: string
     weight?: FontWeight
     underline?: boolean
     italic?: boolean
