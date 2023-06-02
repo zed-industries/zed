@@ -5181,7 +5181,6 @@ impl Editor {
                         s.insert_range(next_selected_range);
                     });
                 } else {
-                    log::error!("Nothing to do in forward state");
                     select_next_state.done = true;
                 }
             }
@@ -5267,7 +5266,6 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    log::error!("next selected range: {:?}", next_selected_range);
                     self.unfold_ranges([next_selected_range.clone()], false, true, cx);
                     self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                         if action.replace_newest {
@@ -5277,7 +5275,6 @@ impl Editor {
                     });
                 } else {
                     select_prev_state.done = true;
-                    log::error!("Nothing to do here");
                 }
             }
 
@@ -5298,7 +5295,6 @@ impl Editor {
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
-                log::error!("query lololo '{}'", query);
                 let select_state = SelectNextState {
                     query: AhoCorasick::new_auto_configured(&[query]),
                     wordwise: true,
@@ -5314,7 +5310,6 @@ impl Editor {
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
-                log::error!("query '{}'", query);
                 self.select_prev_state = Some(SelectNextState {
                     query: AhoCorasick::new_auto_configured(&[query]),
                     wordwise: false,
