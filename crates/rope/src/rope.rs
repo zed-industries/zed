@@ -603,21 +603,13 @@ impl<'a> Bytes<'a> {
 
     pub fn peek(&self) -> Option<&'a [u8]> {
         let chunk = self.chunks.item()?;
-        log::error!("peeking");
         if self.reversed && self.range.start >= self.chunks.end(&()) {
-            log::error!(
-                "Leaving because we're reversed and {} >= {}",
-                self.range.start,
-                self.chunks.end(&())
-            );
             return None;
         }
-        log::error!("peeking 2");
         let chunk_start = *self.chunks.start();
         if self.range.end <= chunk_start {
             return None;
         }
-        log::error!("peeking3");
         let start = self.range.start.saturating_sub(chunk_start);
         let end = self.range.end - chunk_start;
         Some(&chunk.0.as_bytes()[start..chunk.0.len().min(end)])
@@ -647,11 +639,9 @@ impl<'a> io::Read for Bytes<'a> {
             if self.reversed {
                 buf[..len].copy_from_slice(&chunk[chunk.len() - len..]);
                 buf[..len].reverse();
-                log::error!("buffer contents: {:?}", &buf[..len]);
                 self.range.end -= len;
             } else {
                 buf[..len].copy_from_slice(&chunk[..len]);
-                log::error!("buffer contents: {:?}", &buf[..len]);
                 self.range.start += len;
             }
 

@@ -196,6 +196,13 @@ pub struct MultiBufferBytes<'a> {
     chunk: &'a [u8],
 }
 
+pub struct ReversedMultiBufferBytes<'a> {
+    range: Range<usize>,
+    excerpts: Cursor<'a, Excerpt, usize>,
+    excerpt_bytes: Option<ExcerptBytes<'a>>,
+    chunk: &'a [u8],
+}
+
 struct ExcerptChunks<'a> {
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
@@ -1967,7 +1974,6 @@ impl MultiBufferSnapshot {
         } else {
             None
         };
-        log::error!("chunk: {:?}", chunk);
         MultiBufferBytes {
             range,
             excerpts,
@@ -1976,28 +1982,26 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn reversed_bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes {
+    pub fn reversed_bytes_in_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> ReversedMultiBufferBytes {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpts = self.excerpts.cursor::<usize>();
         excerpts.seek(&range.end, Bias::Left, &());
 
         let mut chunk = &[][..];
         let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
-            log::error!(
-                "reversed bytes in range: {:?}",
-                range.start - excerpts.start()..range.end - excerpts.start()
-            );
             let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
                 range.start - excerpts.start()..range.end - excerpts.start(),
             );
             chunk = excerpt_bytes.next().unwrap_or(&[][..]);
-            log::error!("chunk: {:?}", chunk);
             Some(excerpt_bytes)
         } else {
             None
         };
 
-        MultiBufferBytes {
+        ReversedMultiBufferBytes {
             range,
             excerpts,
             excerpt_bytes,
@@ -3776,6 +3780,42 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     }
 }
 
+impl<'a> ReversedMultiBufferBytes<'a> {
+    fn consume(&mut self, len: usize) {
+        self.range.end -= len;
+        let end_offset = self.chunk.len().checked_sub(len);
+
+        if !self.range.is_empty() && end_offset == Some(0) {
+            if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
+                self.chunk = chunk;
+            } else {
+                self.excerpts.next(&());
+                if let Some(excerpt) = self.excerpts.item() {
+                    let mut excerpt_bytes =
+                        excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
+                    self.chunk = excerpt_bytes.next().unwrap();
+                    self.excerpt_bytes = Some(excerpt_bytes);
+                }
+            }
+        } else if let Some(end_offset) = end_offset {
+            self.chunk = &self.chunk[..end_offset];
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl<'a> io::Read for ReversedMultiBufferBytes<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = cmp::min(buf.len(), self.chunk.len());
+        buf[..len].copy_from_slice(&self.chunk[..len]);
+        buf[..len].reverse();
+        if len > 0 {
+            self.consume(len);
+        }
+        Ok(len)
+    }
+}
 impl<'a> Iterator for ExcerptBytes<'a> {
     type Item = &'a [u8];
 

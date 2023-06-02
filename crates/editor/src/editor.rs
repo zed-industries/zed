@@ -492,6 +492,7 @@ pub struct Editor {
     columnar_selection_tail: Option<Anchor>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
+    select_prev_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
@@ -1294,6 +1295,7 @@ impl Editor {
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
+            select_prev_state: None,
             selection_history: Default::default(),
             autoclose_regions: Default::default(),
             snippet_stack: Default::default(),
@@ -1515,6 +1517,7 @@ impl Editor {
         let buffer = &display_map.buffer_snapshot;
         self.add_selections_state = None;
         self.select_next_state = None;
+        self.select_prev_state = None;
         self.select_larger_syntax_node_stack.clear();
         self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
         self.snippet_stack
@@ -5227,55 +5230,33 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
-        log::error!("selections {:?}", selections.len());
-        if let Some(mut select_next_state) = self.select_next_state.take() {
-            let query = &select_next_state.query;
-            if !select_next_state.done {
+        if let Some(mut select_prev_state) = self.select_prev_state.take() {
+            let query = &select_prev_state.query;
+            if !select_prev_state.done {
                 let first_selection = selections.iter().min_by_key(|s| s.id).unwrap();
                 let last_selection = selections.iter().max_by_key(|s| s.id).unwrap();
                 let mut next_selected_range = None;
-                log::error!("first selection {:?}", first_selection);
-                log::error!("last selection {:?}", last_selection);
-                log::error!(
-                    "matching in {:?} and {:?}",
-                    0..last_selection.start,
-                    first_selection.end..buffer.len()
-                );
                 // When we're iterating matches backwards, the oldest match will actually be the furthest one in the buffer.
-                let bytes_after_first_selection =
-                    buffer.reversed_bytes_in_range(first_selection.end..buffer.len());
                 let bytes_before_last_selection =
                     buffer.reversed_bytes_in_range(0..last_selection.start);
+                let bytes_after_first_selection =
+                    buffer.reversed_bytes_in_range(first_selection.end..buffer.len());
                 let query_matches = query
                     .stream_find_iter(bytes_before_last_selection)
                     .map(|result| (last_selection.start, result))
                     .chain(
                         query
                             .stream_find_iter(bytes_after_first_selection)
-                            .map(|result| (buffer.len() - 1, result)),
+                            .map(|result| (buffer.len(), result)),
                     );
                 for (end_offset, query_match) in query_matches {
                     let query_match = query_match.unwrap(); // can only fail due to I/O
-                    log::error!(
-                        "aho returned: {:?} for {} start: {} end: {}",
-                        query_match,
-                        end_offset,
-                        query_match.start(),
-                        query_match.end(),
-                    );
-                    log::error!(
-                        "end_offset: {} end: {} start: {}",
-                        end_offset,
-                        query_match.end(),
-                        query_match.start()
-                    );
                     let offset_range =
                         end_offset - query_match.end()..end_offset - query_match.start();
-                    log::error!("range for select_previous {:?}", offset_range);
                     let display_range = offset_range.start.to_display_point(&display_map)
                         ..offset_range.end.to_display_point(&display_map);
 
-                    if !select_next_state.wordwise
+                    if !select_prev_state.wordwise
                         || (!movement::is_inside_word(&display_map, display_range.start)
                             && !movement::is_inside_word(&display_map, display_range.end))
                     {
@@ -5294,12 +5275,12 @@ impl Editor {
                         s.insert_range(next_selected_range);
                     });
                 } else {
-                    select_next_state.done = true;
+                    select_prev_state.done = true;
                     log::error!("Nothing to do here");
                 }
             }
 
-            self.select_next_state = Some(select_next_state);
+            self.select_prev_state = Some(select_prev_state);
         } else if selections.len() == 1 {
             let selection = selections.last_mut().unwrap();
             if selection.start == selection.end {
@@ -5326,14 +5307,14 @@ impl Editor {
                 self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                     s.select(selections);
                 });
-                self.select_next_state = Some(select_state);
+                self.select_prev_state = Some(select_state);
             } else {
                 let query = buffer
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
                 log::error!("query '{}'", query);
-                self.select_next_state = Some(SelectNextState {
+                self.select_prev_state = Some(SelectNextState {
                     query: AhoCorasick::new_auto_configured(&[query]),
                     wordwise: false,
                     done: false,
