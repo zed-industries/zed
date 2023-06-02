@@ -254,7 +254,6 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, String),
-    LanguageServerReady(LanguageServerId),
     Notification(String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
@@ -278,6 +277,7 @@ pub enum Event {
         new_peer_id: proto::PeerId,
     },
     CollaboratorLeft(proto::PeerId),
+    ReloadInlayHints,
 }
 
 pub enum LanguageServerState {
@@ -2813,19 +2813,13 @@ impl Project {
 
             language_server
                 .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
-                    dbg!("!!!!!!!!!!!!!!");
                     let this = this.downgrade();
-                    move |params, mut cx| async move {
-                        // TODO kb does not get called now, why?
-                        dbg!("#########################");
-
+                    move |(), mut cx| async move {
                         let this = this
                             .upgrade(&cx)
                             .ok_or_else(|| anyhow!("project dropped"))?;
-                        dbg!(params);
                         this.update(&mut cx, |_, cx| {
-                            dbg!("@@@@@@@@@@@@@ SENT event");
-                            cx.emit(Event::LanguageServerReady(server_id));
+                            cx.emit(Event::ReloadInlayHints);
                         });
                         Ok(())
                     }

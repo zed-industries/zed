@@ -615,6 +615,7 @@ impl LanguageServer {
                                 })
                                 .detach();
                         }
+
                         Err(error) => {
                             log::error!(
                                 "error deserializing {} request: {:?}, message: {:?}",

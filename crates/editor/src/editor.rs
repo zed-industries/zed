@@ -1339,8 +1339,7 @@ impl Editor {
                 }));
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     match event {
-                        project::Event::LanguageServerReady(_) => {
-                            dbg!("@@@@@@@@@@@@@ ReceiveD event");
+                        project::Event::ReloadInlayHints => {
                             editor.update_inlay_hints(cx);
                         }
                         _ => {}
