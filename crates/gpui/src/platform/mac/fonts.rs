@@ -66,6 +66,14 @@ impl platform::FontSystem for FontSystem {
         self.0.write().add_fonts(fonts)
     }
 
+    fn all_families(&self) -> Vec<String> {
+        self.0
+            .read()
+            .system_source
+            .all_families()
+            .expect("core text should never return an error")
+    }
+
     fn load_family(&self, name: &str, features: &Features) -> anyhow::Result<Vec<FontId>> {
         self.0.write().load_family(name, features)
     }

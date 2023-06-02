@@ -175,12 +175,16 @@ impl Dock {
         }
     }
 
+    pub fn position(&self) -> DockPosition {
+        self.position
+    }
+
     pub fn is_open(&self) -> bool {
         self.is_open
     }
 
     pub fn has_focus(&self, cx: &WindowContext) -> bool {
-        self.active_panel()
+        self.visible_panel()
             .map_or(false, |panel| panel.has_focus(cx))
     }
 
@@ -207,7 +211,7 @@ impl Dock {
         self.active_panel_index
     }
 
-    pub fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
+    pub(crate) fn set_open(&mut self, open: bool, cx: &mut ViewContext<Self>) {
         if open != self.is_open {
             self.is_open = open;
             if let Some(active_panel) = self.panel_entries.get(self.active_panel_index) {
@@ -216,11 +220,6 @@ impl Dock {
 
             cx.notify();
         }
-    }
-
-    pub fn toggle_open(&mut self, cx: &mut ViewContext<Self>) {
-        self.set_open(!self.is_open, cx);
-        cx.notify();
     }
 
     pub fn set_panel_zoomed(
@@ -265,7 +264,7 @@ impl Dock {
                         cx.focus(&panel);
                     }
                 } else if T::should_close_on_event(event)
-                    && this.active_panel().map_or(false, |p| p.id() == panel.id())
+                    && this.visible_panel().map_or(false, |p| p.id() == panel.id())
                 {
                     this.set_open(false, cx);
                 }
@@ -321,12 +320,16 @@ impl Dock {
         }
     }
 
-    pub fn active_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
-        let entry = self.active_entry()?;
+    pub fn visible_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
+        let entry = self.visible_entry()?;
         Some(&entry.panel)
     }
 
-    fn active_entry(&self) -> Option<&PanelEntry> {
+    pub fn active_panel(&self) -> Option<&Rc<dyn PanelHandle>> {
+        Some(&self.panel_entries.get(self.active_panel_index)?.panel)
+    }
+
+    fn visible_entry(&self) -> Option<&PanelEntry> {
         if self.is_open {
             self.panel_entries.get(self.active_panel_index)
         } else {
@@ -335,7 +338,7 @@ impl Dock {
     }
 
     pub fn zoomed_panel(&self, cx: &WindowContext) -> Option<Rc<dyn PanelHandle>> {
-        let entry = self.active_entry()?;
+        let entry = self.visible_entry()?;
         if entry.panel.is_zoomed(cx) {
             Some(entry.panel.clone())
         } else {
@@ -368,7 +371,7 @@ impl Dock {
     }
 
     pub fn render_placeholder(&self, cx: &WindowContext) -> AnyElement<Workspace> {
-        if let Some(active_entry) = self.active_entry() {
+        if let Some(active_entry) = self.visible_entry() {
             Empty::new()
                 .into_any()
                 .contained()
@@ -405,7 +408,7 @@ impl View for Dock {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(active_entry) = self.active_entry() {
+        if let Some(active_entry) = self.visible_entry() {
             let style = self.style(cx);
             ChildView::new(active_entry.panel.as_any(), cx)
                 .contained()
@@ -423,7 +426,7 @@ impl View for Dock {
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
-            if let Some(active_entry) = self.active_entry() {
+            if let Some(active_entry) = self.visible_entry() {
                 cx.focus(active_entry.panel.as_any());
             } else {
                 cx.focus_parent();
@@ -479,11 +482,22 @@ impl View for PanelButtons {
         Flex::row()
             .with_children(panels.into_iter().enumerate().map(
                 |(panel_ix, (view, context_menu))| {
-                    let (tooltip, tooltip_action) = view.icon_tooltip(cx);
+                    let is_active = is_open && panel_ix == active_ix;
+                    let (tooltip, tooltip_action) = if is_active {
+                        (
+                            format!("Close {} dock", dock_position.to_label()),
+                            Some(match dock_position {
+                                DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
+                                DockPosition::Bottom => crate::ToggleBottomDock.boxed_clone(),
+                                DockPosition::Right => crate::ToggleRightDock.boxed_clone(),
+                            }),
+                        )
+                    } else {
+                        view.icon_tooltip(cx)
+                    };
                     Stack::new()
                         .with_child(
                             MouseEventHandler::<Self, _>::new(panel_ix, cx, |state, cx| {
-                                let is_active = is_open && panel_ix == active_ix;
                                 let style = button_style.style_for(state, is_active);
                                 Flex::row()
                                     .with_child(
@@ -510,13 +524,22 @@ impl View for PanelButtons {
                             })
                             .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(MouseButton::Left, {
+                                let tooltip_action =
+                                    tooltip_action.as_ref().map(|action| action.boxed_clone());
                                 move |_, this, cx| {
-                                    if let Some(workspace) = this.workspace.upgrade(cx) {
-                                        cx.window_context().defer(move |cx| {
-                                            workspace.update(cx, |workspace, cx| {
-                                                workspace.toggle_panel(dock_position, panel_ix, cx)
-                                            });
-                                        });
+                                    if let Some(tooltip_action) = &tooltip_action {
+                                        let window_id = cx.window_id();
+                                        let view_id = this.workspace.id();
+                                        let tooltip_action = tooltip_action.boxed_clone();
+                                        cx.spawn(|_, mut cx| async move {
+                                            cx.dispatch_action(
+                                                window_id,
+                                                view_id,
+                                                &*tooltip_action,
+                                            )
+                                            .ok();
+                                        })
+                                        .detach();
                                     }
                                 }
                             })

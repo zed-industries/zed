@@ -38,7 +38,7 @@ use workspace::{
     notifications::NotifyResultExt,
     pane, register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
-    Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub use terminal::TerminalSettings;
@@ -66,9 +66,9 @@ pub fn init(cx: &mut AppContext) {
     terminal_panel::init(cx);
     terminal::init(cx);
 
-    cx.add_action(TerminalView::deploy);
-
     register_deserializable_item::<TerminalView>(cx);
+
+    cx.add_action(TerminalView::deploy);
 
     //Useful terminal views
     cx.add_action(TerminalView::send_text);
@@ -101,7 +101,7 @@ impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,
-        _: &workspace::NewTerminal,
+        _: &NewCenterTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
         let strategy = settings::get::<TerminalSettings>(cx);
@@ -133,8 +133,8 @@ impl TerminalView {
             Event::Wakeup => {
                 if !cx.is_self_focused() {
                     this.has_new_content = true;
-                    cx.notify();
                 }
+                cx.notify();
                 cx.emit(Event::Wakeup);
             }
             Event::Bell => {
@@ -905,7 +905,10 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
         let params = cx.update(AppState::test);
-        cx.update(|cx| theme::init((), cx));
+        cx.update(|cx| {
+            theme::init((), cx);
+            language::init(cx);
+        });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));

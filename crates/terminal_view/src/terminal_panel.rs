@@ -22,7 +22,7 @@ const TERMINAL_PANEL_KEY: &'static str = "TerminalPanel";
 actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(TerminalPanel::add_terminal);
+    cx.add_action(TerminalPanel::new_terminal);
 }
 
 pub enum Event {
@@ -70,6 +70,7 @@ impl TerminalPanel {
                     .with_child(Pane::render_tab_bar_button(
                         0,
                         "icons/plus_12.svg",
+                        false,
                         Some((
                             "New Terminal".into(),
                             Some(Box::new(workspace::NewTerminal)),
@@ -80,7 +81,7 @@ impl TerminalPanel {
                             cx.window_context().defer(move |cx| {
                                 if let Some(this) = this.upgrade(cx) {
                                     this.update(cx, |this, cx| {
-                                        this.add_terminal(&Default::default(), cx);
+                                        this.add_terminal(cx);
                                     });
                                 }
                             })
@@ -94,6 +95,7 @@ impl TerminalPanel {
                         } else {
                             "icons/maximize_8.svg"
                         },
+                        pane.is_zoomed(),
                         Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
@@ -220,7 +222,19 @@ impl TerminalPanel {
         }
     }
 
-    fn add_terminal(&mut self, _: &workspace::NewTerminal, cx: &mut ViewContext<Self>) {
+    fn new_terminal(
+        workspace: &mut Workspace,
+        _: &workspace::NewTerminal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+            return;
+        };
+
+        this.update(cx, |this, cx| this.add_terminal(cx))
+    }
+
+    fn add_terminal(&mut self, cx: &mut ViewContext<Self>) {
         let workspace = self.workspace.clone();
         cx.spawn(|this, mut cx| async move {
             let pane = this.read_with(&cx, |this, _| this.pane.clone())?;
@@ -363,7 +377,7 @@ impl Panel for TerminalPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            self.add_terminal(&Default::default(), cx)
+            self.add_terminal(cx)
         }
     }
 

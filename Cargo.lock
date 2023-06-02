@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.12.4"
+version = "0.12.5"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -2241,6 +2241,7 @@ dependencies = [
  "log",
  "postage",
  "project",
+ "regex",
  "search",
  "serde",
  "serde_derive",
@@ -8781,7 +8782,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.89.0"
+version = "0.90.0"
 dependencies = [
  "activity_indicator",
  "ai",

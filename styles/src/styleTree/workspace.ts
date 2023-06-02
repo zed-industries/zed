@@ -13,6 +13,7 @@ import tabBar from "./tabBar"
 
 export default function workspace(colorScheme: ColorScheme) {
     const layer = colorScheme.lowest
+    const isLight = colorScheme.isLight
     const itemSpacing = 8
     const titlebarButton = {
         cornerRadius: 6,
@@ -119,13 +120,19 @@ export default function workspace(colorScheme: ColorScheme) {
             cursor: "Arrow",
         },
         zoomedBackground: {
-            padding: 10,
             cursor: "Arrow",
-            background: withOpacity(background(colorScheme.lowest), 0.5)
+            background: isLight
+                ? withOpacity(background(colorScheme.lowest), 0.8)
+                : withOpacity(background(colorScheme.highest), 0.6)
         },
-        zoomedForeground: {
+        zoomedPaneForeground: {
+            margin: 16,
             shadow: colorScheme.modalShadow,
-            border: border(colorScheme.highest, { overlay: true }),
+            border: border(colorScheme.lowest, { overlay: true }),
+        },
+        zoomedPanelForeground: {
+            margin: 16,
+            border: border(colorScheme.lowest, { overlay: true }),
         },
         dock: {
             left: {

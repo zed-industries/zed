@@ -41,7 +41,7 @@ use std::{
         Arc, Weak,
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use sum_tree::Bias;
 use terminal_view::{get_working_directory, TerminalSettings, TerminalView};
@@ -376,6 +376,7 @@ struct Panic {
     backtrace: Vec<String>,
     // TODO
     // stripped_backtrace: String,
+    time: u128,
 }
 
 #[derive(Serialize)]
@@ -413,6 +414,10 @@ fn init_panic_hook(app_version: String) {
                 .map(|line| line.to_string())
                 .collect(),
             // modified_backtrace: None,
+            time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
         };
 
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {

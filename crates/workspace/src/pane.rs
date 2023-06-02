@@ -2,8 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewFile, NewSearch, NewTerminal,
-    ToggleZoom, Workspace, WorkspaceSettings,
+    item::WeakItemHandle, notify_of_new_dock, toolbar::Toolbar, AutosaveSetting, Item,
+    NewCenterTerminal, NewFile, NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -131,7 +131,6 @@ pub enum Event {
 pub struct Pane {
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<usize>,
-    is_active: bool,
     zoomed: bool,
     active_item_index: usize,
     last_focused_view_by_item: HashMap<usize, AnyWeakViewHandle>,
@@ -238,7 +237,6 @@ impl Pane {
         Self {
             items: Vec::new(),
             activation_history: Vec::new(),
-            is_active: true,
             zoomed: false,
             active_item_index: 0,
             last_focused_view_by_item: Default::default(),
@@ -270,6 +268,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         0,
                         "icons/plus_12.svg",
+                        false,
                         Some(("New...".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_new_menu(cx),
@@ -279,6 +278,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         1,
                         "icons/split_12.svg",
+                        false,
                         Some(("Split Pane".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_split_menu(cx),
@@ -292,6 +292,7 @@ impl Pane {
                         } else {
                             "icons/maximize_8.svg"
                         },
+                        pane.is_zoomed(),
                         Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
@@ -304,15 +305,6 @@ impl Pane {
 
     pub(crate) fn workspace(&self) -> &WeakViewHandle<Workspace> {
         &self.workspace
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.is_active
-    }
-
-    pub fn set_active(&mut self, is_active: bool, cx: &mut ViewContext<Self>) {
-        self.is_active = is_active;
-        cx.notify();
     }
 
     pub fn has_focus(&self) -> bool {
@@ -547,6 +539,11 @@ impl Pane {
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        // Potentially warn the user of the new keybinding
+        let workspace_handle = self.workspace().clone();
+        cx.spawn(|_, mut cx| async move { notify_of_new_dock(&workspace_handle, &mut cx) })
+            .detach();
+
         if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {
@@ -1005,7 +1002,7 @@ impl Pane {
                 AnchorCorner::TopRight,
                 vec![
                     ContextMenuItem::action("New File", NewFile),
-                    ContextMenuItem::action("New Terminal", NewTerminal),
+                    ContextMenuItem::action("New Terminal", NewCenterTerminal),
                     ContextMenuItem::action("New Search", NewSearch),
                 ],
                 cx,
@@ -1129,7 +1126,7 @@ impl Pane {
             None
         };
 
-        let pane_active = self.is_active;
+        let pane_active = self.has_focus;
 
         enum Tabs {}
         let mut row = Flex::row().scrollable::<Tabs>(1, autoscroll, cx);
@@ -1412,6 +1409,7 @@ impl Pane {
     pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
         index: usize,
         icon: &'static str,
+        active: bool,
         tooltip: Option<(String, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F,
@@ -1421,7 +1419,7 @@ impl Pane {
 
         let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
             let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
-            let style = theme.pane_button.style_for(mouse_state, false);
+            let style = theme.pane_button.style_for(mouse_state, active);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()
@@ -1508,7 +1506,7 @@ impl View for Pane {
                         let mut tab_row = Flex::row()
                             .with_child(self.render_tabs(cx).flex(1., true).into_any_named("tabs"));
 
-                        if self.is_active {
+                        if self.has_focus {
                             let render_tab_bar_buttons = self.render_tab_bar_buttons.clone();
                             tab_row.add_child(
                                 (render_tab_bar_buttons)(self, cx)
@@ -1599,6 +1597,7 @@ impl View for Pane {
         if !self.has_focus {
             self.has_focus = true;
             cx.emit(Event::Focus);
+            cx.notify();
         }
 
         self.toolbar.update(cx, |toolbar, cx| {
@@ -1633,6 +1632,7 @@ impl View for Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.pane_focus_update(false, cx);
         });
+        cx.notify();
     }
 
     fn update_keymap_context(&self, keymap: &mut KeymapContext, _: &AppContext) {

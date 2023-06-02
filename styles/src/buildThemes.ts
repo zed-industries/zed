@@ -1,7 +1,7 @@
 import * as fs from "fs"
 import { tmpdir } from "os"
 import * as path from "path"
-import colorSchemes, { staffColorSchemes } from "./colorSchemes"
+import { colorSchemes, staffColorSchemes } from "./colorSchemes"
 import app from "./styleTree/app"
 import { ColorScheme } from "./themes/common/colorScheme"
 import snakeCase from "./utils/snakeCase"

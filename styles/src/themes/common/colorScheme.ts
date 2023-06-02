@@ -19,6 +19,11 @@ export interface ColorScheme {
     syntax?: Partial<ThemeSyntax>
 }
 
+export interface MetaAndLicense {
+    meta: Meta
+    licenseFile: string
+}
+
 export interface Meta {
     name: string
     author: string
@@ -28,13 +33,6 @@ export interface Meta {
 
 export interface License {
     SPDX: SPDXExpression
-    /// A url where we can download the license's text
-    license_text: Verification | string
-}
-
-export interface Verification {
-    https_url: string
-    license_checksum: string
 }
 
 // License name -> License text

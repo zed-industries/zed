@@ -200,6 +200,7 @@ impl Server {
             .add_message_handler(start_language_server)
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
+            .add_message_handler(update_worktree_settings)
             .add_request_handler(forward_project_request::<proto::GetHover>)
             .add_request_handler(forward_project_request::<proto::GetDefinition>)
             .add_request_handler(forward_project_request::<proto::GetTypeDefinition>)
@@ -1088,6 +1089,18 @@ async fn rejoin_room(
                         },
                     )?;
                 }
+
+                for settings_file in worktree.settings_files {
+                    session.peer.send(
+                        session.connection_id,
+                        proto::UpdateWorktreeSettings {
+                            project_id: project.id.to_proto(),
+                            worktree_id: worktree.id,
+                            path: settings_file.path,
+                            content: Some(settings_file.content),
+                        },
+                    )?;
+                }
             }
 
             for language_server in &project.language_servers {
@@ -1410,6 +1423,18 @@ async fn join_project(
                 },
             )?;
         }
+
+        for settings_file in dbg!(worktree.settings_files) {
+            session.peer.send(
+                session.connection_id,
+                proto::UpdateWorktreeSettings {
+                    project_id: project_id.to_proto(),
+                    worktree_id: worktree.id,
+                    path: settings_file.path,
+                    content: Some(settings_file.content),
+                },
+            )?;
+        }
     }
 
     for language_server in &project.language_servers {
@@ -1510,6 +1535,31 @@ async fn update_diagnostic_summary(
         .db()
         .await
         .update_diagnostic_summary(&message, session.connection_id)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, message.clone())
+        },
+    );
+
+    Ok(())
+}
+
+async fn update_worktree_settings(
+    message: proto::UpdateWorktreeSettings,
+    session: Session,
+) -> Result<()> {
+    dbg!(&message);
+
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_worktree_settings(&message, session.connection_id)
         .await?;
 
     broadcast(
