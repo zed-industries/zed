@@ -19,10 +19,7 @@ use workspace::{
     pane, Pane, Workspace,
 };
 
-actions!(
-    assistant,
-    [NewContext, Assist, CancelLastAssist, QuoteSelection]
-);
+actions!(assistant, [NewContext, Assist, QuoteSelection]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(AssistantEditor::assist);
@@ -69,6 +66,7 @@ impl AssistantPanel {
                                 .with_child(Pane::render_tab_bar_button(
                                     0,
                                     "icons/plus_12.svg",
+                                    false,
                                     Some(("New Context".into(), Some(Box::new(NewContext)))),
                                     cx,
                                     move |_, _| todo!(),
@@ -81,6 +79,7 @@ impl AssistantPanel {
                                     } else {
                                         "icons/maximize_8.svg"
                                     },
+                                    pane.is_zoomed(),
                                     Some((
                                         "Toggle Zoom".into(),
                                         Some(Box::new(workspace::ToggleZoom)),

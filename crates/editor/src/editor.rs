@@ -31,6 +31,7 @@ use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
+pub use element::RenderExcerptHeaderParams;
 pub use element::{
     Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
 };

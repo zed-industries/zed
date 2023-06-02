@@ -185,7 +185,8 @@
       ],
       "alt-\\": "copilot::Suggest",
       "alt-]": "copilot::NextSuggestion",
-      "alt-[": "copilot::PreviousSuggestion"
+      "alt-[": "copilot::PreviousSuggestion",
+      "cmd->": "assistant::QuoteSelection"
     }
   },
   {
@@ -199,8 +200,7 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
-      "escape": "assistant::CancelLastAssist",
-      "cmd-?": "assistant::QuoteSelection"
+      "cmd->": "assistant::QuoteSelection"
     }
   },
   {
