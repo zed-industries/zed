@@ -2,7 +2,7 @@ import { ColorScheme } from "../themes/common/colorScheme"
 import { withOpacity } from "../utils/color"
 import { background, border, text } from "./components"
 
-export default function picker(colorScheme: ColorScheme) {
+export default function picker(colorScheme: ColorScheme): any {
     let layer = colorScheme.lowest
     const container = {
         background: background(layer),
@@ -28,7 +28,7 @@ export default function picker(colorScheme: ColorScheme) {
             bottom: 4,
         },
     }
-    const emptyInputEditor = { ...inputEditor }
+    const emptyInputEditor: any = { ...inputEditor }
     delete emptyInputEditor.border
     delete emptyInputEditor.margin
 
