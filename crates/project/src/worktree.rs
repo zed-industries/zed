@@ -1670,6 +1670,17 @@ impl Snapshot {
         })
     }
 
+    pub fn statuses_for_directories(&self, paths: &[&Path]) -> Vec<GitFileStatus> {
+        // ["/a/b", "a/b/c", "a/b/d", "j"]
+
+        // Path stack:
+        // If path has descendents following it, push to stack: ["a/b"]
+        // Figure out a/b/c
+        // Figure out a/b/d
+        // Once no more descendants, pop the stack:
+        // Figure out a/b
+    }
+
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
         self.entries_by_path
@@ -1965,20 +1976,20 @@ impl LocalSnapshot {
         path: &Path,
     ) {
         let mut edits = vec![];
+        let prefer_repo = work_directory.0.deref() == path;
 
         for path in self
             .descendent_entries(false, false, path)
             .map(|entry| &entry.path)
         {
-            dbg!("******Starting scan*******");
-            dbg!(path);
             let Ok(repo_path) = path.strip_prefix(&work_directory.0) else {
                 continue;
             };
 
             self.set_git_status(
                 &path,
-                dbg!(repo_ptr.status(&RepoPath(repo_path.into()))),
+                repo_ptr.status(&RepoPath(repo_path.into())),
+                prefer_repo,
                 &mut edits,
             );
         }
@@ -1991,6 +2002,7 @@ impl LocalSnapshot {
         &self,
         path: &Path,
         status: Option<GitFileStatus>,
+        prefer_repo: bool,
         edits: &mut Vec<Edit<Entry>>,
     ) {
         for path in path.ancestors() {
@@ -2004,7 +2016,7 @@ impl LocalSnapshot {
             match search {
                 Ok(idx) => match &mut edits[idx] {
                     Edit::Insert(item) => {
-                        item.git_status = GitFileStatus::merge(item.git_status, status)
+                        item.git_status = GitFileStatus::merge(item.git_status, status, prefer_repo)
                     }
                     _ => unreachable!(),
                 },
@@ -2014,7 +2026,11 @@ impl LocalSnapshot {
                     };
 
                     let mut entry = entry.clone();
-                    entry.git_status = dbg!(GitFileStatus::merge(dbg!(entry.git_status), status));
+                    entry.git_status = dbg!(GitFileStatus::merge(
+                        dbg!(entry.git_status),
+                        status,
+                        prefer_repo
+                    ));
 
                     edits.insert(idx, Edit::Insert(entry))
                 }
@@ -2429,6 +2445,29 @@ impl File {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+struct GitStatuses {
+    added: usize,
+    modified: usize,
+    conflict: usize,
+}
+
+impl GitStatuses {
+    fn status(&self) -> Option<GitFileStatus> {
+        if self.conflict > 0 {
+            Some(GitFileStatus::Conflict)
+        } else if self.modified > 0 {
+            Some(GitFileStatus::Modified)
+        } else if self.added > 0 {
+            Some(GitFileStatus::Added)
+        } else {
+            None
+        }
+    }
+
+    fn add_status(&self, status: Option<GitFileStatus>) {}
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: ProjectEntryId,
@@ -2502,6 +2541,10 @@ impl Entry {
     pub fn is_file(&self) -> bool {
         matches!(self.kind, EntryKind::File(_))
     }
+
+    pub fn git_status(&self) -> Option<GitFileStatus> {
+        self.git_status /*.status() */
+    }
 }
 
 impl sum_tree::Item for Entry {
@@ -2544,6 +2587,9 @@ pub struct EntrySummary {
     visible_count: usize,
     file_count: usize,
     visible_file_count: usize,
+    // git_modified_count: usize,
+    // git_added_count: usize,
+    // git_conflict_count: usize,
 }
 
 impl Default for EntrySummary {
@@ -5108,6 +5154,8 @@ mod tests {
                     snapshot.status_for_file(project_path.join(F_TXT)),
                     Some(GitFileStatus::Added)
                 );
+
+                dbg!(snapshot.entries(false).collect::<Vec<_>>());
 
                 assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
                 assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);

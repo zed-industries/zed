@@ -202,18 +202,23 @@ impl GitFileStatus {
     pub fn merge(
         this: Option<GitFileStatus>,
         other: Option<GitFileStatus>,
+        prefer_other: bool,
     ) -> Option<GitFileStatus> {
-        match (this, other) {
-            (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
-                Some(GitFileStatus::Conflict)
+        if prefer_other {
+            return other;
+        } else {
+            match (this, other) {
+                (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
+                    Some(GitFileStatus::Conflict)
+                }
+                (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
+                    Some(GitFileStatus::Modified)
+                }
+                (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
+                    Some(GitFileStatus::Added)
+                }
+                _ => None,
             }
-            (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
-                Some(GitFileStatus::Modified)
-            }
-            (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
-                Some(GitFileStatus::Added)
-            }
-            _ => None,
         }
     }
 
