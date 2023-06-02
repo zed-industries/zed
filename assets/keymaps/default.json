@@ -251,7 +251,7 @@
         }
       ],
       "ctrl-cmd-d": [
-        "editor::SelectNext",
+        "editor::SelectPrevious",
         {
           "replace_newest": false
         }
