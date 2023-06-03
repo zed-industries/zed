@@ -4321,7 +4321,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // Set rust language override and assert overriden tabsize is sent to language server
+    // Set rust language override and assert overridden tabsize is sent to language server
     update_test_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
@@ -4435,7 +4435,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // Set rust language override and assert overriden tabsize is sent to language server
+    // Set rust language override and assert overridden tabsize is sent to language server
     update_test_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
@@ -4776,7 +4776,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
                     two
                     threeˇ
                 "},
-                "overlapping aditional edit",
+                "overlapping additional edit",
             ),
             (
                 indoc! {"

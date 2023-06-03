@@ -67,7 +67,7 @@ impl KeymapMatcher {
     ///     MatchResult::Pending =>
     ///         There exist bindings which are still waiting for more keys.
     ///     MatchResult::Complete(matches) =>
-    ///         1 or more bindings have recieved the necessary key presses.
+    ///         1 or more bindings have received the necessary key presses.
     ///         The order of the matched actions is by position of the matching first,
     //          and order in the keymap second.
     pub fn push_keystroke(

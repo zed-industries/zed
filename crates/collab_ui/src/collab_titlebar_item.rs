@@ -472,7 +472,7 @@ impl CollabTitlebarItem {
             Stack::new()
                 .with_child(
                     MouseEventHandler::<ShareUnshare, Self>::new(0, cx, |state, _| {
-                        //TODO: Ensure this button has consistant width for both text variations
+                        //TODO: Ensure this button has consistent width for both text variations
                         let style = titlebar.share_button.style_for(state, false);
                         Label::new(label, style.text.clone())
                             .contained()

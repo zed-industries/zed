@@ -112,7 +112,7 @@ export default function editor(colorScheme: ColorScheme) {
             widthEm: 0.15,
             cornerRadius: 0.05,
         },
-        /** Highlights matching occurences of what is under the cursor
+        /** Highlights matching occurrences of what is under the cursor
          * as well as matched brackets
          */
         documentHighlightReadBackground: withOpacity(

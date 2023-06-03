@@ -33,7 +33,7 @@ export default function search(colorScheme: ColorScheme) {
     };
 
     return {
-        // TODO: Add an activeMatchBackground on the rust side to differenciate between active and inactive
+        // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
         matchBackground: withOpacity(foreground(layer, "accent"), 0.4),
         optionButton: {
             ...text(layer, "mono", "on"),

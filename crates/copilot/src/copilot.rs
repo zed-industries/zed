@@ -375,7 +375,7 @@ impl Copilot {
                 server
                     .on_notification::<LogMessage, _>(|params, _cx| {
                         match params.level {
-                            // Copilot is pretty agressive about logging
+                            // Copilot is pretty aggressive about logging
                             0 => debug!("copilot: {}", params.message),
                             1 => debug!("copilot: {}", params.message),
                             _ => error!("copilot: {}", params.message),

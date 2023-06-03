@@ -23,7 +23,7 @@ function checkLicenses(
     licenses: string[]
 ) {
     for (const { meta } of schemeMetaWithLicense) {
-        // FIXME: Add support for conjuctions and conditions
+        // FIXME: Add support for conjunctions and conditions
         if (licenses.indexOf(meta.license.SPDX) < 0) {
             throw Error(
                 `License for theme ${meta.name} (${meta.license.SPDX}) is not supported`

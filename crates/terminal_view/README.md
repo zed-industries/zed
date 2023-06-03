@@ -18,6 +18,6 @@ There are currently many distinct paths for getting keystrokes to the terminal:
 
 3. IME text. When the special character mappings fail, we pass the keystroke back to GPUI to hand it to the IME system. This comes back to us in the `View::replace_text_in_range()` method, and we then send that to the terminal directly, bypassing `try_keystroke()`.
 
-4. Pasted text has a seperate pathway. 
+4. Pasted text has a separate pathway. 
 
 Generally, there's a distinction between 'keystrokes that need to be mapped' and 'strings which need to be written'. I've attempted to unify these under the '.try_keystroke()' API and the `.input()` API (which try_keystroke uses) so we have consistent input handling across the terminal

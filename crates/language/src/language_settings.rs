@@ -264,7 +264,7 @@ impl settings::Setting for AllLanguageSettings {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
 
         // Create a schema for a 'languages overrides' object, associating editor
-        // settings with specific langauges.
+        // settings with specific languages.
         assert!(root_schema
             .definitions
             .contains_key("LanguageSettingsContent"));

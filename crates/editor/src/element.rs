@@ -3080,7 +3080,7 @@ mod tests {
         editor_width: f32,
     ) -> Vec<Invisible> {
         info!(
-            "Creating editor with mode {editor_mode:?}, witdh {editor_width} and text '{input_text}'"
+            "Creating editor with mode {editor_mode:?}, width {editor_width} and text '{input_text}'"
         );
         let (_, editor) = cx.add_window(|cx| {
             let buffer = MultiBuffer::build_simple(&input_text, cx);
