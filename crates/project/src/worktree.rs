@@ -1822,6 +1822,14 @@ impl LocalSnapshot {
         self.git_repositories.get(&repo.work_directory.0)
     }
 
+    pub(crate) fn local_repo_for_path(
+        &self,
+        path: &Path,
+    ) -> Option<(RepositoryWorkDirectory, &LocalRepositoryEntry)> {
+        let (path, repo) = self.repository_and_work_directory_for_path(path)?;
+        Some((path, self.git_repositories.get(&repo.work_directory_id())?))
+    }
+
     pub(crate) fn repo_for_metadata(
         &self,
         path: &Path,
@@ -1997,6 +2005,8 @@ impl LocalSnapshot {
                 },
             );
 
+            self.scan_statuses(repo_lock.deref(), &work_directory);
+
             drop(repo_lock);
 
             self.git_repositories.insert(
@@ -2016,10 +2026,12 @@ impl LocalSnapshot {
         &mut self,
         repo_ptr: &dyn GitRepository,
         work_directory: &RepositoryWorkDirectory,
-        path: &Path,
     ) {
         let mut edits = vec![];
-        for mut entry in self.descendent_entries(false, false, path).cloned() {
+        for mut entry in self
+            .descendent_entries(false, false, &work_directory.0)
+            .cloned()
+        {
             let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
                 continue;
             };
@@ -2754,6 +2766,7 @@ impl BackgroundScanner {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
+
         self.send_status_update(false, None);
 
         // Process any any FS events that occurred while performing the initial scan.
@@ -2813,7 +2826,7 @@ impl BackgroundScanner {
 
             if let Some(paths) = paths {
                 for path in paths {
-                    self.reload_git_status(&path, &mut *snapshot, self.fs.as_ref());
+                    self.reload_git_repo(&path, &mut *snapshot, self.fs.as_ref());
                 }
             }
 
@@ -2940,14 +2953,18 @@ impl BackgroundScanner {
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
-        let (root_abs_path, root_char_bag, next_entry_id) = {
+        let (root_abs_path, root_char_bag, next_entry_id, repository) = {
             let snapshot = &self.state.lock().snapshot;
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
                 self.next_entry_id.clone(),
+                snapshot
+                    .local_repo_for_path(&job.path)
+                    .map(|(work_dir, repo)| (work_dir, repo.clone())),
             )
         };
+
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
         while let Some(child_abs_path) = child_paths.next().await {
             let child_abs_path: Arc<Path> = match child_abs_path {
@@ -3040,6 +3057,13 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+
+                if let Some((repo_path, repo)) = &repository {
+                    if let Ok(path) = child_path.strip_prefix(&repo_path.0) {
+                        child_entry.git_status =
+                            repo.repo_ptr.lock().status(&RepoPath(path.into()));
+                    }
+                }
             }
 
             new_entries.push(child_entry);
@@ -3117,6 +3141,7 @@ impl BackgroundScanner {
                     let ignore_stack = state
                         .snapshot
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir);
+
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
@@ -3124,6 +3149,16 @@ impl BackgroundScanner {
                         state.snapshot.root_char_bag,
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
+
+                    if !fs_entry.is_dir() {
+                        if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(&path) {
+                            if let Ok(path) = path.strip_prefix(work_dir.0) {
+                                fs_entry.git_status =
+                                    repo.repo_ptr.lock().status(&RepoPath(path.into()))
+                            }
+                        }
+                    }
+
                     state.insert_entry(fs_entry, self.fs.as_ref());
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
@@ -3183,7 +3218,7 @@ impl BackgroundScanner {
         Some(())
     }
 
-    fn reload_git_status(
+    fn reload_git_repo(
         &self,
         path: &Path,
         snapshot: &mut LocalSnapshot,
@@ -3230,32 +3265,7 @@ impl BackgroundScanner {
                     entry.branch = branch.map(Into::into);
                 });
 
-            snapshot.scan_statuses(repo.deref(), &work_dir, &work_dir.0);
-        } else {
-            if snapshot
-                .entry_for_path(&path)
-                .map(|entry| entry.is_ignored)
-                .unwrap_or(false)
-            {
-                return None;
-            }
-
-            let repo = snapshot.repository_for_path(&path)?;
-            let work_directory = &repo.work_directory(snapshot)?;
-            let work_dir_id = repo.work_directory.clone();
-            let (local_repo, git_dir_scan_id) =
-                snapshot.git_repositories.update(&work_dir_id, |entry| {
-                    (entry.repo_ptr.clone(), entry.git_dir_scan_id)
-                })?;
-
-            // Short circuit if we've already scanned everything
-            if git_dir_scan_id == scan_id {
-                return None;
-            }
-
-            let repo_ptr = local_repo.lock();
-
-            snapshot.scan_statuses(repo_ptr.deref(), &work_directory, path);
+            snapshot.scan_statuses(repo.deref(), &work_dir);
         }
 
         Some(())
@@ -5270,6 +5280,15 @@ mod tests {
             )
             .await;
 
+            fs.set_status_for_repo(
+                &Path::new("/root/.git"),
+                &[
+                    (Path::new("a/b/c1.txt"), GitFileStatus::Added),
+                    (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
+                    (Path::new("g/h2.txt"), GitFileStatus::Conflict),
+                ],
+            );
+
             let http_client = FakeHttpClient::with_404_response();
             let client = cx.read(|cx| Client::new(http_client, cx));
             let tree = Worktree::local(
@@ -5282,17 +5301,6 @@ mod tests {
             )
             .await
             .unwrap();
-
-            cx.foreground().run_until_parked();
-
-            fs.set_status_for_repo(
-                &Path::new("/root/.git"),
-                &[
-                    (Path::new("a/b/c1.txt"), GitFileStatus::Added),
-                    (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
-                    (Path::new("g/h2.txt"), GitFileStatus::Conflict),
-                ],
-            );
 
             cx.foreground().run_until_parked();
 
