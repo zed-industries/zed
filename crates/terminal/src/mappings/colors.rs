@@ -45,7 +45,7 @@ pub fn convert_color(alac_color: &AnsiColor, style: &TerminalStyle) -> Color {
 }
 
 ///Converts an 8 bit ANSI color to it's GPUI equivalent.
-///Accepts usize for compatability with the alacritty::Colors interface,
+///Accepts usize for compatibility with the alacritty::Colors interface,
 ///Other than that use case, should only be called with values in the [0,255] range
 pub fn get_color_at_index(index: &usize, style: &TerminalStyle) -> Color {
     match index {
@@ -78,7 +78,7 @@ pub fn get_color_at_index(index: &usize, style: &TerminalStyle) -> Color {
             let step = (u8::MAX as f32 / 24.).floor() as u8; //Split the RGB grayscale values into 24 chunks
             Color::new(i * step, i * step, i * step, u8::MAX) //Map the ANSI-grayscale components to the RGB-grayscale
         }
-        //For compatability with the alacritty::Colors interface
+        //For compatibility with the alacritty::Colors interface
         256 => style.foreground,
         257 => style.background,
         258 => style.cursor,

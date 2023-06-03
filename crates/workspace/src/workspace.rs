@@ -4424,7 +4424,7 @@ mod tests {
             assert!(!panel.has_focus(cx));
         });
 
-        // Transfering focus back to the panel keeps it zoomed
+        // Transferring focus back to the panel keeps it zoomed
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_panel_focus::<TestPanel>(cx);
         });

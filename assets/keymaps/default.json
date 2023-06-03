@@ -516,7 +516,7 @@
         "terminal::SendText",
         "\u0001"
       ],
-      // Terminal.app compatability
+      // Terminal.app compatibility
       "alt-left": [
         "terminal::SendText",
         "\u001bb"

@@ -276,7 +276,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Set up fake langauge server to return fuzzy matches against
+        // Set up fake language server to return fuzzy matches against
         // a fixed set of symbol names.
         let fake_symbols = [
             symbol("one", "/external"),

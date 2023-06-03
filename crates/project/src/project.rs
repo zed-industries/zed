@@ -4052,7 +4052,7 @@ impl Project {
                             let end_within = range.start.cmp(&primary.end, buffer).is_le()
                                 && range.end.cmp(&primary.end, buffer).is_ge();
 
-                            //Skip addtional edits which overlap with the primary completion edit
+                            //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
                             if !start_within && !end_within {
                                 buffer.edit([(range, text)], None, cx);

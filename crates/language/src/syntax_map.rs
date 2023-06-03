@@ -773,7 +773,7 @@ impl<'a> SyntaxMapCaptures<'a> {
         } in layers
         {
             let grammar = match &language.grammar {
-                Some(grammer) => grammer,
+                Some(grammar) => grammar,
                 None => continue,
             };
             let query = match query(&grammar) {
@@ -896,7 +896,7 @@ impl<'a> SyntaxMapMatches<'a> {
         } in layers
         {
             let grammar = match &language.grammar {
-                Some(grammer) => grammer,
+                Some(grammar) => grammar,
                 None => continue,
             };
             let query = match query(&grammar) {

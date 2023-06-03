@@ -5332,7 +5332,7 @@ mod tests {
             assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\nAB5678");
 
             // An undo in the multibuffer undoes the multibuffer transaction
-            // and also any individual buffer edits that have occured since
+            // and also any individual buffer edits that have occurred since
             // that transaction.
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");

@@ -157,7 +157,7 @@ impl RepositoryEntry {
                 self.statuses
                     .iter_from(&repo_path)
                     .take_while(|(key, _)| key.starts_with(&repo_path))
-                    // Short circut once we've found the highest level
+                    // Short circuit once we've found the highest level
                     .take_until(|(_, status)| status == &&GitFileStatus::Conflict)
                     .map(|(_, status)| status)
                     .reduce(
@@ -3623,7 +3623,7 @@ pub trait WorktreeHandle {
 
 impl WorktreeHandle for ModelHandle<Worktree> {
     // When the worktree's FS event stream sometimes delivers "redundant" events for FS changes that
-    // occurred before the worktree was constructed. These events can cause the worktree to perfrom
+    // occurred before the worktree was constructed. These events can cause the worktree to perform
     // extra directory scans, and emit extra scan-state notifications.
     //
     // This function mutates the worktree's directory and waits for those mutations to be picked up,

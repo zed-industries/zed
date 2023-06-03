@@ -127,7 +127,7 @@ use plugin_handles::RopeHandle;
 pub fn append(rope: RopeHandle, string: &str);
 ```
 
-This allows us to perform an operation on a `Rope`, but how do we get a `RopeHandle` into a plugin? Well, as plugins, we can only aquire resources to handles we're given, so we'd need to expose a fuction that takes a handle. 
+This allows us to perform an operation on a `Rope`, but how do we get a `RopeHandle` into a plugin? Well, as plugins, we can only acquire resources to handles we're given, so we'd need to expose a function that takes a handle. 
 
 To illustrate that point, here's an example. First, we'd define a plugin-side function as follows:
 
@@ -177,7 +177,7 @@ So here's what calling `append_newline` would do, from the top:
 
 6. And from here on out we return up the callstack, through Wasm, to Rust all the way back to where we started. Right before we return, we clear out the `ResourcePool`, so that we're no longer holding onto the underlying resource.
 
-Throughout this entire chain of calls, the resource remain host-side. By temporarilty checking it into a `ResourcePool`, we're able to keep a reference to the resource that we can use, while avoiding copying the uncopyable resource.
+Throughout this entire chain of calls, the resource remain host-side. By temporarily checking it into a `ResourcePool`, we're able to keep a reference to the resource that we can use, while avoiding copying the uncopyable resource.
 
 ## Final Notes
 

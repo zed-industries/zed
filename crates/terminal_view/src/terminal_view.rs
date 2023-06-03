@@ -804,7 +804,7 @@ mod tests {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
-            //Make sure enviroment is as expeted
+            //Make sure environment is as expected
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_none());
 
@@ -825,7 +825,7 @@ mod tests {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
-            //Make sure enviroment is as expeted
+            //Make sure environment is as expected
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 

@@ -1,4 +1,4 @@
-// Allow binary to be called Zed for a nice application menu when running executable direcly
+// Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
 use anyhow::{anyhow, Context, Result};

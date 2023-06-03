@@ -2539,7 +2539,7 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position.clone(), cx)?;
 
-        // OnTypeFormatting retuns a list of edits, no need to pass them between Zed instances,
+        // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
         // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
@@ -7913,13 +7913,13 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, is_valid: bool) -> Rend
 }
 
 pub fn highlight_diagnostic_message(
-    inital_highlights: Vec<usize>,
+    initial_highlights: Vec<usize>,
     message: &str,
 ) -> (String, Vec<usize>) {
     let mut message_without_backticks = String::new();
     let mut prev_offset = 0;
     let mut inside_block = false;
-    let mut highlights = inital_highlights;
+    let mut highlights = initial_highlights;
     for (match_ix, (offset, _)) in message
         .match_indices('`')
         .chain([(message.len(), "")])

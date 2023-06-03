@@ -1022,7 +1022,7 @@ impl Pane {
         let is_active_item = target_item_id == active_item_id;
         let target_pane = cx.weak_handle();
 
-        // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currenlty, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
+        // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currently, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
 
         self.tab_context_menu.update(cx, |menu, cx| {
             menu.show(
