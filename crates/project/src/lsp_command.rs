@@ -3,7 +3,7 @@ use crate::{
     InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
     MarkupContent, Project, ProjectTransaction,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use fs::LineEnding;
@@ -1790,7 +1790,7 @@ impl LspCommand for OnTypeFormatting {
 impl LspCommand for InlayHints {
     type Response = Vec<InlayHint>;
     type LspRequest = lsp::InlayHintRequest;
-    type ProtoRequest = proto::OnTypeFormatting;
+    type ProtoRequest = proto::InlayHints;
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(inlay_hint_provider) = &server_capabilities.inlay_hint_provider else { return false };
@@ -1892,40 +1892,190 @@ impl LspCommand for InlayHints {
         })
     }
 
-    fn to_proto(&self, _: u64, _: &Buffer) -> proto::OnTypeFormatting {
-        todo!("TODO kb")
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::InlayHints {
+        proto::InlayHints {
+            project_id,
+            buffer_id: buffer.remote_id(),
+            start: Some(language::proto::serialize_anchor(&self.range.start)),
+            end: Some(language::proto::serialize_anchor(&self.range.end)),
+            version: serialize_version(&buffer.version()),
+        }
     }
 
     async fn from_proto(
-        _: proto::OnTypeFormatting,
+        message: proto::InlayHints,
         _: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
-        _: AsyncAppContext,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Self> {
-        todo!("TODO kb")
+        let start = message
+            .start
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid start")?;
+        let end = message
+            .end
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid end")?;
+        // TODO kb has it to be multiple versions instead?
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        Ok(Self { range: start..end })
     }
 
     fn response_to_proto(
-        _: Vec<InlayHint>,
+        response: Vec<InlayHint>,
         _: &mut Project,
         _: PeerId,
-        _: &clock::Global,
+        buffer_version: &clock::Global,
         _: &mut AppContext,
-    ) -> proto::OnTypeFormattingResponse {
-        todo!("TODO kb")
+    ) -> proto::InlayHintsResponse {
+        proto::InlayHintsResponse {
+            hints: response
+                .into_iter()
+                .map(|response_hint| proto::InlayHint {
+                    position: Some(language::proto::serialize_anchor(&response_hint.position)),
+                    label: Some(proto::InlayHintLabel {
+                        label: Some(match response_hint.label {
+                            InlayHintLabel::String(s) => proto::inlay_hint_label::Label::Value(s),
+                            InlayHintLabel::LabelParts(label_parts) => {
+                                proto::inlay_hint_label::Label::LabelParts(proto::InlayHintLabelParts {
+                                    parts: label_parts.into_iter().map(|label_part| proto::InlayHintLabelPart {
+                                        value: label_part.value,
+                                        tooltip: label_part.tooltip.map(|tooltip| {
+                                            let proto_tooltip = match tooltip {
+                                                InlayHintLabelPartTooltip::String(s) => proto::inlay_hint_label_part_tooltip::Content::Value(s),
+                                                InlayHintLabelPartTooltip::MarkupContent(markup_content) => proto::inlay_hint_label_part_tooltip::Content::MarkupContent(proto::MarkupContent {
+                                                    kind: markup_content.kind,
+                                                    value: markup_content.value,
+                                                }),
+                                            };
+                                            proto::InlayHintLabelPartTooltip {content: Some(proto_tooltip)}
+                                        }),
+                                        location: label_part.location.map(|location| proto::Location {
+                                            start: Some(serialize_anchor(&location.range.start)),
+                                            end: Some(serialize_anchor(&location.range.end)),
+                                            buffer_id: location.buffer.id() as u64,
+                                        }),
+                                    }).collect()
+                                })
+                            }
+                        }),
+                    }),
+                    kind: response_hint.kind,
+                    tooltip: response_hint.tooltip.map(|response_tooltip| {
+                        let proto_tooltip = match response_tooltip {
+                            InlayHintTooltip::String(s) => {
+                                proto::inlay_hint_tooltip::Content::Value(s)
+                            }
+                            InlayHintTooltip::MarkupContent(markup_content) => {
+                                proto::inlay_hint_tooltip::Content::MarkupContent(
+                                    proto::MarkupContent {
+                                        kind: markup_content.kind,
+                                        value: markup_content.value,
+                                    },
+                                )
+                            }
+                        };
+                        proto::InlayHintTooltip {
+                            content: Some(proto_tooltip),
+                        }
+                    }),
+                })
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
     }
 
     async fn response_from_proto(
         self,
-        _: proto::OnTypeFormattingResponse,
-        _: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
-        _: AsyncAppContext,
+        message: proto::InlayHintsResponse,
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        mut cx: AsyncAppContext,
     ) -> Result<Vec<InlayHint>> {
-        todo!("TODO kb")
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+
+        let mut hints = Vec::new();
+        for message_hint in message.hints {
+            let hint = InlayHint {
+                position: message_hint
+                    .position
+                    .and_then(language::proto::deserialize_anchor)
+                    .context("invalid position")?,
+                label: match message_hint
+                    .label
+                    .and_then(|label| label.label)
+                    .context("missing label")?
+                {
+                    proto::inlay_hint_label::Label::Value(s) => InlayHintLabel::String(s),
+                    proto::inlay_hint_label::Label::LabelParts(parts) => {
+                        let mut label_parts = Vec::new();
+                        for part in parts.parts {
+                            label_parts.push(InlayHintLabelPart {
+                                value: part.value,
+                                tooltip: part.tooltip.map(|tooltip| match tooltip.content {
+                                    Some(proto::inlay_hint_label_part_tooltip::Content::Value(s)) => InlayHintLabelPartTooltip::String(s),
+                                    Some(proto::inlay_hint_label_part_tooltip::Content::MarkupContent(markup_content)) => InlayHintLabelPartTooltip::MarkupContent(MarkupContent {
+                                        kind: markup_content.kind,
+                                        value: markup_content.value,
+                                    }),
+                                    None => InlayHintLabelPartTooltip::String(String::new()),
+                                }),
+                                location: match part.location {
+                                    Some(location) => {
+                                        let target_buffer = project
+                                            .update(&mut cx, |this, cx| {
+                                                this.wait_for_remote_buffer(location.buffer_id, cx)
+                                            })
+                                            .await?;
+                                        Some(Location {
+                                        range: location
+                                            .start
+                                            .and_then(language::proto::deserialize_anchor)
+                                            .context("invalid start")?
+                                            ..location
+                                                .end
+                                                .and_then(language::proto::deserialize_anchor)
+                                                .context("invalid end")?,
+                                        buffer: target_buffer,
+                                    })},
+                                    None => None,
+                                },
+                            });
+                        }
+
+                        InlayHintLabel::LabelParts(label_parts)
+                    }
+                },
+                kind: message_hint.kind,
+                tooltip: message_hint.tooltip.and_then(|tooltip| {
+                    Some(match tooltip.content? {
+                        proto::inlay_hint_tooltip::Content::Value(s) => InlayHintTooltip::String(s),
+                        proto::inlay_hint_tooltip::Content::MarkupContent(markup_content) => {
+                            InlayHintTooltip::MarkupContent(MarkupContent {
+                                kind: markup_content.kind,
+                                value: markup_content.value,
+                            })
+                        }
+                    })
+                }),
+            };
+
+            hints.push(hint);
+        }
+
+        Ok(hints)
     }
 
-    fn buffer_id_from_proto(message: &proto::OnTypeFormatting) -> u64 {
+    fn buffer_id_from_proto(message: &proto::InlayHints) -> u64 {
         message.buffer_id
     }
 }

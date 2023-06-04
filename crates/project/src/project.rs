@@ -525,6 +525,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
+        client.add_model_request_handler(Self::handle_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
         client.add_model_request_handler(Self::handle_format_buffers);
@@ -6643,6 +6644,47 @@ impl Project {
             .as_ref()
             .map(language::proto::serialize_transaction);
         Ok(proto::OnTypeFormattingResponse { transaction })
+    }
+
+    async fn handle_inlay_hints(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::InlayHints>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::InlayHintsResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.opened_buffers
+                .get(&envelope.payload.buffer_id)
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        let buffer_version = deserialize_version(&envelope.payload.version);
+
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(buffer_version.clone())
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "waiting for version {:?} for buffer {}",
+                    buffer_version,
+                    buffer.id()
+                )
+            })?;
+
+        let buffer_hints = this
+            .update(&mut cx, |project, cx| {
+                let end = buffer.read(cx).len();
+                project.inlay_hints(buffer, 0..end, cx)
+            })
+            .await
+            .context("inlay hints fetch")?;
+
+        Ok(this.update(&mut cx, |project, cx| {
+            InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
+        }))
     }
 
     async fn handle_lsp_command<T: LspCommand>(

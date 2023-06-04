@@ -7240,7 +7240,6 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                // TODO kb wrong?
                 false
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
