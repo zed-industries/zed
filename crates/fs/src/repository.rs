@@ -1,5 +1,6 @@
 use anyhow::Result;
 use collections::HashMap;
+use git2::ErrorCode;
 use parking_lot::Mutex;
 use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
@@ -93,8 +94,17 @@ impl GitRepository for LibGitRepository {
     }
 
     fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
-        let status = self.status_file(path)?;
-        Ok(read_status(status))
+        let status = self.status_file(path);
+        match status {
+            Ok(status) => Ok(read_status(status)),
+            Err(e) => {
+                if e.code() == ErrorCode::NotFound {
+                    Ok(None)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 }
 
