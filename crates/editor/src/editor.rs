@@ -46,9 +46,9 @@ use gpui::{
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    serde_json::{self, json},
-    AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element, Entity,
-    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element,
+    Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -7211,15 +7211,6 @@ impl Editor {
             .show_copilot_suggestions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
-        telemetry.report_mixpanel_event(
-            match name {
-                "open" => "open editor",
-                "save" => "save editor",
-                _ => name,
-            },
-            json!({ "File Extension": file_extension, "Vim Mode": vim_mode, "In Clickhouse": true  }),
-            telemetry_settings,
-        );
         let event = ClickhouseEvent::Editor {
             file_extension,
             vim_mode,
