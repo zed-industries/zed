@@ -1,9 +1,6 @@
 fn main() {
     println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
-    if let Ok(value) = std::env::var("ZED_MIXPANEL_TOKEN") {
-        println!("cargo:rustc-env=ZED_MIXPANEL_TOKEN={value}");
-    }
     if let Ok(value) = std::env::var("ZED_PREVIEW_CHANNEL") {
         println!("cargo:rustc-env=ZED_PREVIEW_CHANNEL={value}");
     }

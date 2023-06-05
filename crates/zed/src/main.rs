@@ -171,11 +171,6 @@ fn main() {
         .detach();
 
         client.telemetry().start();
-        client.telemetry().report_mixpanel_event(
-            "start app",
-            Default::default(),
-            *settings::get::<TelemetrySettings>(cx),
-        );
 
         let app_state = Arc::new(AppState {
             languages,
