@@ -1109,8 +1109,16 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then(|| entry.git_status).flatten();
+                let statuses = worktree.read(cx).statuses_for_paths(
+                    visible_worktree_entries[entry_range.clone()]
+                        .iter()
+                        .map(|entry| entry.path.as_ref()),
+                );
+                for (entry, status) in visible_worktree_entries[entry_range]
+                    .iter()
+                    .zip(statuses.into_iter())
+                {
+                    let status = git_status_setting.then(|| status).flatten();
 
                     let mut details = EntryDetails {
                         filename: entry

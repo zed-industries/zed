@@ -25,7 +25,7 @@ pub trait GitRepository: Send {
 
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
-    fn status(&self, path: &RepoPath) -> Option<GitFileStatus>;
+    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -92,9 +92,9 @@ impl GitRepository for LibGitRepository {
         Some(map)
     }
 
-    fn status(&self, path: &RepoPath) -> Option<GitFileStatus> {
-        let status = self.status_file(path).log_err()?;
-        read_status(status)
+    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
+        let status = self.status_file(path)?;
+        Ok(read_status(status))
     }
 }
 
@@ -156,9 +156,9 @@ impl GitRepository for FakeGitRepository {
         Some(map)
     }
 
-    fn status(&self, path: &RepoPath) -> Option<GitFileStatus> {
+    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
         let state = self.state.lock();
-        state.worktree_statuses.get(path).cloned()
+        Ok(state.worktree_statuses.get(path).cloned())
     }
 }
 

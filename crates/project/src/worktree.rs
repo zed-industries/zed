@@ -1670,11 +1670,14 @@ impl Snapshot {
         })
     }
 
-    pub fn statuses_for_paths(&self, paths: &[&Path]) -> Vec<Option<GitFileStatus>> {
+    pub fn statuses_for_paths<'a>(
+        &self,
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Vec<Option<GitFileStatus>> {
         let mut cursor = self
             .entries_by_path
             .cursor::<(TraversalProgress, GitStatuses)>();
-        let mut paths = paths.iter().peekable();
+        let mut paths = paths.into_iter().peekable();
         let mut path_stack = Vec::<(&Path, usize, GitStatuses)>::new();
         let mut result = Vec::new();
 
@@ -2040,11 +2043,15 @@ impl LocalSnapshot {
             let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
                 continue;
             };
-            let git_file_status = repo_ptr.status(&RepoPath(repo_path.into()));
-            let status = git_file_status;
-            entry.git_status = status;
-            changes.push(entry.path.clone());
-            edits.push(Edit::Insert(entry));
+            let git_file_status = repo_ptr
+                .status(&RepoPath(repo_path.into()))
+                .log_err()
+                .flatten();
+            if entry.git_status != git_file_status {
+                entry.git_status = git_file_status;
+                changes.push(entry.path.clone());
+                edits.push(Edit::Insert(entry));
+            }
         }
 
         self.entries_by_path.edit(edits, &());
@@ -3068,11 +3075,16 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
-
-                if let Some((repo_path, repo)) = &repository {
-                    if let Ok(path) = child_path.strip_prefix(&repo_path.0) {
-                        child_entry.git_status =
-                            repo.repo_ptr.lock().status(&RepoPath(path.into()));
+                if !child_entry.is_ignored {
+                    if let Some((repo_path, repo)) = &repository {
+                        if let Ok(path) = child_path.strip_prefix(&repo_path.0) {
+                            child_entry.git_status = repo
+                                .repo_ptr
+                                .lock()
+                                .status(&RepoPath(path.into()))
+                                .log_err()
+                                .flatten();
+                        }
                     }
                 }
             }
@@ -3170,11 +3182,19 @@ impl BackgroundScanner {
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
 
-                    if !fs_entry.is_dir() {
-                        if let Some((work_dir, repo)) = state.snapshot.local_repo_for_path(&path) {
-                            if let Ok(path) = path.strip_prefix(work_dir.0) {
-                                fs_entry.git_status =
-                                    repo.repo_ptr.lock().status(&RepoPath(path.into()))
+                    if !fs_entry.is_ignored {
+                        if !fs_entry.is_dir() {
+                            if let Some((work_dir, repo)) =
+                                state.snapshot.local_repo_for_path(&path)
+                            {
+                                if let Ok(path) = path.strip_prefix(work_dir.0) {
+                                    fs_entry.git_status = repo
+                                        .repo_ptr
+                                        .lock()
+                                        .status(&RepoPath(path.into()))
+                                        .log_err()
+                                        .flatten()
+                                }
                             }
                         }
                     }
@@ -5345,7 +5365,7 @@ mod tests {
             let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
             assert_eq!(
-                snapshot.statuses_for_paths(&[
+                snapshot.statuses_for_paths([
                     Path::new(""),
                     Path::new("a"),
                     Path::new("a/b"),
