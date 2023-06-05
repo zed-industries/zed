@@ -9,7 +9,8 @@ use gpui::{
     executor::Deterministic,
     geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
-    serde_json, TestAppContext,
+    serde_json::{self, json},
+    TestAppContext,
 };
 use indoc::indoc;
 use language::{
