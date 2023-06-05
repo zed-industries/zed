@@ -372,6 +372,7 @@ struct Panic {
     #[serde(skip_serializing_if = "Option::is_none")]
     location_data: Option<LocationData>,
     backtrace: Vec<String>,
+    app_version: String,
     release_channel: String,
     os_name: String,
     os_version: Option<String>,
@@ -383,8 +384,6 @@ struct Panic {
 #[derive(Serialize)]
 struct PanicRequest {
     panic: Panic,
-    // TODO: Move to Panic struct, as app_version - requires changing zed.dev
-    version: String,
     token: String,
 }
 
@@ -471,6 +470,7 @@ fn init_panic_hook(app: &App) {
                 file: location.file().into(),
                 line: location.line(),
             }),
+            app_version: app_version.clone(),
             release_channel: RELEASE_CHANNEL.dev_name().into(),
             os_name: platform.os_name().into(),
             os_version: platform
@@ -496,8 +496,7 @@ fn init_panic_hook(app: &App) {
             }
 
             let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path =
-                paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, timestamp));
+            let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
             let panic_file = std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -532,15 +531,9 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                         continue;
                     };
 
-                    let mut components = filename.split('-');
-                    if components.next() != Some("zed") {
+                    if !filename.starts_with("zed") {
                         continue;
                     }
-                    let version = if let Some(version) = components.next() {
-                        version
-                    } else {
-                        continue;
-                    };
 
                     if telemetry_settings.diagnostics {
                         let panic_data_text = smol::fs::read_to_string(&child_path)
@@ -549,7 +542,6 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
 
                         let body = serde_json::to_string(&PanicRequest {
                             panic: serde_json::from_str(&panic_data_text)?,
-                            version: version.to_string(),
                             token: ZED_SECRET_CLIENT_TOKEN.into(),
                         })
                         .unwrap();
