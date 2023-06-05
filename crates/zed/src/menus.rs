@@ -12,7 +12,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::submenu(Menu {
                     name: "Preferences",
                     items: vec![
-                        MenuItem::action("Open Settings", workspace::OpenSettings),
+                        MenuItem::action("Open Settings", super::OpenSettings),
                         MenuItem::action("Open Key Bindings", super::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),

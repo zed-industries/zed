@@ -65,6 +65,7 @@ actions!(
         OpenLicenses,
         OpenTelemetryLog,
         OpenKeymap,
+        OpenSettings,
         OpenDefaultSettings,
         OpenDefaultKeymap,
         IncreaseBufferFontSize,
@@ -155,6 +156,16 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(
         move |_: &mut Workspace, _: &OpenKeymap, cx: &mut ViewContext<Workspace>| {
             create_and_open_local_file(&paths::KEYMAP, cx, Default::default).detach_and_log_err(cx);
+        },
+    );
+    cx.add_action(
+        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            create_and_open_local_file(&paths::SETTINGS, cx, || {
+                settings::initial_user_settings_content(&Assets)
+                    .as_ref()
+                    .into()
+            })
+            .detach_and_log_err(cx);
         },
     );
     cx.add_action(
