@@ -2,10 +2,8 @@ pub mod assistant;
 mod assistant_settings;
 
 pub use assistant::AssistantPanel;
-use gpui::{actions, AppContext};
+use gpui::AppContext;
 use serde::{Deserialize, Serialize};
-
-actions!(ai, [Assist]);
 
 // Data types for chat completion requests
 #[derive(Serialize)]
