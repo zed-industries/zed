@@ -1974,7 +1974,8 @@ impl LocalSnapshot {
         entry
     }
 
-    fn build_repo(&mut self, parent_path: Arc<Path>, fs: &dyn Fs) -> Option<()> {
+    #[must_use = "Changed paths must be used for diffing later"]
+    fn build_repo(&mut self, parent_path: Arc<Path>, fs: &dyn Fs) -> Option<Vec<Arc<Path>>> {
         let abs_path = self.abs_path.join(&parent_path);
         let work_dir: Arc<Path> = parent_path.parent().unwrap().into();
 
@@ -1991,42 +1992,46 @@ impl LocalSnapshot {
             .entry_for_path(work_dir.clone())
             .map(|entry| entry.id)?;
 
-        if self.git_repositories.get(&work_dir_id).is_none() {
-            let repo = fs.open_repo(abs_path.as_path())?;
-            let work_directory = RepositoryWorkDirectory(work_dir.clone());
-
-            let repo_lock = repo.lock();
-
-            self.repository_entries.insert(
-                work_directory.clone(),
-                RepositoryEntry {
-                    work_directory: work_dir_id.into(),
-                    branch: repo_lock.branch_name().map(Into::into),
-                },
-            );
-
-            self.scan_statuses(repo_lock.deref(), &work_directory);
-
-            drop(repo_lock);
-
-            self.git_repositories.insert(
-                work_dir_id,
-                LocalRepositoryEntry {
-                    git_dir_scan_id: 0,
-                    repo_ptr: repo,
-                    git_dir_path: parent_path.clone(),
-                },
-            )
+        if self.git_repositories.get(&work_dir_id).is_some() {
+            return None;
         }
 
-        Some(())
+        let repo = fs.open_repo(abs_path.as_path())?;
+        let work_directory = RepositoryWorkDirectory(work_dir.clone());
+
+        let repo_lock = repo.lock();
+
+        self.repository_entries.insert(
+            work_directory.clone(),
+            RepositoryEntry {
+                work_directory: work_dir_id.into(),
+                branch: repo_lock.branch_name().map(Into::into),
+            },
+        );
+
+        let changed_paths = self.scan_statuses(repo_lock.deref(), &work_directory);
+
+        drop(repo_lock);
+
+        self.git_repositories.insert(
+            work_dir_id,
+            LocalRepositoryEntry {
+                git_dir_scan_id: 0,
+                repo_ptr: repo,
+                git_dir_path: parent_path.clone(),
+            },
+        );
+
+        Some(changed_paths)
     }
 
+    #[must_use = "Changed paths must be used for diffing later"]
     fn scan_statuses(
         &mut self,
         repo_ptr: &dyn GitRepository,
         work_directory: &RepositoryWorkDirectory,
-    ) {
+    ) -> Vec<Arc<Path>> {
+        let mut changes = vec![];
         let mut edits = vec![];
         for mut entry in self
             .descendent_entries(false, false, &work_directory.0)
@@ -2038,10 +2043,12 @@ impl LocalSnapshot {
             let git_file_status = repo_ptr.status(&RepoPath(repo_path.into()));
             let status = git_file_status;
             entry.git_status = status;
+            changes.push(entry.path.clone());
             edits.push(Edit::Insert(entry));
         }
 
         self.entries_by_path.edit(edits, &());
+        changes
     }
 
     fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
@@ -2096,13 +2103,14 @@ impl BackgroundScannerState {
         self.snapshot.insert_entry(entry, fs)
     }
 
+    #[must_use = "Changed paths must be used for diffing later"]
     fn populate_dir(
         &mut self,
         parent_path: Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
         fs: &dyn Fs,
-    ) {
+    ) -> Option<Vec<Arc<Path>>> {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
             .entries_by_path
@@ -2114,7 +2122,7 @@ impl BackgroundScannerState {
                 "populating a directory {:?} that has been removed",
                 parent_path
             );
-            return;
+            return None;
         };
 
         match parent_entry.kind {
@@ -2122,7 +2130,7 @@ impl BackgroundScannerState {
                 parent_entry.kind = EntryKind::Dir;
             }
             EntryKind::Dir => {}
-            _ => return,
+            _ => return None,
         }
 
         if let Some(ignore) = ignore {
@@ -2152,8 +2160,9 @@ impl BackgroundScannerState {
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
         if parent_path.file_name() == Some(&DOT_GIT) {
-            self.snapshot.build_repo(parent_path, fs);
+            return self.snapshot.build_repo(parent_path, fs);
         }
+        None
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -2822,13 +2831,15 @@ impl BackgroundScanner {
         self.update_ignore_statuses().await;
 
         {
-            let mut snapshot = &mut self.state.lock().snapshot;
+            let mut state = self.state.lock();
 
             if let Some(paths) = paths {
                 for path in paths {
-                    self.reload_git_repo(&path, &mut *snapshot, self.fs.as_ref());
+                    self.reload_git_repo(&path, &mut *state, self.fs.as_ref());
                 }
             }
+
+            let mut snapshot = &mut state.snapshot;
 
             let mut git_repositories = mem::take(&mut snapshot.git_repositories);
             git_repositories.retain(|work_directory_id, _| {
@@ -3071,9 +3082,18 @@ impl BackgroundScanner {
 
         {
             let mut state = self.state.lock();
-            state.populate_dir(job.path.clone(), new_entries, new_ignore, self.fs.as_ref());
+            let changed_paths =
+                state.populate_dir(job.path.clone(), new_entries, new_ignore, self.fs.as_ref());
             if let Err(ix) = state.changed_paths.binary_search(&job.path) {
                 state.changed_paths.insert(ix, job.path.clone());
+            }
+            if let Some(changed_paths) = changed_paths {
+                util::extend_sorted(
+                    &mut state.changed_paths,
+                    changed_paths,
+                    usize::MAX,
+                    Ord::cmp,
+                )
             }
         }
 
@@ -3221,22 +3241,31 @@ impl BackgroundScanner {
     fn reload_git_repo(
         &self,
         path: &Path,
-        snapshot: &mut LocalSnapshot,
+        state: &mut BackgroundScannerState,
         fs: &dyn Fs,
     ) -> Option<()> {
-        let scan_id = snapshot.scan_id;
+        let scan_id = state.snapshot.scan_id;
 
         if path
             .components()
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
             let (entry_id, repo_ptr) = {
-                let Some((entry_id, repo)) = snapshot.repo_for_metadata(&path) else {
+                let Some((entry_id, repo)) = state.snapshot.repo_for_metadata(&path) else {
                     let dot_git_dir = path.ancestors()
                     .skip_while(|ancestor| ancestor.file_name() != Some(&*DOT_GIT))
                     .next()?;
 
-                    snapshot.build_repo(dot_git_dir.into(), fs);
+                    let changed_paths =  state.snapshot.build_repo(dot_git_dir.into(), fs);
+                    if let Some(changed_paths) = changed_paths {
+                        util::extend_sorted(
+                            &mut state.changed_paths,
+                            changed_paths,
+                            usize::MAX,
+                            Ord::cmp,
+                        );
+                    }
+
                     return None;
                 };
                 if repo.git_dir_scan_id == scan_id {
@@ -3246,7 +3275,8 @@ impl BackgroundScanner {
                 (*entry_id, repo.repo_ptr.to_owned())
             };
 
-            let work_dir = snapshot
+            let work_dir = state
+                .snapshot
                 .entry_for_id(entry_id)
                 .map(|entry| RepositoryWorkDirectory(entry.path.clone()))?;
 
@@ -3254,18 +3284,26 @@ impl BackgroundScanner {
             repo.reload_index();
             let branch = repo.branch_name();
 
-            snapshot.git_repositories.update(&entry_id, |entry| {
+            state.snapshot.git_repositories.update(&entry_id, |entry| {
                 entry.git_dir_scan_id = scan_id;
             });
 
-            snapshot
+            state
+                .snapshot
                 .snapshot
                 .repository_entries
                 .update(&work_dir, |entry| {
                     entry.branch = branch.map(Into::into);
                 });
 
-            snapshot.scan_statuses(repo.deref(), &work_dir);
+            let changed_paths = state.snapshot.scan_statuses(repo.deref(), &work_dir);
+
+            util::extend_sorted(
+                &mut state.changed_paths,
+                changed_paths,
+                usize::MAX,
+                Ord::cmp,
+            )
         }
 
         Some(())
