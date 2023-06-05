@@ -71,7 +71,9 @@
       //    "never"
       "show": "auto",
       // Whether to show git diff indicators in the scrollbar.
-      "git_diff": true
+      "git_diff": true,
+      // Whether to show selections in the scrollbar.
+      "selections": true
   },
   "project_panel": {
       // Whether to show the git status in the project panel.

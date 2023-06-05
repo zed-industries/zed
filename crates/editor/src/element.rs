@@ -1008,6 +1008,7 @@ impl EditorElement {
         bounds: RectF,
         layout: &mut LayoutState,
         cx: &mut ViewContext<Editor>,
+        editor: &Editor,
     ) {
         enum ScrollbarMouseHandlers {}
         if layout.mode != EditorMode::Full {
@@ -1050,9 +1051,49 @@ impl EditorElement {
                 background: style.track.background_color,
                 ..Default::default()
             });
+            let scrollbar_settings = settings::get::<EditorSettings>(cx).scrollbar;
+            let theme = theme::current(cx);
+            let scrollbar_theme = &theme.editor.scrollbar;
+            if layout.is_singleton && scrollbar_settings.selections {
+                let start_anchor = Anchor::min();
+                let end_anchor = Anchor::max();
+                for (row, _) in &editor.background_highlights_in_range(
+                    start_anchor..end_anchor,
+                    &layout.position_map.snapshot,
+                    &theme,
+                ) {
+                    let start_display = row.start;
+                    let end_display = row.end;
+                    let start_y = y_for_row(start_display.row() as f32);
+                    let mut end_y = y_for_row((end_display.row()) as f32);
+                    if end_y - start_y < 1. {
+                        end_y = start_y + 1.;
+                    }
+                    let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
 
-            if layout.is_singleton && settings::get::<EditorSettings>(cx).scrollbar.git_diff {
-                let diff_style = theme::current(cx).editor.scrollbar.git.clone();
+                    let color = scrollbar_theme.selections;
+
+                    let border = Border {
+                        width: 1.,
+                        color: style.thumb.border.color,
+                        overlay: false,
+                        top: false,
+                        right: true,
+                        bottom: false,
+                        left: true,
+                    };
+
+                    scene.push_quad(Quad {
+                        bounds,
+                        background: Some(color),
+                        border,
+                        corner_radius: style.thumb.corner_radius,
+                    })
+                }
+            }
+
+            if layout.is_singleton && scrollbar_settings.git_diff {
+                let diff_style = scrollbar_theme.git.clone();
                 for hunk in layout
                     .position_map
                     .snapshot
@@ -2359,7 +2400,7 @@ impl Element<Editor> for EditorElement {
         if !layout.blocks.is_empty() {
             self.paint_blocks(scene, bounds, visible_bounds, layout, editor, cx);
         }
-        self.paint_scrollbar(scene, bounds, layout, cx);
+        self.paint_scrollbar(scene, bounds, layout, cx, &editor);
         scene.pop_layer();
 
         scene.pop_layer();

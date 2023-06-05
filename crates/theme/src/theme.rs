@@ -700,6 +700,7 @@ pub struct Scrollbar {
     pub width: f32,
     pub min_height_factor: f32,
     pub git: GitDiffColors,
+    pub selections: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]
