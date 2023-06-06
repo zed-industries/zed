@@ -523,7 +523,7 @@ impl Project {
                 _subscriptions: vec![
                     cx.observe_global::<SettingsStore, _>(Self::on_settings_changed)
                 ],
-                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 active_entry: None,
                 languages,
@@ -592,7 +592,7 @@ impl Project {
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
-                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 languages,
                 user_store: user_store.clone(),
@@ -2238,13 +2238,34 @@ impl Project {
     }
 
     fn maintain_buffer_languages(
-        languages: &LanguageRegistry,
+        languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Project>,
     ) -> Task<()> {
         let mut subscription = languages.subscribe();
+        let mut prev_reload_count = languages.reload_count();
         cx.spawn_weak(|project, mut cx| async move {
             while let Some(()) = subscription.next().await {
                 if let Some(project) = project.upgrade(&cx) {
+                    // If the language registry has been reloaded, then remove and
+                    // re-assign the languages on all open buffers.
+                    let reload_count = languages.reload_count();
+                    if reload_count > prev_reload_count {
+                        prev_reload_count = reload_count;
+                        project.update(&mut cx, |this, cx| {
+                            let buffers = this
+                                .opened_buffers
+                                .values()
+                                .filter_map(|b| b.upgrade(cx))
+                                .collect::<Vec<_>>();
+                            for buffer in buffers {
+                                if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned() {
+                                    this.unregister_buffer_from_language_servers(&buffer, &f, cx);
+                                    buffer.update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                }
+                            }
+                        });
+                    }
+
                     project.update(&mut cx, |project, cx| {
                         let mut plain_text_buffers = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();

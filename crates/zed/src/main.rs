@@ -160,6 +160,8 @@ fn main() {
         ai::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
+        cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
+            .detach();
 
         languages.set_theme(theme::current(cx).clone());
         cx.observe_global::<SettingsStore, _>({
@@ -660,8 +662,27 @@ async fn watch_themes(fs: Arc<dyn Fs>, mut cx: AsyncAppContext) -> Option<()> {
     Some(())
 }
 
+#[cfg(debug_assertions)]
+async fn watch_languages(fs: Arc<dyn Fs>, languages: Arc<LanguageRegistry>) -> Option<()> {
+    let mut events = fs
+        .watch(
+            "crates/zed/src/languages".as_ref(),
+            Duration::from_millis(100),
+        )
+        .await;
+    while (events.next().await).is_some() {
+        languages.reload();
+    }
+    Some(())
+}
+
 #[cfg(not(debug_assertions))]
 async fn watch_themes(_fs: Arc<dyn Fs>, _cx: AsyncAppContext) -> Option<()> {
+    None
+}
+
+#[cfg(not(debug_assertions))]
+async fn watch_languages(_: Arc<dyn Fs>, _: Arc<LanguageRegistry>) -> Option<()> {
     None
 }
 

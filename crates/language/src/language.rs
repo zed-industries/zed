@@ -34,7 +34,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     mem,
-    ops::Range,
+    ops::{Not, Range},
     path::{Path, PathBuf},
     str,
     sync::{
@@ -500,6 +500,7 @@ struct AvailableLanguage {
     grammar: tree_sitter::Language,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
     get_queries: fn(&str) -> LanguageQueries,
+    loaded: bool,
 }
 
 pub struct LanguageRegistry {
@@ -527,6 +528,7 @@ struct LanguageRegistryState {
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
     version: usize,
+    reload_count: usize,
 }
 
 pub struct PendingLanguageServer {
@@ -547,6 +549,7 @@ impl LanguageRegistry {
                 subscription: watch::channel(),
                 theme: Default::default(),
                 version: 0,
+                reload_count: 0,
             }),
             language_server_download_dir: None,
             lsp_binary_statuses_tx,
@@ -566,6 +569,14 @@ impl LanguageRegistry {
         self.executor = Some(executor);
     }
 
+    /// Clear out all of the loaded languages and reload them from scratch.
+    ///
+    /// This is useful in development, when queries have changed.
+    #[cfg(debug_assertions)]
+    pub fn reload(&self) {
+        self.state.write().reload();
+    }
+
     pub fn register(
         &self,
         path: &'static str,
@@ -582,6 +593,7 @@ impl LanguageRegistry {
             grammar,
             lsp_adapters,
             get_queries,
+            loaded: false,
         });
     }
 
@@ -590,7 +602,7 @@ impl LanguageRegistry {
         let mut result = state
             .available_languages
             .iter()
-            .map(|l| l.config.name.to_string())
+            .filter_map(|l| l.loaded.not().then_some(l.config.name.to_string()))
             .chain(state.languages.iter().map(|l| l.config.name.to_string()))
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
@@ -603,6 +615,7 @@ impl LanguageRegistry {
             state
                 .available_languages
                 .iter()
+                .filter(|l| !l.loaded)
                 .flat_map(|l| l.lsp_adapters.clone())
                 .chain(
                     state
@@ -639,8 +652,15 @@ impl LanguageRegistry {
         self.state.read().subscription.1.clone()
     }
 
+    /// The number of times that the registry has been changed,
+    /// by adding languages or reloading.
     pub fn version(&self) -> usize {
         self.state.read().version
+    }
+
+    /// The number of times that the registry has been reloaded.
+    pub fn reload_count(&self) -> usize {
+        self.state.read().reload_count
     }
 
     pub fn set_theme(&self, theme: Arc<Theme>) {
@@ -721,7 +741,7 @@ impl LanguageRegistry {
             if let Some(language) = state
                 .available_languages
                 .iter()
-                .find(|l| callback(&l.config))
+                .find(|l| !l.loaded && callback(&l.config))
                 .cloned()
             {
                 let txs = state
@@ -743,9 +763,7 @@ impl LanguageRegistry {
                                         let language = Arc::new(language);
                                         let mut state = this.state.write();
                                         state.add(language.clone());
-                                        state
-                                            .available_languages
-                                            .retain(|language| language.id != id);
+                                        state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
                                             for tx in txs.drain(..) {
                                                 let _ = tx.send(Ok(language.clone()));
@@ -754,9 +772,7 @@ impl LanguageRegistry {
                                     }
                                     Err(err) => {
                                         let mut state = this.state.write();
-                                        state
-                                            .available_languages
-                                            .retain(|language| language.id != id);
+                                        state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
                                             for tx in txs.drain(..) {
                                                 let _ = tx.send(Err(anyhow!(
@@ -904,6 +920,28 @@ impl LanguageRegistryState {
         self.languages.push(language);
         self.version += 1;
         *self.subscription.0.borrow_mut() = ();
+    }
+
+    #[cfg(debug_assertions)]
+    fn reload(&mut self) {
+        self.languages.clear();
+        self.version += 1;
+        self.reload_count += 1;
+        for language in &mut self.available_languages {
+            language.loaded = false;
+        }
+        *self.subscription.0.borrow_mut() = ();
+    }
+
+    /// Mark the given language a having been loaded, so that the
+    /// language registry won't try to load it again.
+    fn mark_language_loaded(&mut self, id: AvailableLanguageId) {
+        for language in &mut self.available_languages {
+            if language.id == id {
+                language.loaded = true;
+                break;
+            }
+        }
     }
 }
 
