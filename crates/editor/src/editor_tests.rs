@@ -5225,7 +5225,28 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
                 Point::new(0, 1)..Point::new(0, 1),
                 Point::new(1, 1)..Point::new(1, 1),
             ]
-        )
+        );
+
+        // Ensure the cursor's head is respected when deleting across an excerpt boundary.
+        view.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 2)..Point::new(1, 2)])
+        });
+        view.backspace(&Default::default(), cx);
+        assert_eq!(view.text(cx), "Xa\nbbb");
+        assert_eq!(
+            view.selections.ranges(cx),
+            [Point::new(1, 0)..Point::new(1, 0)]
+        );
+
+        view.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 1)..Point::new(0, 1)])
+        });
+        view.backspace(&Default::default(), cx);
+        assert_eq!(view.text(cx), "X\nbb");
+        assert_eq!(
+            view.selections.ranges(cx),
+            [Point::new(0, 1)..Point::new(0, 1)]
+        );
     });
 }
 
