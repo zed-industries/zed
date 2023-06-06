@@ -5,7 +5,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::{HashMap, HashSet};
-use editor::{Editor, ExcerptId, ExcerptRange, MultiBuffer};
+use editor::{Anchor, Editor, ExcerptId, ExcerptRange, MultiBuffer};
 use fs::Fs;
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use gpui::{
@@ -710,8 +710,25 @@ impl AssistantEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        self.assistant
-            .update(cx, |assistant, cx| assistant.assist(cx));
+        self.assistant.update(cx, |assistant, cx| {
+            let editor = self.editor.read(cx);
+            let newest_selection = editor.selections.newest_anchor();
+            let message = if newest_selection.head() == Anchor::min() {
+                assistant.messages.first()
+            } else if newest_selection.head() == Anchor::max() {
+                assistant.messages.last()
+            } else {
+                assistant
+                    .messages_by_id
+                    .get(&newest_selection.head().excerpt_id())
+            };
+
+            if message.map_or(false, |message| message.role == Role::Assistant) {
+                assistant.push_message(Role::User, cx);
+            } else {
+                assistant.assist(cx);
+            }
+        });
     }
 
     fn cancel_last_assist(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
