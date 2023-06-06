@@ -25,7 +25,7 @@ jobs:
     steps:
       - name: Install Rust
         run: |
-          rustup set profile minimal
+          rustup set profile default
           rustup update stable
 
       - name: Checkout repo
