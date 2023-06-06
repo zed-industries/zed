@@ -2171,9 +2171,10 @@ impl Editor {
                         indent.len = cmp::min(indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
-
-                        let mut insert_extra_newline = false;
-                        if let Some(language) = buffer.language_scope_at(start) {
+                        let language_scope = buffer.language_scope_at(start);
+                        let (comment_delimiter, insert_extra_newline) = if let Some(language) =
+                            &language_scope
+                        {
                             let leading_whitespace_len = buffer
                                 .reversed_chars_at(start)
                                 .take_while(|c| c.is_whitespace() && *c != '\n')
@@ -2186,25 +2187,56 @@ impl Editor {
                                 .map(|c| c.len_utf8())
                                 .sum::<usize>();
 
-                            insert_extra_newline = language.brackets().any(|(pair, enabled)| {
-                                let pair_start = pair.start.trim_end();
-                                let pair_end = pair.end.trim_start();
+                            let insert_extra_newline =
+                                language.brackets().any(|(pair, enabled)| {
+                                    let pair_start = pair.start.trim_end();
+                                    let pair_end = pair.end.trim_start();
 
-                                enabled
-                                    && pair.newline
-                                    && buffer
-                                        .contains_str_at(end + trailing_whitespace_len, pair_end)
-                                    && buffer.contains_str_at(
-                                        (start - leading_whitespace_len)
-                                            .saturating_sub(pair_start.len()),
-                                        pair_start,
-                                    )
-                            });
-                        }
+                                    enabled
+                                        && pair.newline
+                                        && buffer.contains_str_at(
+                                            end + trailing_whitespace_len,
+                                            pair_end,
+                                        )
+                                        && buffer.contains_str_at(
+                                            (start - leading_whitespace_len)
+                                                .saturating_sub(pair_start.len()),
+                                            pair_start,
+                                        )
+                                });
+                            // Comment extension on newline is allowed only for cursor selections
+                            let comment_delimiter =
+                                language.line_comment_prefix().filter(|_| start == end);
+                            let comment_delimiter = if let Some(delimiter) = &comment_delimiter {
+                                buffer
+                                    .buffer_line_for_row(start_point.row)
+                                    .is_some_and(|(snapshot, range)| {
+                                        snapshot
+                                            .chars_for_range(range)
+                                            .skip_while(|c| c.is_whitespace())
+                                            .take(delimiter.len())
+                                            .eq(delimiter.chars())
+                                    })
+                                    .and_then(|_| comment_delimiter.cloned())
+                            } else {
+                                None
+                            };
+                            (comment_delimiter, insert_extra_newline)
+                        } else {
+                            (None, false)
+                        };
 
-                        let mut new_text = String::with_capacity(1 + indent.len as usize);
-                        new_text.push('\n');
+                        let capacity_for_delimiter = comment_delimiter
+                            .as_deref()
+                            .map(str::len)
+                            .unwrap_or_default();
+                        let mut new_text =
+                            String::with_capacity(1 + capacity_for_delimiter + indent.len as usize);
+                        new_text.push_str("\n");
                         new_text.extend(indent.chars());
+                        if let Some(delimiter) = &comment_delimiter {
+                            new_text.push_str(&delimiter);
+                        }
                         if insert_extra_newline {
                             new_text = new_text.repeat(2);
                         }
