@@ -3557,7 +3557,9 @@ impl Editor {
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
                         let cursor = movement::right(map, selection.head());
-                        selection.set_head(cursor, SelectionGoal::None);
+                        selection.end = cursor;
+                        selection.reversed = true;
+                        selection.goal = SelectionGoal::None;
                     }
                 })
             });
