@@ -44,8 +44,9 @@ use uuid::Uuid;
 use welcome::BaseKeymap;
 pub use workspace;
 use workspace::{
-    create_and_open_local_file, dock::PanelHandle, open_new, AppState, NewFile, NewWindow,
-    Workspace, WorkspaceSettings,
+    create_and_open_local_file, dock::PanelHandle,
+    notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
+    NewWindow, Workspace, WorkspaceSettings,
 };
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -626,6 +627,10 @@ fn open_local_settings_file(
             anyhow::Ok(())
         })
         .detach();
+    } else {
+        workspace.show_notification(0, cx, |cx| {
+            cx.add_view(|_| MessageNotification::new("This project has no folders open."))
+        })
     }
 }
 
