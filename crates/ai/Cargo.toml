@@ -9,12 +9,12 @@ path = "src/ai.rs"
 doctest = false
 
 [dependencies]
-assets = { path = "../assets"}
 collections = { path = "../collections"}
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 
+rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

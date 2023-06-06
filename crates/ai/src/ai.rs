@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use assets::Assets;
 use collections::HashMap;
 use editor::Editor;
 use futures::AsyncBufReadExt;
@@ -15,6 +14,14 @@ use std::rc::Rc;
 use std::{io, sync::Arc};
 use util::channel::{ReleaseChannel, RELEASE_CHANNEL};
 use util::{ResultExt, TryFutureExt};
+
+use rust_embed::RustEmbed;
+use std::str;
+
+#[derive(RustEmbed)]
+#[folder = "../../assets/contexts"]
+#[exclude = "*.DS_Store"]
+pub struct ContextAssets;
 
 actions!(ai, [Assist]);
 
@@ -173,7 +180,7 @@ impl Assistant {
         let assist_task = cx.spawn(|_, mut cx| {
             async move {
                 // TODO: We should have a get_string method on assets. This is repateated elsewhere.
-                let content = Assets::get("contexts/system.zmd").unwrap();
+                let content = ContextAssets::get("system.zmd").unwrap();
                 let mut system_message = std::str::from_utf8(content.data.as_ref())
                     .unwrap()
                     .to_string();

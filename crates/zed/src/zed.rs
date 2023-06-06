@@ -1,7 +1,9 @@
+pub mod assets;
 pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+
 use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
@@ -30,12 +32,11 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{
-    initial_local_settings_content, KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
-};
+use settings::{initial_local_settings_content, KeymapFile, SettingsStore};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
+    asset_str,
     channel::ReleaseChannel,
     paths::{self, LOCAL_SETTINGS_RELATIVE_PATH},
     ResultExt,
@@ -149,7 +150,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
-                "licenses.md",
+                asset_str::<Assets>("licenses.md"),
                 "Open Source License Attribution",
                 "Markdown",
                 cx,
@@ -169,9 +170,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(
         move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
             create_and_open_local_file(&paths::SETTINGS, cx, || {
-                settings::initial_user_settings_content(&Assets)
-                    .as_ref()
-                    .into()
+                settings::initial_user_settings_content().as_ref().into()
             })
             .detach_and_log_err(cx);
         },
@@ -181,7 +180,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
-                "keymaps/default.json",
+                settings::default_keymap(),
                 "Default Key Bindings",
                 "JSON",
                 cx,
@@ -194,7 +193,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
               cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
-                DEFAULT_SETTINGS_ASSET_PATH,
+                settings::default_settings(),
                 "Default Settings",
                 "JSON",
                 cx,
@@ -521,11 +520,11 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 
 pub fn load_default_keymap(cx: &mut AppContext) {
     for path in ["keymaps/default.json", "keymaps/vim.json"] {
-        KeymapFileContent::load_asset(path, cx).unwrap();
+        KeymapFile::load_asset(path, cx).unwrap();
     }
 
     if let Some(asset_path) = settings::get::<BaseKeymap>(cx).asset_path() {
-        KeymapFileContent::load_asset(asset_path, cx).unwrap();
+        KeymapFile::load_asset(asset_path, cx).unwrap();
     }
 }
 
@@ -536,7 +535,7 @@ pub fn handle_keymap_file_changes(
     cx.spawn(move |mut cx| async move {
         let mut settings_subscription = None;
         while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
-            if let Ok(keymap_content) = KeymapFileContent::parse(&user_keymap_content) {
+            if let Ok(keymap_content) = KeymapFile::parse(&user_keymap_content) {
                 cx.update(|cx| {
                     cx.clear_bindings();
                     load_default_keymap(cx);
@@ -613,11 +612,7 @@ fn open_local_settings_file(
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                         if buffer.read(cx).is_empty() {
                             buffer.update(cx, |buffer, cx| {
-                                buffer.edit(
-                                    [(0..0, initial_local_settings_content(&Assets))],
-                                    None,
-                                    cx,
-                                )
+                                buffer.edit([(0..0, initial_local_settings_content())], None, cx)
                             });
                         }
                     }
@@ -693,7 +688,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
 
 fn open_bundled_file(
     workspace: &mut Workspace,
-    asset_path: &'static str,
+    text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,
     cx: &mut ViewContext<Workspace>,
@@ -705,13 +700,9 @@ fn open_bundled_file(
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
-                    let buffer = project.update(cx, |project, cx| {
-                        let text = Assets::get(asset_path)
-                            .map(|f| f.data)
-                            .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
-                        let text = str::from_utf8(text.as_ref()).unwrap();
+                    let buffer = project.update(cx, move |project, cx| {
                         project
-                            .create_buffer(text, language, cx)
+                            .create_buffer(text.as_ref(), language, cx)
                             .expect("creating buffers on a local workspace always succeeds")
                     });
                     let buffer = cx.add_model(|cx| {

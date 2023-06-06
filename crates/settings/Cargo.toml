@@ -12,7 +12,6 @@ doctest = false
 test-support = ["gpui/test-support", "fs/test-support"]
 
 [dependencies]
-assets = { path = "../assets" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 sqlez = { path = "../sqlez" }
@@ -25,6 +24,7 @@ futures.workspace = true
 json_comments = "0.2"
 lazy_static.workspace = true
 postage.workspace = true
+rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true

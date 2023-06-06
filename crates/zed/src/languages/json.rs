@@ -6,7 +6,7 @@ use gpui::AppContext;
 use language::{LanguageRegistry, LanguageServerBinary, LanguageServerName, LspAdapter};
 use node_runtime::NodeRuntime;
 use serde_json::json;
-use settings::{keymap_file_json_schema, SettingsJsonSchemaParams, SettingsStore};
+use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use staff_mode::StaffMode;
 use std::{
@@ -143,7 +143,7 @@ impl LspAdapter for JsonLspAdapter {
                         },
                         {
                             "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                            "schema": keymap_file_json_schema(&action_names),
+                            "schema": KeymapFile::generate_json_schema(&action_names),
                         }
                     ]
                 }

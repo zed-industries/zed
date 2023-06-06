@@ -315,9 +315,7 @@ async fn configure_disabled_globs(
     let settings_editor = workspace
         .update(&mut cx, |_, cx| {
             create_and_open_local_file(&paths::SETTINGS, cx, || {
-                settings::initial_user_settings_content(&assets::Assets)
-                    .as_ref()
-                    .into()
+                settings::initial_user_settings_content().as_ref().into()
             })
         })?
         .await?
