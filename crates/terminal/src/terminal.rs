@@ -10,7 +10,6 @@ use alacritty_terminal::{
     index::{Column, Direction as AlacDirection, Line, Point},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
-
     term::{
         cell::Cell,
         color::Rgb,
