@@ -15,7 +15,6 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
-use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
@@ -83,7 +82,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, paths, ResultExt};
+use util::{async_iife, ResultExt};
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -132,8 +131,6 @@ actions!(
         ToggleBottomDock,
     ]
 );
-
-actions!(zed, [OpenSettings]);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -294,17 +291,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
     });
-
-    cx.add_action(
-        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            create_and_open_local_file(&paths::SETTINGS, cx, || {
-                settings::initial_user_settings_content(&Assets)
-                    .as_ref()
-                    .into()
-            })
-            .detach_and_log_err(cx);
-        },
-    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);

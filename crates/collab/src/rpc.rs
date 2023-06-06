@@ -1424,7 +1424,7 @@ async fn join_project(
             )?;
         }
 
-        for settings_file in dbg!(worktree.settings_files) {
+        for settings_file in worktree.settings_files {
             session.peer.send(
                 session.connection_id,
                 proto::UpdateWorktreeSettings {
@@ -1554,8 +1554,6 @@ async fn update_worktree_settings(
     message: proto::UpdateWorktreeSettings,
     session: Session,
 ) -> Result<()> {
-    dbg!(&message);
-
     let guest_connection_ids = session
         .db()
         .await

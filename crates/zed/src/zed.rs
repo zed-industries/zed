@@ -30,16 +30,23 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH};
+use settings::{
+    initial_local_settings_content, KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
+};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use util::{channel::ReleaseChannel, paths, ResultExt};
+use util::{
+    channel::ReleaseChannel,
+    paths::{self, LOCAL_SETTINGS_RELATIVE_PATH},
+    ResultExt,
+};
 use uuid::Uuid;
 use welcome::BaseKeymap;
 pub use workspace;
 use workspace::{
-    create_and_open_local_file, dock::PanelHandle, open_new, AppState, NewFile, NewWindow,
-    Workspace, WorkspaceSettings,
+    create_and_open_local_file, dock::PanelHandle,
+    notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
+    NewWindow, Workspace, WorkspaceSettings,
 };
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -65,6 +72,8 @@ actions!(
         OpenLicenses,
         OpenTelemetryLog,
         OpenKeymap,
+        OpenSettings,
+        OpenLocalSettings,
         OpenDefaultSettings,
         OpenDefaultKeymap,
         IncreaseBufferFontSize,
@@ -157,6 +166,17 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
             create_and_open_local_file(&paths::KEYMAP, cx, Default::default).detach_and_log_err(cx);
         },
     );
+    cx.add_action(
+        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            create_and_open_local_file(&paths::SETTINGS, cx, || {
+                settings::initial_user_settings_content(&Assets)
+                    .as_ref()
+                    .into()
+            })
+            .detach_and_log_err(cx);
+        },
+    );
+    cx.add_action(open_local_settings_file);
     cx.add_action(
         move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
@@ -542,6 +562,76 @@ pub fn handle_keymap_file_changes(
         }
     })
     .detach();
+}
+
+fn open_local_settings_file(
+    workspace: &mut Workspace,
+    _: &OpenLocalSettings,
+    cx: &mut ViewContext<Workspace>,
+) {
+    let project = workspace.project().clone();
+    let worktree = project
+        .read(cx)
+        .visible_worktrees(cx)
+        .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+    if let Some(worktree) = worktree {
+        let tree_id = worktree.read(cx).id();
+        cx.spawn(|workspace, mut cx| async move {
+            let file_path = &*LOCAL_SETTINGS_RELATIVE_PATH;
+
+            if let Some(dir_path) = file_path.parent() {
+                if worktree.read_with(&cx, |tree, _| tree.entry_for_path(dir_path).is_none()) {
+                    project
+                        .update(&mut cx, |project, cx| {
+                            project.create_entry((tree_id, dir_path), true, cx)
+                        })
+                        .ok_or_else(|| anyhow!("worktree was removed"))?
+                        .await?;
+                }
+            }
+
+            if worktree.read_with(&cx, |tree, _| tree.entry_for_path(file_path).is_none()) {
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.create_entry((tree_id, file_path), false, cx)
+                    })
+                    .ok_or_else(|| anyhow!("worktree was removed"))?
+                    .await?;
+            }
+
+            let editor = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_path((tree_id, file_path), None, true, cx)
+                })?
+                .await?
+                .downcast::<Editor>()
+                .ok_or_else(|| anyhow!("unexpected item type"))?;
+
+            editor
+                .downgrade()
+                .update(&mut cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        if buffer.read(cx).is_empty() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(
+                                    [(0..0, initial_local_settings_content(&Assets))],
+                                    None,
+                                    cx,
+                                )
+                            });
+                        }
+                    }
+                })
+                .ok();
+
+            anyhow::Ok(())
+        })
+        .detach();
+    } else {
+        workspace.show_notification(0, cx, |cx| {
+            cx.add_view(|_| MessageNotification::new("This project has no folders open."))
+        })
+    }
 }
 
 fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {

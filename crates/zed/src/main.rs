@@ -56,9 +56,7 @@ use fs::RealFs;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{
-    item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings, Workspace,
-};
+use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
 use zed::{
     self, build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
 };
@@ -877,6 +875,6 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
         ("Go to file", &file_finder::Toggle),
         ("Open command palette", &command_palette::Toggle),
         ("Open recent projects", &recent_projects::OpenRecent),
-        ("Change your settings", &OpenSettings),
+        ("Change your settings", &zed::OpenSettings),
     ]
 }
