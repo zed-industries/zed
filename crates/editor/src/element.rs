@@ -879,7 +879,6 @@ impl EditorElement {
             for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;
                 line_with_invisibles.draw(
-                    editor,
                     layout,
                     row,
                     scroll_top,
@@ -1795,7 +1794,6 @@ impl LineWithInvisibles {
 
     fn draw(
         &self,
-        editor: &mut Editor,
         layout: &LayoutState,
         row: u32,
         scroll_top: f32,
@@ -1818,9 +1816,6 @@ impl LineWithInvisibles {
             line_height,
             cx,
         );
-
-        // TODO kb bad: syscalls + cloning happen very frequently, check the timestamp first
-        let new_hints = editor.inlay_hints.read();
 
         self.draw_invisibles(
             &selection_ranges,

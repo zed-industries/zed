@@ -72,9 +72,7 @@ pub use multi_buffer::{
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
-use project::{
-    FormatTrigger, InlayHint, Location, LocationLink, Project, ProjectPath, ProjectTransaction,
-};
+use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -539,7 +537,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_hints: Arc<InlayHintState>,
+    inlay_hints_version: InlayHintVersion,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1156,29 +1154,19 @@ impl CopilotState {
     }
 }
 
-#[derive(Debug, Default)]
-struct InlayHintState(RwLock<(HashMap<usize, Global>, Vec<InlayHint>)>);
+#[derive(Debug, Default, Clone)]
+struct InlayHintVersion(Arc<RwLock<HashMap<usize, Global>>>);
 
-impl InlayHintState {
-    fn read(&self) -> Vec<InlayHint> {
-        self.0.read().1.clone()
-    }
-
+impl InlayHintVersion {
     fn is_newer(&self, timestamp: &HashMap<usize, Global>) -> bool {
-        let current_timestamp = self.0.read().0.clone();
+        let current_timestamp = self.0.read();
         Self::first_timestamp_newer(timestamp, &current_timestamp)
     }
 
-    fn update_if_newer(
-        &self,
-        new_hints: Vec<InlayHint>,
-        new_timestamp: HashMap<usize, Global>,
-    ) -> bool {
+    fn update_if_newer(&self, new_timestamp: HashMap<usize, Global>) -> bool {
         let mut guard = self.0.write();
-        if Self::first_timestamp_newer(&new_timestamp, &guard.0) {
-            guard.0 = new_timestamp;
-            guard.1 = new_hints;
-
+        if Self::first_timestamp_newer(&new_timestamp, &guard) {
+            *guard = new_timestamp;
             true
         } else {
             false
@@ -1414,7 +1402,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hints: Arc::new(InlayHintState::default()),
+            inlay_hints_version: InlayHintVersion::default(),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2694,8 +2682,8 @@ impl Editor {
             },
         );
 
-        let inlay_hints_storage = Arc::clone(&self.inlay_hints);
-        if inlay_hints_storage.is_newer(&new_timestamp) {
+        let current_hints_version = self.inlay_hints_version.clone();
+        if current_hints_version.is_newer(&new_timestamp) {
             cx.spawn(|editor, mut cx| async move {
                 let mut new_hints = Vec::new();
                 for task_result in futures::future::join_all(hint_fetch_tasks).await {
@@ -2705,8 +2693,7 @@ impl Editor {
                     }
                 }
 
-                // TODO kb another odd clone, can be avoid all this? hide hints behind a handle?
-                if inlay_hints_storage.update_if_newer(new_hints.clone(), new_timestamp) {
+                if current_hints_version.update_if_newer(new_timestamp) {
                     editor
                         .update(&mut cx, |editor, cx| {
                             editor.display_map.update(cx, |display_map, cx| {
