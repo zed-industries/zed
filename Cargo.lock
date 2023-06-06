@@ -100,12 +100,12 @@ name = "ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "collections",
  "editor",
  "futures 0.3.28",
  "gpui",
  "isahc",
+ "rust-embed",
  "serde",
  "serde_json",
  "util",
@@ -209,15 +209,6 @@ name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
-
-[[package]]
-name = "assets"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
- "rust-embed",
-]
 
 [[package]]
 name = "async-broadcast"
@@ -1402,7 +1393,6 @@ name = "copilot_button"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "context_menu",
  "copilot",
  "editor",
@@ -6114,7 +6104,6 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "collections",
  "fs",
  "futures 0.3.28",
@@ -6123,6 +6112,7 @@ dependencies = [
  "lazy_static",
  "postage",
  "pretty_assertions",
+ "rust-embed",
  "schemars",
  "serde",
  "serde_derive",
@@ -7749,6 +7739,7 @@ dependencies = [
  "lazy_static",
  "log",
  "rand 0.8.5",
+ "rust-embed",
  "serde",
  "serde_json",
  "smol",
@@ -7819,7 +7810,6 @@ name = "vim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "async-compat",
  "async-trait",
  "collections",
@@ -8647,7 +8637,6 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "async-recursion 1.0.4",
  "bincode",
  "call",
@@ -8747,7 +8736,6 @@ dependencies = [
  "activity_indicator",
  "ai",
  "anyhow",
- "assets",
  "async-compression",
  "async-recursion 0.3.2",
  "async-tar",

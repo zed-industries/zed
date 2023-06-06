@@ -2,7 +2,6 @@
 #![allow(non_snake_case)]
 
 use anyhow::{anyhow, Context, Result};
-use assets::Assets;
 use backtrace::Backtrace;
 use cli::{
     ipc::{self, IpcSender},
@@ -58,7 +57,8 @@ use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
 use zed::{
-    self, build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
+    assets::Assets, build_window_options, handle_keymap_file_changes, initialize_workspace,
+    languages, menus,
 };
 
 fn main() {

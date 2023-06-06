@@ -2,31 +2,37 @@ mod keymap_file;
 mod settings_file;
 mod settings_store;
 
-use gpui::AssetSource;
-pub use keymap_file::{keymap_file_json_schema, KeymapFileContent};
+use rust_embed::RustEmbed;
+use std::{borrow::Cow, str};
+use util::asset_str;
+
+pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{Setting, SettingsJsonSchemaParams, SettingsStore};
-use std::{borrow::Cow, str};
 
-pub const DEFAULT_SETTINGS_ASSET_PATH: &str = "settings/default.json";
-const INITIAL_USER_SETTINGS_ASSET_PATH: &str = "settings/initial_user_settings.json";
-const INITIAL_LOCAL_SETTINGS_ASSET_PATH: &str = "settings/initial_local_settings.json";
+#[derive(RustEmbed)]
+#[folder = "../../assets"]
+#[include = "settings/*"]
+#[include = "keymaps/*"]
+#[exclude = "*.DS_Store"]
+pub struct SettingsAssets;
 
 pub fn default_settings() -> Cow<'static, str> {
-    asset_str(&assets::Assets, DEFAULT_SETTINGS_ASSET_PATH)
+    asset_str::<SettingsAssets>("settings/default.json")
 }
 
-pub fn initial_user_settings_content(assets: &dyn AssetSource) -> Cow<'_, str> {
-    asset_str(assets, INITIAL_USER_SETTINGS_ASSET_PATH)
+pub fn default_keymap() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("keymaps/default.json")
 }
 
-pub fn initial_local_settings_content(assets: &dyn AssetSource) -> Cow<'_, str> {
-    asset_str(assets, INITIAL_LOCAL_SETTINGS_ASSET_PATH)
+pub fn vim_keymap() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("keymaps/vim.json")
 }
 
-fn asset_str<'a>(assets: &'a dyn AssetSource, path: &str) -> Cow<'a, str> {
-    match assets.load(path).unwrap() {
-        Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
-        Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-    }
+pub fn initial_user_settings_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_user_settings.json")
+}
+
+pub fn initial_local_settings_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_local_settings.json")
 }

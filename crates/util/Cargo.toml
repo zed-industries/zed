@@ -21,6 +21,7 @@ isahc.workspace = true
 smol.workspace = true
 url = "2.2"
 rand.workspace = true
+rust-embed.workspace = true
 tempdir = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

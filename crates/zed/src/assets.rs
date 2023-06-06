@@ -4,6 +4,10 @@ use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
+#[include = "fonts/**/*"]
+#[include = "icons/**/*"]
+#[include = "themes/**/*"]
+#[include = "*.md"]
 #[exclude = "*.DS_Store"]
 pub struct Assets;
 

@@ -1,6 +1,5 @@
 use crate::{settings_store::SettingsStore, Setting};
 use anyhow::Result;
-use assets::Assets;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{executor::Background, AppContext};
@@ -111,7 +110,7 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
         Err(err) => {
             if let Some(e) = err.downcast_ref::<std::io::Error>() {
                 if e.kind() == ErrorKind::NotFound {
-                    return Ok(crate::initial_user_settings_content(&Assets).to_string());
+                    return Ok(crate::initial_user_settings_content().to_string());
                 }
             }
             return Err(err);

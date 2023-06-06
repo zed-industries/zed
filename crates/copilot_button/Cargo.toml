@@ -9,7 +9,6 @@ path = "src/copilot_button.rs"
 doctest = false
 
 [dependencies]
-assets = { path = "../assets" }
 copilot = { path = "../copilot" }
 editor = { path = "../editor" }
 fs = { path = "../fs" }
