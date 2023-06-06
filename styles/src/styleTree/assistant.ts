@@ -11,7 +11,8 @@ export default function assistant(colorScheme: ColorScheme) {
       },
       header: {
         border: border(layer, "default", { bottom: true, top: true }),
-        margin: { bottom: 6, top: 6 }
+        margin: { bottom: 6, top: 6 },
+        background: editor(colorScheme).background
       },
       user_sender: {
         ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
@@ -23,17 +24,32 @@ export default function assistant(colorScheme: ColorScheme) {
         margin: { top: 2, left: 8 },
         ...text(layer, "sans", "default", { size: "2xs" }),
       },
-      remaining_tokens: {
-        padding: 4,
+      model_info_container: {
         margin: { right: 16, top: 4 },
+      },
+      model: {
         background: background(layer, "on"),
+        border: border(layer, "on", { overlay: true }),
+        padding: 4,
+        cornerRadius: 4,
+        ...text(layer, "sans", "default", { size: "xs" }),
+        hover: {
+          background: background(layer, "on", "hovered"),
+        }
+      },
+      remaining_tokens: {
+        background: background(layer, "on"),
+        border: border(layer, "on", { overlay: true }),
+        padding: 4,
+        margin: { left: 4 },
         cornerRadius: 4,
         ...text(layer, "sans", "positive", { size: "xs" }),
       },
       no_remaining_tokens: {
-        padding: 4,
-        margin: { right: 16, top: 4 },
         background: background(layer, "on"),
+        border: border(layer, "on", { overlay: true }),
+        padding: 4,
+        margin: { left: 4 },
         cornerRadius: 4,
         ...text(layer, "sans", "negative", { size: "xs" }),
       },

@@ -9,15 +9,17 @@ use editor::{Anchor, Editor, ExcerptId, ExcerptRange, MultiBuffer};
 use fs::Fs;
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use gpui::{
-    actions, elements::*, executor::Background, Action, AppContext, AsyncAppContext, Entity,
-    ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    actions,
+    elements::*,
+    executor::Background,
+    platform::{CursorStyle, MouseButton},
+    Action, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use settings::SettingsStore;
 use std::{cell::RefCell, io, rc::Rc, sync::Arc, time::Duration};
-use tiktoken_rs::model::get_context_size;
 use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -430,7 +432,7 @@ impl Assistant {
             pending_completions: Default::default(),
             languages: language_registry,
             token_count: None,
-            max_token_count: get_context_size(model),
+            max_token_count: tiktoken_rs::model::get_context_size(model),
             pending_token_count: Task::ready(None),
             model: model.into(),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
@@ -483,6 +485,7 @@ impl Assistant {
                     .await?;
 
                 this.update(&mut cx, |this, cx| {
+                    this.max_token_count = tiktoken_rs::model::get_context_size(&this.model);
                     this.token_count = Some(token_count);
                     cx.notify()
                 });
@@ -494,6 +497,12 @@ impl Assistant {
 
     fn remaining_tokens(&self) -> Option<isize> {
         Some(self.max_token_count as isize - self.token_count? as isize)
+    }
+
+    fn set_model(&mut self, model: String, cx: &mut ModelContext<Self>) {
+        self.model = model;
+        self.count_remaining_tokens(cx);
+        cx.notify();
     }
 
     fn assist(&mut self, cx: &mut ModelContext<Self>) {
@@ -825,6 +834,16 @@ impl AssistantEditor {
             });
         }
     }
+
+    fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
+        self.assistant.update(cx, |assistant, cx| {
+            let new_model = match assistant.model.as_str() {
+                "gpt-4" => "gpt-3.5-turbo",
+                _ => "gpt-4",
+            };
+            assistant.set_model(new_model.into(), cx);
+        });
+    }
 }
 
 impl Entity for AssistantEditor {
@@ -837,27 +856,23 @@ impl View for AssistantEditor {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        enum Model {}
         let theme = &theme::current(cx).assistant;
-        let remaining_tokens = self
-            .assistant
-            .read(cx)
-            .remaining_tokens()
-            .map(|remaining_tokens| {
-                let remaining_tokens_style = if remaining_tokens <= 0 {
-                    &theme.no_remaining_tokens
-                } else {
-                    &theme.remaining_tokens
-                };
-                Label::new(
-                    remaining_tokens.to_string(),
-                    remaining_tokens_style.text.clone(),
-                )
-                .contained()
-                .with_style(remaining_tokens_style.container)
-                .aligned()
-                .top()
-                .right()
-            });
+        let assistant = &self.assistant.read(cx);
+        let model = assistant.model.clone();
+        let remaining_tokens = assistant.remaining_tokens().map(|remaining_tokens| {
+            let remaining_tokens_style = if remaining_tokens <= 0 {
+                &theme.no_remaining_tokens
+            } else {
+                &theme.remaining_tokens
+            };
+            Label::new(
+                remaining_tokens.to_string(),
+                remaining_tokens_style.text.clone(),
+            )
+            .contained()
+            .with_style(remaining_tokens_style.container)
+        });
 
         Stack::new()
             .with_child(
@@ -865,7 +880,25 @@ impl View for AssistantEditor {
                     .contained()
                     .with_style(theme.container),
             )
-            .with_children(remaining_tokens)
+            .with_child(
+                Flex::row()
+                    .with_child(
+                        MouseEventHandler::<Model, _>::new(0, cx, |state, _| {
+                            let style = theme.model.style_for(state, false);
+                            Label::new(model, style.text.clone())
+                                .contained()
+                                .with_style(style.container)
+                        })
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, |_, this, cx| this.cycle_model(cx)),
+                    )
+                    .with_children(remaining_tokens)
+                    .contained()
+                    .with_style(theme.model_info_container)
+                    .aligned()
+                    .top()
+                    .right(),
+            )
             .into_any()
     }
 
