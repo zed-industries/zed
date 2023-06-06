@@ -30,7 +30,9 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH};
+use settings::{
+    initial_local_settings_content, KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH,
+};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -596,11 +598,30 @@ fn open_local_settings_file(
                     .await?;
             }
 
-            workspace
+            let editor = workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.open_path((tree_id, file_path), None, true, cx)
                 })?
-                .await?;
+                .await?
+                .downcast::<Editor>()
+                .ok_or_else(|| anyhow!("unexpected item type"))?;
+
+            editor
+                .downgrade()
+                .update(&mut cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        if buffer.read(cx).is_empty() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(
+                                    [(0..0, initial_local_settings_content(&Assets))],
+                                    None,
+                                    cx,
+                                )
+                            });
+                        }
+                    }
+                })
+                .ok();
 
             anyhow::Ok(())
         })
