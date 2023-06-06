@@ -19,8 +19,8 @@ use gpui::{
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use settings::SettingsStore;
-use std::{cell::RefCell, io, rc::Rc, sync::Arc, time::Duration};
-use util::{post_inc, ResultExt, TryFutureExt};
+use std::{borrow::Cow, cell::RefCell, io, rc::Rc, sync::Arc, time::Duration};
+use util::{post_inc, truncate_and_trailoff, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     item::Item,
@@ -69,7 +69,7 @@ pub struct AssistantPanel {
     has_read_credentials: bool,
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    _subscriptions: Vec<Subscription>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl AssistantPanel {
@@ -145,11 +145,11 @@ impl AssistantPanel {
                         fs: workspace.app_state().fs.clone(),
                         width: None,
                         height: None,
-                        _subscriptions: Default::default(),
+                        subscriptions: Default::default(),
                     };
 
                     let mut old_dock_position = this.position(cx);
-                    this._subscriptions = vec![
+                    this.subscriptions = vec![
                         cx.observe(&this.pane, |_, _, cx| cx.notify()),
                         cx.subscribe(&this.pane, Self::handle_pane_event),
                         cx.observe_global::<SettingsStore, _>(move |this, cx| {
@@ -186,9 +186,22 @@ impl AssistantPanel {
         let focus = self.has_focus(cx);
         let editor = cx
             .add_view(|cx| AssistantEditor::new(self.api_key.clone(), self.languages.clone(), cx));
+        self.subscriptions
+            .push(cx.subscribe(&editor, Self::handle_assistant_editor_event));
         self.pane.update(cx, |pane, cx| {
             pane.add_item(Box::new(editor), true, focus, None, cx)
         });
+    }
+
+    fn handle_assistant_editor_event(
+        &mut self,
+        _: ViewHandle<AssistantEditor>,
+        event: &AssistantEditorEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            AssistantEditorEvent::TabContentChanged => self.pane.update(cx, |_, cx| cx.notify()),
+        }
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -396,12 +409,15 @@ impl Panel for AssistantPanel {
 
 enum AssistantEvent {
     MessagesEdited { ids: Vec<ExcerptId> },
+    SummaryChanged,
 }
 
 struct Assistant {
     buffer: ModelHandle<MultiBuffer>,
     messages: Vec<Message>,
     messages_by_id: HashMap<ExcerptId, Message>,
+    summary: Option<String>,
+    pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     languages: Arc<LanguageRegistry>,
@@ -428,6 +444,8 @@ impl Assistant {
         let mut this = Self {
             messages: Default::default(),
             messages_by_id: Default::default(),
+            summary: None,
+            pending_summary: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
             languages: language_registry,
@@ -540,9 +558,10 @@ impl Assistant {
                         }
                     }
 
-                    this.update(&mut cx, |this, _| {
+                    this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != this.completion_count);
+                        this.summarize(cx);
                     });
 
                     anyhow::Ok(())
@@ -634,11 +653,63 @@ impl Assistant {
         self.messages_by_id.insert(excerpt_id, message.clone());
         message
     }
+
+    fn summarize(&mut self, cx: &mut ModelContext<Self>) {
+        if self.messages.len() >= 2 && self.summary.is_none() {
+            let api_key = self.api_key.borrow().clone();
+            if let Some(api_key) = api_key {
+                let messages = self
+                    .messages
+                    .iter()
+                    .take(2)
+                    .map(|message| RequestMessage {
+                        role: message.role,
+                        content: message.content.read(cx).text(),
+                    })
+                    .chain(Some(RequestMessage {
+                        role: Role::User,
+                        content: "Summarize the conversation into a short title without punctuation and with as few characters as possible"
+                            .into(),
+                    }))
+                    .collect();
+                let request = OpenAIRequest {
+                    model: self.model.clone(),
+                    messages,
+                    stream: true,
+                };
+
+                let stream = stream_completion(api_key, cx.background().clone(), request);
+                self.pending_summary = cx.spawn(|this, mut cx| {
+                    async move {
+                        let mut messages = stream.await?;
+
+                        while let Some(message) = messages.next().await {
+                            let mut message = message?;
+                            if let Some(choice) = message.choices.pop() {
+                                let text = choice.delta.content.unwrap_or_default();
+                                this.update(&mut cx, |this, cx| {
+                                    this.summary.get_or_insert(String::new()).push_str(&text);
+                                    cx.emit(AssistantEvent::SummaryChanged);
+                                });
+                            }
+                        }
+
+                        anyhow::Ok(())
+                    }
+                    .log_err()
+                });
+            }
+        }
+    }
 }
 
 struct PendingCompletion {
     id: usize,
     _task: Task<Option<()>>,
+}
+
+enum AssistantEditorEvent {
+    TabContentChanged,
 }
 
 struct AssistantEditor {
@@ -712,9 +783,9 @@ impl AssistantEditor {
         ];
 
         Self {
-            _subscriptions,
             assistant,
             editor,
+            _subscriptions,
         }
     }
 
@@ -766,6 +837,9 @@ impl AssistantEditor {
                 assistant.update(cx, |assistant, cx| {
                     assistant.remove_empty_messages(ids, selection_heads, cx)
                 });
+            }
+            AssistantEvent::SummaryChanged => {
+                cx.emit(AssistantEditorEvent::TabContentChanged);
             }
         }
     }
@@ -844,15 +918,23 @@ impl AssistantEditor {
             assistant.set_model(new_model.into(), cx);
         });
     }
+
+    fn title(&self, cx: &AppContext) -> String {
+        self.assistant
+            .read(cx)
+            .summary
+            .clone()
+            .unwrap_or_else(|| "New Context".into())
+    }
 }
 
 impl Entity for AssistantEditor {
-    type Event = ();
+    type Event = AssistantEditorEvent;
 }
 
 impl View for AssistantEditor {
     fn ui_name() -> &'static str {
-        "ContextEditor"
+        "AssistantEditor"
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
@@ -914,9 +996,14 @@ impl Item for AssistantEditor {
         &self,
         _: Option<usize>,
         style: &theme::Tab,
-        _: &gpui::AppContext,
+        cx: &gpui::AppContext,
     ) -> AnyElement<V> {
-        Label::new("New Context", style.label.clone()).into_any()
+        let title = truncate_and_trailoff(&self.title(cx), editor::MAX_TAB_TITLE_LEN);
+        Label::new(title, style.label.clone()).into_any()
+    }
+
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
+        Some(self.title(cx).into())
     }
 }
 
@@ -964,7 +1051,17 @@ async fn stream_completion(
 
                 while let Some(line) = lines.next().await {
                     if let Some(event) = parse_line(line).transpose() {
+                        let done = event.as_ref().map_or(false, |event| {
+                            event
+                                .choices
+                                .last()
+                                .map_or(false, |choice| choice.finish_reason.is_some())
+                        });
                         if tx.unbounded_send(event).is_err() {
+                            break;
+                        }
+
+                        if done {
                             break;
                         }
                     }

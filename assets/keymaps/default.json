@@ -197,7 +197,7 @@
     }
   },
   {
-    "context": "ContextEditor > Editor",
+    "context": "AssistantEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd->": "assistant::QuoteSelection"
