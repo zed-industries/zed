@@ -2382,7 +2382,7 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| {
-                            let anchor = snapshot.anchor_after(s.end);
+                            let anchor = snapshot.anchor_after(s.head());
                             s.map(|_| anchor)
                         })
                         .collect::<Vec<_>>()
