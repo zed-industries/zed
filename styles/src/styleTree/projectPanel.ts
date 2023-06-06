@@ -8,10 +8,10 @@ export default function projectPanel(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
 
     let baseEntry = {
-        height: 24,
+        height: 22,
         iconColor: foreground(layer, "variant"),
-        iconSize: 8,
-        iconSpacing: 8,
+        iconSize: 7,
+        iconSpacing: 5,
     }
 
     let status = {
@@ -71,7 +71,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
             },
         },
         background: background(layer),
-        padding: { left: 12, right: 12, top: 6, bottom: 6 },
+        padding: { left: 6, right: 6, top: 0, bottom: 6 },
         indentWidth: 16,
         entry,
         draggedEntry: {
@@ -83,7 +83,12 @@ export default function projectPanel(colorScheme: ColorScheme) {
         },
         ignoredEntry: {
             ...entry,
+            iconColor: foreground(layer, "disabled"),
             text: text(layer, "mono", "disabled"),
+            active: {
+                ...entry.active,
+                iconColor: foreground(layer, "variant"),
+            }
         },
         cutEntry: {
             ...entry,
