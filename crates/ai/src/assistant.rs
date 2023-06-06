@@ -686,8 +686,9 @@ impl Assistant {
                     })
                     .chain(Some(RequestMessage {
                         role: Role::User,
-                        content: "Summarize the conversation into a short title without punctuation and with as few characters as possible"
-                            .into(),
+                        content:
+                            "Summarize the conversation into a short title without punctuation"
+                                .into(),
                     }))
                     .collect();
                 let request = OpenAIRequest {
