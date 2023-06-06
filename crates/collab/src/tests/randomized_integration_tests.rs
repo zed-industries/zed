@@ -815,6 +815,7 @@ async fn apply_client_operation(
             GitOperation::WriteGitStatuses {
                 repo_path,
                 statuses,
+                git_operation,
             } => {
                 if !client.fs.directories().contains(&repo_path) {
                     return Err(TestError::Inapplicable);
@@ -838,9 +839,16 @@ async fn apply_client_operation(
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
 
-                client
-                    .fs
-                    .set_status_for_repo(&dot_git_dir, statuses.as_slice());
+                if git_operation {
+                    client
+                        .fs
+                        .set_status_for_repo_via_git_operation(&dot_git_dir, statuses.as_slice());
+                } else {
+                    client.fs.set_status_for_repo_via_working_copy_change(
+                        &dot_git_dir,
+                        statuses.as_slice(),
+                    );
+                }
             }
         },
     }
@@ -1229,6 +1237,7 @@ enum GitOperation {
     WriteGitStatuses {
         repo_path: PathBuf,
         statuses: Vec<(PathBuf, GitFileStatus)>,
+        git_operation: bool,
     },
 }
 
@@ -1854,9 +1863,12 @@ impl TestPlan {
                     })
                     .collect::<Vec<_>>();
 
+                let git_operation = self.rng.gen::<bool>();
+
                 GitOperation::WriteGitStatuses {
                     repo_path,
                     statuses,
+                    git_operation,
                 }
             }
             _ => unreachable!(),

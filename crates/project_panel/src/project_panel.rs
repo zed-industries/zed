@@ -1012,6 +1012,9 @@ impl ProjectPanel {
                 }
                 entry_iter.advance();
             }
+
+            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+
             visible_worktree_entries.sort_by(|entry_a, entry_b| {
                 let mut components_a = entry_a.path.components().peekable();
                 let mut components_b = entry_b.path.components().peekable();
@@ -1109,16 +1112,8 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                let statuses = worktree.read(cx).statuses_for_paths(
-                    visible_worktree_entries[entry_range.clone()]
-                        .iter()
-                        .map(|entry| entry.path.as_ref()),
-                );
-                for (entry, status) in visible_worktree_entries[entry_range]
-                    .iter()
-                    .zip(statuses.into_iter())
-                {
-                    let status = git_status_setting.then(|| status).flatten();
+                for entry in visible_worktree_entries[entry_range].iter() {
+                    let status = git_status_setting.then(|| entry.git_status).flatten();
 
                     let mut details = EntryDetails {
                         filename: entry

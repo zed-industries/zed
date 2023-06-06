@@ -1670,46 +1670,42 @@ impl Snapshot {
         })
     }
 
-    pub fn statuses_for_paths<'a>(
-        &self,
-        paths: impl IntoIterator<Item = &'a Path>,
-    ) -> Vec<Option<GitFileStatus>> {
+    /// Update the `git_status` of the given entries such that files'
+    /// statuses bubble up to their ancestor directories.
+    pub fn propagate_git_statuses(&self, result: &mut [Entry]) {
         let mut cursor = self
             .entries_by_path
             .cursor::<(TraversalProgress, GitStatuses)>();
-        let mut paths = paths.into_iter().peekable();
-        let mut path_stack = Vec::<(&Path, usize, GitStatuses)>::new();
-        let mut result = Vec::new();
+        let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
 
+        let mut result_ix = 0;
         loop {
-            let next_path = paths.peek();
-            let containing_path = path_stack.last();
+            let next_entry = result.get(result_ix);
+            let containing_entry = entry_stack.last().map(|(ix, _)| &result[*ix]);
 
-            let mut entry_to_finish = None;
-            let mut path_to_start = None;
-            match (containing_path, next_path) {
-                (Some((containing_path, _, _)), Some(next_path)) => {
-                    if next_path.starts_with(containing_path) {
-                        path_to_start = paths.next();
+            let entry_to_finish = match (containing_entry, next_entry) {
+                (Some(_), None) => entry_stack.pop(),
+                (Some(containing_entry), Some(next_path)) => {
+                    if !next_path.path.starts_with(&containing_entry.path) {
+                        entry_stack.pop()
                     } else {
-                        entry_to_finish = path_stack.pop();
+                        None
                     }
                 }
-                (None, Some(_)) => path_to_start = paths.next(),
-                (Some(_), None) => entry_to_finish = path_stack.pop(),
+                (None, Some(_)) => None,
                 (None, None) => break,
-            }
+            };
 
-            if let Some((containing_path, result_ix, prev_statuses)) = entry_to_finish {
+            if let Some((entry_ix, prev_statuses)) = entry_to_finish {
                 cursor.seek_forward(
-                    &TraversalTarget::PathSuccessor(containing_path),
+                    &TraversalTarget::PathSuccessor(&result[entry_ix].path),
                     Bias::Left,
                     &(),
                 );
 
                 let statuses = cursor.start().1 - prev_statuses;
 
-                result[result_ix] = if statuses.conflict > 0 {
+                result[entry_ix].git_status = if statuses.conflict > 0 {
                     Some(GitFileStatus::Conflict)
                 } else if statuses.modified > 0 {
                     Some(GitFileStatus::Modified)
@@ -1718,15 +1714,18 @@ impl Snapshot {
                 } else {
                     None
                 };
-            }
-            if let Some(path_to_start) = path_to_start {
-                cursor.seek_forward(&TraversalTarget::Path(path_to_start), Bias::Left, &());
-                path_stack.push((path_to_start, result.len(), cursor.start().1));
-                result.push(None);
+            } else {
+                if result[result_ix].is_dir() {
+                    cursor.seek_forward(
+                        &TraversalTarget::Path(&result[result_ix].path),
+                        Bias::Left,
+                        &(),
+                    );
+                    entry_stack.push((result_ix, cursor.start().1));
+                }
+                result_ix += 1;
             }
         }
-
-        return result;
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
@@ -5309,7 +5308,7 @@ mod tests {
         }
 
         #[gpui::test]
-        async fn test_statuses_for_paths(cx: &mut TestAppContext) {
+        async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
             let fs = FakeFs::new(cx.background());
             fs.insert_tree(
                 "/root",
@@ -5338,7 +5337,7 @@ mod tests {
             )
             .await;
 
-            fs.set_status_for_repo(
+            fs.set_status_for_repo_via_git_operation(
                 &Path::new("/root/.git"),
                 &[
                     (Path::new("a/b/c1.txt"), GitFileStatus::Added),
@@ -5361,27 +5360,68 @@ mod tests {
             .unwrap();
 
             cx.foreground().run_until_parked();
-
             let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-            assert_eq!(
-                snapshot.statuses_for_paths([
-                    Path::new(""),
-                    Path::new("a"),
-                    Path::new("a/b"),
-                    Path::new("a/d"),
-                    Path::new("f"),
-                    Path::new("g"),
-                ]),
+            check_propagated_statuses(
+                &snapshot,
                 &[
-                    Some(GitFileStatus::Conflict),
-                    Some(GitFileStatus::Modified),
-                    Some(GitFileStatus::Added),
-                    Some(GitFileStatus::Modified),
-                    None,
-                    Some(GitFileStatus::Conflict),
-                ]
-            )
+                    (Path::new(""), Some(GitFileStatus::Conflict)),
+                    (Path::new("a"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/b"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f"), None),
+                    (Path::new("f/no-status.txt"), None),
+                    (Path::new("g"), Some(GitFileStatus::Conflict)),
+                    (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+                ],
+            );
+
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new("a/b"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/d/e1.txt"), None),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f"), None),
+                    (Path::new("f/no-status.txt"), None),
+                    (Path::new("g"), Some(GitFileStatus::Conflict)),
+                ],
+            );
+
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d/e1.txt"), None),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f/no-status.txt"), None),
+                ],
+            );
+
+            fn check_propagated_statuses(
+                snapshot: &Snapshot,
+                expected_statuses: &[(&Path, Option<GitFileStatus>)],
+            ) {
+                let mut entries = expected_statuses
+                    .iter()
+                    .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
+                    .collect::<Vec<_>>();
+                snapshot.propagate_git_statuses(&mut entries);
+                assert_eq!(
+                    entries
+                        .iter()
+                        .map(|e| (e.path.as_ref(), e.git_status))
+                        .collect::<Vec<_>>(),
+                    expected_statuses
+                );
+            }
         }
 
         #[track_caller]

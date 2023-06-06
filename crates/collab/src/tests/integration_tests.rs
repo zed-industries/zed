@@ -2708,7 +2708,7 @@ async fn test_git_status_sync(
     const A_TXT: &'static str = "a.txt";
     const B_TXT: &'static str = "b.txt";
 
-    client_a.fs.as_fake().set_status_for_repo(
+    client_a.fs.as_fake().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),
         &[
             (&Path::new(A_TXT), GitFileStatus::Added),
@@ -2754,13 +2754,16 @@ async fn test_git_status_sync(
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
 
-    client_a.fs.as_fake().set_status_for_repo(
-        Path::new("/dir/.git"),
-        &[
-            (&Path::new(A_TXT), GitFileStatus::Modified),
-            (&Path::new(B_TXT), GitFileStatus::Modified),
-        ],
-    );
+    client_a
+        .fs
+        .as_fake()
+        .set_status_for_repo_via_working_copy_change(
+            Path::new("/dir/.git"),
+            &[
+                (&Path::new(A_TXT), GitFileStatus::Modified),
+                (&Path::new(B_TXT), GitFileStatus::Modified),
+            ],
+        );
 
     // Wait for buffer_local_a to receive it
     deterministic.run_until_parked();

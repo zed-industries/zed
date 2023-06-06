@@ -619,7 +619,7 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<F>(&self, dot_git: &Path, f: F)
+    pub fn with_git_state<F>(&self, dot_git: &Path, emit_git_event: bool, f: F)
     where
         F: FnOnce(&mut FakeGitRepositoryState),
     {
@@ -633,18 +633,22 @@ impl FakeFs {
 
             f(&mut repo_state);
 
-            state.emit_event([dot_git]);
+            if emit_git_event {
+                state.emit_event([dot_git]);
+            }
         } else {
             panic!("not a directory");
         }
     }
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
-        self.with_git_state(dot_git, |state| state.branch_name = branch.map(Into::into))
+        self.with_git_state(dot_git, true, |state| {
+            state.branch_name = branch.map(Into::into)
+        })
     }
 
     pub fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
-        self.with_git_state(dot_git, |state| {
+        self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
                 head_state
@@ -654,8 +658,32 @@ impl FakeFs {
         });
     }
 
-    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitFileStatus)]) {
-        self.with_git_state(dot_git, |state| {
+    pub fn set_status_for_repo_via_working_copy_change(
+        &self,
+        dot_git: &Path,
+        statuses: &[(&Path, GitFileStatus)],
+    ) {
+        self.with_git_state(dot_git, false, |state| {
+            state.worktree_statuses.clear();
+            state.worktree_statuses.extend(
+                statuses
+                    .iter()
+                    .map(|(path, content)| ((**path).into(), content.clone())),
+            );
+        });
+        self.state.lock().emit_event(
+            statuses
+                .iter()
+                .map(|(path, _)| dot_git.parent().unwrap().join(path)),
+        );
+    }
+
+    pub fn set_status_for_repo_via_git_operation(
+        &self,
+        dot_git: &Path,
+        statuses: &[(&Path, GitFileStatus)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
             state.worktree_statuses.clear();
             state.worktree_statuses.extend(
                 statuses
