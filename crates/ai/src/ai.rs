@@ -4,6 +4,7 @@ mod assistant_settings;
 pub use assistant::AssistantPanel;
 use gpui::AppContext;
 use serde::{Deserialize, Serialize};
+use std::fmt::{self, Display};
 
 // Data types for chat completion requests
 #[derive(Serialize)]
@@ -31,6 +32,16 @@ enum Role {
     User,
     Assistant,
     System,
+}
+
+impl Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Role::User => write!(f, "User"),
+            Role::Assistant => write!(f, "Assistant"),
+            Role::System => write!(f, "System"),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]

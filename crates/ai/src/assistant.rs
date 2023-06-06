@@ -13,14 +13,14 @@ use gpui::{
     elements::*,
     executor::Background,
     platform::{CursorStyle, MouseButton},
-    Action, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    Action, AppContext, AsyncAppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use isahc::{http::StatusCode, Request, RequestExt};
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use serde::Deserialize;
 use settings::SettingsStore;
-use std::{borrow::Cow, cell::RefCell, io, rc::Rc, sync::Arc, time::Duration};
+use std::{borrow::Cow, cell::RefCell, cmp, fmt::Write, io, rc::Rc, sync::Arc, time::Duration};
 use util::{post_inc, truncate_and_trailoff, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -49,6 +49,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(AssistantEditor::assist);
     cx.capture_action(AssistantEditor::cancel_last_assist);
     cx.add_action(AssistantEditor::quote_selection);
+    cx.capture_action(AssistantEditor::copy);
     cx.add_action(AssistantPanel::save_api_key);
     cx.add_action(AssistantPanel::reset_api_key);
 }
@@ -947,6 +948,45 @@ impl AssistantEditor {
                 }
             });
         }
+    }
+
+    fn copy(&mut self, _: &editor::Copy, cx: &mut ViewContext<Self>) {
+        let editor = self.editor.read(cx);
+        let assistant = self.assistant.read(cx);
+        if editor.selections.count() == 1 {
+            let selection = editor.selections.newest::<usize>(cx);
+            let mut offset = 0;
+            let mut copied_text = String::new();
+            let mut spanned_messages = 0;
+            for message in &assistant.messages {
+                let message_range = offset..offset + message.content.read(cx).len() + 1;
+
+                if message_range.start >= selection.range().end {
+                    break;
+                } else if message_range.end >= selection.range().start {
+                    let range = cmp::max(message_range.start, selection.range().start)
+                        ..cmp::min(message_range.end, selection.range().end);
+                    if !range.is_empty() {
+                        spanned_messages += 1;
+                        write!(&mut copied_text, "## {}\n\n", message.role).unwrap();
+                        for chunk in assistant.buffer.read(cx).snapshot(cx).text_for_range(range) {
+                            copied_text.push_str(&chunk);
+                        }
+                        copied_text.push('\n');
+                    }
+                }
+
+                offset = message_range.end;
+            }
+
+            if spanned_messages > 1 {
+                cx.platform()
+                    .write_to_clipboard(ClipboardItem::new(copied_text));
+                return;
+            }
+        }
+
+        cx.propagate_action();
     }
 
     fn cycle_model(&mut self, cx: &mut ViewContext<Self>) {
