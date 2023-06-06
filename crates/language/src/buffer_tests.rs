@@ -593,6 +593,52 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
+    let language = javascript_lang()
+        .with_outline_query(
+            r#"
+            (function_declaration
+                "function" @context
+                name: (_) @name
+                parameters: (formal_parameters
+                    "(" @context.extra
+                    ")" @context.extra)) @item
+            "#,
+        )
+        .unwrap();
+
+    let text = r#"
+        function a() {}
+        function b(c) {}
+    "#
+    .unindent();
+
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(language), cx));
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+    // extra context nodes are included in the outline.
+    let outline = snapshot.outline(None).unwrap();
+    assert_eq!(
+        outline
+            .items
+            .iter()
+            .map(|item| (item.text.as_str(), item.depth))
+            .collect::<Vec<_>>(),
+        &[("function a()", 0), ("function b( )", 0),]
+    );
+
+    // extra context nodes do not appear in breadcrumbs.
+    let symbols = snapshot.symbols_containing(3, None).unwrap();
+    assert_eq!(
+        symbols
+            .iter()
+            .map(|item| (item.text.as_str(), item.depth))
+            .collect::<Vec<_>>(),
+        &[("function a", 0)]
+    );
+}
+
+#[gpui::test]
 async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     let text = r#"
         impl Person {
