@@ -116,4 +116,4 @@ split-debuginfo = "unpacked"
 
 [profile.release]
 debug = true
-lto = "fat"
+lto = "thin"
