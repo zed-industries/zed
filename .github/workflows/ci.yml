@@ -26,8 +26,8 @@ jobs:
       - name: Install Rust
         run: |
           rustup set profile minimal
-          rustup component add --toolchain stable rustfmt
           rustup update stable
+          rustup component add --toolchain stable rustfmt
 
       - name: Checkout repo
         uses: actions/checkout@v2
