@@ -72,7 +72,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
         },
         background: background(layer),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
-        indentWidth: 16,
+        indentWidth: 12,
         entry,
         draggedEntry: {
             ...baseEntry,
