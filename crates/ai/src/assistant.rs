@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{Editor, ExcerptId, ExcerptRange, MultiBuffer};
 use fs::Fs;
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
@@ -545,6 +545,59 @@ impl Assistant {
         self.pending_completions.pop().is_some()
     }
 
+    fn remove_empty_messages<'a>(
+        &mut self,
+        protected: impl IntoIterator<Item = ExcerptId>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        dbg!(&self.messages_by_id);
+
+        let protected = protected
+            .into_iter()
+            .filter_map(|excerpt_id| {
+                self.messages_by_id
+                    .get(&excerpt_id)
+                    .map(|message| message.content.id())
+            })
+            .collect::<HashSet<_>>();
+
+        dbg!(&protected);
+
+        let empty = self
+            .messages_by_id
+            .values()
+            .filter_map(|message| {
+                if message.content.read(cx).is_empty() {
+                    Some(message.content.id())
+                } else {
+                    None
+                }
+            })
+            .collect::<HashSet<_>>();
+
+        dbg!(&empty);
+
+        let mut remove_excerpts = Vec::new();
+        self.messages.retain(|message| {
+            let is_empty = empty.contains(&message.content.id());
+            let is_protected = dbg!(&protected).contains(&message.content.id());
+            let retain_message = !is_empty || is_protected;
+            if !retain_message {
+                remove_excerpts.push(message.excerpt_id);
+                self.messages_by_id.remove(&message.excerpt_id);
+            }
+            retain_message
+        });
+
+        if !remove_excerpts.is_empty() {
+            self.buffer.update(cx, |buffer, cx| {
+                dbg!(buffer.excerpt_ids());
+                buffer.remove_excerpts(dbg!(remove_excerpts), cx)
+            });
+            cx.notify();
+        }
+    }
+
     fn push_message(&mut self, role: Role, cx: &mut ModelContext<Self>) -> Message {
         let content = cx.add_model(|cx| {
             let mut buffer = Buffer::new(0, "", cx);
@@ -578,6 +631,7 @@ impl Assistant {
         });
 
         let message = Message {
+            excerpt_id,
             role,
             content: content.clone(),
             sent_at: Local::now(),
@@ -657,8 +711,14 @@ impl AssistantEditor {
             );
             editor
         });
+
+        let _subscriptions = vec![
+            cx.observe(&assistant, |_, _, cx| cx.notify()),
+            cx.subscribe(&editor, Self::handle_editor_event),
+        ];
+
         Self {
-            _subscriptions: vec![cx.observe(&assistant, |_, _, cx| cx.notify())],
+            _subscriptions,
             assistant,
             editor,
         }
@@ -676,6 +736,32 @@ impl AssistantEditor {
         {
             cx.propagate_action();
         }
+    }
+
+    fn handle_editor_event(
+        &mut self,
+        _: ViewHandle<Editor>,
+        event: &editor::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if *event == editor::Event::Edited {
+            self.remove_empty_messages(cx);
+        }
+    }
+
+    // Removes empty messages that don't contain a cursor.
+    fn remove_empty_messages(&mut self, cx: &mut ViewContext<Self>) {
+        let anchored_selections = self.editor.read(cx).selections.disjoint_anchors();
+        let protected_excerpts = anchored_selections
+            .iter()
+            .map(|selection| selection.head().excerpt_id())
+            .collect::<HashSet<_>>();
+
+        dbg!(&protected_excerpts);
+
+        self.assistant.update(cx, |assistant, cx| {
+            assistant.remove_empty_messages(protected_excerpts, cx)
+        });
     }
 
     fn quote_selection(
@@ -804,8 +890,9 @@ impl Item for AssistantEditor {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Message {
+    excerpt_id: ExcerptId,
     role: Role,
     content: ModelHandle<Buffer>,
     sent_at: DateTime<Local>,
