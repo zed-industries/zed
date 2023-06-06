@@ -26,6 +26,7 @@ jobs:
       - name: Install Rust
         run: |
           rustup set profile minimal
+          rustup component add rustfmt
           rustup update stable
 
       - name: Checkout repo
