@@ -1,5 +1,5 @@
 import { ColorScheme } from "../themes/common/colorScheme"
-import { text, border, background } from "./components"
+import { text, border, background, foreground } from "./components"
 import editor from "./editor"
 
 export default function assistant(colorScheme: ColorScheme) {
@@ -14,17 +14,17 @@ export default function assistant(colorScheme: ColorScheme) {
         margin: { bottom: 6, top: 6 },
         background: editor(colorScheme).background
       },
-      user_sender: {
+      userSender: {
         ...text(layer, "sans", "default", { size: "sm", weight: "bold" }),
       },
-      assistant_sender: {
+      assistantSender: {
         ...text(layer, "sans", "accent", { size: "sm", weight: "bold" }),
       },
-      sent_at: {
+      sentAt: {
         margin: { top: 2, left: 8 },
         ...text(layer, "sans", "default", { size: "2xs" }),
       },
-      model_info_container: {
+      modelInfoContainer: {
         margin: { right: 16, top: 4 },
       },
       model: {
@@ -37,7 +37,7 @@ export default function assistant(colorScheme: ColorScheme) {
           background: background(layer, "on", "hovered"),
         }
       },
-      remaining_tokens: {
+      remainingTokens: {
         background: background(layer, "on"),
         border: border(layer, "on", { overlay: true }),
         padding: 4,
@@ -45,13 +45,18 @@ export default function assistant(colorScheme: ColorScheme) {
         cornerRadius: 4,
         ...text(layer, "sans", "positive", { size: "xs" }),
       },
-      no_remaining_tokens: {
+      noRemainingTokens: {
         background: background(layer, "on"),
         border: border(layer, "on", { overlay: true }),
         padding: 4,
         margin: { left: 4 },
         cornerRadius: 4,
         ...text(layer, "sans", "negative", { size: "xs" }),
+      },
+      errorIcon: {
+        margin: { left: 8 },
+        color: foreground(layer, "negative"),
+        width: 12,
       },
       apiKeyEditor: {
           background: background(layer, "on"),
