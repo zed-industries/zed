@@ -20,6 +20,9 @@ export default function assistant(colorScheme: ColorScheme) {
       assistantSender: {
         ...text(layer, "sans", "accent", { size: "sm", weight: "bold" }),
       },
+      systemSender: {
+        ...text(layer, "sans", "variant", { size: "sm", weight: "bold" }),
+      },
       sentAt: {
         margin: { top: 2, left: 8 },
         ...text(layer, "sans", "default", { size: "2xs" }),
