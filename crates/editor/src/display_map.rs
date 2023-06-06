@@ -30,6 +30,8 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+use self::editor_addition_map::InlayHintToRender;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
     Folded,
@@ -284,6 +286,25 @@ impl DisplayMap {
     pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    pub fn set_inlay_hints(&self, new_hints: &[project::InlayHint], cx: &mut ModelContext<Self>) {
+        let multi_buffer = self.buffer.read(cx);
+        self.editor_addition_map.set_inlay_hints(
+            new_hints
+                .into_iter()
+                .filter_map(|hint| {
+                    let buffer = multi_buffer.buffer(hint.buffer_id)?.read(cx);
+                    let snapshot = buffer.snapshot();
+                    Some(InlayHintToRender {
+                        position: editor_addition_map::EditorAdditionPoint(
+                            text::ToPoint::to_point(&hint.position, &snapshot),
+                        ),
+                        text: hint.text().trim_end().into(),
+                    })
+                })
+                .collect(),
+        )
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {

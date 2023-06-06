@@ -761,11 +761,13 @@ mod tests {
         let (suggestion_map, _) = SuggestionMap::new(fold_snapshot);
         let (suggestion_snapshot, _) = suggestion_map.randomly_mutate(&mut rng);
         log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (editor_addition_map, _) = EditorAdditionMap::new(suggestion_snapshot.clone());
-        let (suggestion_snapshot, _) = editor_addition_map.randomly_mutate(&mut rng);
-        log::info!("EditorAdditionMap text: {:?}", suggestion_snapshot.text());
+        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot.clone());
+        log::info!(
+            "EditorAdditionMap text: {:?}",
+            editor_addition_snapshot.text()
+        );
 
-        let (tab_map, _) = TabMap::new(suggestion_snapshot.clone(), tab_size);
+        let (tab_map, _) = TabMap::new(editor_addition_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
         let text = text::Rope::from(tabs_snapshot.text().as_str());
@@ -803,7 +805,7 @@ mod tests {
             );
 
             let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
-            if tab_size.get() > 1 && suggestion_snapshot.text().contains('\t') {
+            if tab_size.get() > 1 && editor_addition_snapshot.text().contains('\t') {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
             }

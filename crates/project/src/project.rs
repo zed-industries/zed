@@ -29,6 +29,7 @@ use gpui::{
     AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
     ModelHandle, Task, WeakModelHandle,
 };
+use itertools::Itertools;
 use language::{
     language_settings::{language_settings, FormatOnSave, Formatter},
     point_to_lsp,
@@ -320,46 +321,56 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Location {
     pub buffer: ModelHandle<Buffer>,
     pub range: Range<language::Anchor>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
+    pub buffer_id: u64,
     pub position: Anchor,
     pub label: InlayHintLabel,
     pub kind: Option<String>,
     pub tooltip: Option<InlayHintTooltip>,
 }
 
-#[derive(Debug, Clone)]
+impl InlayHint {
+    pub fn text(&self) -> String {
+        match &self.label {
+            InlayHintLabel::String(s) => s.to_owned(),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &part.value).join(""),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintLabel {
     String(String),
     LabelParts(Vec<InlayHintLabelPart>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
     pub location: Option<Location>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintLabelPartTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkupContent {
     pub kind: String,
     pub value: String,

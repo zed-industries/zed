@@ -10,17 +10,20 @@ use super::{
     TextHighlights,
 };
 use gpui::fonts::HighlightStyle;
-use language::{Chunk, Edit, Point, TextSummary};
+use language::{Chunk, Edit, Point, Rope, TextSummary};
+use parking_lot::Mutex;
+use project::InlayHint;
 use rand::Rng;
 use sum_tree::Bias;
 
-pub struct EditorAdditionMap;
+pub struct EditorAdditionMap(Mutex<EditorAdditionSnapshot>);
 
 #[derive(Clone)]
 pub struct EditorAdditionSnapshot {
     // TODO kb merge these two together
     pub suggestion_snapshot: SuggestionSnapshot,
     pub version: usize,
+    hints: Vec<InlayHintToRender>,
 }
 
 pub type EditorAdditionEdit = Edit<EditorAdditionOffset>;
@@ -63,6 +66,12 @@ pub struct EditorAdditionChunks<'a> {
     _z: &'a std::marker::PhantomData<()>,
 }
 
+#[derive(Clone)]
+pub struct InlayHintToRender {
+    pub(super) position: EditorAdditionPoint,
+    pub(super) text: Rope,
+}
+
 impl<'a> Iterator for EditorAdditionChunks<'a> {
     type Item = Chunk<'a>;
 
@@ -95,7 +104,12 @@ impl EditorAdditionPoint {
 
 impl EditorAdditionMap {
     pub fn new(suggestion_snapshot: SuggestionSnapshot) -> (Self, EditorAdditionSnapshot) {
-        todo!("TODO kb")
+        let snapshot = EditorAdditionSnapshot {
+            suggestion_snapshot: suggestion_snapshot.clone(),
+            version: 0,
+            hints: Vec::new(),
+        };
+        (Self(Mutex::new(snapshot.clone())), snapshot)
     }
 
     pub fn sync(
@@ -103,14 +117,24 @@ impl EditorAdditionMap {
         suggestion_snapshot: SuggestionSnapshot,
         suggestion_edits: Vec<SuggestionEdit>,
     ) -> (EditorAdditionSnapshot, Vec<EditorAdditionEdit>) {
-        todo!("TODO kb")
+        let mut snapshot = self.0.lock();
+
+        if snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
+            snapshot.version += 1;
+        }
+
+        let editor_addition_edits = Vec::new();
+        {
+            todo!("TODO kb")
+        }
+
+        snapshot.suggestion_snapshot = suggestion_snapshot;
+
+        (snapshot.clone(), editor_addition_edits)
     }
 
-    pub fn randomly_mutate(
-        &self,
-        rng: &mut impl Rng,
-    ) -> (EditorAdditionSnapshot, Vec<EditorAdditionEdit>) {
-        todo!("TODO kb")
+    pub fn set_inlay_hints(&self, new_hints: Vec<InlayHintToRender>) {
+        self.0.lock().hints = new_hints;
     }
 }
 

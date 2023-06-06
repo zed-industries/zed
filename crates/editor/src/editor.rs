@@ -1169,11 +1169,19 @@ impl InlayHintState {
         Self::first_timestamp_newer(timestamp, &current_timestamp)
     }
 
-    fn update_if_newer(&self, new_hints: Vec<InlayHint>, new_timestamp: HashMap<usize, Global>) {
+    fn update_if_newer(
+        &self,
+        new_hints: Vec<InlayHint>,
+        new_timestamp: HashMap<usize, Global>,
+    ) -> bool {
         let mut guard = self.0.write();
         if Self::first_timestamp_newer(&new_timestamp, &guard.0) {
             guard.0 = new_timestamp;
             guard.1 = new_hints;
+
+            true
+        } else {
+            false
         }
     }
 
@@ -2688,7 +2696,7 @@ impl Editor {
 
         let inlay_hints_storage = Arc::clone(&self.inlay_hints);
         if inlay_hints_storage.is_newer(&new_timestamp) {
-            cx.spawn(|_, _| async move {
+            cx.spawn(|editor, mut cx| async move {
                 let mut new_hints = Vec::new();
                 for task_result in futures::future::join_all(hint_fetch_tasks).await {
                     match task_result {
@@ -2696,7 +2704,18 @@ impl Editor {
                         Err(e) => error!("Failed to update hints for buffer: {e:#}"),
                     }
                 }
-                inlay_hints_storage.update_if_newer(new_hints, new_timestamp);
+
+                // TODO kb another odd clone, can be avoid all this? hide hints behind a handle?
+                if inlay_hints_storage.update_if_newer(new_hints.clone(), new_timestamp) {
+                    editor
+                        .update(&mut cx, |editor, cx| {
+                            editor.display_map.update(cx, |display_map, cx| {
+                                display_map.set_inlay_hints(&new_hints, cx)
+                            });
+                        })
+                        .log_err()
+                        .unwrap_or(())
+                }
             })
             .detach();
         }
