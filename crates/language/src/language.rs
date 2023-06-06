@@ -771,6 +771,7 @@ impl LanguageRegistry {
                                         }
                                     }
                                     Err(err) => {
+                                        log::error!("failed to load language {name} - {err}");
                                         let mut state = this.state.write();
                                         state.mark_language_loaded(id);
                                         if let Some(mut txs) = state.loading_languages.remove(&id) {
@@ -1059,34 +1060,22 @@ impl Language {
 
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
-            self = self
-                .with_highlights_query(query.as_ref())
-                .expect("failed to evaluate highlights query");
+            self = self.with_highlights_query(query.as_ref())?;
         }
         if let Some(query) = queries.brackets {
-            self = self
-                .with_brackets_query(query.as_ref())
-                .expect("failed to load brackets query");
+            self = self.with_brackets_query(query.as_ref())?;
         }
         if let Some(query) = queries.indents {
-            self = self
-                .with_indents_query(query.as_ref())
-                .expect("failed to load indents query");
+            self = self.with_indents_query(query.as_ref())?;
         }
         if let Some(query) = queries.outline {
-            self = self
-                .with_outline_query(query.as_ref())
-                .expect("failed to load outline query");
+            self = self.with_outline_query(query.as_ref())?;
         }
         if let Some(query) = queries.injections {
-            self = self
-                .with_injection_query(query.as_ref())
-                .expect("failed to load injection query");
+            self = self.with_injection_query(query.as_ref())?;
         }
         if let Some(query) = queries.overrides {
-            self = self
-                .with_override_query(query.as_ref())
-                .expect("failed to load override query");
+            self = self.with_override_query(query.as_ref())?;
         }
         Ok(self)
     }
