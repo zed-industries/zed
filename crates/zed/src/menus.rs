@@ -16,6 +16,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                         MenuItem::action("Open Key Bindings", super::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
+                        MenuItem::action("Open Local Settings", super::OpenLocalSettings),
                         MenuItem::action("Select Theme", theme_selector::Toggle),
                     ],
                 }),
