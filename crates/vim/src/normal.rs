@@ -756,7 +756,7 @@ mod test {
                 ˇ
                 The quick"})
             .await;
-        // Indoc disallows trailing whitspace.
+        // Indoc disallows trailing whitespace.
         cx.assert("   ˇ \nThe quick").await;
     }
 

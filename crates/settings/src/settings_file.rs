@@ -1,11 +1,10 @@
-use crate::{settings_store::SettingsStore, Setting, DEFAULT_SETTINGS_ASSET_PATH};
+use crate::{settings_store::SettingsStore, Setting};
 use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{executor::Background, AppContext, AssetSource};
+use gpui::{executor::Background, AppContext};
 use std::{
-    borrow::Cow,
     io::ErrorKind,
     path::{Path, PathBuf},
     str,
@@ -28,19 +27,12 @@ pub fn get_local<'a, T: Setting>(location: Option<(usize, &Path)>, cx: &'a AppCo
     cx.global::<SettingsStore>().get(location)
 }
 
-pub fn default_settings() -> Cow<'static, str> {
-    match Assets.load(DEFAULT_SETTINGS_ASSET_PATH).unwrap() {
-        Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
-        Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-    }
-}
-
 pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {
     let mut value = crate::settings_store::parse_json_with_comments::<serde_json::Value>(
-        default_settings().as_ref(),
+        crate::default_settings().as_ref(),
     )
     .unwrap();
     util::merge_non_null_json_value_into(

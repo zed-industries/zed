@@ -1,4 +1,4 @@
-// Allow binary to be called Zed for a nice application menu when running executable direcly
+// Allow binary to be called Zed for a nice application menu when running executable directly
 #![allow(non_snake_case)]
 
 use anyhow::{anyhow, Context, Result};
@@ -32,6 +32,7 @@ use std::{
     ffi::OsStr,
     fs::OpenOptions,
     io::Write as _,
+    ops::Not,
     os::unix::prelude::OsStrExt,
     panic,
     path::{Path, PathBuf},
@@ -55,9 +56,7 @@ use fs::RealFs;
 #[cfg(debug_assertions)]
 use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::{
-    item::ItemHandle, notifications::NotifyResultExt, AppState, OpenSettings, Workspace,
-};
+use workspace::{item::ItemHandle, notifications::NotifyResultExt, AppState, Workspace};
 use zed::{
     self, build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
 };
@@ -70,10 +69,7 @@ fn main() {
     log::info!("========== starting zed ==========");
     let mut app = gpui::App::new(Assets).unwrap();
 
-    let app_version = ZED_APP_VERSION
-        .or_else(|| app.platform().app_version().ok())
-        .map_or("dev".to_string(), |v| v.to_string());
-    init_panic_hook(app_version);
+    init_panic_hook(&app);
 
     app.background();
 
@@ -173,11 +169,6 @@ fn main() {
         .detach();
 
         client.telemetry().start();
-        client.telemetry().report_mixpanel_event(
-            "start app",
-            Default::default(),
-            *settings::get::<TelemetrySettings>(cx),
-        );
 
         let app_state = Arc::new(AppState {
             languages,
@@ -374,33 +365,96 @@ struct Panic {
     #[serde(skip_serializing_if = "Option::is_none")]
     location_data: Option<LocationData>,
     backtrace: Vec<String>,
-    // TODO
-    // stripped_backtrace: String,
-    time: u128,
+    app_version: String,
+    release_channel: String,
+    os_name: String,
+    os_version: Option<String>,
+    architecture: String,
+    panicked_on: u128,
+    identifying_backtrace: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
 struct PanicRequest {
     panic: Panic,
-    version: String,
     token: String,
 }
 
-fn init_panic_hook(app_version: String) {
+fn init_panic_hook(app: &App) {
     let is_pty = stdout_is_a_pty();
+    let platform = app.platform();
+
     panic::set_hook(Box::new(move |info| {
-        let backtrace = Backtrace::new();
+        let app_version = ZED_APP_VERSION
+            .or_else(|| platform.app_version().ok())
+            .map_or("dev".to_string(), |v| v.to_string());
 
         let thread = thread::current();
         let thread = thread.name().unwrap_or("<unnamed>");
 
-        let payload = match info.payload().downcast_ref::<&'static str>() {
-            Some(s) => *s,
-            None => match info.payload().downcast_ref::<String>() {
-                Some(s) => &**s,
-                None => "Box<Any>",
-            },
-        };
+        let payload = info.payload();
+        let payload = None
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .or_else(|| payload.downcast_ref::<String>().map(|s| s.clone()))
+            .unwrap_or_else(|| "Box<Any>".to_string());
+
+        let backtrace = Backtrace::new();
+        let backtrace = backtrace
+            .frames()
+            .iter()
+            .filter_map(|frame| {
+                let symbol = frame.symbols().first()?;
+                let path = symbol.filename()?;
+                Some((path, symbol.lineno(), format!("{:#}", symbol.name()?)))
+            })
+            .collect::<Vec<_>>();
+
+        let this_file_path = Path::new(file!());
+
+        // Find the first frame in the backtrace for this panic hook itself. Exclude
+        // that frame and all frames before it.
+        let mut start_frame_ix = 0;
+        let mut codebase_root_path = None;
+        for (ix, (path, _, _)) in backtrace.iter().enumerate() {
+            if path.ends_with(this_file_path) {
+                start_frame_ix = ix + 1;
+                codebase_root_path = path.ancestors().nth(this_file_path.components().count());
+                break;
+            }
+        }
+
+        // Exclude any subsequent frames inside of rust's panic handling system.
+        while let Some((path, _, _)) = backtrace.get(start_frame_ix) {
+            if path.starts_with("/rustc") {
+                start_frame_ix += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Build two backtraces:
+        // * one for display, which includes symbol names for all frames, and files
+        //   and line numbers for symbols in this codebase
+        // * one for identification and de-duplication, which only includes symbol
+        //   names for symbols in this codebase.
+        let mut display_backtrace = Vec::new();
+        let mut identifying_backtrace = Vec::new();
+        for (path, line, symbol) in &backtrace[start_frame_ix..] {
+            display_backtrace.push(symbol.clone());
+
+            if let Some(codebase_root_path) = &codebase_root_path {
+                if let Ok(suffix) = path.strip_prefix(&codebase_root_path) {
+                    identifying_backtrace.push(symbol.clone());
+
+                    let display_path = suffix.to_string_lossy();
+                    if let Some(line) = line {
+                        display_backtrace.push(format!("    {display_path}:{line}"));
+                    } else {
+                        display_backtrace.push(format!("    {display_path}"));
+                    }
+                }
+            }
+        }
 
         let panic_data = Panic {
             thread: thread.into(),
@@ -409,15 +463,23 @@ fn init_panic_hook(app_version: String) {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            backtrace: format!("{:?}", backtrace)
-                .split("\n")
-                .map(|line| line.to_string())
-                .collect(),
-            // modified_backtrace: None,
-            time: SystemTime::now()
+            app_version: app_version.clone(),
+            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            os_name: platform.os_name().into(),
+            os_version: platform
+                .os_version()
+                .ok()
+                .map(|os_version| os_version.to_string()),
+            architecture: env::consts::ARCH.into(),
+            panicked_on: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
+            backtrace: display_backtrace,
+            identifying_backtrace: identifying_backtrace
+                .is_empty()
+                .not()
+                .then_some(identifying_backtrace),
         };
 
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
@@ -427,8 +489,7 @@ fn init_panic_hook(app_version: String) {
             }
 
             let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path =
-                paths::LOGS_DIR.join(format!("zed-{}-{}.panic", app_version, timestamp));
+            let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
             let panic_file = std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -463,15 +524,9 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                         continue;
                     };
 
-                    let mut components = filename.split('-');
-                    if components.next() != Some("zed") {
+                    if !filename.starts_with("zed") {
                         continue;
                     }
-                    let version = if let Some(version) = components.next() {
-                        version
-                    } else {
-                        continue;
-                    };
 
                     if telemetry_settings.diagnostics {
                         let panic_data_text = smol::fs::read_to_string(&child_path)
@@ -480,7 +535,6 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
 
                         let body = serde_json::to_string(&PanicRequest {
                             panic: serde_json::from_str(&panic_data_text)?,
-                            version: version.to_string(),
                             token: ZED_SECRET_CLIENT_TOKEN.into(),
                         })
                         .unwrap();
@@ -821,6 +875,6 @@ pub fn background_actions() -> &'static [(&'static str, &'static dyn Action)] {
         ("Go to file", &file_finder::Toggle),
         ("Open command palette", &command_palette::Toggle),
         ("Open recent projects", &recent_projects::OpenRecent),
-        ("Change your settings", &OpenSettings),
+        ("Change your settings", &zed::OpenSettings),
     ]
 }

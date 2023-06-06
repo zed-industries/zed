@@ -160,7 +160,7 @@ impl<M: Migrator> ThreadSafeConnection<M> {
 
         // Create a one shot channel for the result of the queued write
         // so we can await on the result
-        let (sender, reciever) = oneshot::channel();
+        let (sender, receiver) = oneshot::channel();
 
         let thread_safe_connection = (*self).clone();
         write_channel(Box::new(move || {
@@ -168,7 +168,7 @@ impl<M: Migrator> ThreadSafeConnection<M> {
             let result = connection.with_write(|connection| callback(connection));
             sender.send(result).ok();
         }));
-        reciever.map(|response| response.expect("Write queue unexpectedly closed"))
+        receiver.map(|response| response.expect("Write queue unexpectedly closed"))
     }
 
     pub(crate) fn create_connection(
@@ -245,10 +245,10 @@ pub fn background_thread_queue() -> WriteQueueConstructor {
     use std::sync::mpsc::channel;
 
     Box::new(|| {
-        let (sender, reciever) = channel::<QueuedWrite>();
+        let (sender, receiver) = channel::<QueuedWrite>();
 
         thread::spawn(move || {
-            while let Ok(write) = reciever.recv() {
+            while let Ok(write) = receiver.recv() {
                 write()
             }
         });

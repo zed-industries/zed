@@ -476,7 +476,7 @@ message Symbol {
     string name = 4;
     int32 kind = 5;
     string path = 6;
-    // Cannot use generate anchors for unopend files,
+    // Cannot use generate anchors for unopened files,
     // so we are forced to use point coords instead
     PointUtf16 start = 7;
     PointUtf16 end = 8;

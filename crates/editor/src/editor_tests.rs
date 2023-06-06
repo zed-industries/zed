@@ -9,7 +9,8 @@ use gpui::{
     executor::Deterministic,
     geometry::{rect::RectF, vector::vec2f},
     platform::{WindowBounds, WindowOptions},
-    serde_json, TestAppContext,
+    serde_json::{self, json},
+    TestAppContext,
 };
 use indoc::indoc;
 use language::{
@@ -3108,6 +3109,57 @@ async fn test_select_next(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_previous(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    {
+        // `Select previous` without a selection (selects wordwise)
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("abc\nˇabc abc\ndefabc\nabc");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
+
+        cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+        cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
+
+        cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+        cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\n«abcˇ»");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+    }
+    {
+        // `Select previous` with a selection
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+
+        cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
+        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+
+        cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
+        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+    }
+}
+
+#[gpui::test]
 async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -4270,7 +4322,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // Set rust language override and assert overriden tabsize is sent to language server
+    // Set rust language override and assert overridden tabsize is sent to language server
     update_test_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
@@ -4384,7 +4436,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // Set rust language override and assert overriden tabsize is sent to language server
+    // Set rust language override and assert overridden tabsize is sent to language server
     update_test_settings(cx, |settings| {
         settings.languages.insert(
             "Rust".into(),
@@ -4725,7 +4777,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
                     two
                     threeˇ
                 "},
-                "overlapping aditional edit",
+                "overlapping additional edit",
             ),
             (
                 indoc! {"

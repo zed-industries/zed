@@ -252,8 +252,20 @@
           "replace_newest": false
         }
       ],
+      "ctrl-cmd-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ],
       "cmd-k cmd-d": [
         "editor::SelectNext",
+        {
+          "replace_newest": true
+        }
+      ],
+      "cmd-k ctrl-cmd-d": [
+        "editor::SelectPrevious",
         {
           "replace_newest": true
         }
@@ -506,7 +518,7 @@
         "terminal::SendText",
         "\u0001"
       ],
-      // Terminal.app compatability
+      // Terminal.app compatibility
       "alt-left": [
         "terminal::SendText",
         "\u001bb"

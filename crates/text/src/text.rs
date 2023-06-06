@@ -1749,6 +1749,12 @@ impl BufferSnapshot {
         self.visible_text.bytes_in_range(start..end)
     }
 
+    pub fn reversed_bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes<'_> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        self.visible_text.reversed_bytes_in_range(start..end)
+    }
+
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'_> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);

@@ -26,6 +26,12 @@
           "replace_newest": false
         }
       ],
+      "ctrl-cmd-g": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ],
       "cmd-/": [
         "editor::ToggleComments",
         {

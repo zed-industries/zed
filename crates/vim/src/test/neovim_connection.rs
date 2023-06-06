@@ -29,7 +29,7 @@ use tokio::{
 use crate::state::Mode;
 use collections::VecDeque;
 
-// Neovim doesn't like to be started simultaneously from multiple threads. We use thsi lock
+// Neovim doesn't like to be started simultaneously from multiple threads. We use this lock
 // to ensure we are only constructing one neovim connection at a time.
 #[cfg(feature = "neovim")]
 lazy_static! {

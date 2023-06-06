@@ -207,7 +207,7 @@ impl LspAdapter for EsLintLspAdapter {
         http: Arc<dyn HttpClient>,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         // At the time of writing the latest vscode-eslint release was released in 2020 and requires
-        // special custom LSP protocol extensions be handled to fully initalize. Download the latest
+        // special custom LSP protocol extensions be handled to fully initialize. Download the latest
         // prerelease instead to sidestep this issue
         let release = latest_github_release("microsoft/vscode-eslint", true, http).await?;
         Ok(Box::new(GitHubLspBinaryVersion {

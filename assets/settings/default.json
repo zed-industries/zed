@@ -253,7 +253,7 @@
     // copy to the system clipboard.
     "copy_on_select": false,
     // Any key-value pairs added to this list will be added to the terminal's
-    // enviroment. Use `:` to seperate multiple values.
+    // environment. Use `:` to separate multiple values.
     "env": {
       // "KEY": "value1:value2"
     },

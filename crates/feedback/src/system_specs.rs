@@ -6,6 +6,8 @@ use std::{env, fmt::Display};
 use sysinfo::{System, SystemExt};
 use util::channel::ReleaseChannel;
 
+// TODO: Move this file out of feedback and into a more general place
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemSpecs {
     #[serde(serialize_with = "serialize_app_version")]

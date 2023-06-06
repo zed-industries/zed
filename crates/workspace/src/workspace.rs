@@ -15,7 +15,6 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
-use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
@@ -83,7 +82,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, paths, ResultExt};
+use util::{async_iife, ResultExt};
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -132,8 +131,6 @@ actions!(
         ToggleBottomDock,
     ]
 );
-
-actions!(zed, [OpenSettings]);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -294,17 +291,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
     });
-
-    cx.add_action(
-        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            create_and_open_local_file(&paths::SETTINGS, cx, || {
-                settings::initial_user_settings_content(&Assets)
-                    .as_ref()
-                    .into()
-            })
-            .detach_and_log_err(cx);
-        },
-    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -765,25 +751,21 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let window_bounds_override =
-                ZED_WINDOW_POSITION
-                    .zip(*ZED_WINDOW_SIZE)
-                    .map(|(position, size)| {
-                        WindowBounds::Fixed(RectF::new(
-                            cx.platform().screens()[0].bounds().origin() + position,
-                            size,
-                        ))
-                    });
-
-            let build_workspace = |cx: &mut ViewContext<Workspace>| {
-                Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
-            };
-
             let workspace = requesting_window_id
                 .and_then(|window_id| {
-                    cx.update(|cx| cx.replace_root_view(window_id, |cx| build_workspace(cx)))
+                    cx.update(|cx| {
+                        cx.replace_root_view(window_id, |cx| {
+                            Workspace::new(
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        })
+                    })
                 })
                 .unwrap_or_else(|| {
+                    let window_bounds_override = window_bounds_env_override(&cx);
                     let (bounds, display) = if let Some(bounds) = window_bounds_override {
                         (Some(bounds), None)
                     } else {
@@ -819,7 +801,14 @@ impl Workspace {
                     // Use the serialized workspace to construct the new window
                     cx.add_window(
                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                        |cx| build_workspace(cx),
+                        |cx| {
+                            Workspace::new(
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        },
                     )
                     .1
                 });
@@ -3120,6 +3109,17 @@ impl Workspace {
     }
 }
 
+fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
+    ZED_WINDOW_POSITION
+        .zip(*ZED_WINDOW_SIZE)
+        .map(|(position, size)| {
+            WindowBounds::Fixed(RectF::new(
+                cx.platform().screens()[0].bounds().origin() + position,
+                size,
+            ))
+        })
+}
+
 async fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     workspace: &WeakViewHandle<Workspace>,
@@ -3652,8 +3652,13 @@ pub fn join_remote_project(
                 })
                 .await?;
 
+            let window_bounds_override = window_bounds_env_override(&cx);
             let (_, workspace) = cx.add_window(
-                (app_state.build_window_options)(None, None, cx.platform().as_ref()),
+                (app_state.build_window_options)(
+                    window_bounds_override,
+                    None,
+                    cx.platform().as_ref(),
+                ),
                 |cx| Workspace::new(0, project, app_state.clone(), cx),
             );
             (app_state.initialize_workspace)(
@@ -4434,7 +4439,7 @@ mod tests {
             assert!(!panel.has_focus(cx));
         });
 
-        // Transfering focus back to the panel keeps it zoomed
+        // Transferring focus back to the panel keeps it zoomed
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_panel_focus::<TestPanel>(cx);
         });

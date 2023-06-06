@@ -18,4 +18,4 @@ metal = "0.21.0"
 objc = "0.2"
 
 [build-dependencies]
-bindgen = "0.59.2"
+bindgen = "0.65.1"

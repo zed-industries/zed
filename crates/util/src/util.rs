@@ -9,6 +9,7 @@ pub mod test;
 use std::{
     cmp::{self, Ordering},
     ops::{AddAssign, Range, RangeInclusive},
+    panic::Location,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -129,11 +130,13 @@ where
 {
     type Ok = T;
 
+    #[track_caller]
     fn log_err(self) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log::error!("{:?}", error);
+                let caller = Location::caller();
+                log::error!("{}:{}: {:?}", caller.file(), caller.line(), error);
                 None
             }
         }

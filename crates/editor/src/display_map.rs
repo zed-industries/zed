@@ -475,7 +475,7 @@ impl DisplaySnapshot {
             })
     }
 
-    /// Returns an iterator of the start positions of the occurances of `target` in the `self` after `from`
+    /// Returns an iterator of the start positions of the occurrences of `target` in the `self` after `from`
     /// Stops if `condition` returns false for any of the character position pairs observed.
     pub fn find_while<'a>(
         &'a self,
@@ -486,7 +486,7 @@ impl DisplaySnapshot {
         Self::find_internal(self.chars_at(from), target.chars().collect(), condition)
     }
 
-    /// Returns an iterator of the end positions of the occurances of `target` in the `self` before `from`
+    /// Returns an iterator of the end positions of the occurrences of `target` in the `self` before `from`
     /// Stops if `condition` returns false for any of the character position pairs observed.
     pub fn reverse_find_while<'a>(
         &'a self,

@@ -84,8 +84,8 @@ impl InputHandler for WindowInputHandler {
 
     fn rect_for_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
         self.app
-            .borrow_mut()
-            .update_window(self.window_id, |cx| cx.rect_for_text_range(range_utf16))
+            .borrow()
+            .read_window(self.window_id, |cx| cx.rect_for_text_range(range_utf16))
             .flatten()
     }
 }
