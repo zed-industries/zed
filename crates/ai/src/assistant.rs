@@ -392,6 +392,10 @@ impl Panel for AssistantPanel {
     }
 }
 
+enum AssistantEvent {
+    MessagesEdited { ids: Vec<ExcerptId> },
+}
+
 struct Assistant {
     buffer: ModelHandle<MultiBuffer>,
     messages: Vec<Message>,
@@ -408,7 +412,7 @@ struct Assistant {
 }
 
 impl Entity for Assistant {
-    type Event = ();
+    type Event = AssistantEvent;
 }
 
 impl Assistant {
@@ -448,6 +452,9 @@ impl Assistant {
             editor::multi_buffer::Event::ExcerptsAdded { .. }
             | editor::multi_buffer::Event::ExcerptsRemoved { .. }
             | editor::multi_buffer::Event::Edited => self.count_remaining_tokens(cx),
+            editor::multi_buffer::Event::ExcerptsEdited { ids } => {
+                cx.emit(AssistantEvent::MessagesEdited { ids: ids.clone() });
+            }
             _ => {}
         }
     }
@@ -547,52 +554,30 @@ impl Assistant {
 
     fn remove_empty_messages<'a>(
         &mut self,
-        protected: impl IntoIterator<Item = ExcerptId>,
+        excerpts: HashSet<ExcerptId>,
+        protected_offsets: HashSet<usize>,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!(&self.messages_by_id);
-
-        let protected = protected
-            .into_iter()
-            .filter_map(|excerpt_id| {
-                self.messages_by_id
-                    .get(&excerpt_id)
-                    .map(|message| message.content.id())
-            })
-            .collect::<HashSet<_>>();
-
-        dbg!(&protected);
-
-        let empty = self
-            .messages_by_id
-            .values()
-            .filter_map(|message| {
-                if message.content.read(cx).is_empty() {
-                    Some(message.content.id())
-                } else {
-                    None
-                }
-            })
-            .collect::<HashSet<_>>();
-
-        dbg!(&empty);
-
-        let mut remove_excerpts = Vec::new();
+        let mut offset = 0;
+        let mut excerpts_to_remove = Vec::new();
         self.messages.retain(|message| {
-            let is_empty = empty.contains(&message.content.id());
-            let is_protected = dbg!(&protected).contains(&message.content.id());
-            let retain_message = !is_empty || is_protected;
-            if !retain_message {
-                remove_excerpts.push(message.excerpt_id);
+            let range = offset..offset + message.content.read(cx).len();
+            offset = range.end + 1;
+            if range.is_empty()
+                && !protected_offsets.contains(&range.start)
+                && excerpts.contains(&message.excerpt_id)
+            {
+                excerpts_to_remove.push(message.excerpt_id);
                 self.messages_by_id.remove(&message.excerpt_id);
+                false
+            } else {
+                true
             }
-            retain_message
         });
 
-        if !remove_excerpts.is_empty() {
+        if !excerpts_to_remove.is_empty() {
             self.buffer.update(cx, |buffer, cx| {
-                dbg!(buffer.excerpt_ids());
-                buffer.remove_excerpts(dbg!(remove_excerpts), cx)
+                buffer.remove_excerpts(excerpts_to_remove, cx)
             });
             cx.notify();
         }
@@ -714,7 +699,7 @@ impl AssistantEditor {
 
         let _subscriptions = vec![
             cx.observe(&assistant, |_, _, cx| cx.notify()),
-            cx.subscribe(&editor, Self::handle_editor_event),
+            cx.subscribe(&assistant, Self::handle_assistant_event),
         ];
 
         Self {
@@ -738,30 +723,25 @@ impl AssistantEditor {
         }
     }
 
-    fn handle_editor_event(
+    fn handle_assistant_event(
         &mut self,
-        _: ViewHandle<Editor>,
-        event: &editor::Event,
+        assistant: ModelHandle<Assistant>,
+        event: &AssistantEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if *event == editor::Event::Edited {
-            self.remove_empty_messages(cx);
+        match event {
+            AssistantEvent::MessagesEdited { ids } => {
+                let selections = self.editor.read(cx).selections.all::<usize>(cx);
+                let selection_heads = selections
+                    .iter()
+                    .map(|selection| selection.head())
+                    .collect::<HashSet<usize>>();
+                let ids = ids.iter().copied().collect::<HashSet<_>>();
+                assistant.update(cx, |assistant, cx| {
+                    assistant.remove_empty_messages(ids, selection_heads, cx)
+                });
+            }
         }
-    }
-
-    // Removes empty messages that don't contain a cursor.
-    fn remove_empty_messages(&mut self, cx: &mut ViewContext<Self>) {
-        let anchored_selections = self.editor.read(cx).selections.disjoint_anchors();
-        let protected_excerpts = anchored_selections
-            .iter()
-            .map(|selection| selection.head().excerpt_id())
-            .collect::<HashSet<_>>();
-
-        dbg!(&protected_excerpts);
-
-        self.assistant.update(cx, |assistant, cx| {
-            assistant.remove_empty_messages(protected_excerpts, cx)
-        });
     }
 
     fn quote_selection(
