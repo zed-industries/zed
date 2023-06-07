@@ -216,6 +216,11 @@ pub trait File: Send + Sync {
     /// of its worktree, then this method will return the name of the worktree itself.
     fn file_name<'a>(&'a self, cx: &'a AppContext) -> &'a OsStr;
 
+    /// Returns the id of the worktree to which this file belongs.
+    ///
+    /// This is needed for looking up project-specific settings.
+    fn worktree_id(&self) -> usize;
+
     fn is_deleted(&self) -> bool;
 
     fn as_any(&self) -> &dyn Any;
@@ -1802,8 +1807,7 @@ impl BufferSnapshot {
     }
 
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
-        let language_name = self.language_at(position).map(|language| language.name());
-        let settings = language_settings(language_name.as_deref(), cx);
+        let settings = language_settings(self.language_at(position), self.file(), cx);
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2127,8 +2131,7 @@ impl BufferSnapshot {
         position: D,
         cx: &'a AppContext,
     ) -> &'a LanguageSettings {
-        let language = self.language_at(position);
-        language_settings(language.map(|l| l.name()).as_deref(), cx)
+        language_settings(self.language_at(position), self.file.as_ref(), cx)
     }
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
@@ -2250,7 +2253,7 @@ impl BufferSnapshot {
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        self.outline_items_containing(0..self.len(), theme)
+        self.outline_items_containing(0..self.len(), true, theme)
             .map(Outline::new)
     }
 
@@ -2262,6 +2265,7 @@ impl BufferSnapshot {
         let position = position.to_offset(self);
         let mut items = self.outline_items_containing(
             position.saturating_sub(1)..self.len().min(position + 1),
+            false,
             theme,
         )?;
         let mut prev_depth = None;
@@ -2276,6 +2280,7 @@ impl BufferSnapshot {
     fn outline_items_containing(
         &self,
         range: Range<usize>,
+        include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
     ) -> Option<Vec<OutlineItem<Anchor>>> {
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
@@ -2310,7 +2315,10 @@ impl BufferSnapshot {
                 let node_is_name;
                 if capture.index == config.name_capture_ix {
                     node_is_name = true;
-                } else if Some(capture.index) == config.context_capture_ix {
+                } else if Some(capture.index) == config.context_capture_ix
+                    || (Some(capture.index) == config.extra_context_capture_ix
+                        && include_extra_context)
+                {
                     node_is_name = false;
                 } else {
                     continue;
@@ -2337,10 +2345,12 @@ impl BufferSnapshot {
                 buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
                 true,
             );
+            let mut last_buffer_range_end = 0;
             for (buffer_range, is_name) in buffer_ranges {
-                if !text.is_empty() {
+                if !text.is_empty() && buffer_range.start > last_buffer_range_end {
                     text.push(' ');
                 }
+                last_buffer_range_end = buffer_range.end;
                 if is_name {
                     let mut start = text.len();
                     let end = start + buffer_range.len();

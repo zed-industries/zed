@@ -8,9 +8,19 @@
   (arguments
     [
       (identifier) @name
-      (call target: (identifier) @name)
+      (call
+          target: (identifier) @name
+          (arguments
+              "(" @context.extra
+              _* @context.extra
+              ")" @context.extra))
       (binary_operator
-        left: (call target: (identifier) @name)
+        left: (call
+            target: (identifier) @name
+            (arguments
+                "(" @context.extra
+                _* @context.extra
+                ")" @context.extra))
         operator: "when")
     ])
   (#match? @context "^(def|defp|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp)$")) @item

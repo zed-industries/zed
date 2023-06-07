@@ -15,6 +15,7 @@ lazy_static::lazy_static! {
     pub static ref LAST_USERNAME: PathBuf = CONFIG_DIR.join("last-username.txt");
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
+    pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
 }
 
 pub mod legacy {

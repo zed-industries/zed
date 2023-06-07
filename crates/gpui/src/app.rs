@@ -6335,9 +6335,9 @@ mod tests {
     #[crate::test(self)]
     async fn test_labeled_tasks(cx: &mut TestAppContext) {
         assert_eq!(None, cx.update(|cx| cx.active_labeled_tasks().next()));
-        let (mut sender, mut reciever) = postage::oneshot::channel::<()>();
+        let (mut sender, mut receiver) = postage::oneshot::channel::<()>();
         let task = cx
-            .update(|cx| cx.spawn_labeled("Test Label", |_| async move { reciever.recv().await }));
+            .update(|cx| cx.spawn_labeled("Test Label", |_| async move { receiver.recv().await }));
 
         assert_eq!(
             Some("Test Label"),

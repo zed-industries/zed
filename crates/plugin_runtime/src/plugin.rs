@@ -132,7 +132,7 @@ impl PluginBuilder {
             "env",
             &format!("__{}", name),
             move |mut caller: Caller<'_, WasiCtxAlloc>, packed_buffer: u64| {
-                // TODO: use try block once avaliable
+                // TODO: use try block once available
                 let result: Result<(WasiBuffer, Memory, _), Trap> = (|| {
                     // grab a handle to the memory
                     let plugin_memory = match caller.get_export("memory") {
@@ -211,7 +211,7 @@ impl PluginBuilder {
             "env",
             &format!("__{}", name),
             move |mut caller: Caller<'_, WasiCtxAlloc>, packed_buffer: u64| {
-                // TODO: use try block once avaliable
+                // TODO: use try block once available
                 let result: Result<(WasiBuffer, Memory, Vec<u8>), Trap> = (|| {
                     // grab a handle to the memory
                     let plugin_memory = match caller.get_export("memory") {
@@ -297,7 +297,7 @@ pub enum PluginBinary<'a> {
     Precompiled(&'a [u8]),
 }
 
-/// Represents a WebAssembly plugin, with access to the WebAssembly System Inferface.
+/// Represents a WebAssembly plugin, with access to the WebAssembly System Interface.
 /// Build a new plugin using [`PluginBuilder`].
 pub struct Plugin {
     store: Store<WasiCtxAlloc>,
@@ -559,7 +559,7 @@ impl Plugin {
             .ok_or_else(|| anyhow!("Could not grab slice of plugin memory"))?;
 
         // write the argument to linear memory
-        // this returns a (ptr, lentgh) pair
+        // this returns a (ptr, length) pair
         let arg_buffer = Self::bytes_to_buffer(
             self.store.data().alloc_buffer(),
             &mut plugin_memory,
@@ -569,7 +569,7 @@ impl Plugin {
         .await?;
 
         // call the function, passing in the buffer and its length
-        // this returns a ptr to a (ptr, lentgh) pair
+        // this returns a ptr to a (ptr, length) pair
         let result_buffer = handle
             .function
             .call_async(&mut self.store, arg_buffer.into_u64())

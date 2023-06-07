@@ -159,10 +159,7 @@ impl Bundle {
     fn path(&self) -> &Path {
         match self {
             Self::App { app_bundle, .. } => app_bundle,
-            Self::LocalPath {
-                executable: excutable,
-                ..
-            } => excutable,
+            Self::LocalPath { executable, .. } => executable,
         }
     }
 

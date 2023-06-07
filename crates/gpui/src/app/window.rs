@@ -965,10 +965,10 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn rect_for_text_range(&self, range_utf16: Range<usize>) -> Option<RectF> {
-        let root_view_id = self.window.root_view().id();
+        let focused_view_id = self.window.focused_view_id?;
         self.window
             .rendered_views
-            .get(&root_view_id)?
+            .get(&focused_view_id)?
             .rect_for_text_range(range_utf16, self)
             .log_err()
             .flatten()

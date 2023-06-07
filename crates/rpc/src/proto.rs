@@ -236,6 +236,7 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
     (UpdateWorktree, Foreground),
+    (UpdateWorktreeSettings, Foreground),
     (UpdateDiffBase, Foreground),
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
@@ -345,6 +346,7 @@ entity_messages!(
     UpdateProject,
     UpdateProjectCollaborator,
     UpdateWorktree,
+    UpdateWorktreeSettings,
     UpdateDiffBase
 );
 

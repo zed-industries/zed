@@ -196,7 +196,7 @@ impl FollowableItem for Editor {
             singleton: buffer.is_singleton(),
             title: (!buffer.is_singleton()).then(|| buffer.title(cx).into()),
             excerpts,
-            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.top_anchor)),
+            scroll_top_anchor: Some(serialize_anchor(&scroll_anchor.anchor)),
             scroll_x: scroll_anchor.offset.x(),
             scroll_y: scroll_anchor.offset.y(),
             selections: self
@@ -253,7 +253,7 @@ impl FollowableItem for Editor {
                 }
                 Event::ScrollPositionChanged { .. } => {
                     let scroll_anchor = self.scroll_manager.anchor();
-                    update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.top_anchor));
+                    update.scroll_top_anchor = Some(serialize_anchor(&scroll_anchor.anchor));
                     update.scroll_x = scroll_anchor.offset.x();
                     update.scroll_y = scroll_anchor.offset.y();
                     true
@@ -412,7 +412,7 @@ async fn update_editor_from_message(
         } else if let Some(scroll_top_anchor) = scroll_top_anchor {
             editor.set_scroll_anchor_remote(
                 ScrollAnchor {
-                    top_anchor: scroll_top_anchor,
+                    anchor: scroll_top_anchor,
                     offset: vec2f(message.scroll_x, message.scroll_y),
                 },
                 cx,
@@ -510,8 +510,8 @@ impl Item for Editor {
             };
 
             let mut scroll_anchor = data.scroll_anchor;
-            if !buffer.can_resolve(&scroll_anchor.top_anchor) {
-                scroll_anchor.top_anchor = buffer.anchor_before(
+            if !buffer.can_resolve(&scroll_anchor.anchor) {
+                scroll_anchor.anchor = buffer.anchor_before(
                     buffer.clip_point(Point::new(data.scroll_top_row, 0), Bias::Left),
                 );
             }
@@ -1229,6 +1229,10 @@ mod tests {
 
         fn file_name<'a>(&'a self, _: &'a gpui::AppContext) -> &'a std::ffi::OsStr {
             unimplemented!()
+        }
+
+        fn worktree_id(&self) -> usize {
+            0
         }
 
         fn is_deleted(&self) -> bool {

@@ -193,7 +193,7 @@ fn test_line_len() {
 }
 
 #[test]
-fn test_common_prefix_at_positionn() {
+fn test_common_prefix_at_position() {
     let text = "a = str; b = δα";
     let buffer = Buffer::new(0, 0, text.into());
 
@@ -216,7 +216,7 @@ fn test_common_prefix_at_positionn() {
         empty_range_after(text, "str"),
     );
 
-    // prefix matching is case insenstive.
+    // prefix matching is case insensitive.
     assert_eq!(
         buffer.common_prefix_at(offset1, "Strαngε"),
         range_of(text, "str"),

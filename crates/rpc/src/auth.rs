@@ -42,7 +42,7 @@ impl PublicKey {
 }
 
 impl PrivateKey {
-    /// Decrypt a base64-encoded string that was encrypted by the correspoding public key.
+    /// Decrypt a base64-encoded string that was encrypted by the corresponding public key.
     pub fn decrypt_string(&self, encrypted_string: &str) -> Result<String> {
         let encrypted_bytes = base64::decode_config(encrypted_string, base64::URL_SAFE)
             .context("failed to base64-decode encrypted string")?;

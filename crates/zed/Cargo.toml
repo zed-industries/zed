@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.89.0"
+version = "0.90.0"
 publish = false
 
 [lib]
@@ -17,7 +17,6 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator = { path = "../activity_indicator" }
-assets = { path = "../assets" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
@@ -107,7 +106,7 @@ tree-sitter = "0.20"
 tree-sitter-c = "0.20.1"
 tree-sitter-cpp = "0.20.0"
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
-tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "05e3631c6a0701c1fa518b0fee7be95a2ceef5e2" }
+tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "4ba9dab6e2602960d95b2b625f3386c27e08084e" }
 tree-sitter-embedded-template = "0.20.0"
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }

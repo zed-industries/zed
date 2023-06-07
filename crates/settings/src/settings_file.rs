@@ -1,10 +1,15 @@
-use crate::{settings_store::SettingsStore, Setting, DEFAULT_SETTINGS_ASSET_PATH};
+use crate::{settings_store::SettingsStore, Setting};
 use anyhow::Result;
-use assets::Assets;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{executor::Background, AppContext, AssetSource};
-use std::{borrow::Cow, io::ErrorKind, path::PathBuf, str, sync::Arc, time::Duration};
+use gpui::{executor::Background, AppContext};
+use std::{
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+    time::Duration,
+};
 use util::{paths, ResultExt};
 
 pub fn register<T: Setting>(cx: &mut AppContext) {
@@ -17,11 +22,8 @@ pub fn get<'a, T: Setting>(cx: &'a AppContext) -> &'a T {
     cx.global::<SettingsStore>().get(None)
 }
 
-pub fn default_settings() -> Cow<'static, str> {
-    match Assets.load(DEFAULT_SETTINGS_ASSET_PATH).unwrap() {
-        Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
-        Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-    }
+pub fn get_local<'a, T: Setting>(location: Option<(usize, &Path)>, cx: &'a AppContext) -> &'a T {
+    cx.global::<SettingsStore>().get(location)
 }
 
 pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
@@ -29,7 +31,7 @@ pub const EMPTY_THEME_NAME: &'static str = "empty-theme";
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {
     let mut value = crate::settings_store::parse_json_with_comments::<serde_json::Value>(
-        default_settings().as_ref(),
+        crate::default_settings().as_ref(),
     )
     .unwrap();
     util::merge_non_null_json_value_into(
@@ -55,14 +57,21 @@ pub fn watch_config_file(
         .spawn(async move {
             let events = fs.watch(&path, Duration::from_millis(100)).await;
             futures::pin_mut!(events);
+
+            let contents = fs.load(&path).await.unwrap_or_default();
+            if tx.unbounded_send(contents).is_err() {
+                return;
+            }
+
             loop {
+                if events.next().await.is_none() {
+                    break;
+                }
+
                 if let Ok(contents) = fs.load(&path).await {
                     if !tx.unbounded_send(contents).is_ok() {
                         break;
                     }
-                }
-                if events.next().await.is_none() {
-                    break;
                 }
             }
         })
@@ -101,7 +110,7 @@ async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
         Err(err) => {
             if let Some(e) = err.downcast_ref::<std::io::Error>() {
                 if e.kind() == ErrorKind::NotFound {
-                    return Ok(crate::initial_user_settings_content(&Assets).to_string());
+                    return Ok(crate::initial_user_settings_content().to_string());
                 }
             }
             return Err(err);

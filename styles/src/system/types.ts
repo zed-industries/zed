@@ -1,6 +1,6 @@
 import { Curve } from "./ref/curves"
 
-export interface ColorAccessiblityValue {
+export interface ColorAccessibilityValue {
     value: number
     aaPass: boolean
     aaaPass: boolean
@@ -12,14 +12,14 @@ export interface ColorAccessiblityValue {
  * @note This implementation is currently basic – Currently we only calculate contrasts against black and white, in the future will allow for dynamic color contrast calculation based on the colors present in a given palette.
  * @note The goal is to align with WCAG3 accessibility standards as they become stabilized. See the [WCAG 3 Introduction](https://www.w3.org/WAI/standards-guidelines/wcag/wcag3-intro/) for more information.
  */
-export interface ColorAccessiblity {
-    black: ColorAccessiblityValue
-    white: ColorAccessiblityValue
+export interface ColorAccessibility {
+    black: ColorAccessibilityValue
+    white: ColorAccessibilityValue
 }
 
 export type Color = {
     step: number
-    contrast: ColorAccessiblity
+    contrast: ColorAccessibility
     hex: string
     lch: number[]
     rgba: number[]

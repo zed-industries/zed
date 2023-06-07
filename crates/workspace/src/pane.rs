@@ -2,8 +2,8 @@ mod dragged_item_receiver;
 
 use super::{ItemHandle, SplitDirection};
 use crate::{
-    item::WeakItemHandle, toolbar::Toolbar, AutosaveSetting, Item, NewCenterTerminal, NewFile,
-    NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
+    item::WeakItemHandle, notify_of_new_dock, toolbar::Toolbar, AutosaveSetting, Item,
+    NewCenterTerminal, NewFile, NewSearch, ToggleZoom, Workspace, WorkspaceSettings,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -268,6 +268,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         0,
                         "icons/plus_12.svg",
+                        false,
                         Some(("New...".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_new_menu(cx),
@@ -277,6 +278,7 @@ impl Pane {
                     .with_child(Self::render_tab_bar_button(
                         1,
                         "icons/split_12.svg",
+                        false,
                         Some(("Split Pane".into(), None)),
                         cx,
                         |pane, cx| pane.deploy_split_menu(cx),
@@ -290,6 +292,7 @@ impl Pane {
                         } else {
                             "icons/maximize_8.svg"
                         },
+                        pane.is_zoomed(),
                         Some(("Toggle Zoom".into(), Some(Box::new(ToggleZoom)))),
                         cx,
                         move |pane, cx| pane.toggle_zoom(&Default::default(), cx),
@@ -536,6 +539,11 @@ impl Pane {
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, cx: &mut ViewContext<Self>) {
+        // Potentially warn the user of the new keybinding
+        let workspace_handle = self.workspace().clone();
+        cx.spawn(|_, mut cx| async move { notify_of_new_dock(&workspace_handle, &mut cx) })
+            .detach();
+
         if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {
@@ -1014,7 +1022,7 @@ impl Pane {
         let is_active_item = target_item_id == active_item_id;
         let target_pane = cx.weak_handle();
 
-        // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currenlty, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
+        // The `CloseInactiveItems` action should really be called "CloseOthers" and the behaviour should be dynamically based on the tab the action is ran on.  Currently, this is a weird action because you can run it on a non-active tab and it will close everything by the actual active tab
 
         self.tab_context_menu.update(cx, |menu, cx| {
             menu.show(
@@ -1143,7 +1151,8 @@ impl Pane {
                         let theme = theme::current(cx).clone();
                         let mut tooltip_theme = theme.tooltip.clone();
                         tooltip_theme.max_text_width = None;
-                        let tab_tooltip_text = item.tab_tooltip_text(cx).map(|a| a.to_string());
+                        let tab_tooltip_text =
+                            item.tab_tooltip_text(cx).map(|text| text.into_owned());
 
                         move |mouse_state, cx| {
                             let tab_style =
@@ -1401,6 +1410,7 @@ impl Pane {
     pub fn render_tab_bar_button<F: 'static + Fn(&mut Pane, &mut EventContext<Pane>)>(
         index: usize,
         icon: &'static str,
+        active: bool,
         tooltip: Option<(String, Option<Box<dyn Action>>)>,
         cx: &mut ViewContext<Pane>,
         on_click: F,
@@ -1410,7 +1420,7 @@ impl Pane {
 
         let mut button = MouseEventHandler::<TabBarButton, _>::new(index, cx, |mouse_state, cx| {
             let theme = &settings::get::<ThemeSettings>(cx).theme.workspace.tab_bar;
-            let style = theme.pane_button.style_for(mouse_state, false);
+            let style = theme.pane_button.style_for(mouse_state, active);
             Svg::new(icon)
                 .with_color(style.color)
                 .constrained()

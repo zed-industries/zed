@@ -25,7 +25,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     mem,
-    ops::Range,
+    ops::{Not, Range},
     path::PathBuf,
     sync::Arc,
 };
@@ -242,7 +242,13 @@ impl View for ProjectSearchView {
 
 impl Item for ProjectSearchView {
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
-        Some(self.query_editor.read(cx).text(cx).into())
+        let query_text = self.query_editor.read(cx).text(cx);
+
+        query_text
+            .is_empty()
+            .not()
+            .then(|| query_text.into())
+            .or_else(|| Some("Project Search".into()))
     }
 
     fn act_as_type<'a>(

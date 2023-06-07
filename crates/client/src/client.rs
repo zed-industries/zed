@@ -776,15 +776,6 @@ impl Client {
         if credentials.is_none() && try_keychain {
             credentials = read_credentials_from_keychain(cx);
             read_from_keychain = credentials.is_some();
-            if read_from_keychain {
-                cx.read(|cx| {
-                    self.telemetry().report_mixpanel_event(
-                        "read credentials from keychain",
-                        Default::default(),
-                        *settings::get::<TelemetrySettings>(cx),
-                    );
-                });
-            }
         }
         if credentials.is_none() {
             let mut status_rx = self.status();
@@ -1072,10 +1063,7 @@ impl Client {
     ) -> Task<Result<Credentials>> {
         let platform = cx.platform();
         let executor = cx.background();
-        let telemetry = self.telemetry.clone();
         let http = self.http.clone();
-
-        let telemetry_settings = cx.read(|cx| *settings::get::<TelemetrySettings>(cx));
 
         executor.clone().spawn(async move {
             // Generate a pair of asymmetric encryption keys. The public key will be used by the
@@ -1158,12 +1146,6 @@ impl Client {
                 .decrypt_string(&access_token)
                 .context("failed to decrypt access token")?;
             platform.activate(true);
-
-            telemetry.report_mixpanel_event(
-                "authenticate with browser",
-                Default::default(),
-                telemetry_settings,
-            );
 
             Ok(Credentials {
                 user_id: user_id.parse()?,

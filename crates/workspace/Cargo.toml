@@ -19,7 +19,6 @@ test-support = [
 ]
 
 [dependencies]
-assets = { path = "../assets" }
 db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }

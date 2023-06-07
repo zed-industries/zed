@@ -1,5 +1,5 @@
 use crate::{Toast, Workspace};
-use collections::HashSet;
+use collections::HashMap;
 use gpui::{AnyViewHandle, AppContext, Entity, View, ViewContext, ViewHandle};
 use std::{any::TypeId, ops::DerefMut};
 
@@ -33,12 +33,12 @@ impl From<&dyn NotificationHandle> for AnyViewHandle {
     }
 }
 
-struct NotificationTracker {
-    notifications_sent: HashSet<TypeId>,
+pub(crate) struct NotificationTracker {
+    notifications_sent: HashMap<TypeId, Vec<usize>>,
 }
 
 impl std::ops::Deref for NotificationTracker {
-    type Target = HashSet<TypeId>;
+    type Target = HashMap<TypeId, Vec<usize>>;
 
     fn deref(&self) -> &Self::Target {
         &self.notifications_sent
@@ -54,24 +54,33 @@ impl DerefMut for NotificationTracker {
 impl NotificationTracker {
     fn new() -> Self {
         Self {
-            notifications_sent: HashSet::default(),
+            notifications_sent: Default::default(),
         }
     }
 }
 
 impl Workspace {
+    pub fn has_shown_notification_once<V: Notification>(
+        &self,
+        id: usize,
+        cx: &ViewContext<Self>,
+    ) -> bool {
+        cx.global::<NotificationTracker>()
+            .get(&TypeId::of::<V>())
+            .map(|ids| ids.contains(&id))
+            .unwrap_or(false)
+    }
+
     pub fn show_notification_once<V: Notification>(
         &mut self,
         id: usize,
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> ViewHandle<V>,
     ) {
-        if !cx
-            .global::<NotificationTracker>()
-            .contains(&TypeId::of::<V>())
-        {
+        if !self.has_shown_notification_once::<V>(id, cx) {
             cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
-                tracker.insert(TypeId::of::<V>())
+                let entry = tracker.entry(TypeId::of::<V>()).or_default();
+                entry.push(id);
             });
 
             self.show_notification::<V>(id, cx, build_notification)
@@ -154,9 +163,10 @@ pub mod simple_message_notification {
     use gpui::{
         actions,
         elements::{Flex, MouseEventHandler, Padding, ParentElement, Svg, Text},
+        fonts::TextStyle,
         impl_actions,
         platform::{CursorStyle, MouseButton},
-        AppContext, Element, Entity, View, ViewContext,
+        AnyElement, AppContext, Element, Entity, View, ViewContext,
     };
     use menu::Cancel;
     use serde::Deserialize;
@@ -184,8 +194,13 @@ pub mod simple_message_notification {
         )
     }
 
+    enum NotificationMessage {
+        Text(Cow<'static, str>),
+        Element(fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>),
+    }
+
     pub struct MessageNotification {
-        message: Cow<'static, str>,
+        message: NotificationMessage,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<Cow<'static, str>>,
     }
@@ -204,7 +219,17 @@ pub mod simple_message_notification {
             S: Into<Cow<'static, str>>,
         {
             Self {
-                message: message.into(),
+                message: NotificationMessage::Text(message.into()),
+                on_click: None,
+                click_message: None,
+            }
+        }
+
+        pub fn new_element(
+            message: fn(TextStyle, &AppContext) -> AnyElement<MessageNotification>,
+        ) -> MessageNotification {
+            Self {
+                message: NotificationMessage::Element(message),
                 on_click: None,
                 click_message: None,
             }
@@ -243,84 +268,90 @@ pub mod simple_message_notification {
             enum MessageNotificationTag {}
 
             let click_message = self.click_message.clone();
-            let message = self.message.clone();
+            let message = match &self.message {
+                NotificationMessage::Text(text) => {
+                    Text::new(text.to_owned(), theme.message.text.clone()).into_any()
+                }
+                NotificationMessage::Element(e) => e(theme.message.text.clone(), cx),
+            };
             let on_click = self.on_click.clone();
             let has_click_action = on_click.is_some();
 
-            MouseEventHandler::<MessageNotificationTag, _>::new(0, cx, |state, cx| {
-                Flex::column()
-                    .with_child(
-                        Flex::row()
-                            .with_child(
-                                Text::new(message, theme.message.text.clone())
-                                    .contained()
-                                    .with_style(theme.message.container)
-                                    .aligned()
-                                    .top()
-                                    .left()
-                                    .flex(1., true),
-                            )
-                            .with_child(
-                                MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
-                                    let style = theme.dismiss_button.style_for(state, false);
-                                    Svg::new("icons/x_mark_8.svg")
-                                        .with_color(style.color)
-                                        .constrained()
-                                        .with_width(style.icon_width)
-                                        .aligned()
-                                        .contained()
-                                        .with_style(style.container)
-                                        .constrained()
-                                        .with_width(style.button_width)
-                                        .with_height(style.button_width)
-                                })
-                                .with_padding(Padding::uniform(5.))
-                                .on_click(MouseButton::Left, move |_, this, cx| {
-                                    this.dismiss(&Default::default(), cx);
-                                })
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .aligned()
-                                .constrained()
-                                .with_height(
-                                    cx.font_cache().line_height(theme.message.text.font_size),
-                                )
+            Flex::column()
+                .with_child(
+                    Flex::row()
+                        .with_child(
+                            message
+                                .contained()
+                                .with_style(theme.message.container)
                                 .aligned()
                                 .top()
-                                .flex_float(),
-                            ),
-                    )
-                    .with_children({
-                        let style = theme.action_message.style_for(state, false);
-                        if let Some(click_message) = click_message {
-                            Some(
-                                Flex::row().with_child(
-                                    Text::new(click_message, style.text.clone())
+                                .left()
+                                .flex(1., true),
+                        )
+                        .with_child(
+                            MouseEventHandler::<Cancel, _>::new(0, cx, |state, _| {
+                                let style = theme.dismiss_button.style_for(state, false);
+                                Svg::new("icons/x_mark_8.svg")
+                                    .with_color(style.color)
+                                    .constrained()
+                                    .with_width(style.icon_width)
+                                    .aligned()
+                                    .contained()
+                                    .with_style(style.container)
+                                    .constrained()
+                                    .with_width(style.button_width)
+                                    .with_height(style.button_width)
+                            })
+                            .with_padding(Padding::uniform(5.))
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                this.dismiss(&Default::default(), cx);
+                            })
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .aligned()
+                            .constrained()
+                            .with_height(cx.font_cache().line_height(theme.message.text.font_size))
+                            .aligned()
+                            .top()
+                            .flex_float(),
+                        ),
+                )
+                .with_children({
+                    click_message
+                        .map(|click_message| {
+                            MouseEventHandler::<MessageNotificationTag, _>::new(
+                                0,
+                                cx,
+                                |state, _| {
+                                    let style = theme.action_message.style_for(state, false);
+
+                                    Flex::row()
+                                        .with_child(
+                                            Text::new(click_message, style.text.clone())
+                                                .contained()
+                                                .with_style(style.container),
+                                        )
                                         .contained()
-                                        .with_style(style.container),
-                                ),
+                                },
                             )
-                        } else {
-                            None
-                        }
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                if let Some(on_click) = on_click.as_ref() {
+                                    on_click(cx);
+                                    this.dismiss(&Default::default(), cx);
+                                }
+                            })
+                            // Since we're not using a proper overlay, we have to capture these extra events
+                            .on_down(MouseButton::Left, |_, _, _| {})
+                            .on_up(MouseButton::Left, |_, _, _| {})
+                            .with_cursor_style(if has_click_action {
+                                CursorStyle::PointingHand
+                            } else {
+                                CursorStyle::Arrow
+                            })
+                        })
                         .into_iter()
-                    })
-                    .contained()
-            })
-            // Since we're not using a proper overlay, we have to capture these extra events
-            .on_down(MouseButton::Left, |_, _, _| {})
-            .on_up(MouseButton::Left, |_, _, _| {})
-            .on_click(MouseButton::Left, move |_, this, cx| {
-                if let Some(on_click) = on_click.as_ref() {
-                    on_click(cx);
-                    this.dismiss(&Default::default(), cx);
-                }
-            })
-            .with_cursor_style(if has_click_action {
-                CursorStyle::PointingHand
-            } else {
-                CursorStyle::Arrow
-            })
-            .into_any()
+                })
+                .into_any()
         }
     }
 

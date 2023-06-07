@@ -64,6 +64,9 @@ pub enum Event {
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
     },
+    ExcerptsEdited {
+        ids: Vec<ExcerptId>,
+    },
     Edited,
     Reloaded,
     DiffBaseChanged,
@@ -190,6 +193,13 @@ pub struct MultiBufferChunks<'a> {
 }
 
 pub struct MultiBufferBytes<'a> {
+    range: Range<usize>,
+    excerpts: Cursor<'a, Excerpt, usize>,
+    excerpt_bytes: Option<ExcerptBytes<'a>>,
+    chunk: &'a [u8],
+}
+
+pub struct ReversedMultiBufferBytes<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
     excerpt_bytes: Option<ExcerptBytes<'a>>,
@@ -387,6 +397,7 @@ impl MultiBuffer {
             original_indent_column: u32,
         }
         let mut buffer_edits: HashMap<u64, Vec<BufferEdit>> = Default::default();
+        let mut edited_excerpt_ids = Vec::new();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         for (ix, (range, new_text)) in edits.enumerate() {
             let new_text: Arc<str> = new_text.into();
@@ -403,6 +414,7 @@ impl MultiBuffer {
                 .start
                 .to_offset(&start_excerpt.buffer)
                 + start_overshoot;
+            edited_excerpt_ids.push(start_excerpt.id);
 
             cursor.seek(&range.end, Bias::Right, &());
             if cursor.item().is_none() && range.end == *cursor.start() {
@@ -428,6 +440,7 @@ impl MultiBuffer {
                         original_indent_column,
                     });
             } else {
+                edited_excerpt_ids.push(end_excerpt.id);
                 let start_excerpt_range = buffer_start
                     ..start_excerpt
                         .range
@@ -474,6 +487,7 @@ impl MultiBuffer {
                             is_insertion: false,
                             original_indent_column,
                         });
+                    edited_excerpt_ids.push(excerpt.id);
                     cursor.next(&());
                 }
             }
@@ -546,6 +560,10 @@ impl MultiBuffer {
                     buffer.edit(insertions, insertion_autoindent_mode, cx);
                 })
         }
+
+        cx.emit(Event::ExcerptsEdited {
+            ids: edited_excerpt_ids,
+        });
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -1377,8 +1395,14 @@ impl MultiBuffer {
         point: T,
         cx: &'a AppContext,
     ) -> &'a LanguageSettings {
-        let language = self.language_at(point, cx);
-        language_settings(language.map(|l| l.name()).as_deref(), cx)
+        let mut language = None;
+        let mut file = None;
+        if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
+            let buffer = buffer.read(cx);
+            language = buffer.language_at(offset);
+            file = buffer.file();
+        }
+        language_settings(language.as_ref(), file, cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&ModelHandle<Buffer>)) {
@@ -1961,8 +1985,34 @@ impl MultiBufferSnapshot {
         } else {
             None
         };
-
         MultiBufferBytes {
+            range,
+            excerpts,
+            excerpt_bytes,
+            chunk,
+        }
+    }
+
+    pub fn reversed_bytes_in_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> ReversedMultiBufferBytes {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpts = self.excerpts.cursor::<usize>();
+        excerpts.seek(&range.end, Bias::Left, &());
+
+        let mut chunk = &[][..];
+        let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
+            let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
+                range.start - excerpts.start()..range.end - excerpts.start(),
+            );
+            chunk = excerpt_bytes.next().unwrap_or(&[][..]);
+            Some(excerpt_bytes)
+        } else {
+            None
+        };
+
+        ReversedMultiBufferBytes {
             range,
             excerpts,
             excerpt_bytes,
@@ -2785,9 +2835,13 @@ impl MultiBufferSnapshot {
         point: T,
         cx: &'a AppContext,
     ) -> &'a LanguageSettings {
-        self.point_to_buffer_offset(point)
-            .map(|(buffer, offset)| buffer.settings_at(offset, cx))
-            .unwrap_or_else(|| language_settings(None, cx))
+        let mut language = None;
+        let mut file = None;
+        if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
+            language = buffer.language_at(offset);
+            file = buffer.file();
+        }
+        language_settings(language, file, cx)
     }
 
     pub fn language_scope_at<'a, T: ToOffset>(&'a self, point: T) -> Option<LanguageScope> {
@@ -3399,6 +3453,26 @@ impl Excerpt {
         }
     }
 
+    fn reversed_bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
+        let content_start = self.range.context.start.to_offset(&self.buffer);
+        let bytes_start = content_start + range.start;
+        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
+        let footer_height = if self.has_trailing_newline
+            && range.start <= self.text_summary.len
+            && range.end > self.text_summary.len
+        {
+            1
+        } else {
+            0
+        };
+        let content_bytes = self.buffer.reversed_bytes_in_range(bytes_start..bytes_end);
+
+        ExcerptBytes {
+            content_bytes,
+            footer_height,
+        }
+    }
+
     fn clip_anchor(&self, text_anchor: text::Anchor) -> text::Anchor {
         if text_anchor
             .cmp(&self.range.context.start, &self.buffer)
@@ -3717,6 +3791,38 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     }
 }
 
+impl<'a> ReversedMultiBufferBytes<'a> {
+    fn consume(&mut self, len: usize) {
+        self.range.end -= len;
+        self.chunk = &self.chunk[..self.chunk.len() - len];
+
+        if !self.range.is_empty() && self.chunk.is_empty() {
+            if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
+                self.chunk = chunk;
+            } else {
+                self.excerpts.next(&());
+                if let Some(excerpt) = self.excerpts.item() {
+                    let mut excerpt_bytes =
+                        excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
+                    self.chunk = excerpt_bytes.next().unwrap();
+                    self.excerpt_bytes = Some(excerpt_bytes);
+                }
+            }
+        }
+    }
+}
+
+impl<'a> io::Read for ReversedMultiBufferBytes<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = cmp::min(buf.len(), self.chunk.len());
+        buf[..len].copy_from_slice(&self.chunk[..len]);
+        buf[..len].reverse();
+        if len > 0 {
+            self.consume(len);
+        }
+        Ok(len)
+    }
+}
 impl<'a> Iterator for ExcerptBytes<'a> {
     type Item = &'a [u8];
 
@@ -5237,7 +5343,7 @@ mod tests {
             assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\nAB5678");
 
             // An undo in the multibuffer undoes the multibuffer transaction
-            // and also any individual buffer edits that have occured since
+            // and also any individual buffer edits that have occurred since
             // that transaction.
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
