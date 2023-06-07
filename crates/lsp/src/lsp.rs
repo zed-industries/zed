@@ -748,6 +748,15 @@ impl fmt::Display for LanguageServerId {
     }
 }
 
+impl fmt::Debug for LanguageServer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LanguageServer")
+            .field("id", &self.server_id.0)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for Subscription {
     fn drop(&mut self) {
         match self {

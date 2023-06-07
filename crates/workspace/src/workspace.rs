@@ -3500,7 +3500,7 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub struct WorkspaceCreated(WeakViewHandle<Workspace>);
+pub struct WorkspaceCreated(pub WeakViewHandle<Workspace>);
 
 pub fn activate_workspace_for_project(
     cx: &mut AsyncAppContext,
