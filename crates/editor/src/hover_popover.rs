@@ -588,10 +588,7 @@ impl InfoPopover {
                                         MouseRegion::new::<Self>(view_id, region_id, bounds)
                                             .on_click::<Editor, _>(
                                                 MouseButton::Left,
-                                                move |_, _, cx| {
-                                                    println!("clicked link {url}");
-                                                    cx.platform().open_url(&url);
-                                                },
+                                                move |_, _, cx| cx.platform().open_url(&url),
                                             ),
                                     );
                                 }
