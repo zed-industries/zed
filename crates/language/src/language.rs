@@ -887,8 +887,8 @@ impl LanguageRegistry {
                 })
                 .clone();
             drop(lock);
-            let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
 
+            let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
             let server = lsp::LanguageServer::new(
                 server_id,
                 &binary.path,

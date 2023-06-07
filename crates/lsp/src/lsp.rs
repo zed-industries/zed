@@ -167,6 +167,7 @@ impl LanguageServer {
         if let Some(name) = binary_path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
+
         Ok(server)
     }
 
