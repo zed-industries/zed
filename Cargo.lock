@@ -3763,8 +3763,10 @@ name = "lsp_log"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "editor",
+ "env_logger 0.9.3",
  "futures 0.3.28",
  "gpui",
  "language",
