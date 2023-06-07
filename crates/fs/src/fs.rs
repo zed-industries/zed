@@ -12,7 +12,6 @@ use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
 use std::cmp;
-use std::ffi::OsStr;
 use std::io::Write;
 use std::sync::Arc;
 use std::{
@@ -31,6 +30,8 @@ use collections::{btree_map, BTreeMap};
 use repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
+#[cfg(any(test, feature = "test-support"))]
+use std::ffi::OsStr;
 
 lazy_static! {
     static ref LINE_SEPARATORS_REGEX: Regex = Regex::new("\r\n|\r|\u{2028}|\u{2029}").unwrap();
