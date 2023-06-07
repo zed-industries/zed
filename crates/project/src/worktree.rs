@@ -5444,6 +5444,7 @@ mod tests {
                     .iter()
                     .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
                     .collect::<Vec<_>>();
+                dbg!(&entries);
                 snapshot.propagate_git_statuses(&mut entries);
                 dbg!(&entries);
                 assert_eq!(
