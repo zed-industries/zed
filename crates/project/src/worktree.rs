@@ -5407,6 +5407,8 @@ mod tests {
                 ],
             );
 
+            panic!();
+
             check_propagated_statuses(
                 &snapshot,
                 &[
@@ -5443,11 +5445,12 @@ mod tests {
                     .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
                     .collect::<Vec<_>>();
                 snapshot.propagate_git_statuses(&mut entries);
+                dbg!(&entries);
                 assert_eq!(
-                    entries
+                    dbg!(entries
                         .iter()
                         .map(|e| (e.path.as_ref(), e.git_status))
-                        .collect::<Vec<_>>(),
+                        .collect::<Vec<_>>()),
                     expected_statuses
                 );
             }
