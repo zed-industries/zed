@@ -17,8 +17,9 @@ interface ThemeMeta {
      *
      * Example: `MIT`
      */
-    licenseType?: string
+    licenseType?: string | ThemeLicenseType
     licenseUrl?: string
+    licenseFile: string
     themeUrl?: string
 }
 
@@ -92,6 +93,11 @@ export type Theme = {
 export enum ThemeAppearance {
     Light = "light",
     Dark = "dark",
+}
+
+export enum ThemeLicenseType {
+    MIT = "MIT",
+    Apache2 = "Apache License 2.0",
 }
 
 export type ThemeFamilyItem =
