@@ -1365,16 +1365,18 @@ mod tests {
 
         cx.add_model(|cx| {
             let mut assistant = Assistant::new(Default::default(), registry, cx);
-            let message_1 = assistant.insert_message_after(ExcerptId::max(), Role::Assistant, cx);
-            let message_2 = assistant.insert_message_after(message_1.excerpt_id, Role::User, cx);
-            let message_3 = assistant.insert_message_after(message_1.excerpt_id, Role::User, cx);
+            let message_1 = assistant.messages[0].clone();
+            let message_2 = assistant.insert_message_after(ExcerptId::max(), Role::Assistant, cx);
+            let message_3 = assistant.insert_message_after(message_2.excerpt_id, Role::User, cx);
+            let message_4 = assistant.insert_message_after(message_2.excerpt_id, Role::User, cx);
             assistant.remove_empty_messages(
-                HashSet::from_iter([message_2.excerpt_id, message_3.excerpt_id]),
+                HashSet::from_iter([message_3.excerpt_id, message_4.excerpt_id]),
                 Default::default(),
                 cx,
             );
-            assert_eq!(assistant.messages.len(), 1);
+            assert_eq!(assistant.messages.len(), 2);
             assert_eq!(assistant.messages[0].excerpt_id, message_1.excerpt_id);
+            assert_eq!(assistant.messages[1].excerpt_id, message_2.excerpt_id);
             assistant
         });
     }
