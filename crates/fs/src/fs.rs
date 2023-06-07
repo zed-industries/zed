@@ -709,7 +709,11 @@ impl FakeFs {
                     queue.push_back((path.join(name), entry.clone()));
                 }
             }
-            if include_dot_git || !path.components().any(|component| component.as_os_str() == *FS_DOT_GIT) {
+            if include_dot_git
+                || !path
+                    .components()
+                    .any(|component| component.as_os_str() == *FS_DOT_GIT)
+            {
                 result.push(path);
             }
         }
@@ -725,7 +729,11 @@ impl FakeFs {
                 for (name, entry) in entries {
                     queue.push_back((path.join(name), entry.clone()));
                 }
-                if include_dot_git || !path.components().any(|component| component.as_os_str() == *FS_DOT_GIT) {
+                if include_dot_git
+                    || !path
+                        .components()
+                        .any(|component| component.as_os_str() == *FS_DOT_GIT)
+                {
                     result.push(path);
                 }
             }
