@@ -25,11 +25,6 @@ export interface ColorScheme {
     syntax?: Partial<ThemeSyntax>
 }
 
-export interface MetaAndLicense {
-    meta: Meta
-    licenseFile: string
-}
-
 export interface Meta {
     name: string
     author: string

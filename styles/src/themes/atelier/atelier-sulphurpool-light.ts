@@ -1,13 +1,7 @@
-import chroma from "chroma-js"
-import { Meta, colorRamp, createColorScheme, ThemeAppearance } from "../common"
-import { metaCommon, name, buildSyntax, Variant } from "./common"
+import { chroma, ThemeAppearance, ThemeConfig, colorRamp } from "../../common"
+import { meta, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
-    meta: {
-        name: `${name} Sulphurpool Light`,
-        ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/sulphurpool/",
-    },
     colors: {
         base00: "#f5f7ff",
         base01: "#dfe2f1",
@@ -30,13 +24,16 @@ const variant: Variant = {
 
 const syntax = buildSyntax(variant)
 
-const theme = (variant: Variant) => {
-    const { meta, colors } = variant
+const getTheme = (variant: Variant): ThemeConfig => {
+    const { colors } = variant
 
-    return createColorScheme({
-        name: meta.name,
+    return {
+        name: `${meta.name} Sulphurpool Light`,
         author: meta.author,
         appearance: ThemeAppearance.Light,
+        licenseType: meta.licenseType,
+        licenseUrl: meta.licenseUrl,
+        licenseFile: `${__dirname}/LICENSE`,
         inputColor: {
             neutral: chroma.scale(
                 [
@@ -60,9 +57,7 @@ const theme = (variant: Variant) => {
             magenta: colorRamp(chroma(colors.base0F)),
         },
         override: { syntax },
-    })
+    }
 }
 
-export const dark = theme(variant)
-
-export const meta: Meta = variant.meta
+export const theme = getTheme(variant)

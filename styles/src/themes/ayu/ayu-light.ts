@@ -1,18 +1,16 @@
-import { createColorScheme, ThemeAppearance } from "../common"
-import { ayu, meta as themeMeta, buildTheme } from "./common"
-
-export const meta = {
-    ...themeMeta,
-    name: `${themeMeta.name} Light`,
-}
+import { ThemeAppearance, ThemeConfig } from "../../common"
+import { ayu, meta, buildTheme } from "./common"
 
 const variant = ayu.light
-const theme = buildTheme(variant, true)
+const { ramps, syntax } = buildTheme(variant, true)
 
-export const light = createColorScheme({
-    name: meta.name,
+export const theme: ThemeConfig = {
+    name: `${meta.name} Light`,
     author: meta.author,
     appearance: ThemeAppearance.Light,
-    inputColor: theme.ramps,
-    override: { syntax: theme.syntax },
-})
+    licenseType: meta.licenseType,
+    licenseUrl: meta.licenseUrl,
+    licenseFile: `${__dirname}/LICENSE`,
+    inputColor: ramps,
+    override: { syntax },
+}

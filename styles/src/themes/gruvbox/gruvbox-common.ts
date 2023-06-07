@@ -1,19 +1,17 @@
-import chroma from "chroma-js"
 import {
-    Meta,
+    chroma,
     colorRamp,
-    createColorScheme,
-    ThemeSyntax,
     ThemeAppearance,
-} from "../common"
+    ThemeLicenseType,
+    ThemeConfig,
+    ThemeSyntax,
+} from "../../common"
 
-export const meta: Meta = {
+const meta: Partial<ThemeConfig> = {
     name: "Gruvbox",
-    license: {
-        SPDX: "MIT", // "MIT/X11"
-    },
     author: "morhetz <morhetz@gmail.com>",
-    url: "https://github.com/morhetz/gruvbox",
+    licenseType: ThemeLicenseType.MIT,
+    licenseUrl: "https://github.com/morhetz/gruvbox",
 }
 
 const color = {
@@ -168,7 +166,7 @@ const variant: Variant[] = [
     },
 ]
 
-const buildVariant = (variant: Variant) => {
+const buildVariant = (variant: Variant): ThemeConfig => {
     const { colors } = variant
 
     const name = `Gruvbox ${variant.name}`
@@ -245,13 +243,16 @@ const buildVariant = (variant: Variant) => {
         title: { color: colors.green },
     }
 
-    return createColorScheme({
+    return {
         name,
         author: meta.author,
         appearance: variant.appearance as ThemeAppearance,
+        licenseType: meta.licenseType,
+        licenseUrl: meta.licenseUrl,
+        licenseFile: `${__dirname}/LICENSE`,
         inputColor: ramps,
         override: { syntax },
-    })
+    }
 }
 
 // Variants

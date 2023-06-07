@@ -1,7 +1,6 @@
-import { License, Meta, ThemeSyntax } from "../common"
+import { ThemeLicenseType, ThemeConfig, ThemeSyntax } from "../../common"
 
 export interface Variant {
-    meta: Meta
     colors: {
         base00: string
         base01: string
@@ -22,14 +21,12 @@ export interface Variant {
     }
 }
 
-export const metaCommon: {
-    author: string
-    license: License
-} = {
+export const meta: Partial<ThemeConfig> = {
+    name: "Atelier",
     author: "Bram de Haan (http://atelierbramdehaan.nl)",
-    license: {
-        SPDX: "MIT",
-    },
+    licenseType: ThemeLicenseType.MIT,
+    licenseUrl:
+        "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/cave/",
 }
 
 export const buildSyntax = (variant: Variant): ThemeSyntax => {
@@ -57,5 +54,3 @@ export const buildSyntax = (variant: Variant): ThemeSyntax => {
         keyword: { color: colors.base0E },
     }
 }
-
-export const name = "Atelier"
