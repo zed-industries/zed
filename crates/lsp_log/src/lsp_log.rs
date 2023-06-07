@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod lsp_log_tests;
+
 use collections::HashMap;
 use editor::Editor;
 use futures::{channel::mpsc, StreamExt};
@@ -521,7 +524,7 @@ impl View for LspLogToolbarItemView {
                                     )
                                 }))
                                 .contained()
-                                .with_style(theme.context_menu.container)
+                                .with_style(theme.lsp_log_menu.container)
                                 .constrained()
                                 .with_width(400.)
                                 .with_height(400.)
@@ -547,6 +550,9 @@ impl View for LspLogToolbarItemView {
             .into_any()
     }
 }
+
+const RPC_MESSAGES: &str = "RPC Messages";
+const SERVER_LOGS: &str = "Server Logs";
 
 impl LspLogToolbarItemView {
     pub fn new() -> Self {
@@ -605,18 +611,25 @@ impl LspLogToolbarItemView {
             let label: Cow<str> = current_server
                 .and_then(|row| {
                     let worktree = row.worktree.read(cx);
-                    Some(format!("{} - ({})", row.server_name.0, worktree.root_name()).into())
+                    Some(
+                        format!(
+                            "{} ({}) - {}",
+                            row.server_name.0,
+                            worktree.root_name(),
+                            if row.rpc_trace_selected {
+                                RPC_MESSAGES
+                            } else {
+                                SERVER_LOGS
+                            },
+                        )
+                        .into(),
+                    )
                 })
                 .unwrap_or_else(|| "No server selected".into());
-            Label::new(
-                label,
-                theme
-                    .context_menu
-                    .item
-                    .style_for(state, false)
-                    .label
-                    .clone(),
-            )
+            let style = theme.lsp_log_menu.header.style_for(state, false);
+            Label::new(label, style.text.clone())
+                .contained()
+                .with_style(style.container)
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(MouseButton::Left, move |_, view, cx| {
@@ -628,7 +641,7 @@ impl LspLogToolbarItemView {
         id: LanguageServerId,
         name: LanguageServerName,
         worktree: ModelHandle<Worktree>,
-        logging_enabled: bool,
+        rpc_trace_enabled: bool,
         logs_selected: bool,
         rpc_trace_selected: bool,
         theme: &Arc<Theme>,
@@ -637,23 +650,25 @@ impl LspLogToolbarItemView {
         enum ActivateLog {}
         enum ActivateRpcTrace {}
 
-        let header = format!("{} - ({})", name.0, worktree.read(cx).root_name());
-
-        let item_style = &theme.context_menu.item.default;
         Flex::column()
-            .with_child(
-                Label::new(header, item_style.label.clone())
-                    .aligned()
-                    .left(),
-            )
+            .with_child({
+                let style = &theme.lsp_log_menu.server;
+                Label::new(
+                    format!("{} ({})", name.0, worktree.read(cx).root_name()),
+                    style.text.clone(),
+                )
+                .contained()
+                .with_style(style.container)
+                .aligned()
+                .left()
+            })
             .with_child(
                 MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, _| {
-                    let item_style = &theme.context_menu.item.style_for(state, logs_selected);
-                    Label::new("logs", item_style.label.clone())
-                        .aligned()
-                        .left()
+                    let style = theme.lsp_log_menu.item.style_for(state, logs_selected);
+                    Flex::row()
+                        .with_child(Label::new(SERVER_LOGS, style.text.clone()).aligned().left())
                         .contained()
-                        .with_style(item_style.container)
+                        .with_style(style.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
@@ -662,26 +677,29 @@ impl LspLogToolbarItemView {
             )
             .with_child(
                 MouseEventHandler::<ActivateRpcTrace, _>::new(id.0, cx, move |state, cx| {
-                    let item_style = &theme.context_menu.item.style_for(state, rpc_trace_selected);
+                    let style = theme.lsp_log_menu.item.style_for(state, rpc_trace_selected);
                     Flex::row()
-                        .with_child(ui::checkbox_with_label::<Self, _, Self, _>(
-                            Empty::new(),
-                            &theme.welcome.checkbox,
-                            logging_enabled,
-                            id.0,
-                            cx,
-                            move |this, enabled, cx| {
-                                this.toggle_logging_for_server(id, enabled, cx);
-                            },
-                        ))
                         .with_child(
-                            Label::new("rpc trace", item_style.label.clone())
+                            Label::new(RPC_MESSAGES, style.text.clone())
                                 .aligned()
                                 .left(),
                         )
+                        .with_child(
+                            ui::checkbox_with_label::<Self, _, Self, _>(
+                                Empty::new(),
+                                &theme.welcome.checkbox,
+                                rpc_trace_enabled,
+                                id.0,
+                                cx,
+                                move |this, enabled, cx| {
+                                    this.toggle_logging_for_server(id, enabled, cx);
+                                },
+                            )
+                            .flex_float(),
+                        )
                         .align_children_center()
                         .contained()
-                        .with_style(item_style.container)
+                        .with_style(style.container)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
