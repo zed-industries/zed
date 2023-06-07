@@ -1,4 +1,4 @@
-import { ThemeConfig } from "./common"
+import { ThemeConfig } from "../theme"
 import { darkDefault as gruvboxDark } from "./gruvbox/gruvbox-dark"
 import { darkHard as gruvboxDarkHard } from "./gruvbox/gruvbox-dark-hard"
 import { darkSoft as gruvboxDarkSoft } from "./gruvbox/gruvbox-dark-soft"

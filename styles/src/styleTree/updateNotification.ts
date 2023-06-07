@@ -1,4 +1,4 @@
-import { ColorScheme } from "../themes/common/colorScheme"
+import { ColorScheme } from "../theme/colorScheme"
 import { foreground, text } from "./components"
 
 const headerPadding = 8

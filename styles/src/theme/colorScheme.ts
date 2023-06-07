@@ -5,7 +5,7 @@ import {
     ThemeConfig,
     ThemeAppearance,
     ThemeConfigInputColors,
-} from "../../themeConfig"
+} from "./themeConfig"
 import { getRamps } from "./ramps"
 
 export interface ColorScheme {

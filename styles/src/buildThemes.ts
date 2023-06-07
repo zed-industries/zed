@@ -2,7 +2,7 @@ import * as fs from "fs"
 import { tmpdir } from "os"
 import * as path from "path"
 import app from "./styleTree/app"
-import { ColorScheme, createColorScheme } from "./themes/common/colorScheme"
+import { ColorScheme, createColorScheme } from "./theme/colorScheme"
 import snakeCase from "./utils/snakeCase"
 import { themes } from "./themes"
 
@@ -35,7 +35,9 @@ function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
     }
 }
 
-const colorSchemes: ColorScheme[] = themes.map((theme) => createColorScheme(theme))
+const colorSchemes: ColorScheme[] = themes.map((theme) =>
+    createColorScheme(theme)
+)
 
 // Write new themes to theme directory
 writeThemes(colorSchemes, `${assetsDirectory}/themes`)

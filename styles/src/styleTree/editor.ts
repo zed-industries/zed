@@ -1,9 +1,9 @@
-import { withOpacity } from "../utils/color"
-import { ColorScheme, Layer, StyleSets } from "../themes/common/colorScheme"
+import { withOpacity } from "../theme/color"
+import { ColorScheme, Layer, StyleSets } from "../theme/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
-import { buildSyntax } from "../themes/common/syntax"
+import { buildSyntax } from "../theme/syntax"
 
 export default function editor(colorScheme: ColorScheme) {
     const { isLight } = colorScheme
@@ -186,7 +186,10 @@ export default function editor(colorScheme: ColorScheme) {
                 },
             },
             source: {
-                text: text(colorScheme.middle, "sans", { size: "sm", weight: "bold", }),
+                text: text(colorScheme.middle, "sans", {
+                    size: "sm",
+                    weight: "bold",
+                }),
             },
             message: {
                 highlightText: text(colorScheme.middle, "sans", {
@@ -250,7 +253,7 @@ export default function editor(colorScheme: ColorScheme) {
                     right: true,
                     left: true,
                     bottom: false,
-                }
+                },
             },
             git: {
                 deleted: isLight
@@ -262,7 +265,7 @@ export default function editor(colorScheme: ColorScheme) {
                 inserted: isLight
                     ? withOpacity(colorScheme.ramps.green(0.5).hex(), 0.8)
                     : withOpacity(colorScheme.ramps.green(0.4).hex(), 0.8),
-            }
+            },
         },
         compositionMark: {
             underline: {
