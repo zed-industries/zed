@@ -86,7 +86,7 @@ impl Editor {
 
         editor.set_scroll_anchor(
             ScrollAnchor {
-                top_anchor: new_anchor,
+                anchor: new_anchor,
                 offset: Default::default(),
             },
             cx,
@@ -113,7 +113,7 @@ impl Editor {
 
         editor.set_scroll_anchor(
             ScrollAnchor {
-                top_anchor: new_anchor,
+                anchor: new_anchor,
                 offset: Default::default(),
             },
             cx,
@@ -143,7 +143,7 @@ impl Editor {
 
         editor.set_scroll_anchor(
             ScrollAnchor {
-                top_anchor: new_anchor,
+                anchor: new_anchor,
                 offset: Default::default(),
             },
             cx,

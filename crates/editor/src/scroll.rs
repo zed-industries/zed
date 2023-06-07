@@ -36,21 +36,21 @@ pub struct ScrollbarAutoHide(pub bool);
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {
     pub offset: Vector2F,
-    pub top_anchor: Anchor,
+    pub anchor: Anchor,
 }
 
 impl ScrollAnchor {
     fn new() -> Self {
         Self {
             offset: Vector2F::zero(),
-            top_anchor: Anchor::min(),
+            anchor: Anchor::min(),
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> Vector2F {
         let mut scroll_position = self.offset;
-        if self.top_anchor != Anchor::min() {
-            let scroll_top = self.top_anchor.to_display_point(snapshot).row() as f32;
+        if self.anchor != Anchor::min() {
+            let scroll_top = self.anchor.to_display_point(snapshot).row() as f32;
             scroll_position.set_y(scroll_top + scroll_position.y());
         } else {
             scroll_position.set_y(0.);
@@ -59,7 +59,7 @@ impl ScrollAnchor {
     }
 
     pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
-        self.top_anchor.to_point(buffer).row
+        self.anchor.to_point(buffer).row
     }
 }
 
@@ -179,7 +179,7 @@ impl ScrollManager {
         let (new_anchor, top_row) = if scroll_position.y() <= 0. {
             (
                 ScrollAnchor {
-                    top_anchor: Anchor::min(),
+                    anchor: Anchor::min(),
                     offset: scroll_position.max(vec2f(0., 0.)),
                 },
                 0,
@@ -193,7 +193,7 @@ impl ScrollManager {
 
             (
                 ScrollAnchor {
-                    top_anchor,
+                    anchor: top_anchor,
                     offset: vec2f(
                         scroll_position.x(),
                         scroll_position.y() - top_anchor.to_display_point(&map).row() as f32,
@@ -322,7 +322,7 @@ impl Editor {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         let top_row = scroll_anchor
-            .top_anchor
+            .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
         self.scroll_manager
@@ -337,7 +337,7 @@ impl Editor {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
         let top_row = scroll_anchor
-            .top_anchor
+            .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
         self.scroll_manager
@@ -377,7 +377,7 @@ impl Editor {
         let screen_top = self
             .scroll_manager
             .anchor
-            .top_anchor
+            .anchor
             .to_display_point(&snapshot);
 
         if screen_top > newest_head {
@@ -408,7 +408,7 @@ impl Editor {
                 .anchor_at(Point::new(top_row as u32, 0), Bias::Left);
             let scroll_anchor = ScrollAnchor {
                 offset: Vector2F::new(x, y),
-                top_anchor,
+                anchor: top_anchor,
             };
             self.set_scroll_anchor(scroll_anchor, cx);
         }

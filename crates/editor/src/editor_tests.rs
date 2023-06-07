@@ -579,7 +579,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
         assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
 
         // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-        let mut invalid_anchor = editor.scroll_manager.anchor().top_anchor;
+        let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
         invalid_anchor.text_anchor.buffer_id = Some(999);
         let invalid_point = Point::new(9999, 0);
         editor.navigate(
@@ -587,7 +587,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 cursor_anchor: invalid_anchor,
                 cursor_position: invalid_point,
                 scroll_anchor: ScrollAnchor {
-                    top_anchor: invalid_anchor,
+                    anchor: invalid_anchor,
                     offset: Default::default(),
                 },
                 scroll_top_row: invalid_point.row,
@@ -5815,7 +5815,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
         follower.set_scroll_anchor(
             ScrollAnchor {
-                top_anchor,
+                anchor: top_anchor,
                 offset: vec2f(0.0, 0.5),
             },
             cx,
