@@ -5433,6 +5433,7 @@ mod tests {
                 ],
             );
 
+            #[track_caller]
             fn check_propagated_statuses(
                 snapshot: &Snapshot,
                 expected_statuses: &[(&Path, Option<GitFileStatus>)],
