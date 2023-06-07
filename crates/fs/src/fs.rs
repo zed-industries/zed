@@ -29,9 +29,9 @@ use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
 use repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
-use std::sync::Weak;
-#[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Weak;
 
 lazy_static! {
     static ref LINE_SEPARATORS_REGEX: Regex = Regex::new("\r\n|\r|\u{2028}|\u{2029}").unwrap();
