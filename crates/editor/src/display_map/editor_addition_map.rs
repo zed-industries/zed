@@ -1,7 +1,10 @@
 #![allow(unused)]
 // TODO kb
 
-use std::ops::{Add, AddAssign, Range, Sub};
+use std::{
+    ops::{Add, AddAssign, Range, Sub},
+    sync::atomic::{self, AtomicUsize},
+};
 
 use crate::MultiBufferSnapshot;
 
@@ -12,21 +15,43 @@ use super::{
     },
     TextHighlights,
 };
+use collections::HashMap;
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
 use parking_lot::Mutex;
 use project::InlayHint;
 use rand::Rng;
-use sum_tree::Bias;
+use sum_tree::{Bias, SumTree};
 
-pub struct EditorAdditionMap(Mutex<EditorAdditionSnapshot>);
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InlayHintId(usize);
+
+pub struct EditorAdditionMap {
+    snapshot: Mutex<EditorAdditionSnapshot>,
+    next_hint_id: AtomicUsize,
+    hints: HashMap<InlayHintId, InlayHintToRender>,
+}
 
 #[derive(Clone)]
 pub struct EditorAdditionSnapshot {
     // TODO kb merge these two together
     pub suggestion_snapshot: SuggestionSnapshot,
+    transforms: SumTree<Transform>,
     pub version: usize,
-    hints: Vec<InlayHintToRender>,
+}
+
+#[derive(Clone)]
+struct Transform {
+    input: TextSummary,
+    output: TextSummary,
+}
+
+impl sum_tree::Item for Transform {
+    type Summary = TextSummary;
+
+    fn summary(&self) -> Self::Summary {
+        self.output.clone()
+    }
 }
 
 pub type EditorAdditionEdit = Edit<EditorAdditionOffset>;
@@ -68,7 +93,7 @@ pub struct EditorAdditionChunks<'a> {
     suggestion_chunks: SuggestionChunks<'a>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InlayHintToRender {
     pub(super) position: EditorAdditionPoint,
     pub(super) text: Rope,
@@ -109,9 +134,17 @@ impl EditorAdditionMap {
         let snapshot = EditorAdditionSnapshot {
             suggestion_snapshot: suggestion_snapshot.clone(),
             version: 0,
-            hints: Vec::new(),
+            transforms: SumTree::new(),
         };
-        (Self(Mutex::new(snapshot.clone())), snapshot)
+
+        (
+            Self {
+                snapshot: Mutex::new(snapshot.clone()),
+                next_hint_id: AtomicUsize::new(0),
+                hints: HashMap::default(),
+            },
+            snapshot,
+        )
     }
 
     pub fn sync(
@@ -119,13 +152,15 @@ impl EditorAdditionMap {
         suggestion_snapshot: SuggestionSnapshot,
         suggestion_edits: Vec<SuggestionEdit>,
     ) -> (EditorAdditionSnapshot, Vec<EditorAdditionEdit>) {
-        let mut snapshot = self.0.lock();
+        let mut snapshot = self.snapshot.lock();
 
         if snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
             snapshot.version += 1;
         }
 
         let mut editor_addition_edits = Vec::new();
+
+        dbg!(&suggestion_edits);
         for suggestion_edit in suggestion_edits {
             let old = suggestion_edit.old;
             let new = suggestion_edit.new;
@@ -141,8 +176,31 @@ impl EditorAdditionMap {
         (snapshot.clone(), editor_addition_edits)
     }
 
-    pub fn set_inlay_hints(&self, new_hints: Vec<InlayHintToRender>) {
-        self.0.lock().hints = new_hints;
+    // TODO kb replace set_inlay_hints with this
+    pub fn splice(
+        &mut self,
+        to_remove: Vec<InlayHintId>,
+        to_insert: Vec<InlayHintToRender>,
+    ) -> Vec<InlayHintId> {
+        // Order removals and insertions by position.
+        // let anchors;
+
+        // Remove and insert inlays in a single traversal across the tree.
+        todo!("TODO kb")
+    }
+
+    pub fn set_inlay_hints(&mut self, new_hints: Vec<InlayHintToRender>) {
+        dbg!(new_hints.len());
+        // TODO kb reuse ids for hints that did not change and similar things
+        self.hints = new_hints
+            .into_iter()
+            .map(|hint| {
+                (
+                    InlayHintId(self.next_hint_id.fetch_add(1, atomic::Ordering::SeqCst)),
+                    hint,
+                )
+            })
+            .collect();
     }
 }
 

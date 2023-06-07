@@ -288,13 +288,28 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn set_inlay_hints(&self, new_hints: &[project::InlayHint], cx: &mut ModelContext<Self>) {
+    pub fn set_inlay_hints(
+        &mut self,
+        new_hints: &[project::InlayHint],
+        cx: &mut ModelContext<Self>,
+    ) {
+        dbg!("---", new_hints.len());
         let multi_buffer = self.buffer.read(cx);
+
+        let zz = dbg!(multi_buffer
+            .all_buffers()
+            .into_iter()
+            .map(|buffer_handle| buffer_handle.id())
+            .collect::<HashSet<_>>());
+
         self.editor_addition_map.set_inlay_hints(
             new_hints
                 .into_iter()
                 .filter_map(|hint| {
-                    let buffer = multi_buffer.buffer(hint.buffer_id)?.read(cx);
+                    // TODO kb this is all wrong, need to manage both(?) or at least the remote buffer id when needed.
+                    // Here though, `.buffer(` requires remote buffer id, so use the workaround above.
+                    dbg!(zz.contains(&(hint.buffer_id as usize)));
+                    let buffer = dbg!(multi_buffer.buffer(dbg!(hint.buffer_id)))?.read(cx);
                     let snapshot = buffer.snapshot();
                     Some(InlayHintToRender {
                         position: editor_addition_map::EditorAdditionPoint(
