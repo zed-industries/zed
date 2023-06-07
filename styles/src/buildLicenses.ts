@@ -1,7 +1,7 @@
 import * as fs from "fs"
 import toml from "toml"
-import { schemeMeta } from "./colorSchemes"
-import { MetaAndLicense } from "./themes/common/colorScheme"
+import { themes } from "./themes"
+import { ThemeConfig } from "./common"
 
 const ACCEPTED_LICENSES_FILE = `${__dirname}/../../script/licenses/zed-licenses.toml`
 
@@ -18,37 +18,31 @@ function parseAcceptedToml(file: string): string[] {
     return obj.accepted
 }
 
-function checkLicenses(
-    schemeMetaWithLicense: MetaAndLicense[],
-    licenses: string[]
-) {
-    for (const { meta } of schemeMetaWithLicense) {
-        // FIXME: Add support for conjuctions and conditions
-        if (licenses.indexOf(meta.license.SPDX) < 0) {
-            throw Error(
-                `License for theme ${meta.name} (${meta.license.SPDX}) is not supported`
-            )
+function checkLicenses(themes: ThemeConfig[]) {
+    for (const theme of themes) {
+        if (!theme.licenseFile) {
+            throw Error(`Theme ${theme.name} should have a LICENSE files`)
         }
     }
 }
 
-function generateLicenseFile(schemeMetaWithLicense: MetaAndLicense[]) {
-    for (const { meta, licenseFile } of schemeMetaWithLicense) {
-        const licenseText = fs.readFileSync(licenseFile).toString()
-        writeLicense(meta.name, meta.url, licenseText)
+function generateLicenseFile(themes: ThemeConfig[]) {
+    checkLicenses(themes)
+    for (const theme of themes) {
+        const licenseText = fs.readFileSync(theme.licenseFile).toString()
+        writeLicense(theme.name, theme.licenseUrl, licenseText)
     }
 }
 
 function writeLicense(
     themeName: string,
-    themeUrl: string,
+    licenseUrl: string,
     licenseText: String
 ) {
     process.stdout.write(
-        `## [${themeName}](${themeUrl})\n\n${licenseText}\n********************************************************************************\n\n`
+        `## [${themeName}](${licenseUrl})\n\n${licenseText}\n********************************************************************************\n\n`
     )
 }
 
 const acceptedLicenses = parseAcceptedToml(ACCEPTED_LICENSES_FILE)
-checkLicenses(schemeMeta, acceptedLicenses)
-generateLicenseFile(schemeMeta)
+generateLicenseFile(themes)
