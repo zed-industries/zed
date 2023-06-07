@@ -260,9 +260,10 @@ impl LanguageServer {
             buffer.clear();
             stdout.read_until(b'\n', &mut buffer).await?;
             stdout.read_until(b'\n', &mut buffer).await?;
-            let message_len: usize = std::str::from_utf8(&buffer)?
+            let header = std::str::from_utf8(&buffer)?;
+            let message_len: usize = header
                 .strip_prefix(CONTENT_LEN_HEADER)
-                .ok_or_else(|| anyhow!("invalid header"))?
+                .ok_or_else(|| anyhow!("invalid LSP message header {header:?}"))?
                 .trim_end()
                 .parse()?;
 
@@ -301,7 +302,7 @@ impl LanguageServer {
                 }
             } else {
                 warn!(
-                    "Failed to deserialize message:\n{}",
+                    "failed to deserialize LSP message:\n{}",
                     std::str::from_utf8(&buffer)?
                 );
             }
