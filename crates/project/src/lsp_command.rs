@@ -1834,7 +1834,7 @@ impl LspCommand for InlayHints {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|lsp_hint| InlayHint {
-                    buffer_id: buffer.id() as u64,
+                    buffer_id: buffer.id(),
                     position: origin_buffer.anchor_after(
                         origin_buffer
                             .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left),
@@ -2007,7 +2007,7 @@ impl LspCommand for InlayHints {
         let mut hints = Vec::new();
         for message_hint in message.hints {
             let hint = InlayHint {
-                buffer_id: buffer.id() as u64,
+                buffer_id: buffer.id(),
                 position: message_hint
                     .position
                     .and_then(language::proto::deserialize_anchor)

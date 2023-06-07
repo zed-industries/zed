@@ -29,12 +29,12 @@ pub struct InlayHintId(usize);
 pub struct InlayMap {
     snapshot: Mutex<InlaySnapshot>,
     next_hint_id: AtomicUsize,
-    hints: HashMap<InlayHintId, InlayHintToRender>,
+    inlay_hints: HashMap<InlayHintId, InlayHintToRender>,
 }
 
 #[derive(Clone)]
 pub struct InlaySnapshot {
-    // TODO kb merge these two together
+    // TODO kb merge these two together?
     pub suggestion_snapshot: SuggestionSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
@@ -141,7 +141,7 @@ impl InlayMap {
             Self {
                 snapshot: Mutex::new(snapshot.clone()),
                 next_hint_id: AtomicUsize::new(0),
-                hints: HashMap::default(),
+                inlay_hints: HashMap::default(),
             },
             snapshot,
         )
@@ -160,7 +160,6 @@ impl InlayMap {
 
         let mut inlay_edits = Vec::new();
 
-        dbg!(&suggestion_edits);
         for suggestion_edit in suggestion_edits {
             let old = suggestion_edit.old;
             let new = suggestion_edit.new;
@@ -190,9 +189,8 @@ impl InlayMap {
     }
 
     pub fn set_inlay_hints(&mut self, new_hints: Vec<InlayHintToRender>) {
-        dbg!(new_hints.len());
         // TODO kb reuse ids for hints that did not change and similar things
-        self.hints = new_hints
+        self.inlay_hints = new_hints
             .into_iter()
             .map(|hint| {
                 (

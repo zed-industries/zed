@@ -100,13 +100,9 @@ impl DisplayMap {
         let edits = self.buffer_subscription.consume().into_inner();
         let (fold_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
         let (suggestion_snapshot, edits) = self.suggestion_map.sync(fold_snapshot.clone(), edits);
-        let (inlay_snapshot, edits) = self
-            .inlay_map
-            .sync(suggestion_snapshot.clone(), edits);
+        let (inlay_snapshot, edits) = self.inlay_map.sync(suggestion_snapshot.clone(), edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (tab_snapshot, edits) =
-            self.tab_map
-                .sync(inlay_snapshot.clone(), edits, tab_size);
+        let (tab_snapshot, edits) = self.tab_map.sync(inlay_snapshot.clone(), edits, tab_size);
         let (wrap_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tab_snapshot.clone(), edits, cx));
@@ -293,24 +289,24 @@ impl DisplayMap {
         new_hints: &[project::InlayHint],
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("---", new_hints.len());
         let multi_buffer = self.buffer.read(cx);
 
-        let zz = dbg!(multi_buffer
+        // TODO kb carry both remote and local ids of the buffer?
+        // now, `.buffer` requires remote id, hence this map.
+        let buffers_to_local_id = multi_buffer
             .all_buffers()
             .into_iter()
-            .map(|buffer_handle| buffer_handle.id())
-            .collect::<HashSet<_>>());
+            .map(|buffer_handle| (buffer_handle.id(), buffer_handle))
+            .collect::<HashMap<_, _>>();
 
         self.inlay_map.set_inlay_hints(
             new_hints
                 .into_iter()
                 .filter_map(|hint| {
-                    // TODO kb this is all wrong, need to manage both(?) or at least the remote buffer id when needed.
-                    // Here though, `.buffer(` requires remote buffer id, so use the workaround above.
-                    dbg!(zz.contains(&(hint.buffer_id as usize)));
-                    let buffer = dbg!(multi_buffer.buffer(dbg!(hint.buffer_id)))?.read(cx);
-                    let snapshot = buffer.snapshot();
+                    let snapshot = buffers_to_local_id
+                        .get(&hint.buffer_id)?
+                        .read(cx)
+                        .snapshot();
                     Some(InlayHintToRender {
                         position: inlay_map::InlayPoint(text::ToPoint::to_point(
                             &hint.position,
@@ -419,9 +415,7 @@ impl DisplaySnapshot {
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
         let fold_point = self.fold_snapshot.to_fold_point(point, bias);
         let suggestion_point = self.suggestion_snapshot.to_suggestion_point(fold_point);
-        let inlay_point = self
-            .inlay_snapshot
-            .to_inlay_point(suggestion_point);
+        let inlay_point = self.inlay_snapshot.to_inlay_point(suggestion_point);
         let tab_point = self.tab_snapshot.to_tab_point(inlay_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
@@ -432,13 +426,8 @@ impl DisplaySnapshot {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
-        let inlay_point = self
-            .tab_snapshot
-            .to_inlay_point(tab_point, bias)
-            .0;
-        let suggestion_point = self
-            .inlay_snapshot
-            .to_suggestion_point(inlay_point, bias);
+        let inlay_point = self.tab_snapshot.to_inlay_point(tab_point, bias).0;
+        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point, bias);
         let fold_point = self.suggestion_snapshot.to_fold_point(suggestion_point);
         fold_point.to_buffer_point(&self.fold_snapshot)
     }
@@ -853,9 +842,7 @@ impl DisplayPoint {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0);
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let inlay_point = map.tab_snapshot.to_inlay_point(tab_point, bias).0;
-        let suggestion_point = map
-            .inlay_snapshot
-            .to_suggestion_point(inlay_point, bias);
+        let suggestion_point = map.inlay_snapshot.to_suggestion_point(inlay_point, bias);
         let fold_point = map.suggestion_snapshot.to_fold_point(suggestion_point);
         fold_point.to_buffer_offset(&map.fold_snapshot)
     }

@@ -329,7 +329,7 @@ pub struct Location {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
-    pub buffer_id: u64,
+    pub buffer_id: usize,
     pub position: Anchor,
     pub label: InlayHintLabel,
     pub kind: Option<String>,
