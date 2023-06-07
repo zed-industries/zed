@@ -14,11 +14,11 @@
   (list_marker_parenthesis)
 ] @punctuation.list_marker
 
-[
-  (indented_code_block)
-  (fenced_code_block)
-  (code_span)
-] @text.literal
+(code_span) @text.literal
+
+(fenced_code_block
+  (info_string
+    (language) @text.literal))
 
 (link_destination) @link_uri
 (link_text) @link_text

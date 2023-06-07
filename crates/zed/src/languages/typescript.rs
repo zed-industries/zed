@@ -327,10 +327,10 @@ mod tests {
                 .map(|item| (item.text.as_str(), item.depth))
                 .collect::<Vec<_>>(),
             &[
-                ("function a ( )", 0),
-                ("async function a2 ( )", 1),
+                ("function a()", 0),
+                ("async function a2()", 1),
                 ("let b", 0),
-                ("function getB ( )", 0),
+                ("function getB()", 0),
                 ("const d", 0),
             ]
         );

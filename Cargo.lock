@@ -100,7 +100,6 @@ name = "ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "chrono",
  "collections",
  "editor",
@@ -219,15 +218,6 @@ name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
-
-[[package]]
-name = "assets"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gpui",
- "rust-embed",
-]
 
 [[package]]
 name = "async-broadcast"
@@ -1429,7 +1419,6 @@ name = "copilot_button"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "context_menu",
  "copilot",
  "editor",
@@ -6151,7 +6140,6 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "collections",
  "fs",
  "futures 0.3.28",
@@ -6160,6 +6148,7 @@ dependencies = [
  "lazy_static",
  "postage",
  "pretty_assertions",
+ "rust-embed",
  "schemars",
  "serde",
  "serde_derive",
@@ -7404,8 +7393,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-elixir"
-version = "0.19.0"
-source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=05e3631c6a0701c1fa518b0fee7be95a2ceef5e2#05e3631c6a0701c1fa518b0fee7be95a2ceef5e2"
+version = "0.1.0"
+source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=4ba9dab6e2602960d95b2b625f3386c27e08084e#4ba9dab6e2602960d95b2b625f3386c27e08084e"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -7801,6 +7790,7 @@ dependencies = [
  "lazy_static",
  "log",
  "rand 0.8.5",
+ "rust-embed",
  "serde",
  "serde_json",
  "smol",
@@ -7871,7 +7861,6 @@ name = "vim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "async-compat",
  "async-trait",
  "collections",
@@ -8699,7 +8688,6 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "async-recursion 1.0.4",
  "bincode",
  "call",
@@ -8799,7 +8787,6 @@ dependencies = [
  "activity_indicator",
  "ai",
  "anyhow",
- "assets",
  "async-compression",
  "async-recursion 0.3.2",
  "async-tar",
