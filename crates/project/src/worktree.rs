@@ -5410,33 +5410,31 @@ mod tests {
                 ],
             );
 
-            panic!();
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new("a/b"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/d/e1.txt"), None),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f"), None),
+                    (Path::new("f/no-status.txt"), None),
+                    (Path::new("g"), Some(GitFileStatus::Conflict)),
+                ],
+            );
 
-            // check_propagated_statuses(
-            //     &snapshot,
-            //     &[
-            //         (Path::new("a/b"), Some(GitFileStatus::Added)),
-            //         (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            //         (Path::new("a/b/c2.txt"), None),
-            //         (Path::new("a/d"), Some(GitFileStatus::Modified)),
-            //         (Path::new("a/d/e1.txt"), None),
-            //         (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            //         (Path::new("f"), None),
-            //         (Path::new("f/no-status.txt"), None),
-            //         (Path::new("g"), Some(GitFileStatus::Conflict)),
-            //     ],
-            // );
-
-            // check_propagated_statuses(
-            //     &snapshot,
-            //     &[
-            //         (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            //         (Path::new("a/b/c2.txt"), None),
-            //         (Path::new("a/d/e1.txt"), None),
-            //         (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            //         (Path::new("f/no-status.txt"), None),
-            //     ],
-            // );
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d/e1.txt"), None),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f/no-status.txt"), None),
+                ],
+            );
 
             #[track_caller]
             fn check_propagated_statuses(
@@ -5447,14 +5445,12 @@ mod tests {
                     .iter()
                     .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
                     .collect::<Vec<_>>();
-                dbg!(&entries);
                 snapshot.propagate_git_statuses(&mut entries);
-                dbg!(&entries);
                 assert_eq!(
-                    dbg!(entries
+                    entries
                         .iter()
                         .map(|e| (e.path.as_ref(), e.git_status))
-                        .collect::<Vec<_>>()),
+                        .collect::<Vec<_>>(),
                     expected_statuses
                 );
             }
