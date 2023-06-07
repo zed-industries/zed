@@ -15,7 +15,6 @@ mod toolbar;
 mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
-use assets::Assets;
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
@@ -60,7 +59,7 @@ use std::{
 };
 
 use crate::{
-    notifications::simple_message_notification::MessageNotification,
+    notifications::{simple_message_notification::MessageNotification, NotificationTracker},
     persistence::model::{
         DockData, DockStructure, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
     },
@@ -81,9 +80,9 @@ use serde::Deserialize;
 use shared_screen::SharedScreen;
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, paths, ResultExt};
+use util::{async_iife, ResultExt};
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -132,8 +131,6 @@ actions!(
         ToggleBottomDock,
     ]
 );
-
-actions!(zed, [OpenSettings]);
 
 #[derive(Clone, PartialEq)]
 pub struct OpenPaths {
@@ -294,17 +291,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
     });
-
-    cx.add_action(
-        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
-            create_and_open_local_file(&paths::SETTINGS, cx, || {
-                settings::initial_user_settings_content(&Assets)
-                    .as_ref()
-                    .into()
-            })
-            .detach_and_log_err(cx);
-        },
-    );
 
     let client = &app_state.client;
     client.add_view_request_handler(Workspace::handle_follow);
@@ -765,25 +751,21 @@ impl Workspace {
                 DB.next_id().await.unwrap_or(0)
             };
 
-            let window_bounds_override =
-                ZED_WINDOW_POSITION
-                    .zip(*ZED_WINDOW_SIZE)
-                    .map(|(position, size)| {
-                        WindowBounds::Fixed(RectF::new(
-                            cx.platform().screens()[0].bounds().origin() + position,
-                            size,
-                        ))
-                    });
-
-            let build_workspace = |cx: &mut ViewContext<Workspace>| {
-                Workspace::new(workspace_id, project_handle.clone(), app_state.clone(), cx)
-            };
-
             let workspace = requesting_window_id
                 .and_then(|window_id| {
-                    cx.update(|cx| cx.replace_root_view(window_id, |cx| build_workspace(cx)))
+                    cx.update(|cx| {
+                        cx.replace_root_view(window_id, |cx| {
+                            Workspace::new(
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        })
+                    })
                 })
                 .unwrap_or_else(|| {
+                    let window_bounds_override = window_bounds_env_override(&cx);
                     let (bounds, display) = if let Some(bounds) = window_bounds_override {
                         (Some(bounds), None)
                     } else {
@@ -819,7 +801,14 @@ impl Workspace {
                     // Use the serialized workspace to construct the new window
                     cx.add_window(
                         (app_state.build_window_options)(bounds, display, cx.platform().as_ref()),
-                        |cx| build_workspace(cx),
+                        |cx| {
+                            Workspace::new(
+                                workspace_id,
+                                project_handle.clone(),
+                                app_state.clone(),
+                                cx,
+                            )
+                        },
                     )
                     .1
                 });
@@ -908,18 +897,24 @@ impl Workspace {
                         }
                     });
                 } else if T::should_zoom_in_on_event(event) {
-                    this.zoom_out(cx);
                     dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, true, cx));
                     if panel.has_focus(cx) {
                         this.zoomed = Some(panel.downgrade().into_any());
                         this.zoomed_position = Some(panel.read(cx).position(cx));
                     }
                 } else if T::should_zoom_out_on_event(event) {
-                    this.zoom_out(cx);
+                    dock.update(cx, |dock, cx| dock.set_panel_zoomed(&panel, false, cx));
+                    if this.zoomed_position == Some(prev_position) {
+                        this.zoomed = None;
+                        this.zoomed_position = None;
+                    }
+                    cx.notify();
                 } else if T::is_focus_event(event) {
+                    let position = panel.read(cx).position(cx);
+                    this.dismiss_zoomed_items_to_reveal(Some(position), cx);
                     if panel.is_zoomed(cx) {
                         this.zoomed = Some(panel.downgrade().into_any());
-                        this.zoomed_position = Some(panel.read(cx).position(cx));
+                        this.zoomed_position = Some(position);
                     } else {
                         this.zoomed = None;
                         this.zoomed_position = None;
@@ -968,9 +963,8 @@ impl Workspace {
                     let timestamp = entry.timestamp;
                     match history.entry(project_path) {
                         hash_map::Entry::Occupied(mut entry) => {
-                            let (old_fs_path, old_timestamp) = entry.get();
+                            let (_, old_timestamp) = entry.get();
                             if &timestamp > old_timestamp {
-                                assert_eq!(&fs_path, old_fs_path, "Inconsistent nav history");
                                 entry.insert((fs_path, timestamp));
                             }
                         }
@@ -1592,7 +1586,7 @@ impl Workspace {
             DockPosition::Right => &self.right_dock,
         };
         let mut focus_center = false;
-        let mut zoom_out = false;
+        let mut reveal_dock = false;
         dock.update(cx, |dock, cx| {
             let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
             let was_visible = dock.is_open() && !other_is_zoomed;
@@ -1607,14 +1601,15 @@ impl Workspace {
                     if active_panel.is_zoomed(cx) {
                         cx.focus(active_panel.as_any());
                     }
-                    zoom_out = true;
+                    reveal_dock = true;
                 }
             }
         });
 
-        if zoom_out {
-            self.zoom_out_everything_except(dock_side, cx);
+        if reveal_dock {
+            self.dismiss_zoomed_items_to_reveal(Some(dock_side), cx);
         }
+
         if focus_center {
             cx.focus_self();
         }
@@ -1623,62 +1618,49 @@ impl Workspace {
         self.serialize_workspace(cx);
     }
 
+    /// Transfer focus to the panel of the given type.
     pub fn focus_panel<T: Panel>(&mut self, cx: &mut ViewContext<Self>) -> Option<ViewHandle<T>> {
-        self.show_or_hide_panel::<T>(cx, |_, _| true)?
+        self.focus_or_unfocus_panel::<T>(cx, |_, _| true)?
             .as_any()
             .clone()
             .downcast()
     }
 
+    /// Focus the panel of the given type if it isn't already focused. If it is
+    /// already focused, then transfer focus back to the workspace center.
     pub fn toggle_panel_focus<T: Panel>(&mut self, cx: &mut ViewContext<Self>) {
-        self.show_or_hide_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
+        self.focus_or_unfocus_panel::<T>(cx, |panel, cx| !panel.has_focus(cx));
     }
 
-    fn show_or_hide_panel<T: Panel>(
+    /// Focus or unfocus the given panel type, depending on the given callback.
+    fn focus_or_unfocus_panel<T: Panel>(
         &mut self,
         cx: &mut ViewContext<Self>,
-        show: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
+        should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
     ) -> Option<Rc<dyn PanelHandle>> {
-        for (dock, position) in [
-            self.left_dock.clone(),
-            self.bottom_dock.clone(),
-            self.right_dock.clone(),
-        ]
-        .into_iter()
-        .zip(
-            [
-                DockPosition::Left,
-                DockPosition::Bottom,
-                DockPosition::Right,
-            ]
-            .into_iter(),
-        ) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
-                let mut zoom_out = false;
+                let mut reveal_dock = false;
                 let panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, cx);
 
                     let panel = dock.active_panel().cloned();
                     if let Some(panel) = panel.as_ref() {
-                        let should_show = show(&**panel, cx);
-                        if should_show {
+                        if should_focus(&**panel, cx) {
                             dock.set_open(true, cx);
                             cx.focus(panel.as_any());
-                            zoom_out = true;
+                            reveal_dock = true;
                         } else {
-                            if panel.is_zoomed(cx) {
-                                dock.set_open(false, cx);
-                            }
+                            // if panel.is_zoomed(cx) {
+                            //     dock.set_open(false, cx);
+                            // }
                             focus_center = true;
                         }
                     }
                     panel
                 });
 
-                if zoom_out {
-                    self.zoom_out_everything_except(position, cx);
-                }
                 if focus_center {
                     cx.focus_self();
                 }
@@ -1686,6 +1668,16 @@ impl Workspace {
                 self.serialize_workspace(cx);
                 cx.notify();
                 return panel;
+            }
+        }
+        None
+    }
+
+    pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<ViewHandle<T>> {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            let dock = dock.read(cx);
+            if let Some(panel) = dock.panel::<T>() {
+                return Some(panel);
             }
         }
         None
@@ -1705,28 +1697,38 @@ impl Workspace {
         cx.notify();
     }
 
-    fn zoom_out_everything_except(
+    fn dismiss_zoomed_items_to_reveal(
         &mut self,
-        except_position: DockPosition,
+        dock_to_reveal: Option<DockPosition>,
         cx: &mut ViewContext<Self>,
     ) {
+        // If a center pane is zoomed, unzoom it.
         for pane in &self.panes {
-            pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+            if pane != &self.active_pane || dock_to_reveal.is_some() {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+            }
         }
 
-        if except_position != DockPosition::Left {
-            self.left_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        // If another dock is zoomed, hide it.
+        let mut focus_center = false;
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+            dock.update(cx, |dock, cx| {
+                if Some(dock.position()) != dock_to_reveal {
+                    if let Some(panel) = dock.active_panel() {
+                        if panel.is_zoomed(cx) {
+                            focus_center |= panel.has_focus(cx);
+                            dock.set_open(false, cx);
+                        }
+                    }
+                }
+            });
         }
 
-        if except_position != DockPosition::Bottom {
-            self.bottom_dock.update(cx, |dock, cx| dock.zoom_out(cx));
+        if focus_center {
+            cx.focus_self();
         }
 
-        if except_position != DockPosition::Right {
-            self.right_dock.update(cx, |dock, cx| dock.zoom_out(cx));
-        }
-
-        if self.zoomed_position != Some(except_position) {
+        if self.zoomed_position != dock_to_reveal {
             self.zoomed = None;
             self.zoomed_position = None;
         }
@@ -1937,6 +1939,7 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
+        self.dismiss_zoomed_items_to_reveal(None, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into_any());
         } else {
@@ -1998,7 +2001,6 @@ impl Workspace {
             }
             pane::Event::ZoomIn => {
                 if pane == self.active_pane {
-                    self.zoom_out(cx);
                     pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                     if pane.read(cx).has_focus() {
                         self.zoomed = Some(pane.downgrade().into_any());
@@ -2007,7 +2009,13 @@ impl Workspace {
                     cx.notify();
                 }
             }
-            pane::Event::ZoomOut => self.zoom_out(cx),
+            pane::Event::ZoomOut => {
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
+                if self.zoomed_position.is_none() {
+                    self.zoomed = None;
+                }
+                cx.notify();
+            }
         }
 
         self.serialize_workspace(cx);
@@ -3101,6 +3109,17 @@ impl Workspace {
     }
 }
 
+fn window_bounds_env_override(cx: &AsyncAppContext) -> Option<WindowBounds> {
+    ZED_WINDOW_POSITION
+        .zip(*ZED_WINDOW_SIZE)
+        .map(|(position, size)| {
+            WindowBounds::Fixed(RectF::new(
+                cx.platform().screens()[0].bounds().origin() + position,
+                size,
+            ))
+        })
+}
+
 async fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     workspace: &WeakViewHandle<Workspace>,
@@ -3190,6 +3209,87 @@ async fn open_items(
     opened_items
 }
 
+fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
+    const NEW_PANEL_BLOG_POST: &str = "https://zed.dev/blog/new-panel-system";
+    const NEW_DOCK_HINT_KEY: &str = "show_new_dock_key";
+    const MESSAGE_ID: usize = 2;
+
+    if workspace
+        .read_with(cx, |workspace, cx| {
+            workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+        })
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    if db::kvp::KEY_VALUE_STORE
+        .read_kvp(NEW_DOCK_HINT_KEY)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        if !workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.has_shown_notification_once::<MessageNotification>(MESSAGE_ID, cx)
+            })
+            .unwrap_or(false)
+        {
+            cx.update(|cx| {
+                cx.update_global::<NotificationTracker, _, _>(|tracker, _| {
+                    let entry = tracker
+                        .entry(TypeId::of::<MessageNotification>())
+                        .or_default();
+                    if !entry.contains(&MESSAGE_ID) {
+                        entry.push(MESSAGE_ID);
+                    }
+                });
+            });
+        }
+
+        return;
+    }
+
+    cx.spawn(|_| async move {
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(NEW_DOCK_HINT_KEY.to_string(), "seen".to_string())
+            .await
+            .ok();
+    })
+    .detach();
+
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.show_notification_once(2, cx, |cx| {
+                cx.add_view(|_| {
+                    MessageNotification::new_element(|text, _| {
+                        Text::new(
+                            "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
+                            text,
+                        )
+                        .with_custom_runs(vec![26..32, 34..46], |_, bounds, scene, cx| {
+                            let code_span_background_color = settings::get::<ThemeSettings>(cx)
+                                .theme
+                                .editor
+                                .document_highlight_read_background;
+
+                            scene.push_quad(gpui::Quad {
+                                bounds,
+                                background: Some(code_span_background_color),
+                                border: Default::default(),
+                                corner_radius: 2.0,
+                            })
+                        })
+                        .into_any()
+                    })
+                    .with_click_message("Read more about the new panel system")
+                    .on_click(|cx| cx.platform().open_url(NEW_PANEL_BLOG_POST))
+                })
+            })
+        })
+        .ok();
+}
+
 fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
     const REPORT_ISSUE_URL: &str ="https://github.com/zed-industries/community/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
 
@@ -3206,7 +3306,7 @@ fn notify_if_database_failed(workspace: &WeakViewHandle<Workspace>, cx: &mut Asy
             } else {
                 let backup_path = (*db::BACKUP_DB_PATH).read();
                 if let Some(backup_path) = backup_path.clone() {
-                    workspace.show_notification_once(0, cx, move |cx| {
+                    workspace.show_notification_once(1, cx, move |cx| {
                         cx.add_view(move |_| {
                             MessageNotification::new(format!(
                                 "Database file was corrupted. Old database backed up to {}",
@@ -3278,32 +3378,36 @@ impl View for Workspace {
                                         enum ZoomBackground {}
                                         let zoomed = zoomed.upgrade(cx)?;
 
-                                        let mut foreground_style;
-                                        match self.zoomed_position {
-                                            Some(DockPosition::Left) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.left = 0.;
-                                                foreground_style.margin.top = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            Some(DockPosition::Right) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.right = 0.;
-                                                foreground_style.margin.top = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            Some(DockPosition::Bottom) => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_panel_foreground;
-                                                foreground_style.margin.left = 0.;
-                                                foreground_style.margin.right = 0.;
-                                                foreground_style.margin.bottom = 0.;
-                                            }
-                                            None => {
-                                                foreground_style =
-                                                    theme.workspace.zoomed_pane_foreground;
+                                        let mut foreground_style =
+                                            theme.workspace.zoomed_pane_foreground;
+                                        if let Some(zoomed_dock_position) = self.zoomed_position {
+                                            foreground_style =
+                                                theme.workspace.zoomed_panel_foreground;
+                                            let margin = foreground_style.margin.top;
+                                            let border = foreground_style.border.top;
+
+                                            // Only include a margin and border on the opposite side.
+                                            foreground_style.margin.top = 0.;
+                                            foreground_style.margin.left = 0.;
+                                            foreground_style.margin.bottom = 0.;
+                                            foreground_style.margin.right = 0.;
+                                            foreground_style.border.top = false;
+                                            foreground_style.border.left = false;
+                                            foreground_style.border.bottom = false;
+                                            foreground_style.border.right = false;
+                                            match zoomed_dock_position {
+                                                DockPosition::Left => {
+                                                    foreground_style.margin.right = margin;
+                                                    foreground_style.border.right = border;
+                                                }
+                                                DockPosition::Right => {
+                                                    foreground_style.margin.left = margin;
+                                                    foreground_style.border.left = border;
+                                                }
+                                                DockPosition::Bottom => {
+                                                    foreground_style.margin.top = margin;
+                                                    foreground_style.border.top = border;
+                                                }
                                             }
                                         }
 
@@ -3548,8 +3652,13 @@ pub fn join_remote_project(
                 })
                 .await?;
 
+            let window_bounds_override = window_bounds_env_override(&cx);
             let (_, workspace) = cx.add_window(
-                (app_state.build_window_options)(None, None, cx.platform().as_ref()),
+                (app_state.build_window_options)(
+                    window_bounds_override,
+                    None,
+                    cx.platform().as_ref(),
+                ),
                 |cx| Workspace::new(0, project, app_state.clone(), cx),
             );
             (app_state.initialize_workspace)(
@@ -4257,6 +4366,12 @@ mod tests {
             panel
         });
 
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update(cx, |pane, cx| {
+            let item = cx.add_view(|_| TestItem::new());
+            pane.add_item(Box::new(item), true, true, None, cx);
+        });
+
         // Transfer focus from center to panel
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_panel_focus::<TestPanel>(cx);
@@ -4324,7 +4439,7 @@ mod tests {
             assert!(!panel.has_focus(cx));
         });
 
-        // Transfering focus back to the panel keeps it zoomed
+        // Transferring focus back to the panel keeps it zoomed
         workspace.update(cx, |workspace, cx| {
             workspace.toggle_panel_focus::<TestPanel>(cx);
         });
@@ -4357,6 +4472,25 @@ mod tests {
             assert!(panel.is_zoomed(cx));
             assert!(workspace.zoomed.is_some());
             assert!(panel.has_focus(cx));
+        });
+
+        // Unzoom and close the panel, zoom the active pane.
+        panel.update(cx, |panel, cx| panel.set_zoomed(false, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx)
+        });
+        pane.update(cx, |pane, cx| pane.toggle_zoom(&Default::default(), cx));
+
+        // Opening a dock unzooms the pane.
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_dock(DockPosition::Right, cx)
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let pane = pane.read(cx);
+            assert!(!pane.is_zoomed());
+            assert!(pane.has_focus());
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert!(workspace.zoomed.is_none());
         });
     }
 

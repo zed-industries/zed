@@ -76,6 +76,9 @@ impl SelectionsCollection {
         count
     }
 
+    /// The non-pending, non-overlapping selections. There could still be a pending
+    /// selection that overlaps these if the mouse is being dragged, etc. Returned as
+    /// selections over Anchors.
     pub fn disjoint_anchors(&self) -> Arc<[Selection<Anchor>]> {
         self.disjoint.clone()
     }

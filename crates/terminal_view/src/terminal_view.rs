@@ -133,8 +133,8 @@ impl TerminalView {
             Event::Wakeup => {
                 if !cx.is_self_focused() {
                     this.has_new_content = true;
-                    cx.notify();
                 }
+                cx.notify();
                 cx.emit(Event::Wakeup);
             }
             Event::Bell => {
@@ -804,7 +804,7 @@ mod tests {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
-            //Make sure enviroment is as expeted
+            //Make sure environment is as expected
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_none());
 
@@ -825,7 +825,7 @@ mod tests {
             let workspace = workspace.read(cx);
             let active_entry = project.read(cx).active_entry();
 
-            //Make sure enviroment is as expeted
+            //Make sure environment is as expected
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
@@ -905,7 +905,10 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, ViewHandle<Workspace>) {
         let params = cx.update(AppState::test);
-        cx.update(|cx| theme::init((), cx));
+        cx.update(|cx| {
+            theme::init((), cx);
+            language::init(cx);
+        });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let (_, workspace) = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));

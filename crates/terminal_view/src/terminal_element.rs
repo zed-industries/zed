@@ -34,7 +34,7 @@ use std::{mem, ops::Range};
 
 use crate::TerminalView;
 
-///The information generated during layout that is nescessary for painting
+///The information generated during layout that is necessary for painting
 pub struct LayoutState {
     cells: Vec<LayoutCell>,
     rects: Vec<LayoutRect>,
@@ -206,7 +206,7 @@ impl TerminalElement {
                 //Expand background rect range
                 {
                     if matches!(bg, Named(NamedColor::Background)) {
-                        //Continue to next cell, resetting variables if nescessary
+                        //Continue to next cell, resetting variables if necessary
                         cur_alac_color = None;
                         if let Some(rect) = cur_rect {
                             rects.push(rect);

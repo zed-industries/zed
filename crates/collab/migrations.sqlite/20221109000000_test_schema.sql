@@ -97,6 +97,17 @@ CREATE TABLE "worktree_repositories" (
 CREATE INDEX "index_worktree_repositories_on_project_id" ON "worktree_repositories" ("project_id");
 CREATE INDEX "index_worktree_repositories_on_project_id_and_worktree_id" ON "worktree_repositories" ("project_id", "worktree_id");
 
+CREATE TABLE "worktree_settings_files" (
+    "project_id" INTEGER NOT NULL,
+    "worktree_id" INTEGER NOT NULL,
+    "path" VARCHAR NOT NULL,
+    "content" TEXT,
+    PRIMARY KEY(project_id, worktree_id, path),
+    FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
+);
+CREATE INDEX "index_worktree_settings_files_on_project_id" ON "worktree_settings_files" ("project_id");
+CREATE INDEX "index_worktree_settings_files_on_project_id_and_worktree_id" ON "worktree_settings_files" ("project_id", "worktree_id");
+
 CREATE TABLE "worktree_diagnostic_summaries" (
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,

@@ -24,7 +24,6 @@ nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", f
 tokio = { version = "1.15", "optional" = true }
 serde_json.workspace = true
 
-assets = { path = "../assets" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
 editor = { path = "../editor" }

@@ -2,7 +2,6 @@
 members = [
     "crates/activity_indicator",
     "crates/ai",
-    "crates/assets",
     "crates/auto_update",
     "crates/breadcrumbs",
     "crates/call",
@@ -88,6 +87,7 @@ parking_lot = { version = "0.11.1" }
 postage = { version = "0.5", features = ["futures-traits"] }
 rand = { version = "0.8.5" }
 regex = { version = "1.5" }
+rust-embed = { version = "6.3", features = ["include-exclude"] }
 schemars = { version = "0.8" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -116,3 +116,4 @@ split-debuginfo = "unpacked"
 
 [profile.release]
 debug = true
+lto = "thin"

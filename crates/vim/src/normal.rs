@@ -400,7 +400,7 @@ fn scroll(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContext<Edito
         };
 
         let scroll_margin_rows = editor.vertical_scroll_margin() as u32;
-        let top_anchor = editor.scroll_manager.anchor().top_anchor;
+        let top_anchor = editor.scroll_manager.anchor().anchor;
 
         editor.change_selections(None, cx, |s| {
             s.replace_cursors_with(|snapshot| {
@@ -756,7 +756,7 @@ mod test {
                 ˇ
                 The quick"})
             .await;
-        // Indoc disallows trailing whitspace.
+        // Indoc disallows trailing whitespace.
         cx.assert("   ˇ \nThe quick").await;
     }
 

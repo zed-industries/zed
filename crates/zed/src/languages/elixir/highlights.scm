@@ -1,21 +1,6 @@
 ["when" "and" "or" "not" "in" "not in" "fn" "do" "end" "catch" "rescue" "after" "else"] @keyword
 
 (unary_operator
-  operator: "@" @comment.doc
-  operand: (call
-    target: (identifier) @comment.doc.__attribute__
-    (arguments
-      [
-        (string) @comment.doc
-        (charlist) @comment.doc
-        (sigil
-          quoted_start: _ @comment.doc
-          quoted_end: _ @comment.doc) @comment.doc
-        (boolean) @comment.doc
-      ]))
-  (#match? @comment.doc.__attribute__ "^(moduledoc|typedoc|doc)$"))
-
-(unary_operator
   operator: "&"
   operand: (integer) @operator)
 
@@ -84,6 +69,11 @@
   quoted_start: _ @string.special
   quoted_end: _ @string.special) @string.special
 
+(
+  (identifier) @comment.unused
+  (#match? @comment.unused "^_")
+)
+
 (call
   target: [
     (identifier) @function
@@ -99,15 +89,10 @@
       (binary_operator
         left: (identifier) @function
         operator: "when")
+      (binary_operator
+        operator: "|>"
+        right: (identifier))
     ])
-  (#match? @keyword "^(def|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp|defp)$"))
-
-(call
-  target: (identifier) @keyword
-  (arguments
-    (binary_operator
-      operator: "|>"
-      right: (identifier)))
   (#match? @keyword "^(def|defdelegate|defguard|defguardp|defmacro|defmacrop|defn|defnp|defp)$"))
 
 (binary_operator
@@ -127,10 +112,18 @@
   (#match? @constant.builtin "^(__MODULE__|__DIR__|__ENV__|__CALLER__|__STACKTRACE__)$")
 )
 
-(
-  (identifier) @comment.unused
-  (#match? @comment.unused "^_")
-)
+(unary_operator
+  operator: "@" @comment.doc
+  operand: (call
+    target: (identifier) @__attribute__ @comment.doc
+    (arguments
+      [
+        (string)
+        (charlist)
+        (sigil)
+        (boolean)
+      ] @comment.doc))
+  (#match? @__attribute__ "^(moduledoc|typedoc|doc)$"))
 
 (comment) @comment
 

@@ -272,12 +272,11 @@ impl DisplayMap {
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
-        let language_name = buffer
+        let language = buffer
             .read(cx)
             .as_singleton()
-            .and_then(|buffer| buffer.read(cx).language())
-            .map(|language| language.name());
-        language_settings(language_name.as_deref(), cx).tab_size
+            .and_then(|buffer| buffer.read(cx).language());
+        language_settings(language.as_deref(), None, cx).tab_size
     }
 
     #[cfg(test)]
@@ -476,7 +475,7 @@ impl DisplaySnapshot {
             })
     }
 
-    /// Returns an iterator of the start positions of the occurances of `target` in the `self` after `from`
+    /// Returns an iterator of the start positions of the occurrences of `target` in the `self` after `from`
     /// Stops if `condition` returns false for any of the character position pairs observed.
     pub fn find_while<'a>(
         &'a self,
@@ -487,7 +486,7 @@ impl DisplaySnapshot {
         Self::find_internal(self.chars_at(from), target.chars().collect(), condition)
     }
 
-    /// Returns an iterator of the end positions of the occurances of `target` in the `self` before `from`
+    /// Returns an iterator of the end positions of the occurrences of `target` in the `self` before `from`
     /// Stops if `condition` returns false for any of the character position pairs observed.
     pub fn reverse_find_while<'a>(
         &'a self,

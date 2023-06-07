@@ -221,6 +221,7 @@ fn show_hover(
                     project: project.clone(),
                     symbol_range: range,
                     blocks: hover_result.contents,
+                    language: hover_result.language,
                     rendered_content: None,
                 })
             });
@@ -253,6 +254,7 @@ fn render_blocks(
     theme_id: usize,
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
+    language: Option<&Arc<Language>>,
     style: &EditorStyle,
 ) -> RenderedInfo {
     let mut text = String::new();
@@ -351,11 +353,13 @@ fn render_blocks(
                             }
                             Tag::CodeBlock(kind) => {
                                 new_paragraph(&mut text, &mut list_stack);
-                                if let CodeBlockKind::Fenced(language) = kind {
-                                    current_language = language_registry
+                                current_language = if let CodeBlockKind::Fenced(language) = kind {
+                                    language_registry
                                         .language_for_name(language.as_ref())
                                         .now_or_never()
-                                        .and_then(Result::ok);
+                                        .and_then(Result::ok)
+                                } else {
+                                    language.cloned()
                                 }
                             }
                             Tag::Emphasis => italic_depth += 1,
@@ -412,10 +416,6 @@ fn render_blocks(
                 }
             }
         }
-    }
-
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
     }
 
     RenderedInfo {
@@ -524,6 +524,7 @@ pub struct InfoPopover {
     pub project: ModelHandle<Project>,
     pub symbol_range: Range<Anchor>,
     pub blocks: Vec<HoverBlock>,
+    language: Option<Arc<Language>>,
     rendered_content: Option<RenderedInfo>,
 }
 
@@ -559,6 +560,7 @@ impl InfoPopover {
                 style.theme_id,
                 &self.blocks,
                 self.project.read(cx).languages(),
+                self.language.as_ref(),
                 style,
             )
         });
@@ -588,10 +590,7 @@ impl InfoPopover {
                                         MouseRegion::new::<Self>(view_id, region_id, bounds)
                                             .on_click::<Editor, _>(
                                                 MouseButton::Left,
-                                                move |_, _, cx| {
-                                                    println!("clicked link {url}");
-                                                    cx.platform().open_url(&url);
-                                                },
+                                                move |_, _, cx| cx.platform().open_url(&url),
                                             ),
                                     );
                                 }
@@ -906,7 +905,7 @@ mod tests {
                         text: "one **two** three".to_string(),
                         kind: HoverBlockKind::Markdown,
                     }],
-                    expected_marked_text: "one «two» three\n".to_string(),
+                    expected_marked_text: "one «two» three".to_string(),
                     expected_styles: vec![HighlightStyle {
                         weight: Some(Weight::BOLD),
                         ..Default::default()
@@ -918,7 +917,7 @@ mod tests {
                         text: "one [two](the-url) three".to_string(),
                         kind: HoverBlockKind::Markdown,
                     }],
-                    expected_marked_text: "one «two» three\n".to_string(),
+                    expected_marked_text: "one «two» three".to_string(),
                     expected_styles: vec![HighlightStyle {
                         underline: Some(Underline {
                             thickness: 1.0.into(),
@@ -937,8 +936,7 @@ mod tests {
                                 - b
                             * two
                                 - [c](the-url)
-                                - d
-                        "
+                                - d"
                         .unindent(),
                         kind: HoverBlockKind::Markdown,
                     }],
@@ -949,8 +947,7 @@ mod tests {
                           - b
                         - two
                           - «c»
-                          - d
-                    "
+                          - d"
                     .unindent(),
                     expected_styles: vec![HighlightStyle {
                         underline: Some(Underline {
@@ -973,9 +970,8 @@ mod tests {
 
                                   nine
                                 * ten
-                            * six
-                        "
-                        .unindent(),
+                            * six"
+                            .unindent(),
                         kind: HoverBlockKind::Markdown,
                     }],
                     expected_marked_text: "
@@ -985,9 +981,8 @@ mod tests {
 
                             nine
                           - ten
-                        - six
-                    "
-                    .unindent(),
+                        - six"
+                        .unindent(),
                     expected_styles: vec![HighlightStyle {
                         underline: Some(Underline {
                             thickness: 1.0.into(),
@@ -1004,7 +999,7 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered = render_blocks(0, &blocks, &Default::default(), &style);
+                let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges

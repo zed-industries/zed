@@ -1,3 +1,4 @@
+use crate::{File, Language};
 use anyhow::Result;
 use collections::HashMap;
 use globset::GlobMatcher;
@@ -13,12 +14,21 @@ pub fn init(cx: &mut AppContext) {
     settings::register::<AllLanguageSettings>(cx);
 }
 
-pub fn language_settings<'a>(language: Option<&str>, cx: &'a AppContext) -> &'a LanguageSettings {
-    settings::get::<AllLanguageSettings>(cx).language(language)
+pub fn language_settings<'a>(
+    language: Option<&Arc<Language>>,
+    file: Option<&Arc<dyn File>>,
+    cx: &'a AppContext,
+) -> &'a LanguageSettings {
+    let language_name = language.map(|l| l.name());
+    all_language_settings(file, cx).language(language_name.as_deref())
 }
 
-pub fn all_language_settings<'a>(cx: &'a AppContext) -> &'a AllLanguageSettings {
-    settings::get::<AllLanguageSettings>(cx)
+pub fn all_language_settings<'a>(
+    file: Option<&Arc<dyn File>>,
+    cx: &'a AppContext,
+) -> &'a AllLanguageSettings {
+    let location = file.map(|f| (f.worktree_id(), f.path().as_ref()));
+    settings::get_local(location, cx)
 }
 
 #[derive(Debug, Clone)]
@@ -155,7 +165,7 @@ impl AllLanguageSettings {
             .any(|glob| glob.is_match(path))
     }
 
-    pub fn copilot_enabled(&self, language_name: Option<&str>, path: Option<&Path>) -> bool {
+    pub fn copilot_enabled(&self, language: Option<&Arc<Language>>, path: Option<&Path>) -> bool {
         if !self.copilot.feature_enabled {
             return false;
         }
@@ -166,7 +176,8 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language_name).show_copilot_suggestions
+        self.language(language.map(|l| l.name()).as_deref())
+            .show_copilot_suggestions
     }
 }
 
@@ -253,7 +264,7 @@ impl settings::Setting for AllLanguageSettings {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
 
         // Create a schema for a 'languages overrides' object, associating editor
-        // settings with specific langauges.
+        // settings with specific languages.
         assert!(root_schema
             .definitions
             .contains_key("LanguageSettingsContent"));

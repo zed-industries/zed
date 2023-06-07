@@ -1,15 +1,12 @@
 import * as fs from "fs"
 import { tmpdir } from "os"
 import * as path from "path"
-import colorSchemes, { staffColorSchemes } from "./colorSchemes"
 import app from "./styleTree/app"
-import { ColorScheme } from "./themes/common/colorScheme"
+import { ColorScheme, createColorScheme } from "./themes/common/colorScheme"
 import snakeCase from "./utils/snakeCase"
+import { themes } from "./themes"
 
 const assetsDirectory = `${__dirname}/../../assets`
-const themeDirectory = `${assetsDirectory}/themes`
-const staffDirectory = `${themeDirectory}/staff`
-
 const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"))
 
 // Clear existing themes
@@ -19,23 +16,14 @@ function clearThemes(themeDirectory: string) {
     } else {
         for (const file of fs.readdirSync(themeDirectory)) {
             if (file.endsWith(".json")) {
-                const name = file.replace(/\.json$/, "")
-                if (
-                    !colorSchemes.find(
-                        (colorScheme) => colorScheme.name === name
-                    )
-                ) {
-                    fs.unlinkSync(path.join(themeDirectory, file))
-                }
+                fs.unlinkSync(path.join(themeDirectory, file))
             }
         }
     }
 }
 
-clearThemes(themeDirectory)
-clearThemes(staffDirectory)
-
 function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
+    clearThemes(outputDirectory)
     for (let colorScheme of colorSchemes) {
         let styleTree = snakeCase(app(colorScheme))
         let styleTreeJSON = JSON.stringify(styleTree, null, 2)
@@ -47,6 +35,7 @@ function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
     }
 }
 
+const colorSchemes: ColorScheme[] = themes.map((theme) => createColorScheme(theme))
+
 // Write new themes to theme directory
-writeThemes(colorSchemes, themeDirectory)
-writeThemes(staffColorSchemes, staffDirectory)
+writeThemes(colorSchemes, `${assetsDirectory}/themes`)

@@ -1,7 +1,10 @@
+pub mod assets;
 pub mod languages;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+
+use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
@@ -30,16 +33,22 @@ use project_panel::ProjectPanel;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
-use settings::{KeymapFileContent, SettingsStore, DEFAULT_SETTINGS_ASSET_PATH};
+use settings::{initial_local_settings_content, KeymapFile, SettingsStore};
 use std::{borrow::Cow, str, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use util::{channel::ReleaseChannel, paths, ResultExt};
+use util::{
+    asset_str,
+    channel::ReleaseChannel,
+    paths::{self, LOCAL_SETTINGS_RELATIVE_PATH},
+    ResultExt,
+};
 use uuid::Uuid;
 use welcome::BaseKeymap;
 pub use workspace;
 use workspace::{
-    create_and_open_local_file, dock::PanelHandle, open_new, AppState, NewFile, NewWindow,
-    Workspace, WorkspaceSettings,
+    create_and_open_local_file, dock::PanelHandle,
+    notifications::simple_message_notification::MessageNotification, open_new, AppState, NewFile,
+    NewWindow, Workspace, WorkspaceSettings,
 };
 
 #[derive(Deserialize, Clone, PartialEq)]
@@ -65,6 +74,8 @@ actions!(
         OpenLicenses,
         OpenTelemetryLog,
         OpenKeymap,
+        OpenSettings,
+        OpenLocalSettings,
         OpenDefaultSettings,
         OpenDefaultKeymap,
         IncreaseBufferFontSize,
@@ -140,7 +151,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         move |workspace: &mut Workspace, _: &OpenLicenses, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
-                "licenses.md",
+                asset_str::<Assets>("licenses.md"),
                 "Open Source License Attribution",
                 "Markdown",
                 cx,
@@ -158,10 +169,19 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     cx.add_action(
+        move |_: &mut Workspace, _: &OpenSettings, cx: &mut ViewContext<Workspace>| {
+            create_and_open_local_file(&paths::SETTINGS, cx, || {
+                settings::initial_user_settings_content().as_ref().into()
+            })
+            .detach_and_log_err(cx);
+        },
+    );
+    cx.add_action(open_local_settings_file);
+    cx.add_action(
         move |workspace: &mut Workspace, _: &OpenDefaultKeymap, cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
-                "keymaps/default.json",
+                settings::default_keymap(),
                 "Default Key Bindings",
                 "JSON",
                 cx,
@@ -174,7 +194,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
               cx: &mut ViewContext<Workspace>| {
             open_bundled_file(
                 workspace,
-                DEFAULT_SETTINGS_ASSET_PATH,
+                settings::default_settings(),
                 "Default Settings",
                 "JSON",
                 cx,
@@ -232,6 +252,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
          _: &terminal_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
             workspace.toggle_panel_focus::<TerminalPanel>(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace,
+         _: &ai::assistant::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
         },
     );
     cx.add_global_action({
@@ -339,7 +366,9 @@ pub fn initialize_workspace(
 
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-        let (project_panel, terminal_panel) = futures::try_join!(project_panel, terminal_panel)?;
+        let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel, assistant_panel) =
+            futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel(project_panel, cx);
@@ -357,7 +386,8 @@ pub fn initialize_workspace(
                 workspace.toggle_dock(project_panel_position, cx);
             }
 
-            workspace.add_panel(terminal_panel, cx)
+            workspace.add_panel(terminal_panel, cx);
+            workspace.add_panel(assistant_panel, cx);
         })?;
         Ok(())
     })
@@ -501,11 +531,11 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 
 pub fn load_default_keymap(cx: &mut AppContext) {
     for path in ["keymaps/default.json", "keymaps/vim.json"] {
-        KeymapFileContent::load_asset(path, cx).unwrap();
+        KeymapFile::load_asset(path, cx).unwrap();
     }
 
     if let Some(asset_path) = settings::get::<BaseKeymap>(cx).asset_path() {
-        KeymapFileContent::load_asset(asset_path, cx).unwrap();
+        KeymapFile::load_asset(asset_path, cx).unwrap();
     }
 }
 
@@ -516,7 +546,7 @@ pub fn handle_keymap_file_changes(
     cx.spawn(move |mut cx| async move {
         let mut settings_subscription = None;
         while let Some(user_keymap_content) = user_keymap_file_rx.next().await {
-            if let Ok(keymap_content) = KeymapFileContent::parse(&user_keymap_content) {
+            if let Ok(keymap_content) = KeymapFile::parse(&user_keymap_content) {
                 cx.update(|cx| {
                     cx.clear_bindings();
                     load_default_keymap(cx);
@@ -542,6 +572,72 @@ pub fn handle_keymap_file_changes(
         }
     })
     .detach();
+}
+
+fn open_local_settings_file(
+    workspace: &mut Workspace,
+    _: &OpenLocalSettings,
+    cx: &mut ViewContext<Workspace>,
+) {
+    let project = workspace.project().clone();
+    let worktree = project
+        .read(cx)
+        .visible_worktrees(cx)
+        .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
+    if let Some(worktree) = worktree {
+        let tree_id = worktree.read(cx).id();
+        cx.spawn(|workspace, mut cx| async move {
+            let file_path = &*LOCAL_SETTINGS_RELATIVE_PATH;
+
+            if let Some(dir_path) = file_path.parent() {
+                if worktree.read_with(&cx, |tree, _| tree.entry_for_path(dir_path).is_none()) {
+                    project
+                        .update(&mut cx, |project, cx| {
+                            project.create_entry((tree_id, dir_path), true, cx)
+                        })
+                        .ok_or_else(|| anyhow!("worktree was removed"))?
+                        .await?;
+                }
+            }
+
+            if worktree.read_with(&cx, |tree, _| tree.entry_for_path(file_path).is_none()) {
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.create_entry((tree_id, file_path), false, cx)
+                    })
+                    .ok_or_else(|| anyhow!("worktree was removed"))?
+                    .await?;
+            }
+
+            let editor = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.open_path((tree_id, file_path), None, true, cx)
+                })?
+                .await?
+                .downcast::<Editor>()
+                .ok_or_else(|| anyhow!("unexpected item type"))?;
+
+            editor
+                .downgrade()
+                .update(&mut cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        if buffer.read(cx).is_empty() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit([(0..0, initial_local_settings_content())], None, cx)
+                            });
+                        }
+                    }
+                })
+                .ok();
+
+            anyhow::Ok(())
+        })
+        .detach();
+    } else {
+        workspace.show_notification(0, cx, |cx| {
+            cx.add_view(|_| MessageNotification::new("This project has no folders open."))
+        })
+    }
 }
 
 fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -603,7 +699,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
 
 fn open_bundled_file(
     workspace: &mut Workspace,
-    asset_path: &'static str,
+    text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,
     cx: &mut ViewContext<Workspace>,
@@ -615,13 +711,9 @@ fn open_bundled_file(
             .update(&mut cx, |workspace, cx| {
                 workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
-                    let buffer = project.update(cx, |project, cx| {
-                        let text = Assets::get(asset_path)
-                            .map(|f| f.data)
-                            .unwrap_or_else(|| Cow::Borrowed(b"File not found"));
-                        let text = str::from_utf8(text.as_ref()).unwrap();
+                    let buffer = project.update(cx, move |project, cx| {
                         project
-                            .create_buffer(text, language, cx)
+                            .create_buffer(text.as_ref(), language, cx)
                             .expect("creating buffers on a local workspace always succeeds")
                     });
                     let buffer = cx.add_model(|cx| {
@@ -2108,6 +2200,7 @@ mod tests {
             pane::init(cx);
             project_panel::init(cx);
             terminal_view::init(cx);
+            ai::init(cx);
             app_state
         })
     }

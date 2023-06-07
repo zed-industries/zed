@@ -33,7 +33,7 @@ use repository::{FakeGitRepositoryState, GitFileStatus};
 use std::sync::Weak;
 
 lazy_static! {
-    static ref LINE_SEPERATORS_REGEX: Regex = Regex::new("\r\n|\r|\u{2028}|\u{2029}").unwrap();
+    static ref LINE_SEPARATORS_REGEX: Regex = Regex::new("\r\n|\r|\u{2028}|\u{2029}").unwrap();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,13 +78,13 @@ impl LineEnding {
     }
 
     pub fn normalize(text: &mut String) {
-        if let Cow::Owned(replaced) = LINE_SEPERATORS_REGEX.replace_all(text, "\n") {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
             *text = replaced;
         }
     }
 
     pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = LINE_SEPERATORS_REGEX.replace_all(&text, "\n") {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
             replaced.into()
         } else {
             text

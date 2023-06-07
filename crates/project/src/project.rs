@@ -28,7 +28,7 @@ use gpui::{
     ModelHandle, Task, WeakModelHandle,
 };
 use language::{
-    language_settings::{all_language_settings, language_settings, FormatOnSave, Formatter},
+    language_settings::{language_settings, FormatOnSave, Formatter},
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
@@ -72,7 +72,10 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use terminals::Terminals;
-use util::{debug_panic, defer, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _};
+use util::{
+    debug_panic, defer, merge_json_value_into, paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc,
+    ResultExt, TryFutureExt as _,
+};
 
 pub use fs::*;
 pub use worktree::*;
@@ -356,6 +359,7 @@ pub enum HoverBlockKind {
 pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
+    pub language: Option<Arc<Language>>,
 }
 
 #[derive(Default)]
@@ -460,6 +464,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_update_buffer);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_message_handler(Self::handle_update_worktree);
+        client.add_model_message_handler(Self::handle_update_worktree_settings);
         client.add_model_request_handler(Self::handle_create_project_entry);
         client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_copy_project_entry);
@@ -519,7 +524,7 @@ impl Project {
                 _subscriptions: vec![
                     cx.observe_global::<SettingsStore, _>(Self::on_settings_changed)
                 ],
-                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 active_entry: None,
                 languages,
@@ -588,7 +593,7 @@ impl Project {
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
-                _maintain_buffer_languages: Self::maintain_buffer_languages(&languages, cx),
+                _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
                 _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
                 languages,
                 user_store: user_store.clone(),
@@ -686,42 +691,37 @@ impl Project {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let settings = all_language_settings(cx);
-
         let mut language_servers_to_start = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
-                if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language())
-                {
-                    if settings
-                        .language(Some(&language.name()))
-                        .enable_language_server
-                    {
-                        let worktree = file.worktree.read(cx);
-                        language_servers_to_start.push((
-                            worktree.id(),
-                            worktree.as_local().unwrap().abs_path().clone(),
-                            language.clone(),
-                        ));
+                if let Some((file, language)) = buffer.file().zip(buffer.language()) {
+                    let settings = language_settings(Some(language), Some(file), cx);
+                    if settings.enable_language_server {
+                        if let Some(file) = File::from_dyn(Some(file)) {
+                            language_servers_to_start
+                                .push((file.worktree.clone(), language.clone()));
+                        }
                     }
                 }
             }
         }
 
         let mut language_servers_to_stop = Vec::new();
-        for language in self.languages.to_vec() {
-            for lsp_adapter in language.lsp_adapters() {
-                if !settings
-                    .language(Some(&language.name()))
-                    .enable_language_server
-                {
-                    let lsp_name = &lsp_adapter.name;
-                    for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
-                        if lsp_name == started_lsp_name {
-                            language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
-                        }
-                    }
+        let languages = self.languages.to_vec();
+        for (worktree_id, started_lsp_name) in self.language_server_ids.keys() {
+            let language = languages.iter().find(|l| {
+                l.lsp_adapters()
+                    .iter()
+                    .any(|adapter| &adapter.name == started_lsp_name)
+            });
+            if let Some(language) = language {
+                let worktree = self.worktree_for_id(*worktree_id, cx);
+                let file = worktree.and_then(|tree| {
+                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
+                });
+                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
+                    language_servers_to_stop.push((*worktree_id, started_lsp_name.clone()));
                 }
             }
         }
@@ -733,8 +733,9 @@ impl Project {
         }
 
         // Start all the newly-enabled language servers.
-        for (worktree_id, worktree_path, language) in language_servers_to_start {
-            self.start_language_servers(worktree_id, worktree_path, language, cx);
+        for (worktree, language) in language_servers_to_start {
+            let worktree_path = worktree.read(cx).abs_path();
+            self.start_language_servers(&worktree, worktree_path, language, cx);
         }
 
         if !self.copilot_enabled && Copilot::global(cx).is_some() {
@@ -1107,6 +1108,21 @@ impl Project {
                 .log_err();
         }
 
+        let store = cx.global::<SettingsStore>();
+        for worktree in self.worktrees(cx) {
+            let worktree_id = worktree.read(cx).id().to_proto();
+            for (path, content) in store.local_settings(worktree.id()) {
+                self.client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                    })
+                    .log_err();
+            }
+        }
+
         let (updates_tx, mut updates_rx) = mpsc::unbounded();
         let client = self.client.clone();
         self.client_state = Some(ProjectClientState::Local {
@@ -1219,6 +1235,14 @@ impl Project {
         message_id: u32,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        cx.update_global::<SettingsStore, _, _>(|store, cx| {
+            for worktree in &self.worktrees {
+                store
+                    .clear_local_settings(worktree.handle_id(), cx)
+                    .log_err();
+            }
+        });
+
         self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
@@ -2215,13 +2239,34 @@ impl Project {
     }
 
     fn maintain_buffer_languages(
-        languages: &LanguageRegistry,
+        languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Project>,
     ) -> Task<()> {
         let mut subscription = languages.subscribe();
+        let mut prev_reload_count = languages.reload_count();
         cx.spawn_weak(|project, mut cx| async move {
             while let Some(()) = subscription.next().await {
                 if let Some(project) = project.upgrade(&cx) {
+                    // If the language registry has been reloaded, then remove and
+                    // re-assign the languages on all open buffers.
+                    let reload_count = languages.reload_count();
+                    if reload_count > prev_reload_count {
+                        prev_reload_count = reload_count;
+                        project.update(&mut cx, |this, cx| {
+                            let buffers = this
+                                .opened_buffers
+                                .values()
+                                .filter_map(|b| b.upgrade(cx))
+                                .collect::<Vec<_>>();
+                            for buffer in buffers {
+                                if let Some(f) = File::from_dyn(buffer.read(cx).file()).cloned() {
+                                    this.unregister_buffer_from_language_servers(&buffer, &f, cx);
+                                    buffer.update(cx, |buffer, cx| buffer.set_language(None, cx));
+                                }
+                            }
+                        });
+                    }
+
                     project.update(&mut cx, |project, cx| {
                         let mut plain_text_buffers = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
@@ -2321,25 +2366,34 @@ impl Project {
         });
 
         if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-            if let Some(worktree) = file.worktree.read(cx).as_local() {
-                let worktree_id = worktree.id();
-                let worktree_abs_path = worktree.abs_path().clone();
-                self.start_language_servers(worktree_id, worktree_abs_path, new_language, cx);
+            let worktree = file.worktree.clone();
+            if let Some(tree) = worktree.read(cx).as_local() {
+                self.start_language_servers(&worktree, tree.abs_path().clone(), new_language, cx);
             }
         }
     }
 
     fn start_language_servers(
         &mut self,
-        worktree_id: WorktreeId,
+        worktree: &ModelHandle<Worktree>,
         worktree_path: Arc<Path>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        if !language_settings(Some(&language.name()), cx).enable_language_server {
+        if !language_settings(
+            Some(&language),
+            worktree
+                .update(cx, |tree, cx| tree.root_file(cx))
+                .map(|f| f as _)
+                .as_ref(),
+            cx,
+        )
+        .enable_language_server
+        {
             return;
         }
 
+        let worktree_id = worktree.read(cx).id();
         for adapter in language.lsp_adapters() {
             let key = (worktree_id, adapter.name.clone());
             if self.language_server_ids.contains_key(&key) {
@@ -2748,23 +2802,22 @@ impl Project {
         buffers: impl IntoIterator<Item = ModelHandle<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let language_server_lookup_info: HashSet<(WorktreeId, Arc<Path>, Arc<Language>)> = buffers
+        let language_server_lookup_info: HashSet<(ModelHandle<Worktree>, Arc<Language>)> = buffers
             .into_iter()
             .filter_map(|buffer| {
                 let buffer = buffer.read(cx);
                 let file = File::from_dyn(buffer.file())?;
-                let worktree = file.worktree.read(cx).as_local()?;
                 let full_path = file.full_path(cx);
                 let language = self
                     .languages
                     .language_for_file(&full_path, Some(buffer.as_rope()))
                     .now_or_never()?
                     .ok()?;
-                Some((worktree.id(), worktree.abs_path().clone(), language))
+                Some((file.worktree.clone(), language))
             })
             .collect();
-        for (worktree_id, worktree_abs_path, language) in language_server_lookup_info {
-            self.restart_language_servers(worktree_id, worktree_abs_path, language, cx);
+        for (worktree, language) in language_server_lookup_info {
+            self.restart_language_servers(worktree, language, cx);
         }
 
         None
@@ -2773,11 +2826,13 @@ impl Project {
     // TODO This will break in the case where the adapter's root paths and worktrees are not equal
     fn restart_language_servers(
         &mut self,
-        worktree_id: WorktreeId,
-        fallback_path: Arc<Path>,
+        worktree: ModelHandle<Worktree>,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
+        let worktree_id = worktree.read(cx).id();
+        let fallback_path = worktree.read(cx).abs_path();
+
         let mut stops = Vec::new();
         for adapter in language.lsp_adapters() {
             stops.push(self.stop_language_server(worktree_id, adapter.name.clone(), cx));
@@ -2807,7 +2862,7 @@ impl Project {
                     .map(|path_buf| Arc::from(path_buf.as_path()))
                     .unwrap_or(fallback_path);
 
-                this.start_language_servers(worktree_id, root_path, language.clone(), cx);
+                this.start_language_servers(&worktree, root_path, language.clone(), cx);
 
                 // Lookup new server ids and set them for each of the orphaned worktrees
                 for adapter in language.lsp_adapters() {
@@ -3432,8 +3487,7 @@ impl Project {
                 let mut project_transaction = ProjectTransaction::default();
                 for (buffer, buffer_abs_path, language_server) in &buffers_with_paths_and_servers {
                     let settings = buffer.read_with(&cx, |buffer, cx| {
-                        let language_name = buffer.language().map(|language| language.name());
-                        language_settings(language_name.as_deref(), cx).clone()
+                        language_settings(buffer.language(), buffer.file(), cx).clone()
                     });
 
                     let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -4020,7 +4074,7 @@ impl Project {
                             let end_within = range.start.cmp(&primary.end, buffer).is_le()
                                 && range.end.cmp(&primary.end, buffer).is_ge();
 
-                            //Skip addtional edits which overlap with the primary completion edit
+                            //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
                             if !start_within && !end_within {
                                 buffer.edit([(range, text)], None, cx);
@@ -4463,11 +4517,14 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let tab_size = buffer.read_with(cx, |buffer, cx| {
-            let language_name = buffer.language().map(|language| language.name());
-            language_settings(language_name.as_deref(), cx).tab_size
+        let (position, tab_size) = buffer.read_with(cx, |buffer, cx| {
+            let position = position.to_point_utf16(buffer);
+            (
+                position,
+                language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx)
+                    .tab_size,
+            )
         });
-        let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer.clone(),
             OnTypeFormatting {
@@ -4873,6 +4930,7 @@ impl Project {
                 worktree::Event::UpdatedEntries(changes) => {
                     this.update_local_worktree_buffers(&worktree, changes, cx);
                     this.update_local_worktree_language_servers(&worktree, changes, cx);
+                    this.update_local_worktree_settings(&worktree, changes, cx);
                 }
                 worktree::Event::UpdatedGitRepositories(updated_repos) => {
                     this.update_local_worktree_buffers_git_repos(worktree, updated_repos, cx)
@@ -4893,8 +4951,12 @@ impl Project {
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         }
 
-        cx.observe_release(worktree, |this, worktree, cx| {
+        let handle_id = worktree.id();
+        cx.observe_release(worktree, move |this, worktree, cx| {
             let _ = this.remove_worktree(worktree.id(), cx);
+            cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                store.clear_local_settings(handle_id, cx).log_err()
+            });
         })
         .detach();
 
@@ -5179,6 +5241,71 @@ impl Project {
         .detach();
     }
 
+    fn update_local_worktree_settings(
+        &mut self,
+        worktree: &ModelHandle<Worktree>,
+        changes: &UpdatedEntriesSet,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let project_id = self.remote_id();
+        let worktree_id = worktree.id();
+        let worktree = worktree.read(cx).as_local().unwrap();
+        let remote_worktree_id = worktree.id();
+
+        let mut settings_contents = Vec::new();
+        for (path, _, change) in changes.iter() {
+            if path.ends_with(&*LOCAL_SETTINGS_RELATIVE_PATH) {
+                let settings_dir = Arc::from(
+                    path.ancestors()
+                        .nth(LOCAL_SETTINGS_RELATIVE_PATH.components().count())
+                        .unwrap(),
+                );
+                let fs = self.fs.clone();
+                let removed = *change == PathChange::Removed;
+                let abs_path = worktree.absolutize(path);
+                settings_contents.push(async move {
+                    (settings_dir, (!removed).then_some(fs.load(&abs_path).await))
+                });
+            }
+        }
+
+        if settings_contents.is_empty() {
+            return;
+        }
+
+        let client = self.client.clone();
+        cx.spawn_weak(move |_, mut cx| async move {
+            let settings_contents: Vec<(Arc<Path>, _)> =
+                futures::future::join_all(settings_contents).await;
+            cx.update(|cx| {
+                cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                    for (directory, file_content) in settings_contents {
+                        let file_content = file_content.and_then(|content| content.log_err());
+                        store
+                            .set_local_settings(
+                                worktree_id,
+                                directory.clone(),
+                                file_content.as_ref().map(String::as_str),
+                                cx,
+                            )
+                            .log_err();
+                        if let Some(remote_id) = project_id {
+                            client
+                                .send(proto::UpdateWorktreeSettings {
+                                    project_id: remote_id,
+                                    worktree_id: remote_worktree_id.to_proto(),
+                                    path: directory.to_string_lossy().into_owned(),
+                                    content: file_content,
+                                })
+                                .log_err();
+                        }
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
@@ -5425,6 +5552,30 @@ impl Project {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload);
+                });
+            }
+            Ok(())
+        })
+    }
+
+    async fn handle_update_worktree_settings(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+                cx.update_global::<SettingsStore, _, _>(|store, cx| {
+                    store
+                        .set_local_settings(
+                            worktree.id(),
+                            PathBuf::from(&envelope.payload.path).into(),
+                            envelope.payload.content.as_ref().map(String::as_str),
+                            cx,
+                        )
+                        .log_err();
                 });
             }
             Ok(())
@@ -6521,8 +6672,8 @@ impl Project {
         }
 
         self.metadata_changed(cx);
-        for (id, _) in old_worktrees_by_id {
-            cx.emit(Event::WorktreeRemoved(id));
+        for id in old_worktrees_by_id.keys() {
+            cx.emit(Event::WorktreeRemoved(*id));
         }
 
         Ok(())
@@ -6890,6 +7041,13 @@ impl WorktreeHandle {
         match self {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(cx),
+        }
+    }
+
+    pub fn handle_id(&self) -> usize {
+        match self {
+            WorktreeHandle::Strong(handle) => handle.id(),
+            WorktreeHandle::Weak(handle) => handle.id(),
         }
     }
 }

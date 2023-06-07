@@ -1,3 +1,7 @@
+import chroma from "chroma-js"
+export * from "./themes/common"
+export { chroma }
+
 export const fontFamilies = {
     sans: "Zed Sans",
     mono: "Zed Mono",
@@ -23,6 +27,7 @@ export type FontWeight =
     | "bold"
     | "extra_bold"
     | "black"
+    
 export const fontWeights: { [key: string]: FontWeight } = {
     thin: "thin",
     extra_light: "extra_light",

@@ -3,6 +3,7 @@ pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
+use util::asset_str;
 
 mod c;
 mod elixir;
@@ -179,10 +180,7 @@ fn load_query(name: &str, filename_prefix: &str) -> Option<Cow<'static, str>> {
     for path in LanguageDir::iter() {
         if let Some(remainder) = path.strip_prefix(name) {
             if remainder.starts_with(filename_prefix) {
-                let contents = match LanguageDir::get(path.as_ref()).unwrap().data {
-                    Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
-                    Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
-                };
+                let contents = asset_str::<LanguageDir>(path.as_ref());
                 match &mut result {
                     None => result = Some(contents),
                     Some(r) => r.to_mut().push_str(contents.as_ref()),

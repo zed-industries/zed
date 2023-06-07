@@ -2,7 +2,7 @@ import picker from "./picker"
 import { ColorScheme } from "../themes/common/colorScheme"
 import { background, border, foreground, text } from "./components"
 
-export default function contactFinder(colorScheme: ColorScheme) {
+export default function contactFinder(colorScheme: ColorScheme): any {
     let layer = colorScheme.middle
 
     const sideMargin = 6

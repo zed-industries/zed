@@ -1111,14 +1111,18 @@ impl LspCommand for GetHover {
         cx: AsyncAppContext,
     ) -> Result<Self::Response> {
         Ok(message.and_then(|hover| {
-            let range = hover.range.map(|range| {
-                cx.read(|cx| {
-                    let buffer = buffer.read(cx);
-                    let token_start =
-                        buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
-                    let token_end = buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
-                    buffer.anchor_after(token_start)..buffer.anchor_before(token_end)
-                })
+            let (language, range) = cx.read(|cx| {
+                let buffer = buffer.read(cx);
+                (
+                    buffer.language().cloned(),
+                    hover.range.map(|range| {
+                        let token_start =
+                            buffer.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+                        let token_end =
+                            buffer.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+                        buffer.anchor_after(token_start)..buffer.anchor_before(token_end)
+                    }),
+                )
             });
 
             fn hover_blocks_from_marked_string(
@@ -1163,7 +1167,11 @@ impl LspCommand for GetHover {
                 }],
             });
 
-            Some(Hover { contents, range })
+            Some(Hover {
+                contents,
+                range,
+                language,
+            })
         }))
     }
 
@@ -1247,16 +1255,9 @@ impl LspCommand for GetHover {
         self,
         message: proto::GetHoverResponse,
         _: ModelHandle<Project>,
-        _: ModelHandle<Buffer>,
-        _: AsyncAppContext,
+        buffer: ModelHandle<Buffer>,
+        cx: AsyncAppContext,
     ) -> Result<Self::Response> {
-        let range = if let (Some(start), Some(end)) = (message.start, message.end) {
-            language::proto::deserialize_anchor(start)
-                .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
-        } else {
-            None
-        };
-
         let contents: Vec<_> = message
             .contents
             .into_iter()
@@ -1271,12 +1272,23 @@ impl LspCommand for GetHover {
                 },
             })
             .collect();
+        if contents.is_empty() {
+            return Ok(None);
+        }
 
-        Ok(if contents.is_empty() {
-            None
+        let language = buffer.read_with(&cx, |buffer, _| buffer.language().cloned());
+        let range = if let (Some(start), Some(end)) = (message.start, message.end) {
+            language::proto::deserialize_anchor(start)
+                .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
         } else {
-            Some(Hover { contents, range })
-        })
+            None
+        };
+
+        Ok(Some(Hover {
+            contents,
+            range,
+            language,
+        }))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64 {
@@ -1499,7 +1511,11 @@ impl LspCommand for GetCodeActions {
     type ProtoRequest = proto::GetCodeActions;
 
     fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        capabilities.code_action_provider.is_some()
+        match &capabilities.code_action_provider {
+            None => false,
+            Some(lsp::CodeActionProviderCapability::Simple(false)) => false,
+            _ => true,
+        }
     }
 
     fn to_lsp(
@@ -1717,8 +1733,7 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let tab_size = buffer.read_with(&cx, |buffer, cx| {
-            let language_name = buffer.language().map(|language| language.name());
-            language_settings(language_name.as_deref(), cx).tab_size
+            language_settings(buffer.language(), buffer.file(), cx).tab_size
         });
 
         Ok(Self {

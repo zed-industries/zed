@@ -7,8 +7,10 @@ pub mod paths;
 pub mod test;
 
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering},
     ops::{AddAssign, Range, RangeInclusive},
+    panic::Location,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -129,11 +131,13 @@ where
 {
     type Ok = T;
 
+    #[track_caller]
     fn log_err(self) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(error) => {
-                log::error!("{:?}", error);
+                let caller = Location::caller();
+                log::error!("{}:{}: {:?}", caller.file(), caller.line(), error);
                 None
             }
         }
@@ -278,6 +282,14 @@ impl<T: Rng> Iterator for RandomCharIter<T> {
             // ascii letters
             _ => Some(self.0.gen_range(b'a'..b'z' + 1).into()),
         }
+    }
+}
+
+/// Get an embedded file as a string.
+pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
+    match A::get(path).unwrap().data {
+        Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
+        Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
     }
 }
 

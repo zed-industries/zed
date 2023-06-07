@@ -132,6 +132,8 @@ message Envelope {
 
         OnTypeFormatting on_type_formatting = 111;
         OnTypeFormattingResponse on_type_formatting_response = 112;
+
+        UpdateWorktreeSettings update_worktree_settings = 113;
     }
 }
 
@@ -339,6 +341,13 @@ message UpdateWorktree {
     string abs_path = 10;
 }
 
+message UpdateWorktreeSettings {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    optional string content = 4;
+}
+
 message CreateProjectEntry {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
@@ -467,7 +476,7 @@ message Symbol {
     string name = 4;
     int32 kind = 5;
     string path = 6;
-    // Cannot use generate anchors for unopend files,
+    // Cannot use generate anchors for unopened files,
     // so we are forced to use point coords instead
     PointUtf16 start = 7;
     PointUtf16 end = 8;

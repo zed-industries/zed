@@ -16,6 +16,12 @@
           "replace_newest": true
         }
       ],
+      "ctrl-cmd-g": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": true
+        }
+      ],
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::AddSelectionAbove",
       "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",

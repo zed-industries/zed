@@ -6,8 +6,8 @@ on:
   push:
     branches:
       - randomized-tests-runner
-  schedule:
-     - cron: '0 * * * *'
+  # schedule:
+  #    - cron: '0 * * * *'
 
 env:
   CARGO_TERM_COLOR: always

@@ -1,6 +1,5 @@
-use crate::settings_store::parse_json_with_comments;
+use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::{Context, Result};
-use assets::Assets;
 use collections::BTreeMap;
 use gpui::{keymap_matcher::Binding, AppContext};
 use schemars::{
@@ -10,11 +9,11 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::{value::RawValue, Value};
-use util::ResultExt;
+use util::{asset_str, ResultExt};
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
-pub struct KeymapFileContent(Vec<KeymapBlock>);
+pub struct KeymapFile(Vec<KeymapBlock>);
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
 pub struct KeymapBlock {
@@ -40,11 +39,10 @@ impl JsonSchema for KeymapAction {
 #[derive(Deserialize)]
 struct ActionWithData(Box<str>, Box<RawValue>);
 
-impl KeymapFileContent {
+impl KeymapFile {
     pub fn load_asset(asset_path: &str, cx: &mut AppContext) -> Result<()> {
-        let content = Assets::get(asset_path).unwrap().data;
-        let content_str = std::str::from_utf8(content.as_ref()).unwrap();
-        Self::parse(content_str)?.add_to_cx(cx)
+        let content = asset_str::<SettingsAssets>(asset_path);
+        Self::parse(content.as_ref())?.add_to_cx(cx)
     }
 
     pub fn parse(content: &str) -> Result<Self> {
@@ -83,40 +81,40 @@ impl KeymapFileContent {
         }
         Ok(())
     }
-}
 
-pub fn keymap_file_json_schema(action_names: &[&'static str]) -> serde_json::Value {
-    let mut root_schema = SchemaSettings::draft07()
-        .with(|settings| settings.option_add_null_type = false)
-        .into_generator()
-        .into_root_schema_for::<KeymapFileContent>();
+    pub fn generate_json_schema(action_names: &[&'static str]) -> serde_json::Value {
+        let mut root_schema = SchemaSettings::draft07()
+            .with(|settings| settings.option_add_null_type = false)
+            .into_generator()
+            .into_root_schema_for::<KeymapFile>();
 
-    let action_schema = Schema::Object(SchemaObject {
-        subschemas: Some(Box::new(SubschemaValidation {
-            one_of: Some(vec![
-                Schema::Object(SchemaObject {
-                    instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-                    enum_values: Some(
-                        action_names
-                            .iter()
-                            .map(|name| Value::String(name.to_string()))
-                            .collect(),
-                    ),
-                    ..Default::default()
-                }),
-                Schema::Object(SchemaObject {
-                    instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
-                    ..Default::default()
-                }),
-            ]),
+        let action_schema = Schema::Object(SchemaObject {
+            subschemas: Some(Box::new(SubschemaValidation {
+                one_of: Some(vec![
+                    Schema::Object(SchemaObject {
+                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+                        enum_values: Some(
+                            action_names
+                                .iter()
+                                .map(|name| Value::String(name.to_string()))
+                                .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    Schema::Object(SchemaObject {
+                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
+                        ..Default::default()
+                    }),
+                ]),
+                ..Default::default()
+            })),
             ..Default::default()
-        })),
-        ..Default::default()
-    });
+        });
 
-    root_schema
-        .definitions
-        .insert("KeymapAction".to_owned(), action_schema);
+        root_schema
+            .definitions
+            .insert("KeymapAction".to_owned(), action_schema);
 
-    serde_json::to_value(root_schema).unwrap()
+        serde_json::to_value(root_schema).unwrap()
+    }
 }
