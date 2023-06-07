@@ -185,13 +185,8 @@
       ],
       "alt-\\": "copilot::Suggest",
       "alt-]": "copilot::NextSuggestion",
-      "alt-[": "copilot::PreviousSuggestion"
-    }
-  },
-  {
-    "context": "Editor && extension == zmd",
-    "bindings": {
-      "cmd-enter": "ai::Assist"
+      "alt-[": "copilot::PreviousSuggestion",
+      "cmd->": "assistant::QuoteSelection"
     }
   },
   {
@@ -199,6 +194,13 @@
     "bindings": {
       "alt-enter": "editor::Newline",
       "cmd-alt-enter": "editor::NewlineBelow"
+    }
+  },
+  {
+    "context": "AssistantEditor > Editor",
+    "bindings": {
+      "cmd-enter": "assistant::Assist",
+      "cmd->": "assistant::QuoteSelection"
     }
   },
   {

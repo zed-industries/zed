@@ -10,7 +10,7 @@ pub mod items;
 mod link_go_to_definition;
 mod mouse_context_menu;
 pub mod movement;
-mod multi_buffer;
+pub mod multi_buffer;
 mod persistence;
 pub mod scroll;
 pub mod selections_collection;
@@ -31,11 +31,13 @@ use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
+pub use element::RenderExcerptHeaderParams;
 pub use element::{
     Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::LayoutContext;
 use gpui::{
     actions,
     color::Color,
@@ -507,7 +509,9 @@ pub struct Editor {
     blink_manager: ModelHandle<BlinkManager>,
     show_local_selections: bool,
     mode: EditorMode,
+    show_gutter: bool,
     placeholder_text: Option<Arc<str>>,
+    render_excerpt_header: Option<element::RenderExcerptHeader>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
@@ -537,6 +541,7 @@ pub struct Editor {
 
 pub struct EditorSnapshot {
     pub mode: EditorMode,
+    pub show_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -1310,7 +1315,9 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
+            show_gutter: mode == EditorMode::Full,
             placeholder_text: None,
+            render_excerpt_header: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
             nav_history: None,
@@ -1406,6 +1413,7 @@ impl Editor {
     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
+            show_gutter: self.show_gutter,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -2386,7 +2394,7 @@ impl Editor {
                     old_selections
                         .iter()
                         .map(|s| {
-                            let anchor = snapshot.anchor_after(s.end);
+                            let anchor = snapshot.anchor_after(s.head());
                             s.map(|_| anchor)
                         })
                         .collect::<Vec<_>>()
@@ -3561,7 +3569,9 @@ impl Editor {
                 s.move_with(|map, selection| {
                     if selection.is_empty() && !line_mode {
                         let cursor = movement::right(map, selection.head());
-                        selection.set_head(cursor, SelectionGoal::None);
+                        selection.end = cursor;
+                        selection.reversed = true;
+                        selection.goal = SelectionGoal::None;
                     }
                 })
             });
@@ -6764,6 +6774,25 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
+        self.show_gutter = show_gutter;
+        cx.notify();
+    }
+
+    pub fn set_render_excerpt_header(
+        &mut self,
+        render_excerpt_header: impl 'static
+            + Fn(
+                &mut Editor,
+                RenderExcerptHeaderParams,
+                &mut LayoutContext<Editor>,
+            ) -> AnyElement<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.render_excerpt_header = Some(Arc::new(render_excerpt_header));
+        cx.notify();
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
@@ -6988,7 +7017,7 @@ impl Editor {
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
             }
-            multi_buffer::Event::LanguageChanged => {}
+            _ => {}
         }
     }
 
@@ -7402,8 +7431,12 @@ impl View for Editor {
             });
         }
 
+        let mut editor = EditorElement::new(style.clone());
+        if let Some(render_excerpt_header) = self.render_excerpt_header.clone() {
+            editor = editor.with_render_excerpt_header(render_excerpt_header);
+        }
         Stack::new()
-            .with_child(EditorElement::new(style.clone()))
+            .with_child(editor)
             .with_child(ChildView::new(&self.mouse_context_menu, cx))
             .into_any()
     }

@@ -1151,7 +1151,8 @@ impl Pane {
                         let theme = theme::current(cx).clone();
                         let mut tooltip_theme = theme.tooltip.clone();
                         tooltip_theme.max_text_width = None;
-                        let tab_tooltip_text = item.tab_tooltip_text(cx).map(|a| a.to_string());
+                        let tab_tooltip_text =
+                            item.tab_tooltip_text(cx).map(|text| text.into_owned());
 
                         move |mouse_state, cx| {
                             let tab_style =

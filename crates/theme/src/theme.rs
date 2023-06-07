@@ -60,6 +60,7 @@ pub struct Theme {
     pub incoming_call_notification: IncomingCallNotification,
     pub tooltip: TooltipStyle,
     pub terminal: TerminalStyle,
+    pub assistant: AssistantStyle,
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub color_scheme: ColorScheme,
@@ -966,6 +967,23 @@ pub struct TerminalStyle {
     pub dim_white: Color,
     pub bright_foreground: Color,
     pub dim_foreground: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AssistantStyle {
+    pub container: ContainerStyle,
+    pub header: ContainerStyle,
+    pub sent_at: ContainedText,
+    pub user_sender: Interactive<ContainedText>,
+    pub assistant_sender: Interactive<ContainedText>,
+    pub system_sender: Interactive<ContainedText>,
+    pub model_info_container: ContainerStyle,
+    pub model: Interactive<ContainedText>,
+    pub remaining_tokens: ContainedText,
+    pub no_remaining_tokens: ContainedText,
+    pub error_icon: Icon,
+    pub api_key_editor: FieldEditor,
+    pub api_key_prompt: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

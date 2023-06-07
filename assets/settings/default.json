@@ -81,6 +81,14 @@
       // Default width of the project panel.
       "default_width": 240
   },
+  "assistant": {
+      // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
+      "dock": "right",
+      // Default width when the assistant is docked to the left or right.
+      "default_width": 450,
+      // Default height when the assistant is docked to the bottom.
+      "default_height": 320
+  },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.

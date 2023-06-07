@@ -64,6 +64,9 @@ pub enum Event {
     ExcerptsRemoved {
         ids: Vec<ExcerptId>,
     },
+    ExcerptsEdited {
+        ids: Vec<ExcerptId>,
+    },
     Edited,
     Reloaded,
     DiffBaseChanged,
@@ -394,6 +397,7 @@ impl MultiBuffer {
             original_indent_column: u32,
         }
         let mut buffer_edits: HashMap<u64, Vec<BufferEdit>> = Default::default();
+        let mut edited_excerpt_ids = Vec::new();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
         for (ix, (range, new_text)) in edits.enumerate() {
             let new_text: Arc<str> = new_text.into();
@@ -410,6 +414,7 @@ impl MultiBuffer {
                 .start
                 .to_offset(&start_excerpt.buffer)
                 + start_overshoot;
+            edited_excerpt_ids.push(start_excerpt.id);
 
             cursor.seek(&range.end, Bias::Right, &());
             if cursor.item().is_none() && range.end == *cursor.start() {
@@ -435,6 +440,7 @@ impl MultiBuffer {
                         original_indent_column,
                     });
             } else {
+                edited_excerpt_ids.push(end_excerpt.id);
                 let start_excerpt_range = buffer_start
                     ..start_excerpt
                         .range
@@ -481,6 +487,7 @@ impl MultiBuffer {
                             is_insertion: false,
                             original_indent_column,
                         });
+                    edited_excerpt_ids.push(excerpt.id);
                     cursor.next(&());
                 }
             }
@@ -553,6 +560,10 @@ impl MultiBuffer {
                     buffer.edit(insertions, insertion_autoindent_mode, cx);
                 })
         }
+
+        cx.emit(Event::ExcerptsEdited {
+            ids: edited_excerpt_ids,
+        });
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {

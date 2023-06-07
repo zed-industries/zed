@@ -579,7 +579,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
         assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
 
         // Ensure we don't panic when navigation data contains invalid anchors *and* points.
-        let mut invalid_anchor = editor.scroll_manager.anchor().top_anchor;
+        let mut invalid_anchor = editor.scroll_manager.anchor().anchor;
         invalid_anchor.text_anchor.buffer_id = Some(999);
         let invalid_point = Point::new(9999, 0);
         editor.navigate(
@@ -587,7 +587,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 cursor_anchor: invalid_anchor,
                 cursor_position: invalid_point,
                 scroll_anchor: ScrollAnchor {
-                    top_anchor: invalid_anchor,
+                    anchor: invalid_anchor,
                     offset: Default::default(),
                 },
                 scroll_top_row: invalid_point.row,
@@ -5277,7 +5277,28 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
                 Point::new(0, 1)..Point::new(0, 1),
                 Point::new(1, 1)..Point::new(1, 1),
             ]
-        )
+        );
+
+        // Ensure the cursor's head is respected when deleting across an excerpt boundary.
+        view.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(0, 2)..Point::new(1, 2)])
+        });
+        view.backspace(&Default::default(), cx);
+        assert_eq!(view.text(cx), "Xa\nbbb");
+        assert_eq!(
+            view.selections.ranges(cx),
+            [Point::new(1, 0)..Point::new(1, 0)]
+        );
+
+        view.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(1, 1)..Point::new(0, 1)])
+        });
+        view.backspace(&Default::default(), cx);
+        assert_eq!(view.text(cx), "X\nbb");
+        assert_eq!(
+            view.selections.ranges(cx),
+            [Point::new(0, 1)..Point::new(0, 1)]
+        );
     });
 }
 
@@ -5794,7 +5815,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         let top_anchor = follower.buffer().read(cx).read(cx).anchor_after(0);
         follower.set_scroll_anchor(
             ScrollAnchor {
-                top_anchor,
+                anchor: top_anchor,
                 offset: vec2f(0.0, 0.5),
             },
             cx,

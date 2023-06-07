@@ -1673,6 +1673,16 @@ impl Workspace {
         None
     }
 
+    pub fn panel<T: Panel>(&self, cx: &WindowContext) -> Option<ViewHandle<T>> {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            let dock = dock.read(cx);
+            if let Some(panel) = dock.panel::<T>() {
+                return Some(panel);
+            }
+        }
+        None
+    }
+
     fn zoom_out(&mut self, cx: &mut ViewContext<Self>) {
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
