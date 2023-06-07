@@ -221,6 +221,8 @@ impl AssistantPanel {
                 cx.focus_self();
                 cx.notify();
             }
+        } else {
+            cx.propagate_action();
         }
     }
 
@@ -1143,6 +1145,13 @@ impl Item for AssistantEditor {
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<Cow<str>> {
         Some(self.title(cx).into())
+    }
+
+    fn as_searchable(
+        &self,
+        _: &ViewHandle<Self>,
+    ) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
     }
 }
 
