@@ -9,13 +9,6 @@ import { themes } from "./themes"
 const assetsDirectory = `${__dirname}/../../assets`
 const tempDirectory = fs.mkdtempSync(path.join(tmpdir(), "build-themes"))
 
-function getColorSchemes() {
-    const colorSchemes: ColorScheme[] = themes.map((theme) =>
-        createColorScheme(theme)
-    )
-    return colorSchemes
-}
-
 // Clear existing themes
 function clearThemes(themeDirectory: string) {
     if (!fs.existsSync(themeDirectory)) {
@@ -42,5 +35,7 @@ function writeThemes(colorSchemes: ColorScheme[], outputDirectory: string) {
     }
 }
 
+const colorSchemes: ColorScheme[] = themes.map((theme) => createColorScheme(theme))
+
 // Write new themes to theme directory
-writeThemes(getColorSchemes(), `${assetsDirectory}/themes`)
+writeThemes(colorSchemes, `${assetsDirectory}/themes`)

@@ -21,7 +21,7 @@ function parseAcceptedToml(file: string): string[] {
 function checkLicenses(themes: ThemeConfig[]) {
     for (const theme of themes) {
         if (!theme.licenseFile) {
-            throw Error(`Theme ${theme.name} should have a LICENSE files`)
+            throw Error(`Theme ${theme.name} should have a LICENSE file`)
         }
     }
 }
