@@ -26,14 +26,14 @@ use sum_tree::{Bias, SumTree};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InlayHintId(usize);
 
-pub struct EditorAdditionMap {
-    snapshot: Mutex<EditorAdditionSnapshot>,
+pub struct InlayMap {
+    snapshot: Mutex<InlaySnapshot>,
     next_hint_id: AtomicUsize,
     hints: HashMap<InlayHintId, InlayHintToRender>,
 }
 
 #[derive(Clone)]
-pub struct EditorAdditionSnapshot {
+pub struct InlaySnapshot {
     // TODO kb merge these two together
     pub suggestion_snapshot: SuggestionSnapshot,
     transforms: SumTree<Transform>,
@@ -54,12 +54,12 @@ impl sum_tree::Item for Transform {
     }
 }
 
-pub type EditorAdditionEdit = Edit<EditorAdditionOffset>;
+pub type InlayEdit = Edit<InlayOffset>;
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct EditorAdditionOffset(pub usize);
+pub struct InlayOffset(pub usize);
 
-impl Add for EditorAdditionOffset {
+impl Add for InlayOffset {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -67,7 +67,7 @@ impl Add for EditorAdditionOffset {
     }
 }
 
-impl Sub for EditorAdditionOffset {
+impl Sub for InlayOffset {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -75,31 +75,31 @@ impl Sub for EditorAdditionOffset {
     }
 }
 
-impl AddAssign for EditorAdditionOffset {
+impl AddAssign for InlayOffset {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct EditorAdditionPoint(pub Point);
+pub struct InlayPoint(pub Point);
 
 #[derive(Clone)]
-pub struct EditorAdditionBufferRows<'a> {
+pub struct InlayBufferRows<'a> {
     suggestion_rows: SuggestionBufferRows<'a>,
 }
 
-pub struct EditorAdditionChunks<'a> {
+pub struct InlayChunks<'a> {
     suggestion_chunks: SuggestionChunks<'a>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InlayHintToRender {
-    pub(super) position: EditorAdditionPoint,
+    pub(super) position: InlayPoint,
     pub(super) text: Rope,
 }
 
-impl<'a> Iterator for EditorAdditionChunks<'a> {
+impl<'a> Iterator for InlayChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -107,7 +107,7 @@ impl<'a> Iterator for EditorAdditionChunks<'a> {
     }
 }
 
-impl<'a> Iterator for EditorAdditionBufferRows<'a> {
+impl<'a> Iterator for InlayBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -115,7 +115,7 @@ impl<'a> Iterator for EditorAdditionBufferRows<'a> {
     }
 }
 
-impl EditorAdditionPoint {
+impl InlayPoint {
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
@@ -129,9 +129,9 @@ impl EditorAdditionPoint {
     }
 }
 
-impl EditorAdditionMap {
-    pub fn new(suggestion_snapshot: SuggestionSnapshot) -> (Self, EditorAdditionSnapshot) {
-        let snapshot = EditorAdditionSnapshot {
+impl InlayMap {
+    pub fn new(suggestion_snapshot: SuggestionSnapshot) -> (Self, InlaySnapshot) {
+        let snapshot = InlaySnapshot {
             suggestion_snapshot: suggestion_snapshot.clone(),
             version: 0,
             transforms: SumTree::new(),
@@ -151,29 +151,29 @@ impl EditorAdditionMap {
         &self,
         suggestion_snapshot: SuggestionSnapshot,
         suggestion_edits: Vec<SuggestionEdit>,
-    ) -> (EditorAdditionSnapshot, Vec<EditorAdditionEdit>) {
+    ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let mut snapshot = self.snapshot.lock();
 
         if snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
             snapshot.version += 1;
         }
 
-        let mut editor_addition_edits = Vec::new();
+        let mut inlay_edits = Vec::new();
 
         dbg!(&suggestion_edits);
         for suggestion_edit in suggestion_edits {
             let old = suggestion_edit.old;
             let new = suggestion_edit.new;
             // TODO kb copied from suggestion_map
-            editor_addition_edits.push(EditorAdditionEdit {
-                old: EditorAdditionOffset(old.start.0)..EditorAdditionOffset(old.end.0),
-                new: EditorAdditionOffset(old.start.0)..EditorAdditionOffset(new.end.0),
+            inlay_edits.push(InlayEdit {
+                old: InlayOffset(old.start.0)..InlayOffset(old.end.0),
+                new: InlayOffset(old.start.0)..InlayOffset(new.end.0),
             })
         }
 
         snapshot.suggestion_snapshot = suggestion_snapshot;
 
-        (snapshot.clone(), editor_addition_edits)
+        (snapshot.clone(), inlay_edits)
     }
 
     // TODO kb replace set_inlay_hints with this
@@ -204,57 +204,57 @@ impl EditorAdditionMap {
     }
 }
 
-impl EditorAdditionSnapshot {
+impl InlaySnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         // TODO kb copied from suggestion_map
         self.suggestion_snapshot.buffer_snapshot()
     }
 
-    pub fn to_point(&self, offset: EditorAdditionOffset) -> EditorAdditionPoint {
+    pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
         // TODO kb copied from suggestion_map
-        self.to_editor_addition_point(
+        self.to_inlay_point(
             self.suggestion_snapshot
                 .to_point(super::suggestion_map::SuggestionOffset(offset.0)),
         )
     }
 
-    pub fn max_point(&self) -> EditorAdditionPoint {
+    pub fn max_point(&self) -> InlayPoint {
         // TODO kb copied from suggestion_map
-        self.to_editor_addition_point(self.suggestion_snapshot.max_point())
+        self.to_inlay_point(self.suggestion_snapshot.max_point())
     }
 
-    pub fn to_offset(&self, point: EditorAdditionPoint) -> EditorAdditionOffset {
+    pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         // TODO kb copied from suggestion_map
-        EditorAdditionOffset(
+        InlayOffset(
             self.suggestion_snapshot
                 .to_offset(self.to_suggestion_point(point, Bias::Left))
                 .0,
         )
     }
 
-    pub fn chars_at(&self, start: EditorAdditionPoint) -> impl '_ + Iterator<Item = char> {
+    pub fn chars_at(&self, start: InlayPoint) -> impl '_ + Iterator<Item = char> {
         self.suggestion_snapshot
             .chars_at(self.to_suggestion_point(start, Bias::Left))
     }
 
     // TODO kb what to do with bias?
-    pub fn to_suggestion_point(&self, point: EditorAdditionPoint, _: Bias) -> SuggestionPoint {
+    pub fn to_suggestion_point(&self, point: InlayPoint, _: Bias) -> SuggestionPoint {
         SuggestionPoint(point.0)
     }
 
-    pub fn to_editor_addition_point(&self, point: SuggestionPoint) -> EditorAdditionPoint {
-        EditorAdditionPoint(point.0)
+    pub fn to_inlay_point(&self, point: SuggestionPoint) -> InlayPoint {
+        InlayPoint(point.0)
     }
 
-    pub fn clip_point(&self, point: EditorAdditionPoint, bias: Bias) -> EditorAdditionPoint {
+    pub fn clip_point(&self, point: InlayPoint, bias: Bias) -> InlayPoint {
         // TODO kb copied from suggestion_map
-        self.to_editor_addition_point(
+        self.to_inlay_point(
             self.suggestion_snapshot
                 .clip_point(self.to_suggestion_point(point, bias), bias),
         )
     }
 
-    pub fn text_summary_for_range(&self, range: Range<EditorAdditionPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<InlayPoint>) -> TextSummary {
         // TODO kb copied from suggestion_map
         self.suggestion_snapshot.text_summary_for_range(
             self.to_suggestion_point(range.start, Bias::Left)
@@ -262,8 +262,8 @@ impl EditorAdditionSnapshot {
         )
     }
 
-    pub fn buffer_rows<'a>(&'a self, row: u32) -> EditorAdditionBufferRows<'a> {
-        EditorAdditionBufferRows {
+    pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
+        InlayBufferRows {
             suggestion_rows: self.suggestion_snapshot.buffer_rows(row),
         }
     }
@@ -275,13 +275,13 @@ impl EditorAdditionSnapshot {
 
     pub fn chunks<'a>(
         &'a self,
-        range: Range<EditorAdditionOffset>,
+        range: Range<InlayOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
         suggestion_highlight: Option<HighlightStyle>,
-    ) -> EditorAdditionChunks<'a> {
+    ) -> InlayChunks<'a> {
         // TODO kb copied from suggestion_map
-        EditorAdditionChunks {
+        InlayChunks {
             suggestion_chunks: self.suggestion_snapshot.chunks(
                 SuggestionOffset(range.start.0)..SuggestionOffset(range.end.0),
                 language_aware,

@@ -989,7 +989,7 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display_map::editor_addition_map::EditorAdditionMap;
+    use crate::display_map::inlay_map::InlayMap;
     use crate::display_map::suggestion_map::SuggestionMap;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use crate::multi_buffer::MultiBuffer;
@@ -1033,9 +1033,8 @@ mod tests {
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (editor_addition_map, editor_addition_snapshot) =
-            EditorAdditionMap::new(suggestion_snapshot);
-        let (tab_map, tab_snapshot) = TabMap::new(editor_addition_snapshot, 1.try_into().unwrap());
+        let (inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (tab_map, tab_snapshot) = TabMap::new(inlay_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -1182,13 +1181,10 @@ mod tests {
             fold_map.read(buffer_snapshot, subscription.consume().into_inner());
         let (suggestion_snapshot, suggestion_edits) =
             suggestion_map.sync(fold_snapshot, fold_edits);
-        let (editor_addition_snapshot, editor_addition_edits) =
-            editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
-        let (tab_snapshot, tab_edits) = tab_map.sync(
-            editor_addition_snapshot,
-            editor_addition_edits,
-            4.try_into().unwrap(),
-        );
+        let (inlay_snapshot, inlay_edits) =
+            inlay_map.sync(suggestion_snapshot, suggestion_edits);
+        let (tab_snapshot, tab_edits) =
+            tab_map.sync(inlay_snapshot, inlay_edits, 4.try_into().unwrap());
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tab_snapshot, tab_edits, cx)
         });
@@ -1215,8 +1211,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot);
-        let (_, tab_snapshot) = TabMap::new(editor_addition_snapshot, 4.try_into().unwrap());
+        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -1288,9 +1284,8 @@ mod tests {
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (editor_addition_map, editor_addition_snapshot) =
-            EditorAdditionMap::new(suggestion_snapshot);
-        let (tab_map, tab_snapshot) = TabMap::new(editor_addition_snapshot, 4.try_into().unwrap());
+        let (inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (tab_map, tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tab_snapshot, font_id, font_size, wrap_width, cx);
         let mut block_map = BlockMap::new(
@@ -1347,10 +1342,10 @@ mod tests {
                         fold_map.read(buffer_snapshot.clone(), vec![]);
                     let (suggestion_snapshot, suggestion_edits) =
                         suggestion_map.sync(fold_snapshot, fold_edits);
-                    let (editor_addition_snapshot, editor_addition_edits) =
-                        editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(suggestion_snapshot, suggestion_edits);
                     let (tab_snapshot, tab_edits) =
-                        tab_map.sync(editor_addition_snapshot, editor_addition_edits, tab_size);
+                        tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
@@ -1374,10 +1369,10 @@ mod tests {
                         fold_map.read(buffer_snapshot.clone(), vec![]);
                     let (suggestion_snapshot, suggestion_edits) =
                         suggestion_map.sync(fold_snapshot, fold_edits);
-                    let (editor_addition_snapshot, editor_addition_edits) =
-                        editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(suggestion_snapshot, suggestion_edits);
                     let (tab_snapshot, tab_edits) =
-                        tab_map.sync(editor_addition_snapshot, editor_addition_edits, tab_size);
+                        tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
@@ -1399,10 +1394,10 @@ mod tests {
             let (fold_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
             let (suggestion_snapshot, suggestion_edits) =
                 suggestion_map.sync(fold_snapshot, fold_edits);
-            let (editor_addition_snapshot, editor_addition_edits) =
-                editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(suggestion_snapshot, suggestion_edits);
             let (tab_snapshot, tab_edits) =
-                tab_map.sync(editor_addition_snapshot, editor_addition_edits, tab_size);
+                tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             });

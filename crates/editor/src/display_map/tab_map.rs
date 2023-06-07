@@ -1,7 +1,5 @@
 use super::{
-    editor_addition_map::{
-        self, EditorAdditionChunks, EditorAdditionEdit, EditorAdditionPoint, EditorAdditionSnapshot,
-    },
+    inlay_map::{self, InlayChunks, InlayEdit, InlayPoint, InlaySnapshot},
     TextHighlights,
 };
 use crate::MultiBufferSnapshot;
@@ -16,9 +14,9 @@ const MAX_EXPANSION_COLUMN: u32 = 256;
 pub struct TabMap(Mutex<TabSnapshot>);
 
 impl TabMap {
-    pub fn new(input: EditorAdditionSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
+    pub fn new(input: InlaySnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
-            editor_addition_snapshot: input,
+            inlay_snapshot: input,
             tab_size,
             max_expansion_column: MAX_EXPANSION_COLUMN,
             version: 0,
@@ -34,20 +32,20 @@ impl TabMap {
 
     pub fn sync(
         &self,
-        editor_addition_snapshot: EditorAdditionSnapshot,
-        mut suggestion_edits: Vec<EditorAdditionEdit>,
+        inlay_snapshot: InlaySnapshot,
+        mut suggestion_edits: Vec<InlayEdit>,
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
         let mut new_snapshot = TabSnapshot {
-            editor_addition_snapshot,
+            inlay_snapshot,
             tab_size,
             max_expansion_column: old_snapshot.max_expansion_column,
             version: old_snapshot.version,
         };
 
-        if old_snapshot.editor_addition_snapshot.version
-            != new_snapshot.editor_addition_snapshot.version
+        if old_snapshot.inlay_snapshot.version
+            != new_snapshot.inlay_snapshot.version
         {
             new_snapshot.version += 1;
         }
@@ -60,21 +58,21 @@ impl TabMap {
             // boundary.
             for suggestion_edit in &mut suggestion_edits {
                 let old_end = old_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .to_point(suggestion_edit.old.end);
                 let old_end_row_successor_offset =
-                    old_snapshot.editor_addition_snapshot.to_offset(cmp::min(
-                        EditorAdditionPoint::new(old_end.row() + 1, 0),
-                        old_snapshot.editor_addition_snapshot.max_point(),
+                    old_snapshot.inlay_snapshot.to_offset(cmp::min(
+                        InlayPoint::new(old_end.row() + 1, 0),
+                        old_snapshot.inlay_snapshot.max_point(),
                     ));
                 let new_end = new_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .to_point(suggestion_edit.new.end);
 
                 let mut offset_from_edit = 0;
                 let mut first_tab_offset = None;
                 let mut last_tab_with_changed_expansion_offset = None;
-                'outer: for chunk in old_snapshot.editor_addition_snapshot.chunks(
+                'outer: for chunk in old_snapshot.inlay_snapshot.chunks(
                     suggestion_edit.old.end..old_end_row_successor_offset,
                     false,
                     None,
@@ -128,16 +126,16 @@ impl TabMap {
 
             for suggestion_edit in suggestion_edits {
                 let old_start = old_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .to_point(suggestion_edit.old.start);
                 let old_end = old_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .to_point(suggestion_edit.old.end);
                 let new_start = new_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .to_point(suggestion_edit.new.start);
                 let new_end = new_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .to_point(suggestion_edit.new.end);
                 tab_edits.push(TabEdit {
                     old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
@@ -159,7 +157,7 @@ impl TabMap {
 
 #[derive(Clone)]
 pub struct TabSnapshot {
-    pub editor_addition_snapshot: EditorAdditionSnapshot,
+    pub inlay_snapshot: InlaySnapshot,
     pub tab_size: NonZeroU32,
     pub max_expansion_column: u32,
     pub version: usize,
@@ -167,15 +165,15 @@ pub struct TabSnapshot {
 
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        self.editor_addition_snapshot.buffer_snapshot()
+        self.inlay_snapshot.buffer_snapshot()
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.to_tab_point(EditorAdditionPoint::new(
+            self.to_tab_point(InlayPoint::new(
                 row,
-                self.editor_addition_snapshot.line_len(row),
+                self.inlay_snapshot.line_len(row),
             ))
             .0
             .column
@@ -189,10 +187,10 @@ impl TabSnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
-        let input_start = self.to_editor_addition_point(range.start, Bias::Left).0;
-        let input_end = self.to_editor_addition_point(range.end, Bias::Right).0;
+        let input_start = self.to_inlay_point(range.start, Bias::Left).0;
+        let input_end = self.to_inlay_point(range.end, Bias::Right).0;
         let input_summary = self
-            .editor_addition_snapshot
+            .inlay_snapshot
             .text_summary_for_range(input_start..input_end);
 
         let mut first_line_chars = 0;
@@ -245,12 +243,12 @@ impl TabSnapshot {
         suggestion_highlight: Option<HighlightStyle>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
-            self.to_editor_addition_point(range.start, Bias::Left);
+            self.to_inlay_point(range.start, Bias::Left);
         let input_column = input_start.column();
-        let input_start = self.editor_addition_snapshot.to_offset(input_start);
+        let input_start = self.inlay_snapshot.to_offset(input_start);
         let input_end = self
-            .editor_addition_snapshot
-            .to_offset(self.to_editor_addition_point(range.end, Bias::Right).0);
+            .inlay_snapshot
+            .to_offset(self.to_inlay_point(range.end, Bias::Right).0);
         let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
             range.end.column() - range.start.column()
         } else {
@@ -258,7 +256,7 @@ impl TabSnapshot {
         };
 
         TabChunks {
-            editor_addition_chunks: self.editor_addition_snapshot.chunks(
+            inlay_chunks: self.inlay_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
                 text_highlights,
@@ -279,8 +277,8 @@ impl TabSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, row: u32) -> editor_addition_map::EditorAdditionBufferRows<'_> {
-        self.editor_addition_snapshot.buffer_rows(row)
+    pub fn buffer_rows(&self, row: u32) -> inlay_map::InlayBufferRows<'_> {
+        self.inlay_snapshot.buffer_rows(row)
     }
 
     #[cfg(test)]
@@ -291,37 +289,33 @@ impl TabSnapshot {
     }
 
     pub fn max_point(&self) -> TabPoint {
-        self.to_tab_point(self.editor_addition_snapshot.max_point())
+        self.to_tab_point(self.inlay_snapshot.max_point())
     }
 
     pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
         self.to_tab_point(
-            self.editor_addition_snapshot
-                .clip_point(self.to_editor_addition_point(point, bias).0, bias),
+            self.inlay_snapshot
+                .clip_point(self.to_inlay_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_tab_point(&self, input: EditorAdditionPoint) -> TabPoint {
+    pub fn to_tab_point(&self, input: InlayPoint) -> TabPoint {
         let chars = self
-            .editor_addition_snapshot
-            .chars_at(EditorAdditionPoint::new(input.row(), 0));
+            .inlay_snapshot
+            .chars_at(InlayPoint::new(input.row(), 0));
         let expanded = self.expand_tabs(chars, input.column());
         TabPoint::new(input.row(), expanded)
     }
 
-    pub fn to_editor_addition_point(
-        &self,
-        output: TabPoint,
-        bias: Bias,
-    ) -> (EditorAdditionPoint, u32, u32) {
+    pub fn to_inlay_point(&self, output: TabPoint, bias: Bias) -> (InlayPoint, u32, u32) {
         let chars = self
-            .editor_addition_snapshot
-            .chars_at(EditorAdditionPoint::new(output.row(), 0));
+            .inlay_snapshot
+            .chars_at(InlayPoint::new(output.row(), 0));
         let expanded = output.column();
         let (collapsed, expanded_char_column, to_next_stop) =
             self.collapse_tabs(chars, expanded, bias);
         (
-            EditorAdditionPoint::new(output.row(), collapsed as u32),
+            InlayPoint::new(output.row(), collapsed as u32),
             expanded_char_column,
             to_next_stop,
         )
@@ -329,32 +323,32 @@ impl TabSnapshot {
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
         let fold_point = self
-            .editor_addition_snapshot
+            .inlay_snapshot
             .suggestion_snapshot
             .fold_snapshot
             .to_fold_point(point, bias);
         let suggestion_point = self
-            .editor_addition_snapshot
+            .inlay_snapshot
             .suggestion_snapshot
             .to_suggestion_point(fold_point);
-        let editor_addition_point = self
-            .editor_addition_snapshot
-            .to_editor_addition_point(suggestion_point);
-        self.to_tab_point(editor_addition_point)
+        let inlay_point = self
+            .inlay_snapshot
+            .to_inlay_point(suggestion_point);
+        self.to_tab_point(inlay_point)
     }
 
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
-        let editor_addition_point = self.to_editor_addition_point(point, bias).0;
+        let inlay_point = self.to_inlay_point(point, bias).0;
         let suggestion_point = self
-            .editor_addition_snapshot
-            .to_suggestion_point(editor_addition_point, bias);
+            .inlay_snapshot
+            .to_suggestion_point(inlay_point, bias);
         let fold_point = self
-            .editor_addition_snapshot
+            .inlay_snapshot
             .suggestion_snapshot
             .to_fold_point(suggestion_point);
         fold_point.to_buffer_point(
             &self
-                .editor_addition_snapshot
+                .inlay_snapshot
                 .suggestion_snapshot
                 .fold_snapshot,
         )
@@ -516,7 +510,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 const SPACES: &str = "                ";
 
 pub struct TabChunks<'a> {
-    editor_addition_chunks: EditorAdditionChunks<'a>,
+    inlay_chunks: InlayChunks<'a>,
     chunk: Chunk<'a>,
     column: u32,
     max_expansion_column: u32,
@@ -532,7 +526,7 @@ impl<'a> Iterator for TabChunks<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.text.is_empty() {
-            if let Some(chunk) = self.editor_addition_chunks.next() {
+            if let Some(chunk) = self.inlay_chunks.next() {
                 self.chunk = chunk;
                 if self.inside_leading_tab {
                     self.chunk.text = &self.chunk.text[1..];
@@ -600,10 +594,7 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{
-            editor_addition_map::EditorAdditionMap, fold_map::FoldMap,
-            suggestion_map::SuggestionMap,
-        },
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap, suggestion_map::SuggestionMap},
         MultiBuffer,
     };
     use rand::{prelude::StdRng, Rng};
@@ -614,8 +605,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot);
-        let (_, tab_snapshot) = TabMap::new(editor_addition_snapshot, 4.try_into().unwrap());
+        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
         assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
@@ -632,8 +623,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(editor_addition_snapshot, 4.try_into().unwrap());
+        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, mut tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         tab_snapshot.max_expansion_column = max_expansion_column;
         assert_eq!(tab_snapshot.text(), output);
@@ -657,15 +648,15 @@ mod tests {
                 let input_point = Point::new(0, ix as u32);
                 let output_point = Point::new(0, output.find(c).unwrap() as u32);
                 assert_eq!(
-                    tab_snapshot.to_tab_point(EditorAdditionPoint(input_point)),
+                    tab_snapshot.to_tab_point(InlayPoint(input_point)),
                     TabPoint(output_point),
                     "to_tab_point({input_point:?})"
                 );
                 assert_eq!(
                     tab_snapshot
-                        .to_editor_addition_point(TabPoint(output_point), Bias::Left)
+                        .to_inlay_point(TabPoint(output_point), Bias::Left)
                         .0,
-                    EditorAdditionPoint(input_point),
+                    InlayPoint(input_point),
                     "to_suggestion_point({output_point:?})"
                 );
             }
@@ -681,8 +672,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(editor_addition_snapshot, 4.try_into().unwrap());
+        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, mut tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         tab_snapshot.max_expansion_column = max_expansion_column;
         assert_eq!(tab_snapshot.text(), input);
@@ -696,8 +687,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot);
-        let (_, tab_snapshot) = TabMap::new(editor_addition_snapshot, 4.try_into().unwrap());
+        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         assert_eq!(
             chunks(&tab_snapshot, TabPoint::zero()),
@@ -761,13 +752,10 @@ mod tests {
         let (suggestion_map, _) = SuggestionMap::new(fold_snapshot);
         let (suggestion_snapshot, _) = suggestion_map.randomly_mutate(&mut rng);
         log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (_, editor_addition_snapshot) = EditorAdditionMap::new(suggestion_snapshot.clone());
-        log::info!(
-            "EditorAdditionMap text: {:?}",
-            editor_addition_snapshot.text()
-        );
+        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
-        let (tab_map, _) = TabMap::new(editor_addition_snapshot.clone(), tab_size);
+        let (tab_map, _) = TabMap::new(inlay_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
 
         let text = text::Rope::from(tabs_snapshot.text().as_str());
@@ -805,7 +793,7 @@ mod tests {
             );
 
             let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
-            if tab_size.get() > 1 && editor_addition_snapshot.text().contains('\t') {
+            if tab_size.get() > 1 && inlay_snapshot.text().contains('\t') {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
             }

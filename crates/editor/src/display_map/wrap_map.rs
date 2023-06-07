@@ -1,5 +1,5 @@
 use super::{
-    editor_addition_map::EditorAdditionBufferRows,
+    inlay_map::InlayBufferRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     TextHighlights,
 };
@@ -65,7 +65,7 @@ pub struct WrapChunks<'a> {
 
 #[derive(Clone)]
 pub struct WrapBufferRows<'a> {
-    input_buffer_rows: EditorAdditionBufferRows<'a>,
+    input_buffer_rows: InlayBufferRows<'a>,
     input_buffer_row: Option<u32>,
     output_row: u32,
     soft_wrapped: bool,
@@ -762,17 +762,17 @@ impl WrapSnapshot {
             let mut prev_fold_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                let editor_addition_point = self
+                let inlay_point = self
                     .tab_snapshot
-                    .to_editor_addition_point(tab_point, Bias::Left)
+                    .to_inlay_point(tab_point, Bias::Left)
                     .0;
                 let suggestion_point = self
                     .tab_snapshot
-                    .editor_addition_snapshot
-                    .to_suggestion_point(editor_addition_point, Bias::Left);
+                    .inlay_snapshot
+                    .to_suggestion_point(inlay_point, Bias::Left);
                 let fold_point = self
                     .tab_snapshot
-                    .editor_addition_snapshot
+                    .inlay_snapshot
                     .suggestion_snapshot
                     .to_fold_point(suggestion_point);
                 if fold_point.row() == prev_fold_row && display_row != 0 {
@@ -781,7 +781,7 @@ impl WrapSnapshot {
                     let buffer_point = fold_point.to_buffer_point(
                         &self
                             .tab_snapshot
-                            .editor_addition_snapshot
+                            .inlay_snapshot
                             .suggestion_snapshot
                             .fold_snapshot,
                     );
@@ -1049,8 +1049,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            editor_addition_map::EditorAdditionMap, fold_map::FoldMap,
-            suggestion_map::SuggestionMap, tab_map::TabMap,
+            fold_map::FoldMap, inlay_map::InlayMap, suggestion_map::SuggestionMap, tab_map::TabMap,
         },
         MultiBuffer,
     };
@@ -1106,13 +1105,9 @@ mod tests {
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
         log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (editor_addition_map, editors_additions_snapshot) =
-            EditorAdditionMap::new(suggestion_snapshot.clone());
-        log::info!(
-            "EditorAdditionsMap text: {:?}",
-            editors_additions_snapshot.text()
-        );
-        let (tab_map, _) = TabMap::new(editors_additions_snapshot.clone(), tab_size);
+        let (inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        log::info!("InlaysMap text: {:?}", inlay_snapshot.text());
+        let (tab_map, _) = TabMap::new(inlay_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
@@ -1160,10 +1155,10 @@ mod tests {
                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
                         let (suggestion_snapshot, suggestion_edits) =
                             suggestion_map.sync(fold_snapshot, fold_edits);
-                        let (editor_addition_snapshot, editor_addition_edits) =
-                            editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
+                        let (inlay_snapshot, inlay_edits) =
+                            inlay_map.sync(suggestion_snapshot, suggestion_edits);
                         let (tabs_snapshot, tab_edits) =
-                            tab_map.sync(editor_addition_snapshot, editor_addition_edits, tab_size);
+                            tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
                         let (mut snapshot, wrap_edits) =
                             wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
@@ -1174,10 +1169,10 @@ mod tests {
                 40..=59 => {
                     let (suggestion_snapshot, suggestion_edits) =
                         suggestion_map.randomly_mutate(&mut rng);
-                    let (editor_addition_snapshot, editor_addition_edits) =
-                        editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
+                    let (inlay_snapshot, inlay_edits) =
+                        inlay_map.sync(suggestion_snapshot, suggestion_edits);
                     let (tabs_snapshot, tab_edits) =
-                        tab_map.sync(editor_addition_snapshot, editor_addition_edits, tab_size);
+                        tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
                     let (mut snapshot, wrap_edits) =
                         wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                     snapshot.check_invariants();
@@ -1201,10 +1196,10 @@ mod tests {
             let (suggestion_snapshot, suggestion_edits) =
                 suggestion_map.sync(fold_snapshot, fold_edits);
             log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-            let (editor_addition_snapshot, editor_addition_edits) =
-                editor_addition_map.sync(suggestion_snapshot, suggestion_edits);
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(suggestion_snapshot, suggestion_edits);
             let (tabs_snapshot, tab_edits) =
-                tab_map.sync(editor_addition_snapshot, editor_addition_edits, tab_size);
+                tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();
@@ -1252,7 +1247,7 @@ mod tests {
                 if tab_size.get() == 1
                     || !wrapped_snapshot
                         .tab_snapshot
-                        .editor_addition_snapshot
+                        .inlay_snapshot
                         .text()
                         .contains('\t')
                 {
