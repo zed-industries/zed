@@ -2200,6 +2200,7 @@ mod tests {
             pane::init(cx);
             project_panel::init(cx);
             terminal_view::init(cx);
+            ai::init(cx);
             app_state
         })
     }
