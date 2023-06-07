@@ -359,6 +359,7 @@ pub enum HoverBlockKind {
 pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
+    pub language: Option<Arc<Language>>,
 }
 
 #[derive(Default)]
