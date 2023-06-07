@@ -12,6 +12,7 @@ use rope::Rope;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::borrow::Cow;
 use std::cmp;
+use std::ffi::OsStr;
 use std::io::Write;
 use std::sync::Arc;
 use std::{
@@ -502,6 +503,11 @@ impl FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+lazy_static! {
+    pub static ref FS_DOT_GIT: &'static OsStr = OsStr::new(".git");
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
     pub fn new(executor: Arc<gpui::executor::Background>) -> Arc<Self> {
         Arc::new(Self {
@@ -693,7 +699,7 @@ impl FakeFs {
         });
     }
 
-    pub fn paths(&self) -> Vec<PathBuf> {
+    pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
         queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
@@ -703,12 +709,14 @@ impl FakeFs {
                     queue.push_back((path.join(name), entry.clone()));
                 }
             }
-            result.push(path);
+            if include_dot_git || !path.components().any(|component| component.as_os_str() == *FS_DOT_GIT) {
+                result.push(path);
+            }
         }
         result
     }
 
-    pub fn directories(&self) -> Vec<PathBuf> {
+    pub fn directories(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
         queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
@@ -717,7 +725,9 @@ impl FakeFs {
                 for (name, entry) in entries {
                     queue.push_back((path.join(name), entry.clone()));
                 }
-                result.push(path);
+                if include_dot_git || !path.components().any(|component| component.as_os_str() == *FS_DOT_GIT) {
+                    result.push(path);
+                }
             }
         }
         result

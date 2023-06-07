@@ -422,7 +422,7 @@ async fn apply_client_operation(
             );
 
             ensure_project_shared(&project, client, cx).await;
-            if !client.fs.paths().contains(&new_root_path) {
+            if !client.fs.paths(false).contains(&new_root_path) {
                 client.fs.create_dir(&new_root_path).await.unwrap();
             }
             project
@@ -743,7 +743,7 @@ async fn apply_client_operation(
         } => {
             if !client
                 .fs
-                .directories()
+                .directories(false)
                 .contains(&path.parent().unwrap().to_owned())
             {
                 return Err(TestError::Inapplicable);
@@ -770,8 +770,14 @@ async fn apply_client_operation(
                 repo_path,
                 contents,
             } => {
-                if !client.fs.directories().contains(&repo_path) {
+                if !client.fs.directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
+                }
+
+                for (path, _) in contents.iter() {
+                    if !client.fs.files().contains(&repo_path.join(path)) {
+                        return Err(TestError::Inapplicable);
+                    }
                 }
 
                 log::info!(
@@ -795,7 +801,7 @@ async fn apply_client_operation(
                 repo_path,
                 new_branch,
             } => {
-                if !client.fs.directories().contains(&repo_path) {
+                if !client.fs.directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
                 }
 
@@ -817,8 +823,13 @@ async fn apply_client_operation(
                 statuses,
                 git_operation,
             } => {
-                if !client.fs.directories().contains(&repo_path) {
+                if !client.fs.directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
+                }
+                for (path, _) in statuses.iter() {
+                    if !client.fs.files().contains(&repo_path.join(path)) {
+                        return Err(TestError::Inapplicable);
+                    }
                 }
 
                 log::info!(
@@ -920,9 +931,10 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                             assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
-                                "{} has different snapshot than the host for worktree {:?} and project {:?}",
+                                "{} has different snapshot than the host for worktree {:?} ({:?}) and project {:?}",
                                 client.username,
                                 host_snapshot.abs_path(),
+                                id,
                                 guest_project.remote_id(),
                             );
                             assert_eq!(guest_snapshot.repositories().collect::<Vec<_>>(), host_snapshot.repositories().collect::<Vec<_>>(),
@@ -1583,7 +1595,7 @@ impl TestPlan {
                                 .choose(&mut self.rng)
                                 .cloned() else { continue };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let mut paths = client.fs.paths();
+                            let mut paths = client.fs.paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || self.rng.gen() {
                                 Path::new("/").join(&self.next_root_dir_name(user_id))
@@ -1763,7 +1775,7 @@ impl TestPlan {
                     let is_dir = self.rng.gen::<bool>();
                     let content;
                     let mut path;
-                    let dir_paths = client.fs.directories();
+                    let dir_paths = client.fs.directories(false);
 
                     if is_dir {
                         content = String::new();
@@ -1817,7 +1829,7 @@ impl TestPlan {
 
         let repo_path = client
             .fs
-            .directories()
+            .directories(false)
             .choose(&mut self.rng)
             .unwrap()
             .clone();

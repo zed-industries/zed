@@ -2541,7 +2541,7 @@ impl Entry {
     }
 
     pub fn git_status(&self) -> Option<GitFileStatus> {
-        self.git_status /*.status() */
+        self.git_status
     }
 }
 
@@ -3149,12 +3149,14 @@ impl BackgroundScanner {
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
         let mut event_paths = Vec::<Arc<Path>>::with_capacity(abs_paths.len());
+        let mut event_metadata = Vec::<_>::with_capacity(abs_paths.len());
         for (abs_path, metadata) in abs_paths.iter().zip(metadata.iter()) {
             if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                 if matches!(metadata, Ok(None)) || doing_recursive_update {
                     state.remove_path(path);
                 }
                 event_paths.push(path.into());
+                event_metadata.push(metadata);
             } else {
                 log::error!(
                     "unexpected event {:?} for root path {:?}",
@@ -3164,7 +3166,7 @@ impl BackgroundScanner {
             }
         }
 
-        for (path, metadata) in event_paths.iter().cloned().zip(metadata.into_iter()) {
+        for (path, metadata) in event_paths.iter().cloned().zip(event_metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
 
             match metadata {
@@ -3487,7 +3489,6 @@ impl BackgroundScanner {
             if new_paths.item().map_or(false, |e| e.path < path.0) {
                 new_paths.seek_forward(&path, Bias::Left, &());
             }
-
             loop {
                 match (old_paths.item(), new_paths.item()) {
                     (Some(old_entry), Some(new_entry)) => {
@@ -3506,6 +3507,13 @@ impl BackgroundScanner {
                             }
                             Ordering::Equal => {
                                 if self.phase == EventsReceivedDuringInitialScan {
+                                    if old_entry.id != new_entry.id {
+                                        changes.push((
+                                            old_entry.path.clone(),
+                                            old_entry.id,
+                                            Removed,
+                                        ));
+                                    }
                                     // If the worktree was not fully initialized when this event was generated,
                                     // we can't know whether this entry was added during the scan or whether
                                     // it was merely updated.
@@ -4685,7 +4693,7 @@ mod tests {
         log::info!("mutating fs");
         let mut files = Vec::new();
         let mut dirs = Vec::new();
-        for path in fs.as_fake().paths() {
+        for path in fs.as_fake().paths(false) {
             if path.starts_with(root_path) {
                 if fs.is_file(&path).await {
                     files.push(path);
