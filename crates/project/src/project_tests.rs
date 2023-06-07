@@ -826,6 +826,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let mut events = subscribe(&project, cx);
 
     let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerAdded(LanguageServerId(0)),
+    );
+
     fake_server
         .start_progress(format!("{}/0", progress_token))
         .await;
@@ -953,6 +958,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerAdded(LanguageServerId(1))
+    );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
         events.next().await.unwrap(),

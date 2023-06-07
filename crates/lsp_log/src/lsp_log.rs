@@ -1,4 +1,4 @@
-use collections::{hash_map, HashMap};
+use collections::HashMap;
 use editor::Editor;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
@@ -12,28 +12,33 @@ use gpui::{
     ViewHandle, WeakModelHandle,
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
-use project::{Project, WorktreeId};
+use project::{Project, Worktree};
 use std::{borrow::Cow, sync::Arc};
 use theme::{ui, Theme};
 use workspace::{
     item::{Item, ItemHandle},
-    ToolbarItemLocation, ToolbarItemView, Workspace,
+    ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceCreated,
 };
 
 const SEND_LINE: &str = "// Send:\n";
 const RECEIVE_LINE: &str = "// Receive:\n";
 
 struct LogStore {
-    projects: HashMap<WeakModelHandle<Project>, LogStoreProject>,
+    projects: HashMap<WeakModelHandle<Project>, ProjectState>,
     io_tx: mpsc::UnboundedSender<(WeakModelHandle<Project>, LanguageServerId, bool, String)>,
 }
 
-struct LogStoreProject {
-    servers: HashMap<LanguageServerId, LogStoreLanguageServer>,
-    _subscription: gpui::Subscription,
+struct ProjectState {
+    servers: HashMap<LanguageServerId, LanguageServerState>,
+    _subscriptions: [gpui::Subscription; 2],
 }
 
-struct LogStoreLanguageServer {
+struct LanguageServerState {
+    log_buffer: ModelHandle<Buffer>,
+    rpc_state: Option<LanguageServerRpcState>,
+}
+
+struct LanguageServerRpcState {
     buffer: ModelHandle<Buffer>,
     last_message_kind: Option<MessageKind>,
     _subscription: lsp::Subscription,
@@ -42,6 +47,7 @@ struct LogStoreLanguageServer {
 pub struct LspLogView {
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
+    is_showing_rpc_trace: bool,
     editor: Option<ViewHandle<Editor>>,
     project: ModelHandle<Project>,
 }
@@ -49,7 +55,6 @@ pub struct LspLogView {
 pub struct LspLogToolbarItemView {
     log_view: Option<ViewHandle<LspLogView>>,
     menu_open: bool,
-    project: ModelHandle<Project>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -58,10 +63,36 @@ enum MessageKind {
     Receive,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct LogMenuItem {
+    server_id: LanguageServerId,
+    server_name: LanguageServerName,
+    worktree: ModelHandle<Worktree>,
+    rpc_trace_enabled: bool,
+    rpc_trace_selected: bool,
+    logs_selected: bool,
+}
+
 actions!(log, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
-    let log_set = cx.add_model(|cx| LogStore::new(cx));
+    let log_store = cx.add_model(|cx| LogStore::new(cx));
+
+    cx.subscribe_global::<WorkspaceCreated, _>({
+        let log_store = log_store.clone();
+        move |event, cx| {
+            let workspace = &event.0;
+            if let Some(workspace) = workspace.upgrade(cx) {
+                let project = workspace.read(cx).project().clone();
+                if project.read(cx).is_local() {
+                    log_store.update(cx, |store, cx| {
+                        store.add_project(&project, cx);
+                    });
+                }
+            }
+        }
+    })
+    .detach();
 
     cx.add_action(
         move |workspace: &mut Workspace, _: &OpenLanguageServerLogs, cx: _| {
@@ -69,7 +100,7 @@ pub fn init(cx: &mut AppContext) {
             if project.is_local() {
                 workspace.add_item(
                     Box::new(cx.add_view(|cx| {
-                        LspLogView::new(workspace.project().clone(), log_set.clone(), cx)
+                        LspLogView::new(workspace.project().clone(), log_store.clone(), cx)
                     })),
                     cx,
                 );
@@ -100,34 +131,113 @@ impl LogStore {
         this
     }
 
-    pub fn has_enabled_logs_for_language_server(
+    pub fn add_project(&mut self, project: &ModelHandle<Project>, cx: &mut ModelContext<Self>) {
+        use project::Event::*;
+
+        let weak_project = project.downgrade();
+        self.projects.insert(
+            weak_project,
+            ProjectState {
+                servers: HashMap::default(),
+                _subscriptions: [
+                    cx.observe_release(&project, move |this, _, _| {
+                        this.projects.remove(&weak_project);
+                    }),
+                    cx.subscribe(project, |this, project, event, cx| match event {
+                        LanguageServerAdded(id) => {
+                            this.add_language_server(&project, *id, cx);
+                        }
+                        LanguageServerRemoved(id) => {
+                            this.remove_language_server(&project, *id, cx);
+                        }
+                        LanguageServerLog(id, message) => {
+                            this.add_language_server_log(&project, *id, message, cx);
+                        }
+                        _ => {}
+                    }),
+                ],
+            },
+        );
+    }
+
+    fn add_language_server(
+        &mut self,
+        project: &ModelHandle<Project>,
+        id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<ModelHandle<Buffer>> {
+        let project_state = self.projects.get_mut(&project.downgrade())?;
+        Some(
+            project_state
+                .servers
+                .entry(id)
+                .or_insert_with(|| {
+                    cx.notify();
+                    LanguageServerState {
+                        rpc_state: None,
+                        log_buffer: cx.add_model(|cx| Buffer::new(0, "", cx)).clone(),
+                    }
+                })
+                .log_buffer
+                .clone(),
+        )
+    }
+
+    fn add_language_server_log(
+        &mut self,
+        project: &ModelHandle<Project>,
+        id: LanguageServerId,
+        message: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let buffer = self.add_language_server(&project, id, cx)?;
+        buffer.update(cx, |buffer, cx| {
+            let len = buffer.len();
+            let has_newline = message.ends_with("\n");
+            buffer.edit([(len..len, message)], None, cx);
+            if !has_newline {
+                let len = buffer.len();
+                buffer.edit([(len..len, "\n")], None, cx);
+            }
+        });
+        cx.notify();
+        Some(())
+    }
+
+    fn remove_language_server(
+        &mut self,
+        project: &ModelHandle<Project>,
+        id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let project_state = self.projects.get_mut(&project.downgrade())?;
+        project_state.servers.remove(&id);
+        cx.notify();
+        Some(())
+    }
+
+    pub fn log_buffer_for_server(
         &self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
-    ) -> bool {
-        self.projects
-            .get(&project.downgrade())
-            .map_or(false, |store| store.servers.contains_key(&server_id))
+    ) -> Option<ModelHandle<Buffer>> {
+        let weak_project = project.downgrade();
+        let project_state = self.projects.get(&weak_project)?;
+        let server_state = project_state.servers.get(&server_id)?;
+        Some(server_state.log_buffer.clone())
     }
 
-    pub fn enable_logs_for_language_server(
+    pub fn enable_rpc_trace_for_language_server(
         &mut self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Option<ModelHandle<Buffer>> {
-        let server = project.read(cx).language_server_for_id(server_id)?;
         let weak_project = project.downgrade();
-        let project_logs = match self.projects.entry(weak_project) {
-            hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            hash_map::Entry::Vacant(entry) => entry.insert(LogStoreProject {
-                servers: HashMap::default(),
-                _subscription: cx.observe_release(&project, move |this, _, _| {
-                    this.projects.remove(&weak_project);
-                }),
-            }),
-        };
-        let server_log_state = project_logs.servers.entry(server_id).or_insert_with(|| {
+        let project_state = self.projects.get_mut(&weak_project)?;
+        let server_state = project_state.servers.get_mut(&server_id)?;
+        let server = project.read(cx).language_server_for_id(server_id)?;
+        let rpc_state = server_state.rpc_state.get_or_insert_with(|| {
             let io_tx = self.io_tx.clone();
             let language = project.read(cx).languages().language_for_name("JSON");
             let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
@@ -142,33 +252,30 @@ impl LogStore {
             })
             .detach();
 
-            let project = project.downgrade();
-            LogStoreLanguageServer {
+            LanguageServerRpcState {
                 buffer,
                 last_message_kind: None,
                 _subscription: server.on_io(move |is_received, json| {
                     io_tx
-                        .unbounded_send((project, server_id, is_received, json.to_string()))
+                        .unbounded_send((weak_project, server_id, is_received, json.to_string()))
                         .ok();
                 }),
             }
         });
-        Some(server_log_state.buffer.clone())
+        Some(rpc_state.buffer.clone())
     }
 
-    pub fn disable_logs_for_language_server(
+    pub fn disable_rpc_trace_for_language_server(
         &mut self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
         _: &mut ModelContext<Self>,
-    ) {
+    ) -> Option<()> {
         let project = project.downgrade();
-        if let Some(store) = self.projects.get_mut(&project) {
-            store.servers.remove(&server_id);
-            if store.servers.is_empty() {
-                self.projects.remove(&project);
-            }
-        }
+        let project_state = self.projects.get_mut(&project)?;
+        let server_state = project_state.servers.get_mut(&server_id)?;
+        server_state.rpc_state.take();
+        Some(())
     }
 
     fn on_io(
@@ -183,7 +290,9 @@ impl LogStore {
             .projects
             .get_mut(&project)?
             .servers
-            .get_mut(&language_server_id)?;
+            .get_mut(&language_server_id)?
+            .rpc_state
+            .as_mut()?;
         state.buffer.update(cx, |buffer, cx| {
             let kind = if is_received {
                 MessageKind::Receive
@@ -209,23 +318,62 @@ impl LogStore {
 impl LspLogView {
     fn new(
         project: ModelHandle<Project>,
-        log_set: ModelHandle<LogStore>,
-        _: &mut ViewContext<Self>,
+        log_store: ModelHandle<LogStore>,
+        cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self {
+        let server_id = log_store
+            .read(cx)
+            .projects
+            .get(&project.downgrade())
+            .and_then(|project| project.servers.keys().copied().next());
+        let mut this = Self {
             project,
-            log_store: log_set,
+            log_store,
             editor: None,
             current_server_id: None,
+            is_showing_rpc_trace: false,
+        };
+        if let Some(server_id) = server_id {
+            this.show_logs_for_server(server_id, cx);
         }
+        this
+    }
+
+    fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
+        let log_store = self.log_store.read(cx);
+        let state = log_store.projects.get(&self.project.downgrade())?;
+        let mut rows = self
+            .project
+            .read(cx)
+            .language_servers()
+            .filter_map(|(server_id, language_server_name, worktree_id)| {
+                let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
+                let state = state.servers.get(&server_id)?;
+                Some(LogMenuItem {
+                    server_id,
+                    server_name: language_server_name,
+                    worktree,
+                    rpc_trace_enabled: state.rpc_state.is_some(),
+                    rpc_trace_selected: self.is_showing_rpc_trace
+                        && self.current_server_id == Some(server_id),
+                    logs_selected: !self.is_showing_rpc_trace
+                        && self.current_server_id == Some(server_id),
+                })
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by_key(|row| row.server_id);
+        rows.dedup_by_key(|row| row.server_id);
+        Some(rows)
     }
 
     fn show_logs_for_server(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
-        let buffer = self.log_store.update(cx, |log_set, cx| {
-            log_set.enable_logs_for_language_server(&self.project, server_id, cx)
-        });
+        let buffer = self
+            .log_store
+            .read(cx)
+            .log_buffer_for_server(&self.project, server_id);
         if let Some(buffer) = buffer {
             self.current_server_id = Some(server_id);
+            self.is_showing_rpc_trace = false;
             self.editor = Some(cx.add_view(|cx| {
                 let mut editor = Editor::for_buffer(buffer, Some(self.project.clone()), cx);
                 editor.set_read_only(true);
@@ -236,7 +384,28 @@ impl LspLogView {
         }
     }
 
-    fn toggle_logging_for_server(
+    fn show_rpc_trace_for_server(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.log_store.update(cx, |log_set, cx| {
+            log_set.enable_rpc_trace_for_language_server(&self.project, server_id, cx)
+        });
+        if let Some(buffer) = buffer {
+            self.current_server_id = Some(server_id);
+            self.is_showing_rpc_trace = true;
+            self.editor = Some(cx.add_view(|cx| {
+                let mut editor = Editor::for_buffer(buffer, Some(self.project.clone()), cx);
+                editor.set_read_only(true);
+                editor.move_to_end(&Default::default(), cx);
+                editor
+            }));
+            cx.notify();
+        }
+    }
+
+    fn toggle_rpc_trace_for_server(
         &mut self,
         server_id: LanguageServerId,
         enabled: bool,
@@ -244,11 +413,15 @@ impl LspLogView {
     ) {
         self.log_store.update(cx, |log_store, cx| {
             if enabled {
-                log_store.enable_logs_for_language_server(&self.project, server_id, cx);
+                log_store.enable_rpc_trace_for_language_server(&self.project, server_id, cx);
             } else {
-                log_store.disable_logs_for_language_server(&self.project, server_id, cx);
+                log_store.disable_rpc_trace_for_language_server(&self.project, server_id, cx);
             }
         });
+        if !enabled && Some(server_id) == self.current_server_id {
+            self.show_logs_for_server(server_id, cx);
+            cx.notify();
+        }
     }
 }
 
@@ -305,28 +478,18 @@ impl View for LspLogToolbarItemView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx).clone();
         let Some(log_view) = self.log_view.as_ref() else { return Empty::new().into_any() };
-        let project = self.project.read(cx);
         let log_view = log_view.read(cx);
-        let log_store = log_view.log_store.read(cx);
 
-        let mut language_servers = project
-            .language_servers()
-            .map(|(id, name, worktree)| {
-                (
-                    id,
-                    name,
-                    worktree,
-                    log_store.has_enabled_logs_for_language_server(&self.project, id),
-                )
-            })
-            .collect::<Vec<_>>();
-        language_servers.sort_by_key(|a| (a.0, a.2));
-        language_servers.dedup_by_key(|a| a.0);
+        let menu_rows = self
+            .log_view
+            .as_ref()
+            .and_then(|view| view.read(cx).menu_items(cx))
+            .unwrap_or_default();
 
         let current_server_id = log_view.current_server_id;
         let current_server = current_server_id.and_then(|current_server_id| {
-            if let Ok(ix) = language_servers.binary_search_by_key(&current_server_id, |e| e.0) {
-                Some(language_servers[ix].clone())
+            if let Ok(ix) = menu_rows.binary_search_by_key(&current_server_id, |e| e.server_id) {
+                Some(menu_rows[ix].clone())
             } else {
                 None
             }
@@ -337,7 +500,6 @@ impl View for LspLogToolbarItemView {
         Stack::new()
             .with_child(Self::render_language_server_menu_header(
                 current_server,
-                &self.project,
                 &theme,
                 cx,
             ))
@@ -346,20 +508,18 @@ impl View for LspLogToolbarItemView {
                     Overlay::new(
                         MouseEventHandler::<Menu, _>::new(0, cx, move |_, cx| {
                             Flex::column()
-                                .with_children(language_servers.into_iter().filter_map(
-                                    |(id, name, worktree_id, logging_enabled)| {
-                                        Self::render_language_server_menu_item(
-                                            id,
-                                            name,
-                                            worktree_id,
-                                            logging_enabled,
-                                            Some(id) == current_server_id,
-                                            &self.project,
-                                            &theme,
-                                            cx,
-                                        )
-                                    },
-                                ))
+                                .with_children(menu_rows.into_iter().map(|row| {
+                                    Self::render_language_server_menu_item(
+                                        row.server_id,
+                                        row.server_name,
+                                        row.worktree,
+                                        row.rpc_trace_enabled,
+                                        row.logs_selected,
+                                        row.rpc_trace_selected,
+                                        &theme,
+                                        cx,
+                                    )
+                                }))
                                 .contained()
                                 .with_style(theme.context_menu.container)
                                 .constrained()
@@ -389,11 +549,10 @@ impl View for LspLogToolbarItemView {
 }
 
 impl LspLogToolbarItemView {
-    pub fn new(project: ModelHandle<Project>) -> Self {
+    pub fn new() -> Self {
         Self {
             menu_open: false,
             log_view: None,
-            project,
         }
     }
 
@@ -410,10 +569,9 @@ impl LspLogToolbarItemView {
     ) {
         if let Some(log_view) = &self.log_view {
             log_view.update(cx, |log_view, cx| {
-                log_view.toggle_logging_for_server(id, enabled, cx);
+                log_view.toggle_rpc_trace_for_server(id, enabled, cx);
                 if !enabled && Some(id) == log_view.current_server_id {
-                    log_view.current_server_id = None;
-                    log_view.editor = None;
+                    log_view.show_logs_for_server(id, cx);
                     cx.notify();
                 }
             });
@@ -423,28 +581,31 @@ impl LspLogToolbarItemView {
 
     fn show_logs_for_server(&mut self, id: LanguageServerId, cx: &mut ViewContext<Self>) {
         if let Some(log_view) = &self.log_view {
-            log_view.update(cx, |log_view, cx| {
-                log_view.show_logs_for_server(id, cx);
-            });
+            log_view.update(cx, |view, cx| view.show_logs_for_server(id, cx));
             self.menu_open = false;
+            cx.notify();
         }
-        cx.notify();
+    }
+
+    fn show_rpc_trace_for_server(&mut self, id: LanguageServerId, cx: &mut ViewContext<Self>) {
+        if let Some(log_view) = &self.log_view {
+            log_view.update(cx, |view, cx| view.show_rpc_trace_for_server(id, cx));
+            self.menu_open = false;
+            cx.notify();
+        }
     }
 
     fn render_language_server_menu_header(
-        current_server: Option<(LanguageServerId, LanguageServerName, WorktreeId, bool)>,
-        project: &ModelHandle<Project>,
+        current_server: Option<LogMenuItem>,
         theme: &Arc<Theme>,
         cx: &mut ViewContext<Self>,
     ) -> impl Element<Self> {
         enum ToggleMenu {}
         MouseEventHandler::<ToggleMenu, Self>::new(0, cx, move |state, cx| {
-            let project = project.read(cx);
             let label: Cow<str> = current_server
-                .and_then(|(_, server_name, worktree_id, _)| {
-                    let worktree = project.worktree_for_id(worktree_id, cx)?;
-                    let worktree = &worktree.read(cx);
-                    Some(format!("{} - ({})", server_name.0, worktree.root_name()).into())
+                .and_then(|row| {
+                    let worktree = row.worktree.read(cx);
+                    Some(format!("{} - ({})", row.server_name.0, worktree.root_name()).into())
                 })
                 .unwrap_or_else(|| "No server selected".into());
             Label::new(
@@ -466,46 +627,67 @@ impl LspLogToolbarItemView {
     fn render_language_server_menu_item(
         id: LanguageServerId,
         name: LanguageServerName,
-        worktree_id: WorktreeId,
+        worktree: ModelHandle<Worktree>,
         logging_enabled: bool,
-        is_selected: bool,
-        project: &ModelHandle<Project>,
+        logs_selected: bool,
+        rpc_trace_selected: bool,
         theme: &Arc<Theme>,
         cx: &mut ViewContext<Self>,
-    ) -> Option<impl Element<Self>> {
+    ) -> impl Element<Self> {
         enum ActivateLog {}
-        let project = project.read(cx);
-        let worktree = project.worktree_for_id(worktree_id, cx)?;
-        let worktree = &worktree.read(cx);
-        if !worktree.is_visible() {
-            return None;
-        }
-        let label = format!("{} - ({})", name.0, worktree.root_name());
+        enum ActivateRpcTrace {}
 
-        Some(
-            MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, cx| {
-                let item_style = theme.context_menu.item.style_for(state, is_selected);
-                Flex::row()
-                    .with_child(ui::checkbox_with_label::<Self, _, Self, _>(
-                        Empty::new(),
-                        &theme.welcome.checkbox,
-                        logging_enabled,
-                        id.0,
-                        cx,
-                        move |this, enabled, cx| {
-                            this.toggle_logging_for_server(id, enabled, cx);
-                        },
-                    ))
-                    .with_child(Label::new(label, item_style.label.clone()).aligned().left())
-                    .align_children_center()
-                    .contained()
-                    .with_style(item_style.container)
-            })
-            .with_cursor_style(CursorStyle::PointingHand)
-            .on_click(MouseButton::Left, move |_, view, cx| {
-                view.show_logs_for_server(id, cx);
-            }),
-        )
+        let header = format!("{} - ({})", name.0, worktree.read(cx).root_name());
+
+        let item_style = &theme.context_menu.item.default;
+        Flex::column()
+            .with_child(
+                Label::new(header, item_style.label.clone())
+                    .aligned()
+                    .left(),
+            )
+            .with_child(
+                MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, _| {
+                    let item_style = &theme.context_menu.item.style_for(state, logs_selected);
+                    Label::new("logs", item_style.label.clone())
+                        .aligned()
+                        .left()
+                        .contained()
+                        .with_style(item_style.container)
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, view, cx| {
+                    view.show_logs_for_server(id, cx);
+                }),
+            )
+            .with_child(
+                MouseEventHandler::<ActivateRpcTrace, _>::new(id.0, cx, move |state, cx| {
+                    let item_style = &theme.context_menu.item.style_for(state, rpc_trace_selected);
+                    Flex::row()
+                        .with_child(ui::checkbox_with_label::<Self, _, Self, _>(
+                            Empty::new(),
+                            &theme.welcome.checkbox,
+                            logging_enabled,
+                            id.0,
+                            cx,
+                            move |this, enabled, cx| {
+                                this.toggle_logging_for_server(id, enabled, cx);
+                            },
+                        ))
+                        .with_child(
+                            Label::new("rpc trace", item_style.label.clone())
+                                .aligned()
+                                .left(),
+                        )
+                        .align_children_center()
+                        .contained()
+                        .with_style(item_style.container)
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, view, cx| {
+                    view.show_rpc_trace_for_server(id, cx);
+                }),
+            )
     }
 }
 

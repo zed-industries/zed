@@ -311,9 +311,8 @@ pub fn initialize_workspace(
                                 toolbar.add_item(submit_feedback_button, cx);
                                 let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
                                 toolbar.add_item(feedback_info_text, cx);
-                                let lsp_log_item = cx.add_view(|_| {
-                                    lsp_log::LspLogToolbarItemView::new(workspace.project().clone())
-                                });
+                                let lsp_log_item =
+                                    cx.add_view(|_| lsp_log::LspLogToolbarItemView::new());
                                 toolbar.add_item(lsp_log_item, cx);
                             })
                         });
