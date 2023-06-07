@@ -923,7 +923,7 @@ impl LocalWorktree {
         path: Arc<Path>,
         has_changed_file: bool,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+    ) -> Task<Result<()>> {
         let handle = cx.handle();
         let buffer = buffer_handle.read(cx);
 
@@ -979,7 +979,7 @@ impl LocalWorktree {
                 buffer.did_save(version.clone(), fingerprint, entry.mtime, cx);
             });
 
-            Ok((version, fingerprint, entry.mtime))
+            Ok(())
         })
     }
 
@@ -1290,7 +1290,7 @@ impl RemoteWorktree {
         &self,
         buffer_handle: ModelHandle<Buffer>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+    ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
         let version = buffer.version();
@@ -1315,7 +1315,7 @@ impl RemoteWorktree {
                 buffer.did_save(version.clone(), fingerprint, mtime, cx);
             });
 
-            Ok((version, fingerprint, mtime))
+            Ok(())
         })
     }
 

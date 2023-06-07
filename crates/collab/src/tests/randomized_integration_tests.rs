@@ -628,12 +628,13 @@ async fn apply_client_operation(
 
             ensure_project_shared(&project, client, cx).await;
             let requested_version = buffer.read_with(cx, |buffer, _| buffer.version());
-            let save = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
-            let save = cx.background().spawn(async move {
-                let (saved_version, _, _) = save
-                    .await
+            let save = project.update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
+            let save = cx.spawn(|cx| async move {
+                save.await
                     .map_err(|err| anyhow!("save request failed: {:?}", err))?;
-                assert!(saved_version.observed_all(&requested_version));
+                assert!(buffer
+                    .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
+                    .observed_all(&requested_version));
                 anyhow::Ok(())
             });
             if detach {
