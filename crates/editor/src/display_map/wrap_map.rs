@@ -762,10 +762,7 @@ impl WrapSnapshot {
             let mut prev_fold_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                let inlay_point = self
-                    .tab_snapshot
-                    .to_inlay_point(tab_point, Bias::Left)
-                    .0;
+                let inlay_point = self.tab_snapshot.to_inlay_point(tab_point, Bias::Left).0;
                 let suggestion_point = self
                     .tab_snapshot
                     .inlay_snapshot
@@ -1198,8 +1195,7 @@ mod tests {
             log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
             let (inlay_snapshot, inlay_edits) =
                 inlay_map.sync(suggestion_snapshot, suggestion_edits);
-            let (tabs_snapshot, tab_edits) =
-                tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();

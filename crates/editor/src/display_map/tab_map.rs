@@ -44,9 +44,7 @@ impl TabMap {
             version: old_snapshot.version,
         };
 
-        if old_snapshot.inlay_snapshot.version
-            != new_snapshot.inlay_snapshot.version
-        {
+        if old_snapshot.inlay_snapshot.version != new_snapshot.inlay_snapshot.version {
             new_snapshot.version += 1;
         }
 
@@ -60,11 +58,10 @@ impl TabMap {
                 let old_end = old_snapshot
                     .inlay_snapshot
                     .to_point(suggestion_edit.old.end);
-                let old_end_row_successor_offset =
-                    old_snapshot.inlay_snapshot.to_offset(cmp::min(
-                        InlayPoint::new(old_end.row() + 1, 0),
-                        old_snapshot.inlay_snapshot.max_point(),
-                    ));
+                let old_end_row_successor_offset = old_snapshot.inlay_snapshot.to_offset(cmp::min(
+                    InlayPoint::new(old_end.row() + 1, 0),
+                    old_snapshot.inlay_snapshot.max_point(),
+                ));
                 let new_end = new_snapshot
                     .inlay_snapshot
                     .to_point(suggestion_edit.new.end);
@@ -171,12 +168,9 @@ impl TabSnapshot {
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.to_tab_point(InlayPoint::new(
-                row,
-                self.inlay_snapshot.line_len(row),
-            ))
-            .0
-            .column
+            self.to_tab_point(InlayPoint::new(row, self.inlay_snapshot.line_len(row)))
+                .0
+                .column
         } else {
             max_point.column()
         }
@@ -331,27 +325,18 @@ impl TabSnapshot {
             .inlay_snapshot
             .suggestion_snapshot
             .to_suggestion_point(fold_point);
-        let inlay_point = self
-            .inlay_snapshot
-            .to_inlay_point(suggestion_point);
+        let inlay_point = self.inlay_snapshot.to_inlay_point(suggestion_point);
         self.to_tab_point(inlay_point)
     }
 
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
         let inlay_point = self.to_inlay_point(point, bias).0;
-        let suggestion_point = self
-            .inlay_snapshot
-            .to_suggestion_point(inlay_point, bias);
+        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point, bias);
         let fold_point = self
             .inlay_snapshot
             .suggestion_snapshot
             .to_fold_point(suggestion_point);
-        fold_point.to_buffer_point(
-            &self
-                .inlay_snapshot
-                .suggestion_snapshot
-                .fold_snapshot,
-        )
+        fold_point.to_buffer_point(&self.inlay_snapshot.suggestion_snapshot.fold_snapshot)
     }
 
     fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {

@@ -26,7 +26,7 @@ use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
 use clock::{Global, ReplicaId};
-use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -71,7 +71,6 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use parking_lot::RwLock;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
@@ -537,7 +536,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_hints_version: InlayHintVersion,
+    inlay_hint_versions: InlayHintVersions,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1154,52 +1153,27 @@ impl CopilotState {
     }
 }
 
+// TODO kb
 #[derive(Debug, Default, Clone)]
-struct InlayHintVersion(Arc<RwLock<HashMap<usize, Global>>>);
+struct InlayHintVersions {
+    last_buffer_versions_with_hints: HashMap<usize, Global>,
+}
 
-impl InlayHintVersion {
-    fn is_newer(&self, timestamp: &HashMap<usize, Global>) -> bool {
-        let current_timestamp = self.0.read();
-        Self::first_timestamp_newer(timestamp, &current_timestamp)
+impl InlayHintVersions {
+    fn absent_or_newer(&self, buffer_id: usize, new_version: &Global) -> bool {
+        self.last_buffer_versions_with_hints
+            .get(&buffer_id)
+            .map(|last_version_with_hints| new_version.changed_since(&last_version_with_hints))
+            .unwrap_or(true)
     }
 
-    fn update_if_newer(&self, new_timestamp: HashMap<usize, Global>) -> bool {
-        let mut guard = self.0.write();
-        if Self::first_timestamp_newer(&new_timestamp, &guard) {
-            *guard = new_timestamp;
+    fn insert(&mut self, buffer_id: usize, new_version: Global) -> bool {
+        if self.absent_or_newer(buffer_id, &new_version) {
+            self.last_buffer_versions_with_hints
+                .insert(buffer_id, new_version);
             true
         } else {
             false
-        }
-    }
-
-    fn first_timestamp_newer(
-        first: &HashMap<usize, Global>,
-        second: &HashMap<usize, Global>,
-    ) -> bool {
-        if first.is_empty() {
-            false
-        } else if second.is_empty() {
-            true
-        } else {
-            let mut first_newer = false;
-            let mut second_has_extra_buffers = false;
-            for (buffer_id, first_version) in first {
-                match second.get(buffer_id) {
-                    None => {
-                        second_has_extra_buffers = true;
-                    }
-                    Some(second_version) => {
-                        if second_version.changed_since(&first_version) {
-                            return false;
-                        } else if first_version.changed_since(&second_version) {
-                            first_newer = true;
-                        }
-                    }
-                }
-            }
-
-            first_newer || !second_has_extra_buffers
         }
     }
 }
@@ -1402,7 +1376,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hints_version: InlayHintVersion::default(),
+            inlay_hint_versions: InlayHintVersions::default(),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2643,69 +2617,91 @@ impl Editor {
             return;
         }
 
-        let mut hint_fetch_tasks = Vec::new();
-        let new_timestamp = self.buffer().read(cx).all_buffers().into_iter().fold(
-            HashMap::default(),
-            |mut buffer_versions, new_buffer| {
-                let new_buffer_version = new_buffer.read(cx).version();
-                match buffer_versions.entry(new_buffer.id()) {
-                    hash_map::Entry::Occupied(mut entry) => {
-                        let entry_version = entry.get();
-                        if new_buffer_version.changed_since(&entry_version) {
-                            entry.insert(new_buffer_version);
-                        }
-                    }
-                    hash_map::Entry::Vacant(v) => {
-                        v.insert(new_buffer_version);
-                    }
-                }
-
-                hint_fetch_tasks.push(cx.spawn(|editor, mut cx| async move {
-                    let task = editor
+        let hint_fetch_tasks = self
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .map(|buffer_handle| {
+                let buffer_id = buffer_handle.id();
+                cx.spawn(|editor, mut cx| async move {
+                    let task_data = editor
                         .update(&mut cx, |editor, cx| {
-                            editor.project.as_ref().map(|project| {
+                            editor.project.as_ref().and_then(|project| {
                                 project.update(cx, |project, cx| {
-                                    let end = new_buffer.read(cx).len();
-                                    project.inlay_hints(new_buffer, 0..end, cx)
+                                    let buffer = buffer_handle.read(cx);
+                                    let end = buffer.len();
+                                    let version = buffer.version();
+
+                                    if editor
+                                        .inlay_hint_versions
+                                        .absent_or_newer(buffer_id, &version)
+                                    {
+                                        Some((
+                                            version,
+                                            project.inlay_hints_for_buffer(
+                                                buffer_handle,
+                                                0..end,
+                                                cx,
+                                            ),
+                                        ))
+                                    } else {
+                                        None
+                                    }
                                 })
                             })
                         })
                         .context("inlay hints fecth task spawn")?;
 
-                    match task {
-                        Some(task) => Ok(task.await.context("inlay hints fetch task await")?),
-                        None => anyhow::Ok(Vec::new()),
-                    }
-                }));
-
-                buffer_versions
-            },
-        );
-
-        let current_hints_version = self.inlay_hints_version.clone();
-        if current_hints_version.is_newer(&new_timestamp) {
-            cx.spawn(|editor, mut cx| async move {
-                let mut new_hints = Vec::new();
-                for task_result in futures::future::join_all(hint_fetch_tasks).await {
-                    match task_result {
-                        Ok(task_hints) => new_hints.extend(task_hints),
-                        Err(e) => error!("Failed to update hints for buffer: {e:#}"),
-                    }
-                }
-
-                if current_hints_version.update_if_newer(new_timestamp) {
-                    editor
-                        .update(&mut cx, |editor, cx| {
-                            editor.display_map.update(cx, |display_map, cx| {
-                                display_map.set_inlay_hints(&new_hints, cx)
-                            });
-                        })
-                        .log_err()
-                        .unwrap_or(())
-                }
+                    anyhow::Ok((
+                        buffer_id,
+                        match task_data {
+                            Some((buffer_version, task)) => Some((
+                                buffer_version,
+                                task.await.context("inlay hints for buffer task")?,
+                            )),
+                            None => None,
+                        },
+                    ))
+                })
             })
-            .detach();
-        }
+            .collect::<Vec<_>>();
+
+        cx.spawn(|editor, mut cx| async move {
+            let mut new_hints = Vec::new();
+            for task_result in futures::future::join_all(hint_fetch_tasks).await {
+                match task_result {
+                    Ok((_buffer_id, None)) => {}
+                    Ok((buffer_id, Some((buffer_with_hints_version, buffer_hints)))) => {
+                        let should_update_hints = editor
+                            .update(&mut cx, |editor, _| {
+                                editor
+                                    .inlay_hint_versions
+                                    .insert(buffer_id, buffer_with_hints_version)
+                            })
+                            .log_err()
+                            .unwrap_or(false);
+                        if should_update_hints {
+                            new_hints.extend(buffer_hints);
+                        }
+                    }
+                    Err(e) => error!("Failed to update hints for buffer: {e:#}"),
+                }
+            }
+
+            // TODO kb wrong, need a splice here instead
+            if !new_hints.is_empty() {
+                editor
+                    .update(&mut cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.set_inlay_hints(&new_hints, cx);
+                        });
+                    })
+                    .log_err()
+                    .unwrap_or(())
+            }
+        })
+        .detach();
     }
 
     fn trigger_on_type_formatting(

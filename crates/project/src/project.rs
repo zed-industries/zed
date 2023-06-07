@@ -4904,7 +4904,7 @@ impl Project {
         )
     }
 
-    pub fn inlay_hints<T: ToOffset>(
+    pub fn inlay_hints_for_buffer<T: ToOffset>(
         &self,
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
@@ -6688,7 +6688,7 @@ impl Project {
         let buffer_hints = this
             .update(&mut cx, |project, cx| {
                 let end = buffer.read(cx).len();
-                project.inlay_hints(buffer, 0..end, cx)
+                project.inlay_hints_for_buffer(buffer, 0..end, cx)
             })
             .await
             .context("inlay hints fetch")?;

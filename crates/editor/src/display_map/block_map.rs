@@ -1181,8 +1181,7 @@ mod tests {
             fold_map.read(buffer_snapshot, subscription.consume().into_inner());
         let (suggestion_snapshot, suggestion_edits) =
             suggestion_map.sync(fold_snapshot, fold_edits);
-        let (inlay_snapshot, inlay_edits) =
-            inlay_map.sync(suggestion_snapshot, suggestion_edits);
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(suggestion_snapshot, suggestion_edits);
         let (tab_snapshot, tab_edits) =
             tab_map.sync(inlay_snapshot, inlay_edits, 4.try_into().unwrap());
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
@@ -1396,8 +1395,7 @@ mod tests {
                 suggestion_map.sync(fold_snapshot, fold_edits);
             let (inlay_snapshot, inlay_edits) =
                 inlay_map.sync(suggestion_snapshot, suggestion_edits);
-            let (tab_snapshot, tab_edits) =
-                tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
+            let (tab_snapshot, tab_edits) = tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tab_snapshot, tab_edits, cx)
             });
