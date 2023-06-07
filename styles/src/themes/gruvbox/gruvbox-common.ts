@@ -1,8 +1,18 @@
-import chroma from "chroma-js"
-import { Meta, ThemeSyntax } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
+import {
+    chroma,
+    colorRamp,
+    ThemeAppearance,
+    ThemeLicenseType,
+    ThemeConfig,
+    ThemeSyntax,
+} from "../../common"
 
-const name = "Gruvbox"
+const meta: Partial<ThemeConfig> = {
+    name: "Gruvbox",
+    author: "morhetz <morhetz@gmail.com>",
+    licenseType: ThemeLicenseType.MIT,
+    licenseUrl: "https://github.com/morhetz/gruvbox",
+}
 
 const color = {
     dark0_hard: "#1d2021",
@@ -156,7 +166,7 @@ const variant: Variant[] = [
     },
 ]
 
-const buildVariant = (variant: Variant) => {
+const buildVariant = (variant: Variant): ThemeConfig => {
     const { colors } = variant
 
     const name = `Gruvbox ${variant.name}`
@@ -233,7 +243,16 @@ const buildVariant = (variant: Variant) => {
         title: { color: colors.green },
     }
 
-    return createColorScheme(name, isLight, ramps, syntax)
+    return {
+        name,
+        author: meta.author,
+        appearance: variant.appearance as ThemeAppearance,
+        licenseType: meta.licenseType,
+        licenseUrl: meta.licenseUrl,
+        licenseFile: `${__dirname}/LICENSE`,
+        inputColor: ramps,
+        override: { syntax },
+    }
 }
 
 // Variants
@@ -243,12 +262,3 @@ export const darkSoft = buildVariant(variant[2])
 export const lightHard = buildVariant(variant[3])
 export const lightDefault = buildVariant(variant[4])
 export const lightSoft = buildVariant(variant[5])
-
-export const meta: Meta = {
-    name,
-    license: {
-        SPDX: "MIT", // "MIT/X11"
-    },
-    author: "morhetz <morhetz@gmail.com>",
-    url: "https://github.com/morhetz/gruvbox",
-}

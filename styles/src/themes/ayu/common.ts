@@ -1,8 +1,11 @@
 import { dark, light, mirage } from "ayu"
-import { ThemeSyntax } from "../common/syntax"
-import chroma from "chroma-js"
-import { colorRamp } from "../common/ramps"
-import { Meta } from "../common/colorScheme"
+import {
+    chroma,
+    colorRamp,
+    ThemeLicenseType,
+    ThemeConfig,
+    ThemeSyntax,
+} from "../../common"
 
 export const ayu = {
     dark,
@@ -74,11 +77,9 @@ export const buildSyntax = (t: typeof dark): ThemeSyntax => {
     }
 }
 
-export const meta: Meta = {
+export const meta: Partial<ThemeConfig> = {
     name: "Ayu",
     author: "dempfi",
-    license: {
-        SPDX: "MIT",
-    },
-    url: "https://github.com/dempfi/ayu",
+    licenseType: ThemeLicenseType.MIT,
+    licenseUrl: "https://github.com/dempfi/ayu",
 }

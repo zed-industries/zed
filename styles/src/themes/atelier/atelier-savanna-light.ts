@@ -1,14 +1,7 @@
-import chroma from "chroma-js"
-import { Meta } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "./common"
+import { chroma, ThemeAppearance, ThemeConfig, colorRamp } from "../../common"
+import { meta, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
-    meta: {
-        name: `${name} Savanna Light`,
-        ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/savanna/",
-    },
     colors: {
         base00: "#ecf4ee",
         base01: "#dfe7e2",
@@ -31,13 +24,17 @@ const variant: Variant = {
 
 const syntax = buildSyntax(variant)
 
-const theme = (variant: Variant) => {
-    const { meta, colors } = variant
+const getTheme = (variant: Variant): ThemeConfig => {
+    const { colors } = variant
 
-    return createColorScheme(
-        meta.name,
-        true,
-        {
+    return {
+        name: `${meta.name} Savanna Light`,
+        author: meta.author,
+        appearance: ThemeAppearance.Light,
+        licenseType: meta.licenseType,
+        licenseUrl: meta.licenseUrl,
+        licenseFile: `${__dirname}/LICENSE`,
+        inputColor: {
             neutral: chroma.scale(
                 [
                     colors.base00,
@@ -59,10 +56,8 @@ const theme = (variant: Variant) => {
             violet: colorRamp(chroma(colors.base0E)),
             magenta: colorRamp(chroma(colors.base0F)),
         },
-        syntax
-    )
+        override: { syntax },
+    }
 }
 
-export const dark = theme(variant)
-
-export const meta: Meta = variant.meta
+export const theme = getTheme(variant)

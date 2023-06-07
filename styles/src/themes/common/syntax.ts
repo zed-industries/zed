@@ -4,7 +4,7 @@ import { ColorScheme } from "./colorScheme"
 import chroma from "chroma-js"
 
 export interface SyntaxHighlightStyle {
-    color: string
+    color?: string
     weight?: FontWeight
     underline?: boolean
     italic?: boolean
@@ -117,7 +117,7 @@ export interface Syntax {
 export type ThemeSyntax = Partial<Syntax>
 
 const defaultSyntaxHighlightStyle: Omit<SyntaxHighlightStyle, "color"> = {
-    weight: fontWeights.normal,
+    weight: "normal",
     underline: false,
     italic: false,
 }
@@ -140,12 +140,14 @@ function buildDefaultSyntax(colorScheme: ColorScheme): Syntax {
 
     // Mix the neutral and blue colors to get a
     // predictive color distinct from any other color in the theme
-    const predictive = chroma.mix(
-        colorScheme.ramps.neutral(0.4).hex(),
-        colorScheme.ramps.blue(0.4).hex(),
-        0.45,
-        "lch"
-    ).hex()
+    const predictive = chroma
+        .mix(
+            colorScheme.ramps.neutral(0.4).hex(),
+            colorScheme.ramps.blue(0.4).hex(),
+            0.45,
+            "lch"
+        )
+        .hex()
 
     const color = {
         primary: colorScheme.ramps.neutral(1).hex(),

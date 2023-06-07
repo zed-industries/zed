@@ -1,14 +1,7 @@
-import chroma from "chroma-js"
-import { Meta } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
-import { metaCommon, name, buildSyntax, Variant } from "./common"
+import { chroma, ThemeAppearance, ThemeConfig, colorRamp } from "../../common"
+import { meta, buildSyntax, Variant } from "./common"
 
 const variant: Variant = {
-    meta: {
-        name: `${name} Dune Dark`,
-        ...metaCommon,
-        url: "https://atelierbram.github.io/syntax-highlighting/atelier-schemes/dune/",
-    },
     colors: {
         base00: "#20201d",
         base01: "#292824",
@@ -31,13 +24,17 @@ const variant: Variant = {
 
 const syntax = buildSyntax(variant)
 
-const theme = (variant: Variant) => {
-    const { meta, colors } = variant
+const getTheme = (variant: Variant): ThemeConfig => {
+    const { colors } = variant
 
-    return createColorScheme(
-        meta.name,
-        false,
-        {
+    return {
+        name: `${meta.name} Dune Dark`,
+        author: meta.author,
+        appearance: ThemeAppearance.Dark,
+        licenseType: meta.licenseType,
+        licenseUrl: meta.licenseUrl,
+        licenseFile: `${__dirname}/LICENSE`,
+        inputColor: {
             neutral: chroma.scale([
                 colors.base00,
                 colors.base01,
@@ -57,10 +54,8 @@ const theme = (variant: Variant) => {
             violet: colorRamp(chroma(colors.base0E)),
             magenta: colorRamp(chroma(colors.base0F)),
         },
-        syntax
-    )
+        override: { syntax },
+    }
 }
 
-export const dark = theme(variant)
-
-export const meta: Meta = variant.meta
+export const theme = getTheme(variant)

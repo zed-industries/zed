@@ -1,8 +1,10 @@
-import chroma from "chroma-js"
-import { Meta as Metadata } from "../common/colorScheme"
-import { colorRamp, createColorScheme } from "../common/ramps"
-
-const name = "Solarized"
+import {
+    chroma,
+    colorRamp,
+    ThemeAppearance,
+    ThemeLicenseType,
+    ThemeConfig,
+} from "../../common"
 
 const ramps = {
     neutral: chroma
@@ -27,14 +29,24 @@ const ramps = {
     magenta: colorRamp(chroma("#d33682")),
 }
 
-export const dark = createColorScheme(`${name} Dark`, false, ramps)
-export const light = createColorScheme(`${name} Light`, true, ramps)
-
-export const meta: Metadata = {
-    name,
+export const dark: ThemeConfig = {
+    name: "Solarized Dark",
     author: "Ethan Schoonover",
-    license: {
-        SPDX: "MIT",
-    },
-    url: "https://github.com/altercation/solarized",
+    appearance: ThemeAppearance.Dark,
+    licenseType: ThemeLicenseType.MIT,
+    licenseUrl: "https://github.com/altercation/solarized",
+    licenseFile: `${__dirname}/LICENSE`,
+    inputColor: ramps,
+    override: { syntax: {} },
+}
+
+export const light: ThemeConfig = {
+    name: "Solarized Light",
+    author: "Ethan Schoonover",
+    appearance: ThemeAppearance.Light,
+    licenseType: ThemeLicenseType.MIT,
+    licenseUrl: "https://github.com/altercation/solarized",
+    licenseFile: `${__dirname}/LICENSE`,
+    inputColor: ramps,
+    override: { syntax: {} },
 }
