@@ -5387,6 +5387,9 @@ mod tests {
             .await
             .unwrap();
 
+            cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+                .await;
+
             cx.foreground().run_until_parked();
             let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
