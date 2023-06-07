@@ -1499,7 +1499,11 @@ impl LspCommand for GetCodeActions {
     type ProtoRequest = proto::GetCodeActions;
 
     fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
-        capabilities.code_action_provider.is_some()
+        match &capabilities.code_action_provider {
+            None => false,
+            Some(lsp::CodeActionProviderCapability::Simple(false)) => false,
+            _ => true,
+        }
     }
 
     fn to_lsp(
