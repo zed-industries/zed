@@ -5,9 +5,10 @@ import {
     ThemeLicenseType,
     ThemeConfig,
     ThemeSyntax,
+    ThemeFamilyMeta,
 } from "../../common"
 
-const meta: Partial<ThemeConfig> = {
+const meta: ThemeFamilyMeta = {
     name: "Gruvbox",
     author: "morhetz <morhetz@gmail.com>",
     licenseType: ThemeLicenseType.MIT,

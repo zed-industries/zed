@@ -23,6 +23,11 @@ interface ThemeMeta {
     themeUrl?: string
 }
 
+export type ThemeFamilyMeta = Pick<
+    ThemeMeta,
+    "name" | "author" | "licenseType" | "licenseUrl"
+>
+
 export interface ThemeConfigInputColors {
     neutral: Scale<Color>
     red: Scale<Color>
