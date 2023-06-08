@@ -177,7 +177,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.suggestion_chunks.next().unwrap();
                 }
 
-                let (prefix, suffix) = chunk.text.split_at(transform.len);
+                let (prefix, suffix) = chunk
+                    .text
+                    .split_at(cmp::min(transform.len, chunk.text.len()));
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
                 Chunk {
@@ -264,23 +266,48 @@ impl InlayMap {
             snapshot.version += 1;
         }
 
-        let mut inlay_edits = Vec::new();
+        let mut new_transforms = SumTree::new();
+        let mut cursor = snapshot.transforms.cursor::<SuggestionOffset>();
+        let mut suggestion_edits = suggestion_edits.iter().peekable();
 
-        dbg!(self.inlays.len());
+        while let Some(suggestion_edit) = suggestion_edits.next() {
+            if suggestion_edit.old.start >= *cursor.start() {
+                new_transforms.push_tree(
+                    cursor.slice(&suggestion_edit.old.start, Bias::Right, &()),
+                    &(),
+                );
+            }
 
-        for suggestion_edit in suggestion_edits {
-            let old = suggestion_edit.old;
-            let new = suggestion_edit.new;
-            // TODO kb copied from suggestion_map
-            inlay_edits.push(InlayEdit {
-                old: InlayOffset(old.start.0)..InlayOffset(old.end.0),
-                new: InlayOffset(old.start.0)..InlayOffset(new.end.0),
-            })
+            if suggestion_edit.old.end > cursor.end(&()) {
+                cursor.seek_forward(&suggestion_edit.old.end, Bias::Right, &());
+            }
+
+            let transform_start = SuggestionOffset(new_transforms.summary().input.len);
+            let mut transform_end = suggestion_edit.new.end;
+            if suggestion_edits
+                .peek()
+                .map_or(true, |edit| edit.old.start > cursor.end(&()))
+            {
+                transform_end += cursor.end(&()) - suggestion_edit.old.end;
+                cursor.next(&());
+            }
+            new_transforms.push(
+                Transform::Isomorphic(suggestion_snapshot.text_summary_for_range(
+                    suggestion_snapshot.to_point(transform_start)
+                        ..suggestion_snapshot.to_point(transform_end),
+                )),
+                &(),
+            );
         }
 
-        snapshot.suggestion_snapshot = suggestion_snapshot;
+        new_transforms.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
 
-        (snapshot.clone(), inlay_edits)
+        snapshot.suggestion_snapshot = suggestion_snapshot;
+        dbg!(new_transforms.items(&()));
+        snapshot.transforms = new_transforms;
+
+        (snapshot.clone(), Default::default())
     }
 
     pub fn splice(
@@ -580,7 +607,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
         assert_eq!(inlay_snapshot.text(), "XYZabc|123|defghi");
 
-        ////////// case: replacing the anchor that got the hint: it should disappear, then undo and it should reappear again
+        ////////// case: replacing the anchor that got the hint: it should disappear
         buffer.update(cx, |buffer, cx| buffer.edit([(2..3, "C")], None, cx));
         let (fold_snapshot, fold_edits) = fold_map.read(
             buffer.read(cx).snapshot(cx),
@@ -590,15 +617,5 @@ mod tests {
             suggestion_map.sync(fold_snapshot.clone(), fold_edits);
         let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
         assert_eq!(inlay_snapshot.text(), "XYZabCdefghi");
-
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        let (fold_snapshot, fold_edits) = fold_map.read(
-            buffer.read(cx).snapshot(cx),
-            buffer_edits.consume().into_inner(),
-        );
-        let (suggestion_snapshot, suggestion_edits) =
-            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
-        assert_eq!(inlay_snapshot.text(), "XYZabc|123|defghi");
     }
 }

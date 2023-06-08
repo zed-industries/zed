@@ -1917,7 +1917,6 @@ impl LspCommand for InlayHints {
             .end
             .and_then(language::proto::deserialize_anchor)
             .context("invalid end")?;
-        // TODO kb has it to be multiple versions instead?
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))

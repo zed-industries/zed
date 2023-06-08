@@ -2672,6 +2672,8 @@ impl Editor {
                         let buffer_id = excerpt_buffer_snapshot.remote_id();
                         let should_update_hints = editor
                             .update(&mut cx, |editor, _| {
+                                // TODO kb wrong: need to query hints per buffer, not per excerpt
+                                // need to store the previous state and calculate the diff between them, and calculate anchors here too.
                                 editor.inlay_hint_versions.insert(
                                     InlayHintLocation {
                                         buffer_id,
