@@ -245,10 +245,11 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
+    LanguageServerLog(LanguageServerId, String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
@@ -2454,18 +2455,23 @@ impl Project {
         LanguageServerState::Starting(cx.spawn_weak(|this, mut cx| async move {
             let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
             let language_server = pending_server.task.await.log_err()?;
-            let language_server = language_server
-                .initialize(initialization_options)
-                .await
-                .log_err()?;
-            let this = this.upgrade(&cx)?;
+
+            language_server
+                .on_notification::<lsp::notification::LogMessage, _>({
+                    move |params, mut cx| {
+                        if let Some(this) = this.upgrade(&cx) {
+                            this.update(&mut cx, |_, cx| {
+                                cx.emit(Event::LanguageServerLog(server_id, params.message))
+                            });
+                        }
+                    }
+                })
+                .detach();
 
             language_server
                 .on_notification::<lsp::notification::PublishDiagnostics, _>({
-                    let this = this.downgrade();
                     let adapter = adapter.clone();
                     move |mut params, cx| {
-                        let this = this;
                         let adapter = adapter.clone();
                         cx.spawn(|mut cx| async move {
                             adapter.process_diagnostics(&mut params).await;
@@ -2517,8 +2523,7 @@ impl Project {
             // avoid stalling any language server like `gopls` which waits for a response
             // to these requests when initializing.
             language_server
-                .on_request::<lsp::request::WorkDoneProgressCreate, _, _>({
-                    let this = this.downgrade();
+                .on_request::<lsp::request::WorkDoneProgressCreate, _, _>(
                     move |params, mut cx| async move {
                         if let Some(this) = this.upgrade(&cx) {
                             this.update(&mut cx, |this, _| {
@@ -2532,12 +2537,11 @@ impl Project {
                             });
                         }
                         Ok(())
-                    }
-                })
+                    },
+                )
                 .detach();
             language_server
-                .on_request::<lsp::request::RegisterCapability, _, _>({
-                    let this = this.downgrade();
+                .on_request::<lsp::request::RegisterCapability, _, _>(
                     move |params, mut cx| async move {
                         let this = this
                             .upgrade(&cx)
@@ -2555,24 +2559,15 @@ impl Project {
                             }
                         }
                         Ok(())
-                    }
-                })
+                    },
+                )
                 .detach();
 
             language_server
                 .on_request::<lsp::request::ApplyWorkspaceEdit, _, _>({
-                    let this = this.downgrade();
                     let adapter = adapter.clone();
-                    let language_server = language_server.clone();
                     move |params, cx| {
-                        Self::on_lsp_workspace_edit(
-                            this,
-                            params,
-                            server_id,
-                            adapter.clone(),
-                            language_server.clone(),
-                            cx,
-                        )
+                        Self::on_lsp_workspace_edit(this, params, server_id, adapter.clone(), cx)
                     }
                 })
                 .detach();
@@ -2582,7 +2577,6 @@ impl Project {
 
             language_server
                 .on_notification::<lsp::notification::Progress, _>({
-                    let this = this.downgrade();
                     move |params, mut cx| {
                         if let Some(this) = this.upgrade(&cx) {
                             this.update(&mut cx, |this, cx| {
@@ -2598,6 +2592,10 @@ impl Project {
                 })
                 .detach();
 
+            let language_server = language_server
+                .initialize(initialization_options)
+                .await
+                .log_err()?;
             language_server
                 .notify::<lsp::notification::DidChangeConfiguration>(
                     lsp::DidChangeConfigurationParams {
@@ -2606,6 +2604,7 @@ impl Project {
                 )
                 .ok();
 
+            let this = this.upgrade(&cx)?;
             this.update(&mut cx, |this, cx| {
                 // If the language server for this key doesn't match the server id, don't store the
                 // server. Which will cause it to be dropped, killing the process
@@ -2639,6 +2638,8 @@ impl Project {
                         progress_tokens: Default::default(),
                     },
                 );
+
+                cx.emit(Event::LanguageServerAdded(server_id));
 
                 if let Some(project_id) = this.remote_id() {
                     this.client
@@ -2765,6 +2766,7 @@ impl Project {
             cx.notify();
 
             let server_state = self.language_servers.remove(&server_id);
+            cx.emit(Event::LanguageServerRemoved(server_id));
             cx.spawn_weak(|this, mut cx| async move {
                 let mut root_path = None;
 
@@ -3109,12 +3111,14 @@ impl Project {
         params: lsp::ApplyWorkspaceEditParams,
         server_id: LanguageServerId,
         adapter: Arc<CachedLspAdapter>,
-        language_server: Arc<LanguageServer>,
         mut cx: AsyncAppContext,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
         let this = this
             .upgrade(&cx)
             .ok_or_else(|| anyhow!("project project closed"))?;
+        let language_server = this
+            .read_with(&cx, |this, _| this.language_server_for_id(server_id))
+            .ok_or_else(|| anyhow!("language server not found"))?;
         let transaction = Self::deserialize_workspace_edit(
             this.clone(),
             params.edit,
