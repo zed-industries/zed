@@ -659,16 +659,17 @@ impl LspLogToolbarItemView {
                 )
                 .contained()
                 .with_style(style.container)
-                .aligned()
-                .left()
+                .constrained()
+                .with_height(theme.lsp_log_menu.row_height)
             })
             .with_child(
                 MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, _| {
                     let style = theme.lsp_log_menu.item.style_for(state, logs_selected);
-                    Flex::row()
-                        .with_child(Label::new(SERVER_LOGS, style.text.clone()).aligned().left())
+                    Label::new(SERVER_LOGS, style.text.clone())
                         .contained()
                         .with_style(style.container)
+                        .constrained()
+                        .with_height(theme.lsp_log_menu.row_height)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
@@ -681,8 +682,8 @@ impl LspLogToolbarItemView {
                     Flex::row()
                         .with_child(
                             Label::new(RPC_MESSAGES, style.text.clone())
-                                .aligned()
-                                .left(),
+                                .constrained()
+                                .with_height(theme.lsp_log_menu.row_height),
                         )
                         .with_child(
                             ui::checkbox_with_label::<Self, _, Self, _>(
@@ -700,6 +701,8 @@ impl LspLogToolbarItemView {
                         .align_children_center()
                         .contained()
                         .with_style(style.container)
+                        .constrained()
+                        .with_height(theme.lsp_log_menu.row_height)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {

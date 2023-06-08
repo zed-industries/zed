@@ -252,6 +252,7 @@ pub struct LspLogMenu {
     pub header: Interactive<ContainedText>,
     pub server: ContainedText,
     pub item: Interactive<ContainedText>,
+    pub row_height: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
