@@ -1153,24 +1153,30 @@ impl CopilotState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InlayHintLocation {
+    pub buffer_id: u64,
+    pub excerpt_id: ExcerptId,
+}
+
 // TODO kb
 #[derive(Debug, Default, Clone)]
 struct InlayHintVersions {
-    last_buffer_versions_with_hints: HashMap<usize, Global>,
+    last_buffer_versions_with_hints: HashMap<InlayHintLocation, Global>,
 }
 
 impl InlayHintVersions {
-    fn absent_or_newer(&self, buffer_id: usize, new_version: &Global) -> bool {
+    fn absent_or_newer(&self, location: &InlayHintLocation, new_version: &Global) -> bool {
         self.last_buffer_versions_with_hints
-            .get(&buffer_id)
+            .get(location)
             .map(|last_version_with_hints| new_version.changed_since(&last_version_with_hints))
             .unwrap_or(true)
     }
 
-    fn insert(&mut self, buffer_id: usize, new_version: Global) -> bool {
-        if self.absent_or_newer(buffer_id, &new_version) {
+    fn insert(&mut self, location: InlayHintLocation, new_version: Global) -> bool {
+        if self.absent_or_newer(&location, &new_version) {
             self.last_buffer_versions_with_hints
-                .insert(buffer_id, new_version);
+                .insert(location, new_version);
             true
         } else {
             false
@@ -2617,50 +2623,40 @@ impl Editor {
             return;
         }
 
-        let hint_fetch_tasks = self
-            .buffer()
-            .read(cx)
-            .all_buffers()
-            .into_iter()
-            .map(|buffer_handle| {
-                let buffer_id = buffer_handle.id();
+        let multi_buffer = self.buffer().read(cx);
+        let buffer_snapshot = multi_buffer.snapshot(cx);
+        let hint_fetch_tasks = buffer_snapshot
+            .excerpts()
+            .map(|(excerpt_id, excerpt_buffer_snapshot, _)| {
+                (excerpt_id, excerpt_buffer_snapshot.clone())
+            })
+            .map(|(excerpt_id, excerpt_buffer_snapshot)| {
                 cx.spawn(|editor, mut cx| async move {
-                    let task_data = editor
+                    let task = editor
                         .update(&mut cx, |editor, cx| {
                             editor.project.as_ref().and_then(|project| {
                                 project.update(cx, |project, cx| {
-                                    let buffer = buffer_handle.read(cx);
-                                    let end = buffer.len();
-                                    let version = buffer.version();
-
-                                    if editor
-                                        .inlay_hint_versions
-                                        .absent_or_newer(buffer_id, &version)
-                                    {
-                                        Some((
-                                            version,
-                                            project.inlay_hints_for_buffer(
-                                                buffer_handle,
-                                                0..end,
-                                                cx,
-                                            ),
-                                        ))
-                                    } else {
-                                        None
-                                    }
+                                    Some(
+                                        project.inlay_hints_for_buffer(
+                                            editor
+                                                .buffer()
+                                                .read(cx)
+                                                .buffer(excerpt_buffer_snapshot.remote_id())?,
+                                            0..excerpt_buffer_snapshot.len(),
+                                            cx,
+                                        ),
+                                    )
                                 })
                             })
                         })
                         .context("inlay hints fecth task spawn")?;
 
                     anyhow::Ok((
-                        buffer_id,
-                        match task_data {
-                            Some((buffer_version, task)) => Some((
-                                buffer_version,
-                                task.await.context("inlay hints for buffer task")?,
-                            )),
-                            None => None,
+                        excerpt_id,
+                        excerpt_buffer_snapshot,
+                        match task {
+                            Some(task) => task.await.context("inlay hints for buffer task")?,
+                            None => Vec::new(),
                         },
                     ))
                 })
@@ -2668,21 +2664,32 @@ impl Editor {
             .collect::<Vec<_>>();
 
         cx.spawn(|editor, mut cx| async move {
-            let mut new_hints = Vec::new();
+            let mut new_hints: HashMap<InlayHintLocation, Vec<project::InlayHint>> =
+                HashMap::default();
             for task_result in futures::future::join_all(hint_fetch_tasks).await {
                 match task_result {
-                    Ok((_buffer_id, None)) => {}
-                    Ok((buffer_id, Some((buffer_with_hints_version, buffer_hints)))) => {
+                    Ok((excerpt_id, excerpt_buffer_snapshot, excerpt_hints)) => {
+                        let buffer_id = excerpt_buffer_snapshot.remote_id();
                         let should_update_hints = editor
                             .update(&mut cx, |editor, _| {
-                                editor
-                                    .inlay_hint_versions
-                                    .insert(buffer_id, buffer_with_hints_version)
+                                editor.inlay_hint_versions.insert(
+                                    InlayHintLocation {
+                                        buffer_id,
+                                        excerpt_id,
+                                    },
+                                    excerpt_buffer_snapshot.version().clone(),
+                                )
                             })
                             .log_err()
                             .unwrap_or(false);
                         if should_update_hints {
-                            new_hints.extend(buffer_hints);
+                            new_hints
+                                .entry(InlayHintLocation {
+                                    buffer_id,
+                                    excerpt_id,
+                                })
+                                .or_default()
+                                .extend(excerpt_hints);
                         }
                     }
                     Err(e) => error!("Failed to update hints for buffer: {e:#}"),

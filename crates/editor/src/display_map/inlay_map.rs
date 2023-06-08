@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{self, AtomicUsize},
 };
 
-use crate::{Anchor, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{Anchor, ExcerptId, InlayHintLocation, MultiBufferSnapshot, ToOffset, ToPoint};
 
 use super::{
     suggestion_map::{
@@ -31,7 +31,7 @@ pub struct InlayId(usize);
 pub struct InlayMap {
     snapshot: Mutex<InlaySnapshot>,
     next_inlay_id: usize,
-    inlays: HashMap<InlayId, Inlay>,
+    inlays: HashMap<InlayId, (InlayHintLocation, Inlay)>,
 }
 
 #[derive(Clone)]
@@ -224,18 +224,18 @@ impl InlayMap {
     pub fn splice(
         &mut self,
         to_remove: HashSet<InlayId>,
-        to_insert: Vec<InlayProperties>,
+        to_insert: Vec<(InlayHintLocation, InlayProperties)>,
     ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
         let mut snapshot = self.snapshot.lock();
 
         let mut inlays = BTreeMap::new();
         let mut new_ids = Vec::new();
-        for properties in to_insert {
+        for (location, properties) in to_insert {
             let inlay = Inlay {
                 id: InlayId(post_inc(&mut self.next_inlay_id)),
                 properties,
             };
-            self.inlays.insert(inlay.id, inlay.clone());
+            self.inlays.insert(inlay.id, (location, inlay.clone()));
             new_ids.push(inlay.id);
 
             let buffer_point = inlay
@@ -253,7 +253,7 @@ impl InlayMap {
         }
 
         for inlay_id in to_remove {
-            if let Some(inlay) = self.inlays.remove(&inlay_id) {
+            if let Some((_, inlay)) = self.inlays.remove(&inlay_id) {
                 let buffer_point = inlay
                     .properties
                     .position
@@ -448,10 +448,16 @@ mod tests {
 
         let (inlay_snapshot, _, inlay_ids) = inlay_map.splice(
             HashSet::default(),
-            vec![InlayProperties {
-                position: buffer.read(cx).read(cx).anchor_before(3),
-                text: "|123|".into(),
-            }],
+            vec![(
+                InlayHintLocation {
+                    buffer_id: 0,
+                    excerpt_id: ExcerptId::default(),
+                },
+                InlayProperties {
+                    position: buffer.read(cx).read(cx).anchor_before(3),
+                    text: "|123|".into(),
+                },
+            )],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
 

@@ -5,7 +5,9 @@ mod suggestion_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{
+    Anchor, AnchorRangeExt, InlayHintLocation, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::{FoldMap, FoldOffset};
@@ -284,18 +286,11 @@ impl DisplayMap {
 
     pub fn set_inlay_hints(
         &mut self,
-        new_hints: &[project::InlayHint],
+        new_hints: &HashMap<InlayHintLocation, Vec<project::InlayHint>>,
         cx: &mut ModelContext<Self>,
     ) {
+        // TODO kb map this to Anchor and set to the map
         let multi_buffer = self.buffer.read(cx);
-
-        // TODO kb carry both remote and local ids of the buffer?
-        // now, `.buffer` requires remote id, hence this map.
-        let buffers_to_local_id = multi_buffer
-            .all_buffers()
-            .into_iter()
-            .map(|buffer_handle| (buffer_handle.id(), buffer_handle))
-            .collect::<HashMap<_, _>>();
 
         // multi_buffer.anchor_in_excerpt(excerpt_id, hint.position);
         // TODO kb !!! rework things from buffer_id to excerpt_id
