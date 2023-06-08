@@ -312,6 +312,7 @@ mod tests {
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
                 ..Default::default()
             },
             cx,
