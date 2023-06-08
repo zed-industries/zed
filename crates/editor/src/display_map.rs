@@ -30,8 +30,6 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-use self::inlay_map::InlayHintToRender;
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
     Folded,
@@ -299,24 +297,29 @@ impl DisplayMap {
             .map(|buffer_handle| (buffer_handle.id(), buffer_handle))
             .collect::<HashMap<_, _>>();
 
-        self.inlay_map.set_inlay_hints(
-            new_hints
-                .into_iter()
-                .filter_map(|hint| {
-                    let snapshot = buffers_to_local_id
-                        .get(&hint.buffer_id)?
-                        .read(cx)
-                        .snapshot();
-                    Some(InlayHintToRender {
-                        position: inlay_map::InlayPoint(text::ToPoint::to_point(
-                            &hint.position,
-                            &snapshot,
-                        )),
-                        text: hint.text().trim_end().into(),
-                    })
-                })
-                .collect(),
-        )
+        // multi_buffer.anchor_in_excerpt(excerpt_id, hint.position);
+        // TODO kb !!! rework things from buffer_id to excerpt_id
+        // let hint_anchor = multi_buffer
+        //     .snapshot(cx)
+        //     .anchor_in_excerpt(excerpt_id, hint.position);
+
+        // self.inlay_map.splice(
+        //     vec![],
+        //     new_hints
+        //         .into_iter()
+        //         .filter_map(|hint| {
+        //             let snapshot = buffers_to_local_id
+        //                 .get(&hint.buffer_id)?
+        //                 .read(cx)
+        //                 .snapshot();
+        //             Some(Inlay {
+        //                 position: hint.position,
+        //                 text: hint.text().trim_end().into(),
+        //             })
+        //         })
+        //         .collect(),
+        // )
+        todo!("TODO kb")
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
