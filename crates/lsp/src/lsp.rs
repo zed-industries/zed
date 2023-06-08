@@ -792,6 +792,8 @@ impl LanguageServer {
             code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
             document_formatting_provider: Some(OneOf::Left(true)),
             document_range_formatting_provider: Some(OneOf::Left(true)),
+            definition_provider: Some(OneOf::Left(true)),
+            type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
             ..Default::default()
         }
     }
