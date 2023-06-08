@@ -3,7 +3,7 @@ import { RampSet } from "./colorScheme"
 import {
     ThemeConfigInputColors,
     ThemeConfigInputColorsKeys,
-} from "../../themeConfig"
+} from "./themeConfig"
 
 export function colorRamp(color: Color): Scale {
     let endColor = color.desaturate(1).brighten(5)

@@ -1,5 +1,5 @@
 import { Scale, Color } from "chroma-js"
-import { Syntax } from "./themes/common/syntax"
+import { Syntax } from "./syntax"
 
 interface ThemeMeta {
     /** The name of the theme */

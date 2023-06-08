@@ -1,5 +1,5 @@
 import chroma from "chroma-js"
-export * from "./themes/common"
+export * from "./theme"
 export { chroma }
 
 export const fontFamilies = {
@@ -27,7 +27,7 @@ export type FontWeight =
     | "bold"
     | "extra_bold"
     | "black"
-    
+
 export const fontWeights: { [key: string]: FontWeight } = {
     thin: "thin",
     extra_light: "extra_light",

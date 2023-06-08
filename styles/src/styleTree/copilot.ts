@@ -1,4 +1,4 @@
-import { ColorScheme } from "../themes/common/colorScheme"
+import { ColorScheme } from "../theme/colorScheme"
 import { background, border, foreground, svg, text } from "./components"
 
 export default function copilot(colorScheme: ColorScheme) {

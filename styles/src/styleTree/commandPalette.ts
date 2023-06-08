@@ -1,5 +1,5 @@
-import { ColorScheme } from "../themes/common/colorScheme"
-import { withOpacity } from "../utils/color"
+import { ColorScheme } from "../theme/colorScheme"
+import { withOpacity } from "../theme/color"
 import { text, background } from "./components"
 
 export default function commandPalette(colorScheme: ColorScheme) {
