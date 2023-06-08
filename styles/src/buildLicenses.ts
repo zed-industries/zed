@@ -30,17 +30,19 @@ function generateLicenseFile(themes: ThemeConfig[]) {
     checkLicenses(themes)
     for (const theme of themes) {
         const licenseText = fs.readFileSync(theme.licenseFile).toString()
-        writeLicense(theme.name, theme.licenseUrl, licenseText)
+        writeLicense(theme.name, licenseText, theme.licenseUrl)
     }
 }
 
 function writeLicense(
     themeName: string,
-    licenseUrl: string,
-    licenseText: String
+    licenseText: string,
+    licenseUrl?: string
 ) {
     process.stdout.write(
-        `## [${themeName}](${licenseUrl})\n\n${licenseText}\n********************************************************************************\n\n`
+        licenseUrl
+            ? `## [${themeName}](${licenseUrl})\n\n${licenseText}\n********************************************************************************\n\n`
+            : `## ${themeName}\n\n${licenseText}\n********************************************************************************\n\n`
     )
 }
 

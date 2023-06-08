@@ -1,5 +1,5 @@
-import { ColorScheme } from "../themes/common/colorScheme"
-import { withOpacity } from "../utils/color"
+import { ColorScheme } from "../theme/colorScheme"
+import { withOpacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 
 export default function search(colorScheme: ColorScheme) {
@@ -30,7 +30,7 @@ export default function search(colorScheme: ColorScheme) {
         ...editor,
         minWidth: 100,
         maxWidth: 250,
-    };
+    }
 
     return {
         // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive

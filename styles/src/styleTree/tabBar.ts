@@ -1,5 +1,5 @@
-import { ColorScheme } from "../themes/common/colorScheme"
-import { withOpacity } from "../utils/color"
+import { ColorScheme } from "../theme/colorScheme"
+import { withOpacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
 
 export default function tabBar(colorScheme: ColorScheme) {
@@ -96,7 +96,7 @@ export default function tabBar(colorScheme: ColorScheme) {
             },
             active: {
                 color: foreground(layer, "accent"),
-            }
+            },
         },
         paneButtonContainer: {
             background: tab.background,

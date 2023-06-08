@@ -1005,13 +1005,12 @@ message Entry {
     Timestamp mtime = 5;
     bool is_symlink = 6;
     bool is_ignored = 7;
+    optional GitStatus git_status = 8;
 }
 
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
-    repeated string removed_repo_paths = 3;
-    repeated StatusEntry updated_statuses = 4;
 }
 
 message StatusEntry {

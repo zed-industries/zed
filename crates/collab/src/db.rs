@@ -1539,6 +1539,7 @@ impl Database {
                                     }),
                                     is_symlink: db_entry.is_symlink,
                                     is_ignored: db_entry.is_ignored,
+                                    git_status: db_entry.git_status.map(|status| status as i32),
                                 });
                             }
                         }
@@ -1573,54 +1574,6 @@ impl Database {
                                 worktree.updated_repositories.push(proto::RepositoryEntry {
                                     work_directory_id: db_repository.work_directory_id as u64,
                                     branch: db_repository.branch,
-                                    removed_repo_paths: Default::default(),
-                                    updated_statuses: Default::default(),
-                                });
-                            }
-                        }
-                    }
-
-                    // Repository Status Entries
-                    for repository in worktree.updated_repositories.iter_mut() {
-                        let repository_status_entry_filter =
-                            if let Some(rejoined_worktree) = rejoined_worktree {
-                                worktree_repository_statuses::Column::ScanId
-                                    .gt(rejoined_worktree.scan_id)
-                            } else {
-                                worktree_repository_statuses::Column::IsDeleted.eq(false)
-                            };
-
-                        let mut db_repository_statuses =
-                            worktree_repository_statuses::Entity::find()
-                                .filter(
-                                    Condition::all()
-                                        .add(
-                                            worktree_repository_statuses::Column::ProjectId
-                                                .eq(project.id),
-                                        )
-                                        .add(
-                                            worktree_repository_statuses::Column::WorktreeId
-                                                .eq(worktree.id),
-                                        )
-                                        .add(
-                                            worktree_repository_statuses::Column::WorkDirectoryId
-                                                .eq(repository.work_directory_id),
-                                        )
-                                        .add(repository_status_entry_filter),
-                                )
-                                .stream(&*tx)
-                                .await?;
-
-                        while let Some(db_status_entry) = db_repository_statuses.next().await {
-                            let db_status_entry = db_status_entry?;
-                            if db_status_entry.is_deleted {
-                                repository
-                                    .removed_repo_paths
-                                    .push(db_status_entry.repo_path);
-                            } else {
-                                repository.updated_statuses.push(proto::StatusEntry {
-                                    repo_path: db_status_entry.repo_path,
-                                    status: db_status_entry.status as i32,
                                 });
                             }
                         }
@@ -2396,6 +2349,7 @@ impl Database {
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                         is_symlink: ActiveValue::set(entry.is_symlink),
                         is_ignored: ActiveValue::set(entry.is_ignored),
+                        git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
                         is_deleted: ActiveValue::set(false),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                     }
@@ -2414,6 +2368,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::IsSymlink,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::GitStatus,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
@@ -2467,68 +2422,6 @@ impl Database {
                 )
                 .exec(&*tx)
                 .await?;
-
-                for repository in update.updated_repositories.iter() {
-                    if !repository.updated_statuses.is_empty() {
-                        worktree_repository_statuses::Entity::insert_many(
-                            repository.updated_statuses.iter().map(|status_entry| {
-                                worktree_repository_statuses::ActiveModel {
-                                    project_id: ActiveValue::set(project_id),
-                                    worktree_id: ActiveValue::set(worktree_id),
-                                    work_directory_id: ActiveValue::set(
-                                        repository.work_directory_id as i64,
-                                    ),
-                                    repo_path: ActiveValue::set(status_entry.repo_path.clone()),
-                                    status: ActiveValue::set(status_entry.status as i64),
-                                    scan_id: ActiveValue::set(update.scan_id as i64),
-                                    is_deleted: ActiveValue::set(false),
-                                }
-                            }),
-                        )
-                        .on_conflict(
-                            OnConflict::columns([
-                                worktree_repository_statuses::Column::ProjectId,
-                                worktree_repository_statuses::Column::WorktreeId,
-                                worktree_repository_statuses::Column::WorkDirectoryId,
-                                worktree_repository_statuses::Column::RepoPath,
-                            ])
-                            .update_columns([
-                                worktree_repository_statuses::Column::ScanId,
-                                worktree_repository_statuses::Column::Status,
-                                worktree_repository_statuses::Column::IsDeleted,
-                            ])
-                            .to_owned(),
-                        )
-                        .exec(&*tx)
-                        .await?;
-                    }
-
-                    if !repository.removed_repo_paths.is_empty() {
-                        worktree_repository_statuses::Entity::update_many()
-                            .filter(
-                                worktree_repository_statuses::Column::ProjectId
-                                    .eq(project_id)
-                                    .and(
-                                        worktree_repository_statuses::Column::WorktreeId
-                                            .eq(worktree_id),
-                                    )
-                                    .and(
-                                        worktree_repository_statuses::Column::WorkDirectoryId
-                                            .eq(repository.work_directory_id as i64),
-                                    )
-                                    .and(worktree_repository_statuses::Column::RepoPath.is_in(
-                                        repository.removed_repo_paths.iter().map(String::as_str),
-                                    )),
-                            )
-                            .set(worktree_repository_statuses::ActiveModel {
-                                is_deleted: ActiveValue::Set(true),
-                                scan_id: ActiveValue::Set(update.scan_id as i64),
-                                ..Default::default()
-                            })
-                            .exec(&*tx)
-                            .await?;
-                    }
-                }
             }
 
             if !update.removed_repositories.is_empty() {
@@ -2812,6 +2705,7 @@ impl Database {
                             }),
                             is_symlink: db_entry.is_symlink,
                             is_ignored: db_entry.is_ignored,
+                            git_status: db_entry.git_status.map(|status| status as i32),
                         });
                     }
                 }
@@ -2837,37 +2731,8 @@ impl Database {
                             proto::RepositoryEntry {
                                 work_directory_id: db_repository_entry.work_directory_id as u64,
                                 branch: db_repository_entry.branch,
-                                removed_repo_paths: Default::default(),
-                                updated_statuses: Default::default(),
                             },
                         );
-                    }
-                }
-            }
-
-            {
-                let mut db_status_entries = worktree_repository_statuses::Entity::find()
-                    .filter(
-                        Condition::all()
-                            .add(worktree_repository_statuses::Column::ProjectId.eq(project_id))
-                            .add(worktree_repository_statuses::Column::IsDeleted.eq(false)),
-                    )
-                    .stream(&*tx)
-                    .await?;
-
-                while let Some(db_status_entry) = db_status_entries.next().await {
-                    let db_status_entry = db_status_entry?;
-                    if let Some(worktree) = worktrees.get_mut(&(db_status_entry.worktree_id as u64))
-                    {
-                        if let Some(repository_entry) = worktree
-                            .repository_entries
-                            .get_mut(&(db_status_entry.work_directory_id as u64))
-                        {
-                            repository_entry.updated_statuses.push(proto::StatusEntry {
-                                repo_path: db_status_entry.repo_path,
-                                status: db_status_entry.status as i32,
-                            });
-                        }
                     }
                 }
             }

@@ -1,5 +1,5 @@
-import { ColorScheme } from "../themes/common/colorScheme"
-import { withOpacity } from "../utils/color"
+import { ColorScheme } from "../theme/colorScheme"
+import { withOpacity } from "../theme/color"
 import {
     background,
     border,
@@ -123,7 +123,7 @@ export default function workspace(colorScheme: ColorScheme) {
             cursor: "Arrow",
             background: isLight
                 ? withOpacity(background(colorScheme.lowest), 0.8)
-                : withOpacity(background(colorScheme.highest), 0.6)
+                : withOpacity(background(colorScheme.highest), 0.6),
         },
         zoomedPaneForeground: {
             margin: 16,
@@ -143,7 +143,7 @@ export default function workspace(colorScheme: ColorScheme) {
             },
             right: {
                 border: border(layer, { left: true }),
-            }
+            },
         },
         paneDivider: {
             color: borderColor(layer),

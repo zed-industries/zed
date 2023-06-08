@@ -3,8 +3,8 @@ import {
     chroma,
     colorRamp,
     ThemeLicenseType,
-    ThemeConfig,
     ThemeSyntax,
+    ThemeFamilyMeta,
 } from "../../common"
 
 export const ayu = {
@@ -77,7 +77,7 @@ export const buildSyntax = (t: typeof dark): ThemeSyntax => {
     }
 }
 
-export const meta: Partial<ThemeConfig> = {
+export const meta: ThemeFamilyMeta = {
     name: "Ayu",
     author: "dempfi",
     licenseType: ThemeLicenseType.MIT,

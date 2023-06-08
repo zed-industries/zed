@@ -66,6 +66,7 @@ impl<'a> AddAssign<&'a Local> for Local {
     }
 }
 
+/// A vector clock
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[u32; 8]>);
 

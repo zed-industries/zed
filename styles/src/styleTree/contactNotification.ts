@@ -1,4 +1,4 @@
-import { ColorScheme } from "../themes/common/colorScheme"
+import { ColorScheme } from "../theme/colorScheme"
 import { background, foreground, text } from "./components"
 
 const avatarSize = 12

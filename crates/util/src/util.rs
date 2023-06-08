@@ -57,7 +57,7 @@ pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
 }
 
 /// Extend a sorted vector with a sorted sequence of items, maintaining the vector's sort order and
-/// enforcing a maximum length. Sort the items according to the given callback. Before calling this,
+/// enforcing a maximum length. This also de-duplicates items. Sort the items according to the given callback. Before calling this,
 /// both `vec` and `new_items` should already be sorted according to the `cmp` comparator.
 pub fn extend_sorted<T, I, F>(vec: &mut Vec<T>, new_items: I, limit: usize, mut cmp: F)
 where

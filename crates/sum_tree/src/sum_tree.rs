@@ -480,6 +480,11 @@ impl<T: Item> SumTree<T> {
             } => child_trees.last().unwrap().rightmost_leaf(),
         }
     }
+
+    #[cfg(debug_assertions)]
+    pub fn _debug_entries(&self) -> Vec<&T> {
+        self.iter().collect::<Vec<_>>()
+    }
 }
 
 impl<T: Item + PartialEq> PartialEq for SumTree<T> {

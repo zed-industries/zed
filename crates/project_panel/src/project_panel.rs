@@ -1002,6 +1002,7 @@ impl ProjectPanel {
                         mtime: entry.mtime,
                         is_symlink: false,
                         is_ignored: false,
+                        git_status: entry.git_status,
                     });
                 }
                 if expanded_dir_ids.binary_search(&entry.id).is_err()
@@ -1011,6 +1012,9 @@ impl ProjectPanel {
                 }
                 entry_iter.advance();
             }
+
+            snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+
             visible_worktree_entries.sort_by(|entry_a, entry_b| {
                 let mut components_a = entry_a.path.components().peekable();
                 let mut components_b = entry_b.path.components().peekable();
@@ -1108,14 +1112,8 @@ impl ProjectPanel {
                     .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-                for (entry, repo) in
-                    snapshot.entries_with_repositories(visible_worktree_entries[entry_range].iter())
-                {
-                    let status = (git_status_setting
-                        && entry.path.parent().is_some()
-                        && !entry.is_ignored)
-                        .then(|| repo.and_then(|repo| repo.status_for_path(&snapshot, &entry.path)))
-                        .flatten();
+                for entry in visible_worktree_entries[entry_range].iter() {
+                    let status = git_status_setting.then(|| entry.git_status).flatten();
 
                     let mut details = EntryDetails {
                         filename: entry

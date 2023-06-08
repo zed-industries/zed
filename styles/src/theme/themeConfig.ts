@@ -1,5 +1,5 @@
 import { Scale, Color } from "chroma-js"
-import { Syntax } from "./themes/common/syntax"
+import { Syntax } from "./syntax"
 
 interface ThemeMeta {
     /** The name of the theme */
@@ -22,6 +22,11 @@ interface ThemeMeta {
     licenseFile: string
     themeUrl?: string
 }
+
+export type ThemeFamilyMeta = Pick<
+    ThemeMeta,
+    "name" | "author" | "licenseType" | "licenseUrl"
+>
 
 export interface ThemeConfigInputColors {
     neutral: Scale<Color>

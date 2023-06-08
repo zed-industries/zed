@@ -1,4 +1,4 @@
-import { ColorScheme } from "../themes/common/colorScheme"
+import { ColorScheme } from "../theme/colorScheme"
 
 export default function terminal(colorScheme: ColorScheme) {
     /**

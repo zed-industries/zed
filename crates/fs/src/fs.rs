@@ -29,6 +29,8 @@ use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
 use repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
+use std::ffi::OsStr;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Weak;
 
 lazy_static! {
@@ -502,6 +504,11 @@ impl FakeFsState {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+lazy_static! {
+    pub static ref FS_DOT_GIT: &'static OsStr = OsStr::new(".git");
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
     pub fn new(executor: Arc<gpui::executor::Background>) -> Arc<Self> {
         Arc::new(Self {
@@ -619,7 +626,7 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<F>(&self, dot_git: &Path, f: F)
+    pub fn with_git_state<F>(&self, dot_git: &Path, emit_git_event: bool, f: F)
     where
         F: FnOnce(&mut FakeGitRepositoryState),
     {
@@ -633,18 +640,22 @@ impl FakeFs {
 
             f(&mut repo_state);
 
-            state.emit_event([dot_git]);
+            if emit_git_event {
+                state.emit_event([dot_git]);
+            }
         } else {
             panic!("not a directory");
         }
     }
 
-    pub async fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
-        self.with_git_state(dot_git, |state| state.branch_name = branch.map(Into::into))
+    pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.branch_name = branch.map(Into::into)
+        })
     }
 
-    pub async fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
-        self.with_git_state(dot_git, |state| {
+    pub fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
+        self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
                 head_state
@@ -654,8 +665,32 @@ impl FakeFs {
         });
     }
 
-    pub async fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, GitFileStatus)]) {
-        self.with_git_state(dot_git, |state| {
+    pub fn set_status_for_repo_via_working_copy_change(
+        &self,
+        dot_git: &Path,
+        statuses: &[(&Path, GitFileStatus)],
+    ) {
+        self.with_git_state(dot_git, false, |state| {
+            state.worktree_statuses.clear();
+            state.worktree_statuses.extend(
+                statuses
+                    .iter()
+                    .map(|(path, content)| ((**path).into(), content.clone())),
+            );
+        });
+        self.state.lock().emit_event(
+            statuses
+                .iter()
+                .map(|(path, _)| dot_git.parent().unwrap().join(path)),
+        );
+    }
+
+    pub fn set_status_for_repo_via_git_operation(
+        &self,
+        dot_git: &Path,
+        statuses: &[(&Path, GitFileStatus)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
             state.worktree_statuses.clear();
             state.worktree_statuses.extend(
                 statuses
@@ -665,7 +700,7 @@ impl FakeFs {
         });
     }
 
-    pub fn paths(&self) -> Vec<PathBuf> {
+    pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
         queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
@@ -675,12 +710,18 @@ impl FakeFs {
                     queue.push_back((path.join(name), entry.clone()));
                 }
             }
-            result.push(path);
+            if include_dot_git
+                || !path
+                    .components()
+                    .any(|component| component.as_os_str() == *FS_DOT_GIT)
+            {
+                result.push(path);
+            }
         }
         result
     }
 
-    pub fn directories(&self) -> Vec<PathBuf> {
+    pub fn directories(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
         queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
@@ -689,7 +730,13 @@ impl FakeFs {
                 for (name, entry) in entries {
                     queue.push_back((path.join(name), entry.clone()));
                 }
-                result.push(path);
+                if include_dot_git
+                    || !path
+                        .components()
+                        .any(|component| component.as_os_str() == *FS_DOT_GIT)
+                {
+                    result.push(path);
+                }
             }
         }
         result

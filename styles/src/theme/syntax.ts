@@ -1,5 +1,5 @@
 import deepmerge from "deepmerge"
-import { FontWeight, fontWeights } from "../../common"
+import { FontWeight, fontWeights } from "../common"
 import { ColorScheme } from "./colorScheme"
 import chroma from "chroma-js"
 
