@@ -5,11 +5,13 @@
     "main": "index.js",
     "scripts": {
         "build": "ts-node ./src/buildThemes.ts",
-        "build-licenses": "ts-node ./src/buildLicenses.ts"
+        "build-licenses": "ts-node ./src/buildLicenses.ts",
+        "build-tokens": "ts-node ./src/buildTokens.ts"
     },
     "author": "",
     "license": "ISC",
     "dependencies": {
+        "@tokens-studio/types": "^0.2.3",
         "@types/chroma-js": "^2.4.0",
         "@types/node": "^18.14.1",
         "ayu": "^8.0.1",
