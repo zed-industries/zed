@@ -5,6 +5,7 @@ export default function contactsPanel(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
 
     return {
+        rowHeight: 30,
         background: background(layer),
         border: border(layer),
         shadow: colorScheme.popoverShadow,
