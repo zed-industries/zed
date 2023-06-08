@@ -76,10 +76,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                 logs_selected: true,
             }]
         );
-        assert_eq!(
-            view.editor.as_ref().unwrap().read(cx).text(cx),
-            "hello from the server\n"
-        );
+        assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");
     });
 }
 

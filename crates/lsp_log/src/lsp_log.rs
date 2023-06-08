@@ -20,6 +20,7 @@ use std::{borrow::Cow, sync::Arc};
 use theme::{ui, Theme};
 use workspace::{
     item::{Item, ItemHandle},
+    searchable::{SearchableItem, SearchableItemHandle},
     ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceCreated,
 };
 
@@ -51,7 +52,7 @@ pub struct LspLogView {
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
-    editor: Option<ViewHandle<Editor>>,
+    editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
 }
 
@@ -329,10 +330,11 @@ impl LspLogView {
             .projects
             .get(&project.downgrade())
             .and_then(|project| project.servers.keys().copied().next());
+        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
         let mut this = Self {
+            editor: Self::editor_for_buffer(project.clone(), buffer, cx),
             project,
             log_store,
-            editor: None,
             current_server_id: None,
             is_showing_rpc_trace: false,
         };
@@ -340,6 +342,22 @@ impl LspLogView {
             this.show_logs_for_server(server_id, cx);
         }
         this
+    }
+
+    fn editor_for_buffer(
+        project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> ViewHandle<Editor> {
+        let editor = cx.add_view(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+            editor.set_read_only(true);
+            editor.move_to_end(&Default::default(), cx);
+            editor
+        });
+        cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()))
+            .detach();
+        editor
     }
 
     fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
@@ -377,12 +395,7 @@ impl LspLogView {
         if let Some(buffer) = buffer {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = false;
-            self.editor = Some(cx.add_view(|cx| {
-                let mut editor = Editor::for_buffer(buffer, Some(self.project.clone()), cx);
-                editor.set_read_only(true);
-                editor.move_to_end(&Default::default(), cx);
-                editor
-            }));
+            self.editor = Self::editor_for_buffer(self.project.clone(), buffer, cx);
             cx.notify();
         }
     }
@@ -398,12 +411,7 @@ impl LspLogView {
         if let Some(buffer) = buffer {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = true;
-            self.editor = Some(cx.add_view(|cx| {
-                let mut editor = Editor::for_buffer(buffer, Some(self.project.clone()), cx);
-                editor.set_read_only(true);
-                editor.move_to_end(&Default::default(), cx);
-                editor
-            }));
+            self.editor = Self::editor_for_buffer(self.project.clone(), buffer, cx);
             cx.notify();
         }
     }
@@ -434,10 +442,12 @@ impl View for LspLogView {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        if let Some(editor) = &self.editor {
-            ChildView::new(&editor, cx).into_any()
-        } else {
-            Empty::new().into_any()
+        ChildView::new(&self.editor, cx).into_any()
+    }
+
+    fn focus_in(&mut self, _: gpui::AnyViewHandle, cx: &mut ViewContext<Self>) {
+        if cx.is_self_focused() {
+            cx.focus(&self.editor);
         }
     }
 }
@@ -450,6 +460,58 @@ impl Item for LspLogView {
         _: &AppContext,
     ) -> AnyElement<V> {
         Label::new("LSP Logs", style.label.clone()).into_any()
+    }
+
+    fn as_searchable(&self, handle: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
+}
+
+impl SearchableItem for LspLogView {
+    type Match = <Editor as SearchableItem>::Match;
+
+    fn to_search_event(event: &Self::Event) -> Option<workspace::searchable::SearchEvent> {
+        Editor::to_search_event(event)
+    }
+
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |e, cx| e.clear_matches(cx))
+    }
+
+    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |e, cx| e.update_matches(matches, cx))
+    }
+
+    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+        self.editor.update(cx, |e, cx| e.query_suggestion(cx))
+    }
+
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor
+            .update(cx, |e, cx| e.activate_match(index, matches, cx))
+    }
+
+    fn find_matches(
+        &mut self,
+        query: project::search::SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) -> gpui::Task<Vec<Self::Match>> {
+        self.editor.update(cx, |e, cx| e.find_matches(query, cx))
+    }
+
+    fn active_match_index(
+        &mut self,
+        matches: Vec<Self::Match>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<usize> {
+        self.editor
+            .update(cx, |e, cx| e.active_match_index(matches, cx))
     }
 }
 
@@ -717,7 +779,7 @@ impl Entity for LogStore {
 }
 
 impl Entity for LspLogView {
-    type Event = ();
+    type Event = editor::Event;
 }
 
 impl Entity for LspLogToolbarItemView {
