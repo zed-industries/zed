@@ -1,4 +1,4 @@
-import { SingleBoxShadowToken, SingleColorToken, SingleOtherToken, TokenTypes, TokenTypographyValue } from "@tokens-studio/types"
+import { SingleBoxShadowToken, SingleColorToken, SingleOtherToken, TokenTypes } from "@tokens-studio/types"
 import { ColorScheme, Shadow, SyntaxHighlightStyle, ThemeSyntax } from "../colorScheme"
 import { LayerToken, layerToken } from "./layer"
 import { PlayersToken, playersToken } from "./players"
@@ -15,7 +15,7 @@ interface ColorSchemeTokens {
     players: PlayersToken
     popoverShadow: SingleBoxShadowToken
     modalShadow: SingleBoxShadowToken
-    syntax?: Partial<ThemeSyntaxColorTokens> & Partial<ThemeSyntaxTypographyTokens>
+    syntax?: Partial<ThemeSyntaxColorTokens>
 }
 
 const createShadowToken = (shadow: Shadow, tokenName: string): SingleBoxShadowToken => {
@@ -38,7 +38,7 @@ const modalShadowToken = (colorScheme: ColorScheme): SingleBoxShadowToken => {
 
 type ThemeSyntaxColorTokens = Record<keyof ThemeSyntax, SingleColorToken>
 
-function syntaxHighlightStyleColorTokens(syntax: Syntax): ThemeSyntaxColorTokens | null {
+function syntaxHighlightStyleColorTokens(syntax: Syntax): ThemeSyntaxColorTokens {
     const styleKeys = Object.keys(syntax) as (keyof Syntax)[]
 
     return styleKeys.reduce((acc, styleKey) => {
@@ -52,46 +52,10 @@ function syntaxHighlightStyleColorTokens(syntax: Syntax): ThemeSyntaxColorTokens
     }, {} as ThemeSyntaxColorTokens);
 }
 
-function syntaxHighlightStyleTypographyToken(highlightStyle: SyntaxHighlightStyle): TokenTypographyValue | null {
-    const { weight, underline, italic } = highlightStyle
-
-    let w = weight ? weight : "extended"
-
-    if (italic) {
-        w = `${w} Italic`
-    }
-
-    const fontWeight = w as TokenTypographyValue['fontWeight']
-
-    return {
-        fontWeight,
-        textDecoration: underline ? "underline" : "none",
-    }
-}
-
-type ThemeSyntaxTypographyTokens = Record<keyof ThemeSyntax, TokenTypographyValue>
-
-function syntaxHighlightStyleTypographyTokens(syntax: Syntax): ThemeSyntaxTypographyTokens | null {
-    const styleKeys = Object.keys(syntax) as (keyof Syntax)[]
-
-    return styleKeys.reduce((acc, styleKey) => {
-        // Hack: The type of a style could be "Function"
-        // This can happen because we have a "constructor" property on the syntax object
-        // and a "constructor" property on the prototype of the syntax object
-        // To work around this just assert that the type of the style is not a function
-        if (!syntax[styleKey] || typeof syntax[styleKey] === 'function') return acc;
-        const syntaxHighlightStyle = syntax[styleKey] as Required<SyntaxHighlightStyle>;
-        return { ...acc, [styleKey]: syntaxHighlightStyleTypographyToken(syntaxHighlightStyle) };
-    }, {} as ThemeSyntaxTypographyTokens);
-}
-
 const syntaxTokens = (colorScheme: ColorScheme): ColorSchemeTokens['syntax'] => {
     const syntax = editor(colorScheme).syntax
 
-    return {
-        ...syntaxHighlightStyleColorTokens(syntax),
-        // ...syntaxHighlightStyleTypographyTokens(syntax),
-    }
+    return syntaxHighlightStyleColorTokens(syntax)
 }
 
 export function colorSchemeTokens(colorScheme: ColorScheme): ColorSchemeTokens {
