@@ -1,4 +1,4 @@
-import { ThemeLicenseType, ThemeConfig, ThemeSyntax } from "../../common"
+import { ThemeLicenseType, ThemeSyntax, ThemeFamilyMeta } from "../../common"
 
 export interface Variant {
     colors: {
@@ -21,7 +21,7 @@ export interface Variant {
     }
 }
 
-export const meta: Partial<ThemeConfig> = {
+export const meta: ThemeFamilyMeta = {
     name: "Atelier",
     author: "Bram de Haan (http://atelierbramdehaan.nl)",
     licenseType: ThemeLicenseType.MIT,
