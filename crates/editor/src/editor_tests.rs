@@ -1744,6 +1744,15 @@ async fn test_newline_comments(cx: &mut gpui::TestAppContext) {
         // Foo
         //ˇ
     "});
+    // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
+    cx.set_state(indoc! {"
+        ˇ// Foo
+    "});
+    cx.update_editor(|e, cx| e.newline(&Newline, cx));
+    cx.assert_editor_state(indoc! {"
+
+        ˇ// Foo
+    "});
 }
 
 #[gpui::test]
