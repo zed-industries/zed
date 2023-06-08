@@ -4,7 +4,7 @@ import { colorToken } from "./token"
 
 export type PlayerToken = Record<"selection" | "cursor", SingleColorToken>
 
-export type PlayerTokens = Record<keyof Players, PlayerToken>
+export type PlayersToken = Record<keyof Players, PlayerToken>
 
 function buildPlayerToken(colorScheme: ColorScheme, index: number): PlayerToken {
 
@@ -16,7 +16,7 @@ function buildPlayerToken(colorScheme: ColorScheme, index: number): PlayerToken 
     }
 }
 
-export const players = (colorScheme: ColorScheme): PlayerTokens => ({
+export const playersToken = (colorScheme: ColorScheme): PlayersToken => ({
     "0": buildPlayerToken(colorScheme, 0),
     "1": buildPlayerToken(colorScheme, 1),
     "2": buildPlayerToken(colorScheme, 2),
