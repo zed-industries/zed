@@ -1,6 +1,8 @@
 use anyhow::Result;
 use collections::HashMap;
+use git2::ErrorCode;
 use parking_lot::Mutex;
+use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -24,7 +26,7 @@ pub trait GitRepository: Send {
 
     fn statuses(&self) -> Option<TreeMap<RepoPath, GitFileStatus>>;
 
-    fn status(&self, path: &RepoPath) -> Option<GitFileStatus>;
+    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -91,9 +93,18 @@ impl GitRepository for LibGitRepository {
         Some(map)
     }
 
-    fn status(&self, path: &RepoPath) -> Option<GitFileStatus> {
-        let status = self.status_file(path).log_err()?;
-        read_status(status)
+    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
+        let status = self.status_file(path);
+        match status {
+            Ok(status) => Ok(read_status(status)),
+            Err(e) => {
+                if e.code() == ErrorCode::NotFound {
+                    Ok(None)
+                } else {
+                    Err(e.into())
+                }
+            }
+        }
     }
 }
 
@@ -155,9 +166,9 @@ impl GitRepository for FakeGitRepository {
         Some(map)
     }
 
-    fn status(&self, path: &RepoPath) -> Option<GitFileStatus> {
+    fn status(&self, path: &RepoPath) -> Result<Option<GitFileStatus>> {
         let state = self.state.lock();
-        state.worktree_statuses.get(path).cloned()
+        Ok(state.worktree_statuses.get(path).cloned())
     }
 }
 
@@ -197,8 +208,51 @@ pub enum GitFileStatus {
     Conflict,
 }
 
+impl GitFileStatus {
+    pub fn merge(
+        this: Option<GitFileStatus>,
+        other: Option<GitFileStatus>,
+        prefer_other: bool,
+    ) -> Option<GitFileStatus> {
+        if prefer_other {
+            return other;
+        } else {
+            match (this, other) {
+                (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
+                    Some(GitFileStatus::Conflict)
+                }
+                (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
+                    Some(GitFileStatus::Modified)
+                }
+                (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
+                    Some(GitFileStatus::Added)
+                }
+                _ => None,
+            }
+        }
+    }
+
+    pub fn from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
+        git_status.and_then(|status| {
+            proto::GitStatus::from_i32(status).map(|status| match status {
+                proto::GitStatus::Added => GitFileStatus::Added,
+                proto::GitStatus::Modified => GitFileStatus::Modified,
+                proto::GitStatus::Conflict => GitFileStatus::Conflict,
+            })
+        })
+    }
+
+    pub fn to_proto(self) -> i32 {
+        match self {
+            GitFileStatus::Added => proto::GitStatus::Added as i32,
+            GitFileStatus::Modified => proto::GitStatus::Modified as i32,
+            GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(PathBuf);
+pub struct RepoPath(pub PathBuf);
 
 impl RepoPath {
     pub fn new(path: PathBuf) -> Self {

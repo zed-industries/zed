@@ -37,8 +37,8 @@ use language::{
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
     Language, LanguageRegistry, LanguageServerName, LocalFile, OffsetRangeExt, Operation, Patch,
-    PendingLanguageServer, PointUtf16, RopeFingerprint, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Transaction, Unclipped,
+    PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use log::error;
 use lsp::{
@@ -69,7 +69,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use terminals::Terminals;
 use util::{
@@ -1616,7 +1616,7 @@ impl Project {
         &self,
         buffer: ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+    ) -> Task<Result<()>> {
         let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
             return Task::ready(Err(anyhow!("buffer doesn't have a file")));
         };
@@ -5156,9 +5156,9 @@ impl Project {
                     return None;
                 }
                 let path = &project_path.path;
-                changed_repos.iter().find(|(work_dir, change)| {
-                    path.starts_with(work_dir) && change.git_dir_changed
-                })?;
+                changed_repos
+                    .iter()
+                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 let receiver = receiver.clone();
                 let path = path.clone();
                 Some(async move {
@@ -5181,9 +5181,9 @@ impl Project {
                     return None;
                 }
                 let path = file.path();
-                changed_repos.iter().find(|(work_dir, change)| {
-                    path.starts_with(work_dir) && change.git_dir_changed
-                })?;
+                changed_repos
+                    .iter()
+                    .find(|(work_dir, _)| path.starts_with(work_dir))?;
                 Some((buffer, path.clone()))
             })
             .collect::<Vec<_>>();
@@ -5984,16 +5984,15 @@ impl Project {
             .await?;
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
 
-        let (saved_version, fingerprint, mtime) = this
-            .update(&mut cx, |this, cx| this.save_buffer(buffer, cx))
+        this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))
             .await?;
-        Ok(proto::BufferSaved {
+        Ok(buffer.read_with(&cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id,
-            version: serialize_version(&saved_version),
-            mtime: Some(mtime.into()),
-            fingerprint: language::proto::serialize_fingerprint(fingerprint),
-        })
+            version: serialize_version(buffer.saved_version()),
+            mtime: Some(buffer.saved_mtime().into()),
+            fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
+        }))
     }
 
     async fn handle_reload_buffers(
