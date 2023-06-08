@@ -358,6 +358,10 @@ impl SuggestionSnapshot {
         }
     }
 
+    pub fn text_summary(&self) -> TextSummary {
+        self.text_summary_for_range(Default::default()..self.max_point())
+    }
+
     pub fn text_summary_for_range(&self, range: Range<SuggestionPoint>) -> TextSummary {
         if let Some(suggestion) = self.suggestion.as_ref() {
             let suggestion_start = suggestion.position.to_point(&self.fold_snapshot).0;

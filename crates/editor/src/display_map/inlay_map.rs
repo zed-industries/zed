@@ -2,7 +2,7 @@
 // TODO kb
 
 use std::{
-    cmp::Reverse,
+    cmp::{self, Reverse},
     ops::{Add, AddAssign, Range, Sub},
     sync::atomic::{self, AtomicUsize},
 };
@@ -22,7 +22,7 @@ use language::{Chunk, Edit, Point, Rope, TextSummary};
 use parking_lot::Mutex;
 use project::InlayHint;
 use rand::Rng;
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, Cursor, SumTree};
 use util::post_inc;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -42,7 +42,7 @@ pub struct InlaySnapshot {
     pub version: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Transform {
     Isomorphic(TextSummary),
     Inlay(Inlay),
@@ -107,6 +107,18 @@ impl AddAssign for InlayOffset {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        self.0 += &summary.output.len;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for SuggestionOffset {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        self.0 += &summary.input.len;
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct InlayPoint(pub Point);
 
@@ -128,7 +140,12 @@ pub struct InlayBufferRows<'a> {
 }
 
 pub struct InlayChunks<'a> {
+    transforms: Cursor<'a, Transform, (InlayOffset, SuggestionOffset)>,
     suggestion_chunks: SuggestionChunks<'a>,
+    suggestion_chunk: Option<Chunk<'a>>,
+    inlay_chunks: Option<text::Chunks<'a>>,
+    output_offset: InlayOffset,
+    max_output_offset: InlayOffset,
 }
 
 #[derive(Debug, Clone)]
@@ -147,7 +164,49 @@ impl<'a> Iterator for InlayChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.suggestion_chunks.next()
+        if self.output_offset == self.max_output_offset {
+            return None;
+        }
+
+        let chunk = match self.transforms.item()? {
+            Transform::Isomorphic(transform) => {
+                let chunk = self
+                    .suggestion_chunk
+                    .get_or_insert_with(|| self.suggestion_chunks.next().unwrap());
+                if chunk.text.is_empty() {
+                    *chunk = self.suggestion_chunks.next().unwrap();
+                }
+
+                let (prefix, suffix) = chunk.text.split_at(transform.len);
+                chunk.text = suffix;
+                self.output_offset.0 += prefix.len();
+                Chunk {
+                    text: prefix,
+                    ..chunk.clone()
+                }
+            }
+            Transform::Inlay(inlay) => {
+                let inlay_chunks = self.inlay_chunks.get_or_insert_with(|| {
+                    let start = self.output_offset - self.transforms.start().0;
+                    let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
+                        - self.transforms.start().0;
+                    inlay.properties.text.chunks_in_range(start.0..end.0)
+                });
+
+                let chunk = inlay_chunks.next().unwrap();
+                self.output_offset.0 += chunk.len();
+                Chunk {
+                    text: chunk,
+                    ..Default::default()
+                }
+            }
+        };
+
+        if self.output_offset == self.transforms.end(&()).0 {
+            self.transforms.next(&());
+        }
+
+        Some(chunk)
     }
 }
 
@@ -178,7 +237,10 @@ impl InlayMap {
         let snapshot = InlaySnapshot {
             suggestion_snapshot: suggestion_snapshot.clone(),
             version: 0,
-            transforms: SumTree::new(),
+            transforms: SumTree::from_item(
+                Transform::Isomorphic(suggestion_snapshot.text_summary()),
+                &(),
+            ),
         };
 
         (
@@ -348,9 +410,12 @@ impl InlaySnapshot {
         )
     }
 
+    pub fn len(&self) -> InlayOffset {
+        InlayOffset(self.transforms.summary().output.len)
+    }
+
     pub fn max_point(&self) -> InlayPoint {
-        // TODO kb copied from suggestion_map
-        self.to_inlay_point(self.suggestion_snapshot.max_point())
+        InlayPoint(self.transforms.summary().output.lines)
     }
 
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
@@ -370,6 +435,19 @@ impl InlaySnapshot {
     // TODO kb what to do with bias?
     pub fn to_suggestion_point(&self, point: InlayPoint, _: Bias) -> SuggestionPoint {
         SuggestionPoint(point.0)
+    }
+
+    pub fn to_suggestion_offset(&self, offset: InlayOffset) -> SuggestionOffset {
+        let mut cursor = self.transforms.cursor::<(InlayOffset, SuggestionOffset)>();
+        cursor.seek(&offset, Bias::Right, &());
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => {
+                let overshoot = offset - cursor.start().0;
+                cursor.start().1 + SuggestionOffset(overshoot.0)
+            }
+            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            None => self.suggestion_snapshot.len(),
+        }
     }
 
     pub fn to_inlay_point(&self, point: SuggestionPoint) -> InlayPoint {
@@ -410,21 +488,35 @@ impl InlaySnapshot {
         text_highlights: Option<&'a TextHighlights>,
         suggestion_highlight: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
-        // TODO kb copied from suggestion_map
+        dbg!(self.transforms.items(&()));
+
+        let mut cursor = self.transforms.cursor::<(InlayOffset, SuggestionOffset)>();
+        cursor.seek(&range.start, Bias::Right, &());
+
+        let suggestion_range =
+            self.to_suggestion_offset(range.start)..self.to_suggestion_offset(range.end);
+        let suggestion_chunks = self.suggestion_snapshot.chunks(
+            suggestion_range,
+            language_aware,
+            text_highlights,
+            suggestion_highlight,
+        );
+
         InlayChunks {
-            suggestion_chunks: self.suggestion_snapshot.chunks(
-                SuggestionOffset(range.start.0)..SuggestionOffset(range.end.0),
-                language_aware,
-                text_highlights,
-                suggestion_highlight,
-            ),
+            transforms: cursor,
+            suggestion_chunks,
+            inlay_chunks: None,
+            suggestion_chunk: None,
+            output_offset: range.start,
+            max_output_offset: range.end,
         }
     }
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        // TODO kb copied from suggestion_map
-        self.suggestion_snapshot.text()
+        self.chunks(Default::default()..self.len(), false, None, None)
+            .map(|chunk| chunk.text)
+            .collect()
     }
 }
 
