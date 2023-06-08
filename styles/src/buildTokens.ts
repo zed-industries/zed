@@ -6,7 +6,7 @@ import { slugify } from "./utils/slugify";
 import { colorSchemeTokens } from "./theme/tokens/colorScheme";
 
 const TOKENS_DIRECTORY = path.join(__dirname, "..", "target", "tokens");
-const TOKENS_FILE = path.join(TOKENS_DIRECTORY, "$tokens.json");
+const TOKENS_FILE = path.join(TOKENS_DIRECTORY, "$themes.json");
 const METADATA_FILE = path.join(TOKENS_DIRECTORY, "$metadata.json");
 
 function clearTokens(tokensDirectory: string) {
