@@ -422,7 +422,7 @@ async fn apply_client_operation(
             );
 
             ensure_project_shared(&project, client, cx).await;
-            if !client.fs.paths().contains(&new_root_path) {
+            if !client.fs.paths(false).contains(&new_root_path) {
                 client.fs.create_dir(&new_root_path).await.unwrap();
             }
             project
@@ -628,12 +628,13 @@ async fn apply_client_operation(
 
             ensure_project_shared(&project, client, cx).await;
             let requested_version = buffer.read_with(cx, |buffer, _| buffer.version());
-            let save = project.update(cx, |project, cx| project.save_buffer(buffer, cx));
-            let save = cx.background().spawn(async move {
-                let (saved_version, _, _) = save
-                    .await
+            let save = project.update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
+            let save = cx.spawn(|cx| async move {
+                save.await
                     .map_err(|err| anyhow!("save request failed: {:?}", err))?;
-                assert!(saved_version.observed_all(&requested_version));
+                assert!(buffer
+                    .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
+                    .observed_all(&requested_version));
                 anyhow::Ok(())
             });
             if detach {
@@ -743,7 +744,7 @@ async fn apply_client_operation(
         } => {
             if !client
                 .fs
-                .directories()
+                .directories(false)
                 .contains(&path.parent().unwrap().to_owned())
             {
                 return Err(TestError::Inapplicable);
@@ -770,8 +771,14 @@ async fn apply_client_operation(
                 repo_path,
                 contents,
             } => {
-                if !client.fs.directories().contains(&repo_path) {
+                if !client.fs.directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
+                }
+
+                for (path, _) in contents.iter() {
+                    if !client.fs.files().contains(&repo_path.join(path)) {
+                        return Err(TestError::Inapplicable);
+                    }
                 }
 
                 log::info!(
@@ -789,13 +796,13 @@ async fn apply_client_operation(
                 if client.fs.metadata(&dot_git_dir).await?.is_none() {
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
-                client.fs.set_index_for_repo(&dot_git_dir, &contents).await;
+                client.fs.set_index_for_repo(&dot_git_dir, &contents);
             }
             GitOperation::WriteGitBranch {
                 repo_path,
                 new_branch,
             } => {
-                if !client.fs.directories().contains(&repo_path) {
+                if !client.fs.directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
                 }
 
@@ -810,14 +817,20 @@ async fn apply_client_operation(
                 if client.fs.metadata(&dot_git_dir).await?.is_none() {
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
-                client.fs.set_branch_name(&dot_git_dir, new_branch).await;
+                client.fs.set_branch_name(&dot_git_dir, new_branch);
             }
             GitOperation::WriteGitStatuses {
                 repo_path,
                 statuses,
+                git_operation,
             } => {
-                if !client.fs.directories().contains(&repo_path) {
+                if !client.fs.directories(false).contains(&repo_path) {
                     return Err(TestError::Inapplicable);
+                }
+                for (path, _) in statuses.iter() {
+                    if !client.fs.files().contains(&repo_path.join(path)) {
+                        return Err(TestError::Inapplicable);
+                    }
                 }
 
                 log::info!(
@@ -838,10 +851,16 @@ async fn apply_client_operation(
                     client.fs.create_dir(&dot_git_dir).await?;
                 }
 
-                client
-                    .fs
-                    .set_status_for_repo(&dot_git_dir, statuses.as_slice())
-                    .await;
+                if git_operation {
+                    client
+                        .fs
+                        .set_status_for_repo_via_git_operation(&dot_git_dir, statuses.as_slice());
+                } else {
+                    client.fs.set_status_for_repo_via_working_copy_change(
+                        &dot_git_dir,
+                        statuses.as_slice(),
+                    );
+                }
             }
         },
     }
@@ -913,9 +932,10 @@ fn check_consistency_between_clients(clients: &[(Rc<TestClient>, TestAppContext)
                             assert_eq!(
                                 guest_snapshot.entries(false).collect::<Vec<_>>(),
                                 host_snapshot.entries(false).collect::<Vec<_>>(),
-                                "{} has different snapshot than the host for worktree {:?} and project {:?}",
+                                "{} has different snapshot than the host for worktree {:?} ({:?}) and project {:?}",
                                 client.username,
                                 host_snapshot.abs_path(),
+                                id,
                                 guest_project.remote_id(),
                             );
                             assert_eq!(guest_snapshot.repositories().collect::<Vec<_>>(), host_snapshot.repositories().collect::<Vec<_>>(),
@@ -1230,6 +1250,7 @@ enum GitOperation {
     WriteGitStatuses {
         repo_path: PathBuf,
         statuses: Vec<(PathBuf, GitFileStatus)>,
+        git_operation: bool,
     },
 }
 
@@ -1575,7 +1596,7 @@ impl TestPlan {
                                 .choose(&mut self.rng)
                                 .cloned() else { continue };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let mut paths = client.fs.paths();
+                            let mut paths = client.fs.paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || self.rng.gen() {
                                 Path::new("/").join(&self.next_root_dir_name(user_id))
@@ -1755,7 +1776,7 @@ impl TestPlan {
                     let is_dir = self.rng.gen::<bool>();
                     let content;
                     let mut path;
-                    let dir_paths = client.fs.directories();
+                    let dir_paths = client.fs.directories(false);
 
                     if is_dir {
                         content = String::new();
@@ -1809,7 +1830,7 @@ impl TestPlan {
 
         let repo_path = client
             .fs
-            .directories()
+            .directories(false)
             .choose(&mut self.rng)
             .unwrap()
             .clone();
@@ -1855,9 +1876,12 @@ impl TestPlan {
                     })
                     .collect::<Vec<_>>();
 
+                let git_operation = self.rng.gen::<bool>();
+
                 GitOperation::WriteGitStatuses {
                     repo_path,
                     statuses,
+                    git_operation,
                 }
             }
             _ => unreachable!(),

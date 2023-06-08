@@ -2415,14 +2415,10 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a
-        .fs
-        .as_fake()
-        .set_index_for_repo(
-            Path::new("/dir/.git"),
-            &[(Path::new("a.txt"), diff_base.clone())],
-        )
-        .await;
+    client_a.fs.as_fake().set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[(Path::new("a.txt"), diff_base.clone())],
+    );
 
     // Create the buffer
     let buffer_local_a = project_local
@@ -2464,14 +2460,10 @@ async fn test_git_diff_base_change(
         );
     });
 
-    client_a
-        .fs
-        .as_fake()
-        .set_index_for_repo(
-            Path::new("/dir/.git"),
-            &[(Path::new("a.txt"), new_diff_base.clone())],
-        )
-        .await;
+    client_a.fs.as_fake().set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[(Path::new("a.txt"), new_diff_base.clone())],
+    );
 
     // Wait for buffer_local_a to receive it
     deterministic.run_until_parked();
@@ -2513,14 +2505,10 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a
-        .fs
-        .as_fake()
-        .set_index_for_repo(
-            Path::new("/dir/sub/.git"),
-            &[(Path::new("b.txt"), diff_base.clone())],
-        )
-        .await;
+    client_a.fs.as_fake().set_index_for_repo(
+        Path::new("/dir/sub/.git"),
+        &[(Path::new("b.txt"), diff_base.clone())],
+    );
 
     // Create the buffer
     let buffer_local_b = project_local
@@ -2562,14 +2550,10 @@ async fn test_git_diff_base_change(
         );
     });
 
-    client_a
-        .fs
-        .as_fake()
-        .set_index_for_repo(
-            Path::new("/dir/sub/.git"),
-            &[(Path::new("b.txt"), new_diff_base.clone())],
-        )
-        .await;
+    client_a.fs.as_fake().set_index_for_repo(
+        Path::new("/dir/sub/.git"),
+        &[(Path::new("b.txt"), new_diff_base.clone())],
+    );
 
     // Wait for buffer_local_b to receive it
     deterministic.run_until_parked();
@@ -2646,8 +2630,7 @@ async fn test_git_branch_name(
     client_a
         .fs
         .as_fake()
-        .set_branch_name(Path::new("/dir/.git"), Some("branch-1"))
-        .await;
+        .set_branch_name(Path::new("/dir/.git"), Some("branch-1"));
 
     // Wait for it to catch up to the new branch
     deterministic.run_until_parked();
@@ -2673,8 +2656,7 @@ async fn test_git_branch_name(
     client_a
         .fs
         .as_fake()
-        .set_branch_name(Path::new("/dir/.git"), Some("branch-2"))
-        .await;
+        .set_branch_name(Path::new("/dir/.git"), Some("branch-2"));
 
     // Wait for buffer_local_a to receive it
     deterministic.run_until_parked();
@@ -2726,17 +2708,13 @@ async fn test_git_status_sync(
     const A_TXT: &'static str = "a.txt";
     const B_TXT: &'static str = "b.txt";
 
-    client_a
-        .fs
-        .as_fake()
-        .set_status_for_repo(
-            Path::new("/dir/.git"),
-            &[
-                (&Path::new(A_TXT), GitFileStatus::Added),
-                (&Path::new(B_TXT), GitFileStatus::Added),
-            ],
-        )
-        .await;
+    client_a.fs.as_fake().set_status_for_repo_via_git_operation(
+        Path::new("/dir/.git"),
+        &[
+            (&Path::new(A_TXT), GitFileStatus::Added),
+            (&Path::new(B_TXT), GitFileStatus::Added),
+        ],
+    );
 
     let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
     let project_id = active_call_a
@@ -2763,8 +2741,7 @@ async fn test_git_status_sync(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let snapshot = worktree.read(cx).snapshot();
-        let root_entry = snapshot.root_git_entry().unwrap();
-        assert_eq!(root_entry.status_for_file(&snapshot, file), status);
+        assert_eq!(snapshot.status_for_file(file), status);
     }
 
     // Smoke test status reading
@@ -2780,14 +2757,13 @@ async fn test_git_status_sync(
     client_a
         .fs
         .as_fake()
-        .set_status_for_repo(
+        .set_status_for_repo_via_working_copy_change(
             Path::new("/dir/.git"),
             &[
                 (&Path::new(A_TXT), GitFileStatus::Modified),
                 (&Path::new(B_TXT), GitFileStatus::Modified),
             ],
-        )
-        .await;
+        );
 
     // Wait for buffer_local_a to receive it
     deterministic.run_until_parked();

@@ -15,6 +15,7 @@ pub struct Model {
     pub inode: i64,
     pub mtime_seconds: i64,
     pub mtime_nanos: i32,
+    pub git_status: Option<i64>,
     pub is_symlink: bool,
     pub is_ignored: bool,
     pub is_deleted: bool,

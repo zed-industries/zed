@@ -7,7 +7,7 @@ use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, VecDeque};
 use fs::{
-    repository::{GitFileStatus, GitRepository, RepoPath, RepoPathDescendants},
+    repository::{GitFileStatus, GitRepository, RepoPath},
     Fs, LineEnding,
 };
 use futures::{
@@ -45,7 +45,7 @@ use std::{
     fmt,
     future::Future,
     mem,
-    ops::{Deref, DerefMut},
+    ops::{AddAssign, Deref, DerefMut, Sub},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -55,7 +55,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap, TreeSet};
-use util::{paths::HOME, ResultExt, TakeUntilExt};
+use util::{paths::HOME, ResultExt};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -124,15 +124,6 @@ pub struct Snapshot {
 pub struct RepositoryEntry {
     pub(crate) work_directory: WorkDirectoryEntry,
     pub(crate) branch: Option<Arc<str>>,
-    pub(crate) statuses: TreeMap<RepoPath, GitFileStatus>,
-}
-
-fn read_git_status(git_status: i32) -> Option<GitFileStatus> {
-    proto::GitStatus::from_i32(git_status).map(|status| match status {
-        proto::GitStatus::Added => GitFileStatus::Added,
-        proto::GitStatus::Modified => GitFileStatus::Modified,
-        proto::GitStatus::Conflict => GitFileStatus::Conflict,
-    })
 }
 
 impl RepositoryEntry {
@@ -150,101 +141,11 @@ impl RepositoryEntry {
             .map(|entry| RepositoryWorkDirectory(entry.path.clone()))
     }
 
-    pub fn status_for_path(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
-        self.work_directory
-            .relativize(snapshot, path)
-            .and_then(|repo_path| {
-                self.statuses
-                    .iter_from(&repo_path)
-                    .take_while(|(key, _)| key.starts_with(&repo_path))
-                    // Short circuit once we've found the highest level
-                    .take_until(|(_, status)| status == &&GitFileStatus::Conflict)
-                    .map(|(_, status)| status)
-                    .reduce(
-                        |status_first, status_second| match (status_first, status_second) {
-                            (GitFileStatus::Conflict, _) | (_, GitFileStatus::Conflict) => {
-                                &GitFileStatus::Conflict
-                            }
-                            (GitFileStatus::Modified, _) | (_, GitFileStatus::Modified) => {
-                                &GitFileStatus::Modified
-                            }
-                            _ => &GitFileStatus::Added,
-                        },
-                    )
-                    .copied()
-            })
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn status_for_file(&self, snapshot: &Snapshot, path: &Path) -> Option<GitFileStatus> {
-        self.work_directory
-            .relativize(snapshot, path)
-            .and_then(|repo_path| (&self.statuses).get(&repo_path))
-            .cloned()
-    }
-
-    pub fn build_update(&self, other: &Self) -> proto::RepositoryEntry {
-        let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
-        let mut removed_statuses: Vec<String> = Vec::new();
-
-        let mut self_statuses = self.statuses.iter().peekable();
-        let mut other_statuses = other.statuses.iter().peekable();
-        loop {
-            match (self_statuses.peek(), other_statuses.peek()) {
-                (Some((self_repo_path, self_status)), Some((other_repo_path, other_status))) => {
-                    match Ord::cmp(self_repo_path, other_repo_path) {
-                        Ordering::Less => {
-                            updated_statuses.push(make_status_entry(self_repo_path, self_status));
-                            self_statuses.next();
-                        }
-                        Ordering::Equal => {
-                            if self_status != other_status {
-                                updated_statuses
-                                    .push(make_status_entry(self_repo_path, self_status));
-                            }
-
-                            self_statuses.next();
-                            other_statuses.next();
-                        }
-                        Ordering::Greater => {
-                            removed_statuses.push(make_repo_path(other_repo_path));
-                            other_statuses.next();
-                        }
-                    }
-                }
-                (Some((self_repo_path, self_status)), None) => {
-                    updated_statuses.push(make_status_entry(self_repo_path, self_status));
-                    self_statuses.next();
-                }
-                (None, Some((other_repo_path, _))) => {
-                    removed_statuses.push(make_repo_path(other_repo_path));
-                    other_statuses.next();
-                }
-                (None, None) => break,
-            }
-        }
-
+    pub fn build_update(&self, _: &Self) -> proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id().to_proto(),
             branch: self.branch.as_ref().map(|str| str.to_string()),
-            removed_repo_paths: removed_statuses,
-            updated_statuses,
         }
-    }
-}
-
-fn make_repo_path(path: &RepoPath) -> String {
-    path.as_os_str().to_string_lossy().to_string()
-}
-
-fn make_status_entry(path: &RepoPath, status: &GitFileStatus) -> proto::StatusEntry {
-    proto::StatusEntry {
-        repo_path: make_repo_path(path),
-        status: match status {
-            GitFileStatus::Added => proto::GitStatus::Added.into(),
-            GitFileStatus::Modified => proto::GitStatus::Modified.into(),
-            GitFileStatus::Conflict => proto::GitStatus::Conflict.into(),
-        },
     }
 }
 
@@ -253,12 +154,6 @@ impl From<&RepositoryEntry> for proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: value.work_directory.to_proto(),
             branch: value.branch.as_ref().map(|str| str.to_string()),
-            updated_statuses: value
-                .statuses
-                .iter()
-                .map(|(repo_path, status)| make_status_entry(repo_path, status))
-                .collect(),
-            removed_repo_paths: Default::default(),
         }
     }
 }
@@ -330,7 +225,6 @@ pub struct BackgroundScannerState {
 
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
-    pub(crate) work_dir_scan_id: usize,
     pub(crate) git_dir_scan_id: usize,
     pub(crate) repo_ptr: Arc<Mutex<dyn GitRepository>>,
     /// Path to the actual .git folder.
@@ -864,18 +758,13 @@ impl LocalWorktree {
                                     entry.path.clone(),
                                     GitRepositoryChange {
                                         old_repository: None,
-                                        git_dir_changed: true,
                                     },
                                 ));
                             }
                             new_repos.next();
                         }
                         Ordering::Equal => {
-                            let git_dir_changed =
-                                new_repo.git_dir_scan_id != old_repo.git_dir_scan_id;
-                            let work_dir_changed =
-                                new_repo.work_dir_scan_id != old_repo.work_dir_scan_id;
-                            if git_dir_changed || work_dir_changed {
+                            if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id {
                                 if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
                                     let old_repo = old_snapshot
                                         .repository_entries
@@ -885,7 +774,6 @@ impl LocalWorktree {
                                         entry.path.clone(),
                                         GitRepositoryChange {
                                             old_repository: old_repo,
-                                            git_dir_changed,
                                         },
                                     ));
                                 }
@@ -903,7 +791,6 @@ impl LocalWorktree {
                                     entry.path.clone(),
                                     GitRepositoryChange {
                                         old_repository: old_repo,
-                                        git_dir_changed: true,
                                     },
                                 ));
                             }
@@ -917,7 +804,6 @@ impl LocalWorktree {
                             entry.path.clone(),
                             GitRepositoryChange {
                                 old_repository: None,
-                                git_dir_changed: true,
                             },
                         ));
                     }
@@ -933,7 +819,6 @@ impl LocalWorktree {
                             entry.path.clone(),
                             GitRepositoryChange {
                                 old_repository: old_repo,
-                                git_dir_changed: true,
                             },
                         ));
                     }
@@ -1038,7 +923,7 @@ impl LocalWorktree {
         path: Arc<Path>,
         has_changed_file: bool,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+    ) -> Task<Result<()>> {
         let handle = cx.handle();
         let buffer = buffer_handle.read(cx);
 
@@ -1094,7 +979,7 @@ impl LocalWorktree {
                 buffer.did_save(version.clone(), fingerprint, entry.mtime, cx);
             });
 
-            Ok((version, fingerprint, entry.mtime))
+            Ok(())
         })
     }
 
@@ -1405,7 +1290,7 @@ impl RemoteWorktree {
         &self,
         buffer_handle: ModelHandle<Buffer>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(clock::Global, RopeFingerprint, SystemTime)>> {
+    ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
         let version = buffer.version();
@@ -1430,7 +1315,7 @@ impl RemoteWorktree {
                 buffer.did_save(version.clone(), fingerprint, mtime, cx);
             });
 
-            Ok((version, fingerprint, mtime))
+            Ok(())
         })
     }
 
@@ -1574,7 +1459,7 @@ impl Snapshot {
     fn delete_entry(&mut self, entry_id: ProjectEntryId) -> Option<Arc<Path>> {
         let removed_entry = self.entries_by_id.remove(&entry_id, &())?;
         self.entries_by_path = {
-            let mut cursor = self.entries_by_path.cursor();
+            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>();
             let mut new_entries_by_path =
                 cursor.slice(&TraversalTarget::Path(&removed_entry.path), Bias::Left, &());
             while let Some(entry) = cursor.item() {
@@ -1590,6 +1475,14 @@ impl Snapshot {
         };
 
         Some(removed_entry.path)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn status_for_file(&self, path: impl Into<PathBuf>) -> Option<GitFileStatus> {
+        let path = path.into();
+        self.entries_by_path
+            .get(&PathKey(Arc::from(path)), &())
+            .and_then(|entry| entry.git_status)
     }
 
     pub(crate) fn apply_remote_update(&mut self, mut update: proto::UpdateWorktree) -> Result<()> {
@@ -1643,26 +1536,10 @@ impl Snapshot {
                 ProjectEntryId::from_proto(repository.work_directory_id).into();
 
             if let Some(entry) = self.entry_for_id(*work_directory_entry) {
-                let mut statuses = TreeMap::default();
-                for status_entry in repository.updated_statuses {
-                    let Some(git_file_status) = read_git_status(status_entry.status) else {
-                        continue;
-                    };
-
-                    let repo_path = RepoPath::new(status_entry.repo_path.into());
-                    statuses.insert(repo_path, git_file_status);
-                }
-
                 let work_directory = RepositoryWorkDirectory(entry.path.clone());
                 if self.repository_entries.get(&work_directory).is_some() {
                     self.repository_entries.update(&work_directory, |repo| {
                         repo.branch = repository.branch.map(Into::into);
-                        repo.statuses.insert_tree(statuses);
-
-                        for repo_path in repository.removed_repo_paths {
-                            let repo_path = RepoPath::new(repo_path.into());
-                            repo.statuses.remove(&repo_path);
-                        }
                     });
                 } else {
                     self.repository_entries.insert(
@@ -1670,7 +1547,6 @@ impl Snapshot {
                         RepositoryEntry {
                             work_directory: work_directory_entry,
                             branch: repository.branch.map(Into::into),
-                            statuses,
                         },
                     )
                 }
@@ -1799,6 +1675,64 @@ impl Snapshot {
         })
     }
 
+    /// Update the `git_status` of the given entries such that files'
+    /// statuses bubble up to their ancestor directories.
+    pub fn propagate_git_statuses(&self, result: &mut [Entry]) {
+        let mut cursor = self
+            .entries_by_path
+            .cursor::<(TraversalProgress, GitStatuses)>();
+        let mut entry_stack = Vec::<(usize, GitStatuses)>::new();
+
+        let mut result_ix = 0;
+        loop {
+            let next_entry = result.get(result_ix);
+            let containing_entry = entry_stack.last().map(|(ix, _)| &result[*ix]);
+
+            let entry_to_finish = match (containing_entry, next_entry) {
+                (Some(_), None) => entry_stack.pop(),
+                (Some(containing_entry), Some(next_path)) => {
+                    if !next_path.path.starts_with(&containing_entry.path) {
+                        entry_stack.pop()
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(_)) => None,
+                (None, None) => break,
+            };
+
+            if let Some((entry_ix, prev_statuses)) = entry_to_finish {
+                cursor.seek_forward(
+                    &TraversalTarget::PathSuccessor(&result[entry_ix].path),
+                    Bias::Left,
+                    &(),
+                );
+
+                let statuses = cursor.start().1 - prev_statuses;
+
+                result[entry_ix].git_status = if statuses.conflict > 0 {
+                    Some(GitFileStatus::Conflict)
+                } else if statuses.modified > 0 {
+                    Some(GitFileStatus::Modified)
+                } else if statuses.added > 0 {
+                    Some(GitFileStatus::Added)
+                } else {
+                    None
+                };
+            } else {
+                if result[result_ix].is_dir() {
+                    cursor.seek_forward(
+                        &TraversalTarget::Path(&result[result_ix].path),
+                        Bias::Left,
+                        &(),
+                    );
+                    entry_stack.push((result_ix, cursor.start().1));
+                }
+                result_ix += 1;
+            }
+        }
+    }
+
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
         self.entries_by_path
@@ -1893,6 +1827,14 @@ impl Snapshot {
 impl LocalSnapshot {
     pub(crate) fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
         self.git_repositories.get(&repo.work_directory.0)
+    }
+
+    pub(crate) fn local_repo_for_path(
+        &self,
+        path: &Path,
+    ) -> Option<(RepositoryWorkDirectory, &LocalRepositoryEntry)> {
+        let (path, repo) = self.repository_and_work_directory_for_path(path)?;
+        Some((path, self.git_repositories.get(&repo.work_directory_id())?))
     }
 
     pub(crate) fn repo_for_metadata(
@@ -2039,7 +1981,8 @@ impl LocalSnapshot {
         entry
     }
 
-    fn build_repo(&mut self, parent_path: Arc<Path>, fs: &dyn Fs) -> Option<()> {
+    #[must_use = "Changed paths must be used for diffing later"]
+    fn build_repo(&mut self, parent_path: Arc<Path>, fs: &dyn Fs) -> Option<Vec<Arc<Path>>> {
         let abs_path = self.abs_path.join(&parent_path);
         let work_dir: Arc<Path> = parent_path.parent().unwrap().into();
 
@@ -2056,35 +1999,67 @@ impl LocalSnapshot {
             .entry_for_path(work_dir.clone())
             .map(|entry| entry.id)?;
 
-        if self.git_repositories.get(&work_dir_id).is_none() {
-            let repo = fs.open_repo(abs_path.as_path())?;
-            let work_directory = RepositoryWorkDirectory(work_dir.clone());
-            let scan_id = self.scan_id;
-
-            let repo_lock = repo.lock();
-
-            self.repository_entries.insert(
-                work_directory,
-                RepositoryEntry {
-                    work_directory: work_dir_id.into(),
-                    branch: repo_lock.branch_name().map(Into::into),
-                    statuses: repo_lock.statuses().unwrap_or_default(),
-                },
-            );
-            drop(repo_lock);
-
-            self.git_repositories.insert(
-                work_dir_id,
-                LocalRepositoryEntry {
-                    work_dir_scan_id: scan_id,
-                    git_dir_scan_id: scan_id,
-                    repo_ptr: repo,
-                    git_dir_path: parent_path.clone(),
-                },
-            )
+        if self.git_repositories.get(&work_dir_id).is_some() {
+            return None;
         }
 
-        Some(())
+        let repo = fs.open_repo(abs_path.as_path())?;
+        let work_directory = RepositoryWorkDirectory(work_dir.clone());
+
+        let repo_lock = repo.lock();
+
+        self.repository_entries.insert(
+            work_directory.clone(),
+            RepositoryEntry {
+                work_directory: work_dir_id.into(),
+                branch: repo_lock.branch_name().map(Into::into),
+            },
+        );
+
+        let changed_paths = self.scan_statuses(repo_lock.deref(), &work_directory);
+
+        drop(repo_lock);
+
+        self.git_repositories.insert(
+            work_dir_id,
+            LocalRepositoryEntry {
+                git_dir_scan_id: 0,
+                repo_ptr: repo,
+                git_dir_path: parent_path.clone(),
+            },
+        );
+
+        Some(changed_paths)
+    }
+
+    #[must_use = "Changed paths must be used for diffing later"]
+    fn scan_statuses(
+        &mut self,
+        repo_ptr: &dyn GitRepository,
+        work_directory: &RepositoryWorkDirectory,
+    ) -> Vec<Arc<Path>> {
+        let mut changes = vec![];
+        let mut edits = vec![];
+        for mut entry in self
+            .descendent_entries(false, false, &work_directory.0)
+            .cloned()
+        {
+            let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
+                continue;
+            };
+            let git_file_status = repo_ptr
+                .status(&RepoPath(repo_path.into()))
+                .log_err()
+                .flatten();
+            if entry.git_status != git_file_status {
+                entry.git_status = git_file_status;
+                changes.push(entry.path.clone());
+                edits.push(Edit::Insert(entry));
+            }
+        }
+
+        self.entries_by_path.edit(edits, &());
+        changes
     }
 
     fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
@@ -2139,13 +2114,14 @@ impl BackgroundScannerState {
         self.snapshot.insert_entry(entry, fs)
     }
 
+    #[must_use = "Changed paths must be used for diffing later"]
     fn populate_dir(
         &mut self,
         parent_path: Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
         fs: &dyn Fs,
-    ) {
+    ) -> Option<Vec<Arc<Path>>> {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
             .entries_by_path
@@ -2157,7 +2133,7 @@ impl BackgroundScannerState {
                 "populating a directory {:?} that has been removed",
                 parent_path
             );
-            return;
+            return None;
         };
 
         match parent_entry.kind {
@@ -2165,7 +2141,7 @@ impl BackgroundScannerState {
                 parent_entry.kind = EntryKind::Dir;
             }
             EntryKind::Dir => {}
-            _ => return,
+            _ => return None,
         }
 
         if let Some(ignore) = ignore {
@@ -2173,10 +2149,6 @@ impl BackgroundScannerState {
             self.snapshot
                 .ignores_by_parent_abs_path
                 .insert(abs_parent_path, (ignore, false));
-        }
-
-        if parent_path.file_name() == Some(&DOT_GIT) {
-            self.snapshot.build_repo(parent_path, fs);
         }
 
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
@@ -2197,6 +2169,11 @@ impl BackgroundScannerState {
             .entries_by_path
             .edit(entries_by_path_edits, &());
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
+
+        if parent_path.file_name() == Some(&DOT_GIT) {
+            return self.snapshot.build_repo(parent_path, fs);
+        }
+        None
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -2518,6 +2495,7 @@ pub struct Entry {
     pub mtime: SystemTime,
     pub is_symlink: bool,
     pub is_ignored: bool,
+    pub git_status: Option<GitFileStatus>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2546,9 +2524,6 @@ pub enum PathChange {
 pub struct GitRepositoryChange {
     /// The previous state of the repository, if it already existed.
     pub old_repository: Option<RepositoryEntry>,
-    /// Whether the content of the .git directory changed. This will be false
-    /// if only the repository's work directory changed.
-    pub git_dir_changed: bool,
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
@@ -2573,6 +2548,7 @@ impl Entry {
             mtime: metadata.mtime,
             is_symlink: metadata.is_symlink,
             is_ignored: false,
+            git_status: None,
         }
     }
 
@@ -2582,6 +2558,10 @@ impl Entry {
 
     pub fn is_file(&self) -> bool {
         matches!(self.kind, EntryKind::File(_))
+    }
+
+    pub fn git_status(&self) -> Option<GitFileStatus> {
+        self.git_status
     }
 }
 
@@ -2600,12 +2580,23 @@ impl sum_tree::Item for Entry {
             visible_file_count = 0;
         }
 
+        let mut statuses = GitStatuses::default();
+        match self.git_status {
+            Some(status) => match status {
+                GitFileStatus::Added => statuses.added = 1,
+                GitFileStatus::Modified => statuses.modified = 1,
+                GitFileStatus::Conflict => statuses.conflict = 1,
+            },
+            None => {}
+        }
+
         EntrySummary {
             max_path: self.path.clone(),
             count: 1,
             visible_count,
             file_count,
             visible_file_count,
+            statuses,
         }
     }
 }
@@ -2625,6 +2616,7 @@ pub struct EntrySummary {
     visible_count: usize,
     file_count: usize,
     visible_file_count: usize,
+    statuses: GitStatuses,
 }
 
 impl Default for EntrySummary {
@@ -2635,6 +2627,7 @@ impl Default for EntrySummary {
             visible_count: 0,
             file_count: 0,
             visible_file_count: 0,
+            statuses: Default::default(),
         }
     }
 }
@@ -2648,6 +2641,7 @@ impl sum_tree::Summary for EntrySummary {
         self.visible_count += rhs.visible_count;
         self.file_count += rhs.file_count;
         self.visible_file_count += rhs.visible_file_count;
+        self.statuses += rhs.statuses;
     }
 }
 
@@ -2807,6 +2801,7 @@ impl BackgroundScanner {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
+
         self.send_status_update(false, None);
 
         // Process any any FS events that occurred while performing the initial scan.
@@ -2862,13 +2857,15 @@ impl BackgroundScanner {
         self.update_ignore_statuses().await;
 
         {
-            let mut snapshot = &mut self.state.lock().snapshot;
+            let mut state = self.state.lock();
 
             if let Some(paths) = paths {
                 for path in paths {
-                    self.reload_repo_for_file_path(&path, &mut *snapshot, self.fs.as_ref());
+                    self.reload_git_repo(&path, &mut *state, self.fs.as_ref());
                 }
             }
+
+            let mut snapshot = &mut state.snapshot;
 
             let mut git_repositories = mem::take(&mut snapshot.git_repositories);
             git_repositories.retain(|work_directory_id, _| {
@@ -2993,14 +2990,18 @@ impl BackgroundScanner {
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
-        let (root_abs_path, root_char_bag, next_entry_id) = {
+        let (root_abs_path, root_char_bag, next_entry_id, repository) = {
             let snapshot = &self.state.lock().snapshot;
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
                 self.next_entry_id.clone(),
+                snapshot
+                    .local_repo_for_path(&job.path)
+                    .map(|(work_dir, repo)| (work_dir, repo.clone())),
             )
         };
+
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
         while let Some(child_abs_path) = child_paths.next().await {
             let child_abs_path: Arc<Path> = match child_abs_path {
@@ -3093,6 +3094,18 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+                if !child_entry.is_ignored {
+                    if let Some((repo_path, repo)) = &repository {
+                        if let Ok(path) = child_path.strip_prefix(&repo_path.0) {
+                            child_entry.git_status = repo
+                                .repo_ptr
+                                .lock()
+                                .status(&RepoPath(path.into()))
+                                .log_err()
+                                .flatten();
+                        }
+                    }
+                }
             }
 
             new_entries.push(child_entry);
@@ -3100,9 +3113,18 @@ impl BackgroundScanner {
 
         {
             let mut state = self.state.lock();
-            state.populate_dir(job.path.clone(), new_entries, new_ignore, self.fs.as_ref());
+            let changed_paths =
+                state.populate_dir(job.path.clone(), new_entries, new_ignore, self.fs.as_ref());
             if let Err(ix) = state.changed_paths.binary_search(&job.path) {
                 state.changed_paths.insert(ix, job.path.clone());
+            }
+            if let Some(changed_paths) = changed_paths {
+                util::extend_sorted(
+                    &mut state.changed_paths,
+                    changed_paths,
+                    usize::MAX,
+                    Ord::cmp,
+                )
             }
         }
 
@@ -3147,12 +3169,14 @@ impl BackgroundScanner {
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
         let mut event_paths = Vec::<Arc<Path>>::with_capacity(abs_paths.len());
+        let mut event_metadata = Vec::<_>::with_capacity(abs_paths.len());
         for (abs_path, metadata) in abs_paths.iter().zip(metadata.iter()) {
             if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                 if matches!(metadata, Ok(None)) || doing_recursive_update {
                     state.remove_path(path);
                 }
                 event_paths.push(path.into());
+                event_metadata.push(metadata);
             } else {
                 log::error!(
                     "unexpected event {:?} for root path {:?}",
@@ -3162,7 +3186,7 @@ impl BackgroundScanner {
             }
         }
 
-        for (path, metadata) in event_paths.iter().cloned().zip(metadata.into_iter()) {
+        for (path, metadata) in event_paths.iter().cloned().zip(event_metadata.into_iter()) {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
 
             match metadata {
@@ -3170,6 +3194,7 @@ impl BackgroundScanner {
                     let ignore_stack = state
                         .snapshot
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir);
+
                     let mut fs_entry = Entry::new(
                         path.clone(),
                         &metadata,
@@ -3177,6 +3202,24 @@ impl BackgroundScanner {
                         state.snapshot.root_char_bag,
                     );
                     fs_entry.is_ignored = ignore_stack.is_all();
+
+                    if !fs_entry.is_ignored {
+                        if !fs_entry.is_dir() {
+                            if let Some((work_dir, repo)) =
+                                state.snapshot.local_repo_for_path(&path)
+                            {
+                                if let Ok(path) = path.strip_prefix(work_dir.0) {
+                                    fs_entry.git_status = repo
+                                        .repo_ptr
+                                        .lock()
+                                        .status(&RepoPath(path.into()))
+                                        .log_err()
+                                        .flatten()
+                                }
+                            }
+                        }
+                    }
+
                     state.insert_entry(fs_entry, self.fs.as_ref());
 
                     if let Some(scan_queue_tx) = &scan_queue_tx {
@@ -3219,8 +3262,6 @@ impl BackgroundScanner {
             .components()
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
-            let scan_id = snapshot.scan_id;
-
             if let Some(repository) = snapshot.repository_for_work_directory(path) {
                 let entry = repository.work_directory.0;
                 snapshot.git_repositories.remove(&entry);
@@ -3230,113 +3271,80 @@ impl BackgroundScanner {
                     .remove(&RepositoryWorkDirectory(path.into()));
                 return Some(());
             }
-
-            let repo = snapshot.repository_for_path(&path)?;
-            let repo_path = repo.work_directory.relativize(&snapshot, &path)?;
-            let work_dir = repo.work_directory(snapshot)?;
-            let work_dir_id = repo.work_directory;
-
-            snapshot
-                .git_repositories
-                .update(&work_dir_id, |entry| entry.work_dir_scan_id = scan_id);
-
-            snapshot.repository_entries.update(&work_dir, |entry| {
-                entry
-                    .statuses
-                    .remove_range(&repo_path, &RepoPathDescendants(&repo_path))
-            });
         }
+
+        // TODO statuses
+        // Track when a .git is removed and iterate over the file system there
 
         Some(())
     }
 
-    fn reload_repo_for_file_path(
+    fn reload_git_repo(
         &self,
         path: &Path,
-        snapshot: &mut LocalSnapshot,
+        state: &mut BackgroundScannerState,
         fs: &dyn Fs,
     ) -> Option<()> {
-        let scan_id = snapshot.scan_id;
+        let scan_id = state.snapshot.scan_id;
 
         if path
             .components()
             .any(|component| component.as_os_str() == *DOT_GIT)
         {
             let (entry_id, repo_ptr) = {
-                let Some((entry_id, repo)) = snapshot.repo_for_metadata(&path) else {
+                let Some((entry_id, repo)) = state.snapshot.repo_for_metadata(&path) else {
                     let dot_git_dir = path.ancestors()
                     .skip_while(|ancestor| ancestor.file_name() != Some(&*DOT_GIT))
                     .next()?;
 
-                    snapshot.build_repo(dot_git_dir.into(), fs);
+                    let changed_paths =  state.snapshot.build_repo(dot_git_dir.into(), fs);
+                    if let Some(changed_paths) = changed_paths {
+                        util::extend_sorted(
+                            &mut state.changed_paths,
+                            changed_paths,
+                            usize::MAX,
+                            Ord::cmp,
+                        );
+                    }
+
                     return None;
                 };
                 if repo.git_dir_scan_id == scan_id {
                     return None;
                 }
+
                 (*entry_id, repo.repo_ptr.to_owned())
             };
 
-            let work_dir = snapshot
+            let work_dir = state
+                .snapshot
                 .entry_for_id(entry_id)
                 .map(|entry| RepositoryWorkDirectory(entry.path.clone()))?;
 
             let repo = repo_ptr.lock();
             repo.reload_index();
             let branch = repo.branch_name();
-            let statuses = repo.statuses().unwrap_or_default();
 
-            snapshot.git_repositories.update(&entry_id, |entry| {
-                entry.work_dir_scan_id = scan_id;
+            state.snapshot.git_repositories.update(&entry_id, |entry| {
                 entry.git_dir_scan_id = scan_id;
             });
 
-            snapshot.repository_entries.update(&work_dir, |entry| {
-                entry.branch = branch.map(Into::into);
-                entry.statuses = statuses;
-            });
-        } else {
-            if snapshot
-                .entry_for_path(&path)
-                .map(|entry| entry.is_ignored)
-                .unwrap_or(false)
-            {
-                self.remove_repo_path(&path, snapshot);
-                return None;
-            }
+            state
+                .snapshot
+                .snapshot
+                .repository_entries
+                .update(&work_dir, |entry| {
+                    entry.branch = branch.map(Into::into);
+                });
 
-            let repo = snapshot.repository_for_path(&path)?;
+            let changed_paths = state.snapshot.scan_statuses(repo.deref(), &work_dir);
 
-            let work_dir = repo.work_directory(snapshot)?;
-            let work_dir_id = repo.work_directory.clone();
-
-            let (local_repo, git_dir_scan_id) =
-                snapshot.git_repositories.update(&work_dir_id, |entry| {
-                    entry.work_dir_scan_id = scan_id;
-                    (entry.repo_ptr.clone(), entry.git_dir_scan_id)
-                })?;
-
-            // Short circuit if we've already scanned everything
-            if git_dir_scan_id == scan_id {
-                return None;
-            }
-
-            let mut repository = snapshot.repository_entries.remove(&work_dir)?;
-
-            for entry in snapshot.descendent_entries(false, false, path) {
-                let Some(repo_path) = repo.work_directory.relativize(snapshot, &entry.path) else {
-                    continue;
-                };
-
-                let status = local_repo.lock().status(&repo_path);
-                if let Some(status) = status {
-                    repository.statuses.insert(repo_path.clone(), status);
-                } else {
-                    repository.statuses.remove(&repo_path);
-                }
-            }
-
-            snapshot.repository_entries.insert(work_dir, repository)
+            util::extend_sorted(
+                &mut state.changed_paths,
+                changed_paths,
+                usize::MAX,
+                Ord::cmp,
+            )
         }
 
         Some(())
@@ -3501,7 +3509,6 @@ impl BackgroundScanner {
             if new_paths.item().map_or(false, |e| e.path < path.0) {
                 new_paths.seek_forward(&path, Bias::Left, &());
             }
-
             loop {
                 match (old_paths.item(), new_paths.item()) {
                     (Some(old_entry), Some(new_entry)) => {
@@ -3520,6 +3527,13 @@ impl BackgroundScanner {
                             }
                             Ordering::Equal => {
                                 if self.phase == EventsReceivedDuringInitialScan {
+                                    if old_entry.id != new_entry.id {
+                                        changes.push((
+                                            old_entry.path.clone(),
+                                            old_entry.id,
+                                            Removed,
+                                        ));
+                                    }
                                     // If the worktree was not fully initialized when this event was generated,
                                     // we can't know whether this entry was added during the scan or whether
                                     // it was merely updated.
@@ -3702,6 +3716,39 @@ impl<'a> Default for TraversalProgress<'a> {
     }
 }
 
+#[derive(Clone, Debug, Default, Copy)]
+struct GitStatuses {
+    added: usize,
+    modified: usize,
+    conflict: usize,
+}
+
+impl AddAssign for GitStatuses {
+    fn add_assign(&mut self, rhs: Self) {
+        self.added += rhs.added;
+        self.modified += rhs.modified;
+        self.conflict += rhs.conflict;
+    }
+}
+
+impl Sub for GitStatuses {
+    type Output = GitStatuses;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        GitStatuses {
+            added: self.added - rhs.added,
+            modified: self.modified - rhs.modified,
+            conflict: self.conflict - rhs.conflict,
+        }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for GitStatuses {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        *self += summary.statuses
+    }
+}
+
 pub struct Traversal<'a> {
     cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
     include_ignored: bool,
@@ -3803,6 +3850,14 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
     }
 }
 
+impl<'a, 'b> SeekTarget<'a, EntrySummary, (TraversalProgress<'a>, GitStatuses)>
+    for TraversalTarget<'b>
+{
+    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
+        self.cmp(&cursor_location.0, &())
+    }
+}
+
 struct ChildEntriesIter<'a> {
     parent_path: &'a Path,
     traversal: Traversal<'a>,
@@ -3851,6 +3906,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             mtime: Some(entry.mtime.into()),
             is_symlink: entry.is_symlink,
             is_ignored: entry.is_ignored,
+            git_status: entry.git_status.map(|status| status.to_proto()),
         }
     }
 }
@@ -3876,6 +3932,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 mtime: mtime.into(),
                 is_symlink: entry.is_symlink,
                 is_ignored: entry.is_ignored,
+                git_status: GitFileStatus::from_proto(entry.git_status),
             })
         } else {
             Err(anyhow!(
@@ -4656,7 +4713,7 @@ mod tests {
         log::info!("mutating fs");
         let mut files = Vec::new();
         let mut dirs = Vec::new();
-        for path in fs.as_fake().paths() {
+        for path in fs.as_fake().paths(false) {
             if path.starts_with(root_path) {
                 if fs.is_file(&path).await {
                     files.push(path);
@@ -4931,14 +4988,14 @@ mod tests {
 
             cx.read(|cx| {
                 let tree = tree.read(cx);
-                let (work_dir, repo) = tree.repositories().next().unwrap();
+                let (work_dir, _) = tree.repositories().next().unwrap();
                 assert_eq!(work_dir.as_ref(), Path::new("projects/project1"));
                 assert_eq!(
-                    repo.status_for_file(tree, Path::new("projects/project1/a")),
+                    tree.status_for_file(Path::new("projects/project1/a")),
                     Some(GitFileStatus::Modified)
                 );
                 assert_eq!(
-                    repo.status_for_file(tree, Path::new("projects/project1/b")),
+                    tree.status_for_file(Path::new("projects/project1/b")),
                     Some(GitFileStatus::Added)
                 );
             });
@@ -4952,14 +5009,14 @@ mod tests {
 
             cx.read(|cx| {
                 let tree = tree.read(cx);
-                let (work_dir, repo) = tree.repositories().next().unwrap();
+                let (work_dir, _) = tree.repositories().next().unwrap();
                 assert_eq!(work_dir.as_ref(), Path::new("projects/project2"));
                 assert_eq!(
-                    repo.status_for_file(tree, Path::new("projects/project2/a")),
+                    tree.status_for_file(Path::new("projects/project2/a")),
                     Some(GitFileStatus::Modified)
                 );
                 assert_eq!(
-                    repo.status_for_file(tree, Path::new("projects/project2/b")),
+                    tree.status_for_file(Path::new("projects/project2/b")),
                     Some(GitFileStatus::Added)
                 );
             });
@@ -5088,7 +5145,7 @@ mod tests {
         }
 
         #[gpui::test]
-        async fn test_git_status(cx: &mut TestAppContext) {
+        async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
             const IGNORE_RULE: &'static str = "**/target";
 
             let root = temp_tree(json!({
@@ -5131,6 +5188,7 @@ mod tests {
             const F_TXT: &'static str = "f.txt";
             const DOTGITIGNORE: &'static str = ".gitignore";
             const BUILD_FILE: &'static str = "target/build_file";
+            let project_path: &Path = &Path::new("project");
 
             let work_dir = root.path().join("project");
             let mut repo = git_init(work_dir.as_path());
@@ -5140,29 +5198,37 @@ mod tests {
             git_add(Path::new(DOTGITIGNORE), &repo);
             git_commit("Initial commit", &repo);
 
-            std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
-
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             // Check that the right git state is observed on startup
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
                 assert_eq!(snapshot.repository_entries.iter().count(), 1);
-                let (dir, repo) = snapshot.repository_entries.iter().next().unwrap();
+                let (dir, _) = snapshot.repository_entries.iter().next().unwrap();
                 assert_eq!(dir.0.as_ref(), Path::new("project"));
 
-                assert_eq!(repo.statuses.iter().count(), 3);
                 assert_eq!(
-                    repo.statuses.get(&Path::new(A_TXT).into()),
-                    Some(&GitFileStatus::Modified)
+                    snapshot.status_for_file(project_path.join(B_TXT)),
+                    Some(GitFileStatus::Added)
                 );
                 assert_eq!(
-                    repo.statuses.get(&Path::new(B_TXT).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot.status_for_file(project_path.join(F_TXT)),
+                    Some(GitFileStatus::Added)
                 );
+            });
+
+            std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
+
+            tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
+
+            tree.read_with(cx, |tree, _cx| {
+                let snapshot = tree.snapshot();
+
                 assert_eq!(
-                    repo.statuses.get(&Path::new(F_TXT).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot.status_for_file(project_path.join(A_TXT)),
+                    Some(GitFileStatus::Modified)
                 );
             });
 
@@ -5170,17 +5236,19 @@ mod tests {
             git_add(Path::new(B_TXT), &repo);
             git_commit("Committing modified and added", &repo);
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             // Check that repo only changes are tracked
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
-                let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-                assert_eq!(repo.statuses.iter().count(), 1);
                 assert_eq!(
-                    repo.statuses.get(&Path::new(F_TXT).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot.status_for_file(project_path.join(F_TXT)),
+                    Some(GitFileStatus::Added)
                 );
+
+                assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
+                assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
             });
 
             git_reset(0, &repo);
@@ -5189,25 +5257,20 @@ mod tests {
             std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
             std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             // Check that more complex repo changes are tracked
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
-                let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-                assert_eq!(repo.statuses.iter().count(), 3);
-                assert_eq!(repo.statuses.get(&Path::new(A_TXT).into()), None);
+                assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
                 assert_eq!(
-                    repo.statuses.get(&Path::new(B_TXT).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot.status_for_file(project_path.join(B_TXT)),
+                    Some(GitFileStatus::Added)
                 );
                 assert_eq!(
-                    repo.statuses.get(&Path::new(E_TXT).into()),
-                    Some(&GitFileStatus::Modified)
-                );
-                assert_eq!(
-                    repo.statuses.get(&Path::new(F_TXT).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot.status_for_file(project_path.join(E_TXT)),
+                    Some(GitFileStatus::Modified)
                 );
             });
 
@@ -5223,14 +5286,7 @@ mod tests {
             git_commit("Committing modified git ignore", &repo);
 
             tree.flush_fs_events(cx).await;
-
-            // Check that non-repo behavior is tracked
-            tree.read_with(cx, |tree, _cx| {
-                let snapshot = tree.snapshot();
-                let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
-
-                assert_eq!(repo.statuses.iter().count(), 0);
-            });
+            deterministic.run_until_parked();
 
             let mut renamed_dir_name = "first_directory/second_directory";
             const RENAMED_FILE: &'static str = "rf.txt";
@@ -5243,16 +5299,14 @@ mod tests {
             .unwrap();
 
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
-                let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
-
-                assert_eq!(repo.statuses.iter().count(), 1);
                 assert_eq!(
-                    repo.statuses
-                        .get(&Path::new(renamed_dir_name).join(RENAMED_FILE).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot
+                        .status_for_file(&project_path.join(renamed_dir_name).join(RENAMED_FILE)),
+                    Some(GitFileStatus::Added)
                 );
             });
 
@@ -5265,18 +5319,141 @@ mod tests {
             .unwrap();
 
             tree.flush_fs_events(cx).await;
+            deterministic.run_until_parked();
 
             tree.read_with(cx, |tree, _cx| {
                 let snapshot = tree.snapshot();
-                let (_, repo) = snapshot.repository_entries.iter().next().unwrap();
 
-                assert_eq!(repo.statuses.iter().count(), 1);
                 assert_eq!(
-                    repo.statuses
-                        .get(&Path::new(renamed_dir_name).join(RENAMED_FILE).into()),
-                    Some(&GitFileStatus::Added)
+                    snapshot.status_for_file(
+                        project_path
+                            .join(Path::new(renamed_dir_name))
+                            .join(RENAMED_FILE)
+                    ),
+                    Some(GitFileStatus::Added)
                 );
             });
+        }
+
+        #[gpui::test]
+        async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
+            let fs = FakeFs::new(cx.background());
+            fs.insert_tree(
+                "/root",
+                json!({
+                    ".git": {},
+                    "a": {
+                        "b": {
+                            "c1.txt": "",
+                            "c2.txt": "",
+                        },
+                        "d": {
+                            "e1.txt": "",
+                            "e2.txt": "",
+                            "e3.txt": "",
+                        }
+                    },
+                    "f": {
+                        "no-status.txt": ""
+                    },
+                    "g": {
+                        "h1.txt": "",
+                        "h2.txt": ""
+                    },
+
+                }),
+            )
+            .await;
+
+            fs.set_status_for_repo_via_git_operation(
+                &Path::new("/root/.git"),
+                &[
+                    (Path::new("a/b/c1.txt"), GitFileStatus::Added),
+                    (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
+                    (Path::new("g/h2.txt"), GitFileStatus::Conflict),
+                ],
+            );
+
+            let http_client = FakeHttpClient::with_404_response();
+            let client = cx.read(|cx| Client::new(http_client, cx));
+            let tree = Worktree::local(
+                client,
+                Path::new("/root"),
+                true,
+                fs.clone(),
+                Default::default(),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+
+            cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+                .await;
+
+            cx.foreground().run_until_parked();
+            let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new(""), Some(GitFileStatus::Conflict)),
+                    (Path::new("a"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/b"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f"), None),
+                    (Path::new("f/no-status.txt"), None),
+                    (Path::new("g"), Some(GitFileStatus::Conflict)),
+                    (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+                ],
+            );
+
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new("a/b"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d"), Some(GitFileStatus::Modified)),
+                    (Path::new("a/d/e1.txt"), None),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f"), None),
+                    (Path::new("f/no-status.txt"), None),
+                    (Path::new("g"), Some(GitFileStatus::Conflict)),
+                ],
+            );
+
+            check_propagated_statuses(
+                &snapshot,
+                &[
+                    (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+                    (Path::new("a/b/c2.txt"), None),
+                    (Path::new("a/d/e1.txt"), None),
+                    (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+                    (Path::new("f/no-status.txt"), None),
+                ],
+            );
+
+            #[track_caller]
+            fn check_propagated_statuses(
+                snapshot: &Snapshot,
+                expected_statuses: &[(&Path, Option<GitFileStatus>)],
+            ) {
+                let mut entries = expected_statuses
+                    .iter()
+                    .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
+                    .collect::<Vec<_>>();
+                snapshot.propagate_git_statuses(&mut entries);
+                assert_eq!(
+                    entries
+                        .iter()
+                        .map(|e| (e.path.as_ref(), e.git_status))
+                        .collect::<Vec<_>>(),
+                    expected_statuses
+                );
+            }
         }
 
         #[track_caller]
