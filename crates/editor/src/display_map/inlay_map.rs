@@ -32,7 +32,7 @@ pub struct InlayId(usize);
 pub struct InlayMap {
     snapshot: Mutex<InlaySnapshot>,
     next_inlay_id: usize,
-    pub(super) inlays: HashMap<InlayId, (InlayHintLocation, Inlay)>,
+    pub(super) inlays: HashMap<InlayId, Inlay>,
 }
 
 #[derive(Clone)]
@@ -212,10 +212,11 @@ impl<'a> Iterator for InlayChunks<'a> {
         };
 
         if self.output_offset == self.transforms.end(&()).0 {
+            self.inlay_chunks = None;
             self.transforms.next(&());
         }
 
-        Some(chunk)
+        Some(dbg!(chunk))
     }
 }
 
@@ -329,18 +330,18 @@ impl InlayMap {
     pub fn splice(
         &mut self,
         to_remove: HashSet<InlayId>,
-        to_insert: Vec<(InlayHintLocation, InlayProperties)>,
+        to_insert: Vec<InlayProperties>,
     ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
         let mut snapshot = self.snapshot.lock();
 
         let mut inlays = BTreeMap::new();
         let mut new_ids = Vec::new();
-        for (location, properties) in to_insert {
+        for properties in to_insert {
             let inlay = Inlay {
                 id: InlayId(post_inc(&mut self.next_inlay_id)),
                 properties,
             };
-            self.inlays.insert(inlay.id, (location, inlay.clone()));
+            self.inlays.insert(inlay.id, inlay.clone());
             new_ids.push(inlay.id);
 
             let buffer_point = inlay
@@ -357,7 +358,7 @@ impl InlayMap {
         }
 
         for inlay_id in to_remove {
-            if let Some((_, inlay)) = self.inlays.remove(&inlay_id) {
+            if let Some(inlay) = self.inlays.remove(&inlay_id) {
                 let buffer_point = inlay
                     .properties
                     .position
@@ -410,17 +411,17 @@ impl InlayMap {
             }
 
             if let Some(inlay) = inlay {
+                let prefix_suggestion_start = SuggestionPoint(new_transforms.summary().input.lines);
+                push_isomorphic(
+                    &mut new_transforms,
+                    snapshot
+                        .suggestion_snapshot
+                        .text_summary_for_range(prefix_suggestion_start..suggestion_point),
+                );
+
                 let new_start = InlayOffset(new_transforms.summary().output.len);
                 let new_end = InlayOffset(new_start.0 + inlay.properties.text.len());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                    let prefix_suggestion_start =
-                        SuggestionPoint(new_transforms.summary().input.lines);
-                    push_isomorphic(
-                        &mut new_transforms,
-                        snapshot
-                            .suggestion_snapshot
-                            .text_summary_for_range(prefix_suggestion_start..suggestion_point),
-                    );
                     let old_start = snapshot.to_offset(InlayPoint(
                         cursor.start().1 .1 .0 + (suggestion_point.0 - cursor.start().0 .0),
                     ));
@@ -460,6 +461,43 @@ impl InlayMap {
         snapshot.version += 1;
 
         (snapshot.clone(), inlay_edits.into_inner(), new_ids)
+    }
+
+    #[cfg(test)]
+    pub fn randomly_mutate(
+        &mut self,
+        rng: &mut rand::rngs::StdRng,
+    ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
+        use rand::seq::IteratorRandom;
+
+        let mut to_remove = HashSet::default();
+        let mut to_insert = Vec::default();
+        let snapshot = self.snapshot.lock();
+        for _ in 0..rng.gen_range(1..=5) {
+            if self.inlays.is_empty() || rng.gen() {
+                let buffer_snapshot = snapshot.buffer_snapshot();
+                let position = buffer_snapshot.random_byte_range(0, rng).start;
+                let len = rng.gen_range(1..=5);
+                let text = util::RandomCharIter::new(&mut *rng)
+                    .take(len)
+                    .collect::<String>();
+                log::info!(
+                    "creating inlay at buffer offset {} with text {:?}",
+                    position,
+                    text
+                );
+
+                to_insert.push(InlayProperties {
+                    position: buffer_snapshot.anchor_before(position),
+                    text: text.as_str().into(),
+                });
+            } else {
+                to_remove.insert(*self.inlays.keys().choose(rng).unwrap());
+            }
+        }
+
+        drop(snapshot);
+        self.splice(to_remove, to_insert)
     }
 }
 
@@ -741,16 +779,15 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, suggestion_map::SuggestionMap},
         MultiBuffer,
     };
     use gpui::AppContext;
-    use rand::rngs::StdRng;
+    use rand::prelude::*;
     use settings::SettingsStore;
+    use std::env;
     use text::Patch;
 
     #[gpui::test]
@@ -764,16 +801,10 @@ mod tests {
 
         let (inlay_snapshot, _, inlay_ids) = inlay_map.splice(
             HashSet::default(),
-            vec![(
-                InlayHintLocation {
-                    buffer_id: 0,
-                    excerpt_id: ExcerptId::default(),
-                },
-                InlayProperties {
-                    position: buffer.read(cx).read(cx).anchor_before(3),
-                    text: "|123|".into(),
-                },
-            )],
+            vec![InlayProperties {
+                position: buffer.read(cx).read(cx).anchor_before(3),
+                text: "|123|".into(),
+            }],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
         assert_eq!(
@@ -894,15 +925,22 @@ mod tests {
 
         let (mut fold_map, mut fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (suggestion_map, mut suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        let (inlay_map, mut inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
 
         for _ in 0..operations {
             let mut suggestion_edits = Patch::default();
+            let mut inlay_edits = Patch::default();
 
             let mut prev_inlay_text = inlay_snapshot.text();
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
-                0..=59 => {
+                0..=29 => {
+                    let (snapshot, edits, _) = inlay_map.randomly_mutate(&mut rng);
+                    dbg!(&edits);
+                    inlay_snapshot = snapshot;
+                    inlay_edits = Patch::new(edits);
+                }
+                30..=59 => {
                     for (new_fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
                         fold_snapshot = new_fold_snapshot;
                         let (_, edits) = suggestion_map.sync(fold_snapshot.clone(), fold_edits);
@@ -927,9 +965,10 @@ mod tests {
                 suggestion_map.sync(fold_snapshot.clone(), fold_edits);
             suggestion_snapshot = new_suggestion_snapshot;
             suggestion_edits = suggestion_edits.compose(new_suggestion_edits);
-            let (new_inlay_snapshot, inlay_edits) =
+            let (new_inlay_snapshot, new_inlay_edits) =
                 inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits.into_inner());
             inlay_snapshot = new_inlay_snapshot;
+            inlay_edits = inlay_edits.compose(new_inlay_edits);
 
             log::info!("buffer text: {:?}", buffer_snapshot.text());
             log::info!("folds text: {:?}", fold_snapshot.text());

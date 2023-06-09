@@ -307,13 +307,10 @@ impl DisplayMap {
             for hint in hints {
                 let hint_anchor =
                     buffer_snapshot.anchor_in_excerpt(location.excerpt_id, hint.position);
-                new_inlays.push((
-                    location,
-                    InlayProperties {
-                        position: hint_anchor,
-                        text: hint.text().trim_end().into(),
-                    },
-                ))
+                new_inlays.push(InlayProperties {
+                    position: hint_anchor,
+                    text: hint.text().trim_end().into(),
+                });
             }
         }
 
