@@ -19,6 +19,13 @@
     name: (_) @name) @item
 
 (program
+    (export_statement
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (_) @name) @item)))
+
+(program
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
