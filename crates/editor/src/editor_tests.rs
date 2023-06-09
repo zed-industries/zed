@@ -4921,7 +4921,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-
+    let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig {
             line_comment: Some("// ".into()),
@@ -4929,128 +4929,95 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_rust::language()),
     ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    let text = "
+    // If multiple selections intersect a line, the line is only toggled once.
+    cx.set_state(indoc! {"
         fn a() {
-            //b();
-            // c();
-            //  d();
+            «//b();
+            ˇ»// «c();
+            //ˇ»  d();
         }
-    "
-    .unindent();
+    "});
 
-    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
-    let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-    let (_, view) = cx.add_window(|cx| build_editor(buffer, cx));
+    cx.update_editor(|e, cx| e.toggle_comments(&ToggleComments::default(), cx));
 
-    view.update(cx, |editor, cx| {
-        // If multiple selections intersect a line, the line is only
-        // toggled once.
-        editor.change_selections(None, cx, |s| {
-            s.select_display_ranges([
-                DisplayPoint::new(1, 3)..DisplayPoint::new(2, 3),
-                DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
-            ])
-        });
-        editor.toggle_comments(&ToggleComments::default(), cx);
-        assert_eq!(
-            editor.text(cx),
-            "
-                fn a() {
-                    b();
-                    c();
-                     d();
-                }
-            "
-            .unindent()
-        );
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            «b();
+            c();
+            ˇ» d();
+        }
+    "});
 
-        // The comment prefix is inserted at the same column for every line
-        // in a selection.
-        editor.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)])
-        });
-        editor.toggle_comments(&ToggleComments::default(), cx);
-        assert_eq!(
-            editor.text(cx),
-            "
-                fn a() {
-                    // b();
-                    // c();
-                    //  d();
-                }
-            "
-            .unindent()
-        );
+    // The comment prefix is inserted at the same column for every line in a
+    // selection.
+    cx.update_editor(|e, cx| e.toggle_comments(&ToggleComments::default(), cx));
 
-        // If a selection ends at the beginning of a line, that line is not toggled.
-        editor.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)])
-        });
-        editor.toggle_comments(&ToggleComments::default(), cx);
-        assert_eq!(
-            editor.text(cx),
-            "
-                fn a() {
-                    // b();
-                    c();
-                    //  d();
-                }
-            "
-            .unindent()
-        );
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            // «b();
+            // c();
+            ˇ»//  d();
+        }
+    "});
 
-        // If a selection span a single line and is empty, the line is toggled.
-        editor.set_text(
-            "
+    // If a selection ends at the beginning of a line, that line is not toggled.
+    cx.set_selections_state(indoc! {"
+        fn a() {
+            // b();
+            «// c();
+        ˇ»    //  d();
+        }
+    "});
 
-            fn a() { }
+    cx.update_editor(|e, cx| e.toggle_comments(&ToggleComments::default(), cx));
 
-            "
-            .unindent(),
-            cx,
-        );
-        editor.change_selections(None, cx, |s| {
-            s.select_display_ranges([
-                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-            ])
-        });
-        editor.toggle_comments(&ToggleComments::default(), cx);
-        assert_eq!(
-            editor.text(cx),
-            "
-                //\x20
-                fn a() { }
-                //\x20
-            "
-            .unindent()
-        );
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            // b();
+            «c();
+        ˇ»    //  d();
+        }
+    "});
 
-        // If a selection span multiple lines, empty lines are not toggled.
-        editor.set_text(
-            "
+    // If a selection span a single line and is empty, the line is toggled.
+    cx.set_state(indoc! {"
+        fn a() {
+            a();
+            b();
+        ˇ
+        }
+    "});
 
-            fn a() { }
+    cx.update_editor(|e, cx| e.toggle_comments(&ToggleComments::default(), cx));
 
-            "
-            .unindent(),
-            cx,
-        );
-        editor.change_selections(None, cx, |s| {
-            s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0)])
-        });
-        editor.toggle_comments(&ToggleComments::default(), cx);
-        assert_eq!(
-            editor.text(cx),
-            "
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            a();
+            b();
+        //•ˇ
+        }
+    "});
 
-                // fn a() { }
+    // If a selection span multiple lines, empty lines are not toggled.
+    cx.set_state(indoc! {"
+        fn a() {
+            «a();
 
-            "
-            .unindent()
-        );
-    });
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(&ToggleComments::default(), cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            // «a();
+
+            // c();ˇ»
+        }
+    "});
 }
 
 #[gpui::test]
