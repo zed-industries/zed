@@ -310,7 +310,6 @@ impl InlayMap {
         drop(cursor);
 
         snapshot.suggestion_snapshot = suggestion_snapshot;
-        dbg!(new_transforms.items(&()));
         snapshot.transforms = new_transforms;
 
         (snapshot.clone(), Default::default())
@@ -555,10 +554,61 @@ impl InlaySnapshot {
     }
 
     pub fn text_summary_for_range(&self, range: Range<InlayPoint>) -> TextSummary {
-        // TODO kb copied from suggestion_map
-        self.suggestion_snapshot.text_summary_for_range(
-            self.to_suggestion_point(range.start)..self.to_suggestion_point(range.end),
-        )
+        let mut summary = TextSummary::default();
+
+        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+        cursor.seek(&range.start, Bias::Right, &());
+
+        let overshoot = range.start.0 - cursor.start().0 .0;
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => {
+                let suggestion_start = cursor.start().1 .0;
+                let suffix_start = SuggestionPoint(suggestion_start + overshoot);
+                let suffix_end = SuggestionPoint(
+                    suggestion_start
+                        + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0),
+                );
+                summary = self
+                    .suggestion_snapshot
+                    .text_summary_for_range(suffix_start..suffix_end);
+                cursor.next(&());
+            }
+            Some(Transform::Inlay(inlay)) => {
+                let text = &inlay.properties.text;
+                let suffix_start = text.point_to_offset(overshoot);
+                let suffix_end = text.point_to_offset(
+                    cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0,
+                );
+                summary = text.cursor(suffix_start).summary(suffix_end);
+                cursor.next(&());
+            }
+            None => {}
+        }
+
+        if range.end > cursor.start().0 {
+            summary += cursor
+                .summary::<_, TransformSummary>(&range.end, Bias::Right, &())
+                .output;
+
+            let overshoot = range.end.0 - cursor.start().0 .0;
+            match cursor.item() {
+                Some(Transform::Isomorphic(transform)) => {
+                    let prefix_start = cursor.start().1;
+                    let prefix_end = SuggestionPoint(prefix_start.0 + overshoot);
+                    summary += self
+                        .suggestion_snapshot
+                        .text_summary_for_range(prefix_start..prefix_end);
+                }
+                Some(Transform::Inlay(inlay)) => {
+                    let text = &inlay.properties.text;
+                    let prefix_end = text.point_to_offset(overshoot);
+                    summary += text.cursor(0).summary::<TextSummary>(prefix_end);
+                }
+                None => {}
+            }
+        }
+
+        summary
     }
 
     pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
@@ -579,8 +629,6 @@ impl InlaySnapshot {
         text_highlights: Option<&'a TextHighlights>,
         suggestion_highlight: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
-        dbg!(self.transforms.items(&()));
-
         let mut cursor = self.transforms.cursor::<(InlayOffset, SuggestionOffset)>();
         cursor.seek(&range.start, Bias::Right, &());
 
