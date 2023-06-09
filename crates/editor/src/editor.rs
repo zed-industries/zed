@@ -7102,7 +7102,7 @@ impl Editor {
 
         let mut new_selections_by_buffer = HashMap::default();
         for selection in editor.selections.all::<usize>(cx) {
-            for (buffer, mut range) in
+            for (buffer, mut range, _) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
                 if selection.reversed {
