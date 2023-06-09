@@ -78,6 +78,7 @@ impl View for CollabTitlebarItem {
         let user = self.user_store.read(cx).current_user();
         let peer_id = self.client.peer_id();
         if let Some(((user, peer_id), room)) = user
+            .as_ref()
             .zip(peer_id)
             .zip(ActiveCall::global(cx).read(cx).room().cloned())
         {
