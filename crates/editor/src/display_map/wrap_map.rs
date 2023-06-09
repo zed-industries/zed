@@ -766,7 +766,7 @@ impl WrapSnapshot {
                 let suggestion_point = self
                     .tab_snapshot
                     .inlay_snapshot
-                    .to_suggestion_point(inlay_point, Bias::Left);
+                    .to_suggestion_point(inlay_point);
                 let fold_point = self
                     .tab_snapshot
                     .inlay_snapshot

@@ -423,7 +423,7 @@ impl DisplaySnapshot {
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let inlay_point = self.tab_snapshot.to_inlay_point(tab_point, bias).0;
-        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point, bias);
+        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point);
         let fold_point = self.suggestion_snapshot.to_fold_point(suggestion_point);
         fold_point.to_buffer_point(&self.fold_snapshot)
     }
@@ -838,7 +838,7 @@ impl DisplayPoint {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0);
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let inlay_point = map.tab_snapshot.to_inlay_point(tab_point, bias).0;
-        let suggestion_point = map.inlay_snapshot.to_suggestion_point(inlay_point, bias);
+        let suggestion_point = map.inlay_snapshot.to_suggestion_point(inlay_point);
         let fold_point = map.suggestion_snapshot.to_fold_point(suggestion_point);
         fold_point.to_buffer_offset(&map.fold_snapshot)
     }

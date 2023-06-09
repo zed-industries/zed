@@ -331,7 +331,7 @@ impl TabSnapshot {
 
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
         let inlay_point = self.to_inlay_point(point, bias).0;
-        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point, bias);
+        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point);
         let fold_point = self
             .inlay_snapshot
             .suggestion_snapshot

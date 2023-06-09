@@ -48,6 +48,12 @@ enum Transform {
     Inlay(Inlay),
 }
 
+impl Transform {
+    fn is_inlay(&self) -> bool {
+        matches!(self, Self::Inlay(_))
+    }
+}
+
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
@@ -425,16 +431,29 @@ impl InlayMap {
 
 impl InlaySnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        // TODO kb copied from suggestion_map
         self.suggestion_snapshot.buffer_snapshot()
     }
 
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
-        // TODO kb copied from suggestion_map
-        self.to_inlay_point(
-            self.suggestion_snapshot
-                .to_point(super::suggestion_map::SuggestionOffset(offset.0)),
-        )
+        let mut cursor = self
+            .transforms
+            .cursor::<(InlayOffset, (InlayPoint, SuggestionOffset))>();
+        cursor.seek(&offset, Bias::Right, &());
+        let overshoot = offset.0 - cursor.start().0 .0;
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => {
+                let suggestion_offset_start = cursor.start().1 .1;
+                let suggestion_offset_end = SuggestionOffset(suggestion_offset_start.0 + overshoot);
+                let suggestion_start = self.suggestion_snapshot.to_point(suggestion_offset_start);
+                let suggestion_end = self.suggestion_snapshot.to_point(suggestion_offset_end);
+                InlayPoint(cursor.start().1 .0 .0 + (suggestion_end.0 - suggestion_start.0))
+            }
+            Some(Transform::Inlay(inlay)) => {
+                let overshoot = inlay.properties.text.offset_to_point(overshoot);
+                InlayPoint(cursor.start().1 .0 .0 + overshoot)
+            }
+            None => self.max_point(),
+        }
     }
 
     pub fn len(&self) -> InlayOffset {
@@ -446,22 +465,43 @@ impl InlaySnapshot {
     }
 
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
-        // TODO kb copied from suggestion_map
-        InlayOffset(
-            self.suggestion_snapshot
-                .to_offset(self.to_suggestion_point(point, Bias::Left))
-                .0,
-        )
+        let mut cursor = self
+            .transforms
+            .cursor::<(InlayPoint, (InlayOffset, SuggestionPoint))>();
+        cursor.seek(&point, Bias::Right, &());
+        let overshoot = point.0 - cursor.start().0 .0;
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => {
+                let suggestion_point_start = cursor.start().1 .1;
+                let suggestion_point_end = SuggestionPoint(suggestion_point_start.0 + overshoot);
+                let suggestion_start = self.suggestion_snapshot.to_offset(suggestion_point_start);
+                let suggestion_end = self.suggestion_snapshot.to_offset(suggestion_point_end);
+                InlayOffset(cursor.start().1 .0 .0 + (suggestion_end.0 - suggestion_start.0))
+            }
+            Some(Transform::Inlay(inlay)) => {
+                let overshoot = inlay.properties.text.point_to_offset(overshoot);
+                InlayOffset(cursor.start().1 .0 .0 + overshoot)
+            }
+            None => self.len(),
+        }
     }
 
     pub fn chars_at(&self, start: InlayPoint) -> impl '_ + Iterator<Item = char> {
-        self.suggestion_snapshot
-            .chars_at(self.to_suggestion_point(start, Bias::Left))
+        self.chunks(self.to_offset(start)..self.len(), false, None, None)
+            .flat_map(|chunk| chunk.text.chars())
     }
 
-    // TODO kb what to do with bias?
-    pub fn to_suggestion_point(&self, point: InlayPoint, _: Bias) -> SuggestionPoint {
-        SuggestionPoint(point.0)
+    pub fn to_suggestion_point(&self, point: InlayPoint) -> SuggestionPoint {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+        cursor.seek(&point, Bias::Right, &());
+        let overshoot = point.0 - cursor.start().0 .0;
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => {
+                SuggestionPoint(cursor.start().1 .0 + overshoot)
+            }
+            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            None => self.suggestion_snapshot.max_point(),
+        }
     }
 
     pub fn to_suggestion_offset(&self, offset: InlayOffset) -> SuggestionOffset {
@@ -478,22 +518,46 @@ impl InlaySnapshot {
     }
 
     pub fn to_inlay_point(&self, point: SuggestionPoint) -> InlayPoint {
-        InlayPoint(point.0)
+        let mut cursor = self.transforms.cursor::<(SuggestionPoint, InlayPoint)>();
+        // TODO kb is the bias right? should we have an external one instead?
+        cursor.seek(&point, Bias::Right, &());
+        let overshoot = point.0 - cursor.start().0 .0;
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => InlayPoint(cursor.start().1 .0 + overshoot),
+            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            None => self.max_point(),
+        }
     }
 
     pub fn clip_point(&self, point: InlayPoint, bias: Bias) -> InlayPoint {
-        // TODO kb copied from suggestion_map
-        self.to_inlay_point(
-            self.suggestion_snapshot
-                .clip_point(self.to_suggestion_point(point, bias), bias),
-        )
+        let mut cursor = self.transforms.cursor::<InlayPoint>();
+        cursor.seek(&point, bias, &());
+        match cursor.item() {
+            Some(Transform::Isomorphic(_)) => return point,
+            Some(Transform::Inlay(_)) => {}
+            None => cursor.prev(&()),
+        }
+
+        while cursor
+            .item()
+            .map_or(false, |transform| transform.is_inlay())
+        {
+            match bias {
+                Bias::Left => cursor.prev(&()),
+                Bias::Right => cursor.next(&()),
+            }
+        }
+
+        match bias {
+            Bias::Left => cursor.end(&()),
+            Bias::Right => *cursor.start(),
+        }
     }
 
     pub fn text_summary_for_range(&self, range: Range<InlayPoint>) -> TextSummary {
         // TODO kb copied from suggestion_map
         self.suggestion_snapshot.text_summary_for_range(
-            self.to_suggestion_point(range.start, Bias::Left)
-                ..self.to_suggestion_point(range.end, Bias::Left),
+            self.to_suggestion_point(range.start)..self.to_suggestion_point(range.end),
         )
     }
 

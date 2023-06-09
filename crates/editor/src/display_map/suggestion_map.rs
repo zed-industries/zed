@@ -56,6 +56,7 @@ impl SuggestionPoint {
     }
 }
 
+
 #[derive(Clone, Debug)]
 pub struct Suggestion<T> {
     pub position: T,
