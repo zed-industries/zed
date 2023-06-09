@@ -2216,23 +2216,26 @@ impl Editor {
                                 let comment_delimiter =
                                     language.line_comment_prefix().filter(|_| is_cursor);
                                 let comment_delimiter = if let Some(delimiter) = comment_delimiter {
-                                    let mut first_non_whitespace = 0;
                                     buffer
                                         .buffer_line_for_row(start_point.row)
                                         .is_some_and(|(snapshot, range)| {
-                                            snapshot
+                                            let mut index_of_first_non_whitespace = 0;
+                                            let line_starts_with_comment = snapshot
                                                 .chars_for_range(range)
                                                 .skip_while(|c| {
                                                     let should_skip = c.is_whitespace();
                                                     if should_skip {
-                                                        first_non_whitespace += 1;
+                                                        index_of_first_non_whitespace += 1;
                                                     }
                                                     should_skip
                                                 })
                                                 .take(delimiter.len())
-                                                .eq(delimiter.chars())
-                                                && first_non_whitespace + delimiter.len()
-                                                    <= start_point.column as usize
+                                                .eq(delimiter.chars());
+                                            let cursor_is_placed_after_comment_marker =
+                                                index_of_first_non_whitespace + delimiter.len()
+                                                    <= start_point.column as usize;
+                                            line_starts_with_comment
+                                                && cursor_is_placed_after_comment_marker
                                         })
                                         .then(|| delimiter.clone())
                                 } else {
