@@ -1118,7 +1118,7 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &AppContext,
-    ) -> Option<(ModelHandle<Buffer>, usize)> {
+    ) -> Option<(ModelHandle<Buffer>, usize, ExcerptId)> {
         let snapshot = self.read(cx);
         let offset = point.to_offset(&snapshot);
         let mut cursor = snapshot.excerpts.cursor::<usize>();
@@ -1132,7 +1132,7 @@ impl MultiBuffer {
             let buffer_point = excerpt_start + offset - *cursor.start();
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
 
-            (buffer, buffer_point)
+            (buffer, buffer_point, excerpt.id)
         })
     }
 
@@ -1387,7 +1387,7 @@ impl MultiBuffer {
         cx: &'a AppContext,
     ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
-            .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
+            .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
     }
 
     pub fn settings_at<'a, T: ToOffset>(
@@ -1397,7 +1397,7 @@ impl MultiBuffer {
     ) -> &'a LanguageSettings {
         let mut language = None;
         let mut file = None;
-        if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
+        if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
             let buffer = buffer.read(cx);
             language = buffer.language_at(offset);
             file = buffer.file();

@@ -285,7 +285,7 @@ pub fn initialize_workspace(
                                 let feedback_info_text = cx.add_view(|_| FeedbackInfoText::new());
                                 toolbar.add_item(feedback_info_text, cx);
                                 let lsp_log_item =
-                                    cx.add_view(|_| lsp_log::LspLogToolbarItemView::new());
+                                    cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
                                 toolbar.add_item(lsp_log_item, cx);
                             })
                         });

@@ -125,8 +125,17 @@ impl SyntaxLayerContent {
 #[derive(Debug)]
 pub struct SyntaxLayerInfo<'a> {
     pub depth: usize,
-    pub node: Node<'a>,
     pub language: &'a Arc<Language>,
+    tree: &'a Tree,
+    offset: (usize, tree_sitter::Point),
+}
+
+#[derive(Clone)]
+pub struct OwnedSyntaxLayerInfo {
+    pub depth: usize,
+    pub language: Arc<Language>,
+    tree: tree_sitter::Tree,
+    offset: (usize, tree_sitter::Point),
 }
 
 #[derive(Debug, Clone)]
@@ -664,8 +673,9 @@ impl SyntaxSnapshot {
             text,
             [SyntaxLayerInfo {
                 language,
+                tree,
                 depth: 0,
-                node: tree.root_node(),
+                offset: (0, tree_sitter::Point::new(0, 0)),
             }]
             .into_iter(),
             query,
@@ -728,9 +738,10 @@ impl SyntaxSnapshot {
             while let Some(layer) = cursor.item() {
                 if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
                     let info = SyntaxLayerInfo {
+                        tree,
                         language,
                         depth: layer.depth,
-                        node: tree.root_node_with_offset(
+                        offset: (
                             layer.range.start.to_offset(buffer),
                             layer.range.start.to_point(buffer).to_ts_point(),
                         ),
@@ -766,13 +777,8 @@ impl<'a> SyntaxMapCaptures<'a> {
             grammars: Vec::new(),
             active_layer_count: 0,
         };
-        for SyntaxLayerInfo {
-            language,
-            depth,
-            node,
-        } in layers
-        {
-            let grammar = match &language.grammar {
+        for layer in layers {
+            let grammar = match &layer.language.grammar {
                 Some(grammar) => grammar,
                 None => continue,
             };
@@ -789,7 +795,7 @@ impl<'a> SyntaxMapCaptures<'a> {
             };
 
             cursor.set_byte_range(range.clone());
-            let captures = cursor.captures(query, node, TextProvider(text));
+            let captures = cursor.captures(query, layer.node(), TextProvider(text));
             let grammar_index = result
                 .grammars
                 .iter()
@@ -799,7 +805,7 @@ impl<'a> SyntaxMapCaptures<'a> {
                     result.grammars.len() - 1
                 });
             let mut layer = SyntaxMapCapturesLayer {
-                depth,
+                depth: layer.depth,
                 grammar_index,
                 next_capture: None,
                 captures,
@@ -889,13 +895,8 @@ impl<'a> SyntaxMapMatches<'a> {
         query: fn(&Grammar) -> Option<&Query>,
     ) -> Self {
         let mut result = Self::default();
-        for SyntaxLayerInfo {
-            language,
-            depth,
-            node,
-        } in layers
-        {
-            let grammar = match &language.grammar {
+        for layer in layers {
+            let grammar = match &layer.language.grammar {
                 Some(grammar) => grammar,
                 None => continue,
             };
@@ -912,7 +913,7 @@ impl<'a> SyntaxMapMatches<'a> {
             };
 
             cursor.set_byte_range(range.clone());
-            let matches = cursor.matches(query, node, TextProvider(text));
+            let matches = cursor.matches(query, layer.node(), TextProvider(text));
             let grammar_index = result
                 .grammars
                 .iter()
@@ -922,7 +923,7 @@ impl<'a> SyntaxMapMatches<'a> {
                     result.grammars.len() - 1
                 });
             let mut layer = SyntaxMapMatchesLayer {
-                depth,
+                depth: layer.depth,
                 grammar_index,
                 matches,
                 next_pattern_index: 0,
@@ -1290,7 +1291,28 @@ fn splice_included_ranges(
     ranges
 }
 
+impl OwnedSyntaxLayerInfo {
+    pub fn node(&self) -> Node {
+        self.tree
+            .root_node_with_offset(self.offset.0, self.offset.1)
+    }
+}
+
 impl<'a> SyntaxLayerInfo<'a> {
+    pub fn to_owned(&self) -> OwnedSyntaxLayerInfo {
+        OwnedSyntaxLayerInfo {
+            tree: self.tree.clone(),
+            offset: self.offset,
+            depth: self.depth,
+            language: self.language.clone(),
+        }
+    }
+
+    pub fn node(&self) -> Node<'a> {
+        self.tree
+            .root_node_with_offset(self.offset.0, self.offset.1)
+    }
+
     pub(crate) fn override_id(&self, offset: usize, text: &text::BufferSnapshot) -> Option<u32> {
         let text = TextProvider(text.as_rope());
         let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
@@ -1299,7 +1321,7 @@ impl<'a> SyntaxLayerInfo<'a> {
         query_cursor.set_byte_range(offset..offset);
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
-        for mat in query_cursor.matches(&config.query, self.node, text) {
+        for mat in query_cursor.matches(&config.query, self.node(), text) {
             for capture in mat.captures {
                 if !config.values.contains_key(&capture.index) {
                     continue;
@@ -2328,8 +2350,11 @@ mod tests {
         let reference_layers = reference_syntax_map.layers(&buffer);
         for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter())
         {
-            assert_eq!(edited_layer.node.to_sexp(), reference_layer.node.to_sexp());
-            assert_eq!(edited_layer.node.range(), reference_layer.node.range());
+            assert_eq!(
+                edited_layer.node().to_sexp(),
+                reference_layer.node().to_sexp()
+            );
+            assert_eq!(edited_layer.node().range(), reference_layer.node().range());
         }
     }
 
@@ -2411,8 +2436,11 @@ mod tests {
         let reference_layers = reference_syntax_map.layers(&buffer);
         for (edited_layer, reference_layer) in layers.into_iter().zip(reference_layers.into_iter())
         {
-            assert_eq!(edited_layer.node.to_sexp(), reference_layer.node.to_sexp());
-            assert_eq!(edited_layer.node.range(), reference_layer.node.range());
+            assert_eq!(
+                edited_layer.node().to_sexp(),
+                reference_layer.node().to_sexp()
+            );
+            assert_eq!(edited_layer.node().range(), reference_layer.node().range());
         }
     }
 
@@ -2563,13 +2591,13 @@ mod tests {
                 mutated_layers.into_iter().zip(reference_layers.into_iter())
             {
                 assert_eq!(
-                    edited_layer.node.to_sexp(),
-                    reference_layer.node.to_sexp(),
+                    edited_layer.node().to_sexp(),
+                    reference_layer.node().to_sexp(),
                     "different layer at step {i}"
                 );
                 assert_eq!(
-                    edited_layer.node.range(),
-                    reference_layer.node.range(),
+                    edited_layer.node().range(),
+                    reference_layer.node().range(),
                     "different layer at step {i}"
                 );
             }
@@ -2709,10 +2737,8 @@ mod tests {
             expected_layers.len(),
             "wrong number of layers"
         );
-        for (i, (SyntaxLayerInfo { node, .. }, expected_s_exp)) in
-            layers.iter().zip(expected_layers.iter()).enumerate()
-        {
-            let actual_s_exp = node.to_sexp();
+        for (i, (layer, expected_s_exp)) in layers.iter().zip(expected_layers.iter()).enumerate() {
+            let actual_s_exp = layer.node().to_sexp();
             assert!(
                 string_contains_sequence(
                     &actual_s_exp,
