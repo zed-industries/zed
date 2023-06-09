@@ -1325,6 +1325,7 @@ dependencies = [
  "serde_derive",
  "settings",
  "theme",
+ "theme_selector",
  "util",
  "workspace",
 ]

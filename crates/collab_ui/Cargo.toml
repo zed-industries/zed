@@ -37,6 +37,7 @@ picker = { path = "../picker" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 theme = { path = "../theme" }
+theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 
