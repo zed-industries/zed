@@ -1102,7 +1102,7 @@ mod tests {
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
         log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
         log::info!("InlaysMap text: {:?}", inlay_snapshot.text());
         let (tab_map, _) = TabMap::new(inlay_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);

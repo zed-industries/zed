@@ -96,7 +96,7 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
+    pub fn snapshot(&mut self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (fold_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
@@ -249,7 +249,7 @@ impl DisplayMap {
     }
 
     pub fn replace_suggestion<T>(
-        &self,
+        &mut self,
         new_suggestion: Option<Suggestion<T>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Suggestion<FoldOffset>>
