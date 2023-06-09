@@ -104,6 +104,8 @@ spec:
                   key: secret
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
+            - name: RUST_BACKTRACE
+              value: "1"
             - name: RUST_LOG
               value: ${RUST_LOG}
             - name: LOG_JSON
