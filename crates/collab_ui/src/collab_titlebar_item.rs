@@ -99,7 +99,7 @@ impl View for CollabTitlebarItem {
             right_container.add_child(self.render_user_menu_button(&theme, avatar, cx));
         } else {
             right_container.add_children(self.render_connection_status(status, cx));
-            right_container.add_child(self.render_sign_in_button(&theme, cx));
+            right_container.add_child(self.render_user_menu_button(&theme, None, cx));
         }
 
         Stack::new()
@@ -298,42 +298,28 @@ impl CollabTitlebarItem {
     }
 
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
-        let theme = theme::current(cx).clone();
-        let avatar_style = theme.workspace.titlebar.leader_avatar.clone();
-        let item_style = theme.context_menu.item.disabled_style().clone();
         self.user_menu.update(cx, |user_menu, cx| {
-            let items = if let Some(user) = self.user_store.read(cx).current_user() {
+            let items = if let Some(_) = self.user_store.read(cx).current_user() {
                 vec![
-                    ContextMenuItem::Static(Box::new(move |_| {
-                        Flex::row()
-                            .with_children(user.avatar.clone().map(|avatar| {
-                                Self::render_face(
-                                    avatar,
-                                    avatar_style.clone(),
-                                    Color::transparent_black(),
-                                )
-                            }))
-                            .with_child(Label::new(
-                                user.github_login.clone(),
-                                item_style.label.clone(),
-                            ))
-                            .contained()
-                            .with_style(item_style.container)
-                            .into_any()
-                    })),
-                    ContextMenuItem::action("Sign out", SignOut),
+                    ContextMenuItem::action("Settings", SignIn),
+                    ContextMenuItem::action("Theme", theme_selector::Toggle),
+                    ContextMenuItem::separator(),
                     ContextMenuItem::action(
-                        "Send Feedback",
+                        "Share Feedback",
                         feedback::feedback_editor::GiveFeedback,
                     ),
+                    ContextMenuItem::action("Sign out", SignOut),
                 ]
             } else {
                 vec![
-                    ContextMenuItem::action("Sign in", SignIn),
+                    ContextMenuItem::action("Settings", SignIn),
+                    ContextMenuItem::action("Theme", theme_selector::Toggle),
+                    ContextMenuItem::separator(),
                     ContextMenuItem::action(
-                        "Send Feedback",
+                        "Share Feedback",
                         feedback::feedback_editor::GiveFeedback,
                     ),
+                    ContextMenuItem::action("Sign in", SignIn),
                 ]
             };
 
