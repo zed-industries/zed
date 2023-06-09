@@ -268,17 +268,18 @@ impl InlayMap {
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let mut snapshot = self.snapshot.lock();
 
-        if snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
-            snapshot.version += 1;
+        let mut new_snapshot = snapshot.clone();
+        if new_snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
+            new_snapshot.version += 1;
         }
 
-        let mut new_transforms = SumTree::new();
+        new_snapshot.transforms = SumTree::new();
         let mut cursor = snapshot.transforms.cursor::<SuggestionOffset>();
         let mut suggestion_edits = suggestion_edits.iter().peekable();
 
         while let Some(suggestion_edit) = suggestion_edits.next() {
             if suggestion_edit.old.start >= *cursor.start() {
-                new_transforms.push_tree(
+                new_snapshot.transforms.push_tree(
                     cursor.slice(&suggestion_edit.old.start, Bias::Right, &()),
                     &(),
                 );
@@ -288,7 +289,7 @@ impl InlayMap {
                 cursor.seek_forward(&suggestion_edit.old.end, Bias::Right, &());
             }
 
-            let transform_start = SuggestionOffset(new_transforms.summary().input.len);
+            let transform_start = SuggestionOffset(new_snapshot.transforms.summary().input.len);
             let mut transform_end = suggestion_edit.new.end;
             if suggestion_edits
                 .peek()
@@ -298,7 +299,7 @@ impl InlayMap {
                 cursor.next(&());
             }
             push_isomorphic(
-                &mut new_transforms,
+                &mut new_snapshot.transforms,
                 suggestion_snapshot.text_summary_for_range(
                     suggestion_snapshot.to_point(transform_start)
                         ..suggestion_snapshot.to_point(transform_end),
@@ -306,13 +307,21 @@ impl InlayMap {
             );
         }
 
-        new_transforms.push_tree(cursor.suffix(&()), &());
+        new_snapshot.transforms.push_tree(cursor.suffix(&()), &());
+        new_snapshot.suggestion_snapshot = suggestion_snapshot;
         drop(cursor);
 
-        snapshot.suggestion_snapshot = suggestion_snapshot;
-        snapshot.transforms = new_transforms;
+        let mut inlay_edits = Vec::new();
+        for suggestion_edit in suggestion_edits {
+            let old = snapshot.to_inlay_offset(suggestion_edit.old.start)
+                ..snapshot.to_inlay_offset(suggestion_edit.old.end);
+            let new = new_snapshot.to_inlay_offset(suggestion_edit.new.start)
+                ..new_snapshot.to_inlay_offset(suggestion_edit.new.end);
+            inlay_edits.push(Edit { old, new })
+        }
 
-        (snapshot.clone(), Default::default())
+        *snapshot = new_snapshot.clone();
+        (new_snapshot, inlay_edits)
     }
 
     pub fn splice(
@@ -513,6 +522,18 @@ impl InlaySnapshot {
             }
             Some(Transform::Inlay(inlay)) => cursor.start().1,
             None => self.suggestion_snapshot.len(),
+        }
+    }
+
+    pub fn to_inlay_offset(&self, offset: SuggestionOffset) -> InlayOffset {
+        let mut cursor = self.transforms.cursor::<(SuggestionOffset, InlayOffset)>();
+        // TODO kb is the bias right? should we have an external one instead?
+        cursor.seek(&offset, Bias::Right, &());
+        let overshoot = offset.0 - cursor.start().0 .0;
+        match cursor.item() {
+            Some(Transform::Isomorphic(transform)) => InlayOffset(cursor.start().1 .0 + overshoot),
+            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            None => self.len(),
         }
     }
 
