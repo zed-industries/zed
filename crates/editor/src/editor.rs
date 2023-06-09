@@ -2702,7 +2702,7 @@ impl Editor {
                 editor
                     .update(&mut cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
-                            display_map.splice_inlay_hints(&new_hints, cx);
+                            display_map.splice_inlays(&new_hints, cx);
                         });
                     })
                     .log_err()

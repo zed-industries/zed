@@ -285,20 +285,29 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn splice_inlay_hints(
+    pub fn splice_inlays(
         &mut self,
         new_hints: &HashMap<InlayHintLocation, Vec<project::InlayHint>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let multi_buffer = self.buffer.read(cx);
-        let multi_snapshot = multi_buffer.snapshot(cx);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.fold_map.read(buffer_snapshot.clone(), edits);
+        let (snapshot, edits) = self.suggestion_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
 
-        let mut hints_to_add = Vec::new();
+        let mut new_inlays = Vec::new();
         for (&location, hints) in new_hints {
             for hint in hints {
                 let hint_anchor =
-                    multi_snapshot.anchor_in_excerpt(location.excerpt_id, hint.position);
-                hints_to_add.push((
+                    buffer_snapshot.anchor_in_excerpt(location.excerpt_id, hint.position);
+                new_inlays.push((
                     location,
                     InlayProperties {
                         position: hint_anchor,
@@ -308,11 +317,16 @@ impl DisplayMap {
             }
         }
 
-        self.inlay_map.splice(
+        let (snapshot, edits, _) = self.inlay_map.splice(
             // TODO kb this is wrong, calc diffs in the editor instead.
             self.inlay_map.inlays.keys().copied().collect(),
-            hints_to_add,
+            new_inlays,
         );
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {

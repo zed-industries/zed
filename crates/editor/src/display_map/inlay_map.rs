@@ -23,6 +23,7 @@ use parking_lot::Mutex;
 use project::InlayHint;
 use rand::Rng;
 use sum_tree::{Bias, Cursor, SumTree};
+use text::Patch;
 use util::post_inc;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -372,10 +373,11 @@ impl InlayMap {
             }
         }
 
+        let mut inlay_edits = Patch::default();
         let mut new_transforms = SumTree::new();
         let mut cursor = snapshot
             .transforms
-            .cursor::<(InlayPoint, SuggestionPoint)>();
+            .cursor::<(InlayPoint, (SuggestionPoint, InlayOffset))>();
         for ((inlay_point, inlay_id), inlay) in inlays {
             new_transforms.push_tree(cursor.slice(&inlay_point, Bias::Right, &()), &());
             while let Some(transform) = cursor.item() {
@@ -387,6 +389,11 @@ impl InlayMap {
                             cursor.next(&());
                         } else {
                             if inlay.id == inlay_id.0 {
+                                let new_start = InlayOffset(new_transforms.summary().output.len);
+                                inlay_edits.push(Edit {
+                                    old: cursor.start().1 .1..cursor.end(&()).1 .1,
+                                    new: new_start..new_start,
+                                });
                                 cursor.next(&());
                             }
                             break;
@@ -396,11 +403,14 @@ impl InlayMap {
             }
 
             if let Some(inlay) = inlay {
+                let new_start = InlayOffset(new_transforms.summary().output.len);
+                let new_end = InlayOffset(new_start.0 + inlay.properties.text.len());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                     let prefix = inlay_point.0 - cursor.start().0 .0;
                     if !prefix.is_zero() {
-                        let prefix_suggestion_start = cursor.start().1;
-                        let prefix_suggestion_end = SuggestionPoint(cursor.start().1 .0 + prefix);
+                        let prefix_suggestion_start = cursor.start().1 .0;
+                        let prefix_suggestion_end =
+                            SuggestionPoint(cursor.start().1 .0 .0 + prefix);
                         new_transforms.push(
                             Transform::Isomorphic(
                                 snapshot.suggestion_snapshot.text_summary_for_range(
@@ -413,8 +423,8 @@ impl InlayMap {
 
                     new_transforms.push(Transform::Inlay(inlay), &());
 
-                    let suffix_suggestion_start = SuggestionPoint(cursor.start().1 .0 + prefix);
-                    let suffix_suggestion_end = cursor.end(&()).1;
+                    let suffix_suggestion_start = SuggestionPoint(cursor.start().1 .0 .0 + prefix);
+                    let suffix_suggestion_end = cursor.end(&()).1 .0;
                     new_transforms.push(
                         Transform::Isomorphic(snapshot.suggestion_snapshot.text_summary_for_range(
                             suffix_suggestion_start..suffix_suggestion_end,
@@ -426,6 +436,12 @@ impl InlayMap {
                 } else {
                     new_transforms.push(Transform::Inlay(inlay), &());
                 }
+
+                let old_start = snapshot.to_offset(inlay_point);
+                inlay_edits.push(Edit {
+                    old: old_start..old_start,
+                    new: new_start..new_end,
+                });
             }
         }
 
@@ -434,7 +450,7 @@ impl InlayMap {
         snapshot.transforms = new_transforms;
         snapshot.version += 1;
 
-        (snapshot.clone(), Vec::new(), new_ids)
+        (snapshot.clone(), inlay_edits.into_inner(), new_ids)
     }
 }
 
