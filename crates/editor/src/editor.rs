@@ -5480,7 +5480,7 @@ impl Editor {
                     let mut all_selection_lines_are_comments = true;
 
                     for row in start_row..=end_row {
-                        if snapshot.is_line_blank(row) {
+                        if snapshot.is_line_blank(row) && start_row < end_row {
                             continue;
                         }
 
