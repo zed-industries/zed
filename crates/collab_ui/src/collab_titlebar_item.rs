@@ -92,10 +92,10 @@ impl View for CollabTitlebarItem {
 
         let status = workspace.read(cx).client().status();
         let status = &*status.borrow();
-
         if matches!(status, client::Status::Connected { .. }) {
             right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
-            right_container.add_child(self.render_user_menu_button(&theme, cx));
+            let avatar = user.as_ref().map(|user| user.avatar.clone()).flatten();
+            right_container.add_child(self.render_user_menu_button(&theme, avatar, cx));
         } else {
             right_container.add_children(self.render_connection_status(status, cx));
             right_container.add_child(self.render_sign_in_button(&theme, cx));
@@ -504,24 +504,31 @@ impl CollabTitlebarItem {
     fn render_user_menu_button(
         &self,
         theme: &Theme,
+        avatar: Option<Arc<ImageData>>,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
-
+        let avatar_style = &theme.workspace.titlebar.leader_avatar;
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
                     let style = titlebar.call_control.style_for(state, false);
-                    Svg::new("icons/ellipsis_14.svg")
-                        .with_color(style.color)
-                        .constrained()
-                        .with_width(style.icon_width)
-                        .aligned()
-                        .constrained()
-                        .with_width(style.button_width)
-                        .with_height(style.button_width)
-                        .contained()
-                        .with_style(style.container)
+
+                    if let Some(avatar_img) = avatar {
+                        Self::render_face(avatar_img, *avatar_style, Color::transparent_black())
+                    } else {
+                        Svg::new("icons/ellipsis_14.svg")
+                            .with_color(style.color)
+                            .constrained()
+                            .with_width(style.icon_width)
+                            .aligned()
+                            .constrained()
+                            .with_width(style.button_width)
+                            .with_height(style.button_width)
+                            .contained()
+                            .with_style(style.container)
+                            .into_any()
+                    }
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {
