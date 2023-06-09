@@ -31,7 +31,7 @@ pub struct InlayId(usize);
 pub struct InlayMap {
     snapshot: Mutex<InlaySnapshot>,
     next_inlay_id: usize,
-    inlays: HashMap<InlayId, (InlayHintLocation, Inlay)>,
+    pub(super) inlays: HashMap<InlayId, (InlayHintLocation, Inlay)>,
 }
 
 #[derive(Clone)]

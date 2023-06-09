@@ -2825,7 +2825,6 @@ impl Project {
 
             language_server
                 .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
-                    let this = this.downgrade();
                     move |(), mut cx| async move {
                         let this = this
                             .upgrade(&cx)

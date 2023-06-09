@@ -6,7 +6,8 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    Anchor, AnchorRangeExt, InlayHintLocation, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    display_map::inlay_map::InlayProperties, Anchor, AnchorRangeExt, InlayHintLocation,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
@@ -284,37 +285,34 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn set_inlay_hints(
+    pub fn splice_inlay_hints(
         &mut self,
         new_hints: &HashMap<InlayHintLocation, Vec<project::InlayHint>>,
         cx: &mut ModelContext<Self>,
     ) {
-        // TODO kb map this to Anchor and set to the map
         let multi_buffer = self.buffer.read(cx);
+        let multi_snapshot = multi_buffer.snapshot(cx);
 
-        // multi_buffer.anchor_in_excerpt(excerpt_id, hint.position);
-        // TODO kb !!! rework things from buffer_id to excerpt_id
-        // let hint_anchor = multi_buffer
-        //     .snapshot(cx)
-        //     .anchor_in_excerpt(excerpt_id, hint.position);
+        let mut hints_to_add = Vec::new();
+        for (&location, hints) in new_hints {
+            for hint in hints {
+                let hint_anchor =
+                    multi_snapshot.anchor_in_excerpt(location.excerpt_id, hint.position);
+                hints_to_add.push((
+                    location,
+                    InlayProperties {
+                        position: hint_anchor,
+                        text: hint.text().trim_end().into(),
+                    },
+                ))
+            }
+        }
 
-        // self.inlay_map.splice(
-        //     vec![],
-        //     new_hints
-        //         .into_iter()
-        //         .filter_map(|hint| {
-        //             let snapshot = buffers_to_local_id
-        //                 .get(&hint.buffer_id)?
-        //                 .read(cx)
-        //                 .snapshot();
-        //             Some(Inlay {
-        //                 position: hint.position,
-        //                 text: hint.text().trim_end().into(),
-        //             })
-        //         })
-        //         .collect(),
-        // )
-        todo!("TODO kb")
+        self.inlay_map.splice(
+            // TODO kb this is wrong, calc diffs in the editor instead.
+            self.inlay_map.inlays.keys().copied().collect(),
+            hints_to_add,
+        );
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {

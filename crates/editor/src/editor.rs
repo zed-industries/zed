@@ -2698,12 +2698,11 @@ impl Editor {
                 }
             }
 
-            // TODO kb wrong, need a splice here instead
             if !new_hints.is_empty() {
                 editor
                     .update(&mut cx, |editor, cx| {
                         editor.display_map.update(cx, |display_map, cx| {
-                            display_map.set_inlay_hints(&new_hints, cx);
+                            display_map.splice_inlay_hints(&new_hints, cx);
                         });
                     })
                     .log_err()
