@@ -5022,6 +5022,57 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             "
             .unindent()
         );
+
+        // If a selection span a single line and is empty, the line is toggled.
+        editor.set_text(
+            "
+
+            fn a() { }
+
+            "
+            .unindent(),
+            cx,
+        );
+        editor.change_selections(None, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+            ])
+        });
+        editor.toggle_comments(&ToggleComments::default(), cx);
+        assert_eq!(
+            editor.text(cx),
+            "
+                //\x20
+                fn a() { }
+                //\x20
+            "
+            .unindent()
+        );
+
+        // If a selection span multiple lines, empty lines are not toggled.
+        editor.set_text(
+            "
+
+            fn a() { }
+
+            "
+            .unindent(),
+            cx,
+        );
+        editor.change_selections(None, cx, |s| {
+            s.select_display_ranges([DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0)])
+        });
+        editor.toggle_comments(&ToggleComments::default(), cx);
+        assert_eq!(
+            editor.text(cx),
+            "
+
+                // fn a() { }
+
+            "
+            .unindent()
+        );
     });
 }
 
