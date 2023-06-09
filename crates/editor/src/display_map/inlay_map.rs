@@ -549,7 +549,7 @@ impl InlaySnapshot {
 
         match bias {
             Bias::Left => cursor.end(&()),
-            Bias::Right => *cursor.start(),
+            Bias::Right => cursor.start(),
         }
     }
 
@@ -618,8 +618,13 @@ impl InlaySnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        // TODO kb copied from suggestion_map
-        self.suggestion_snapshot.line_len(row)
+        let line_start = self.to_offset(InlayPoint::new(row, 0)).0;
+        let line_end = if row >= self.max_point().row() {
+            self.len().0
+        } else {
+            self.to_offset(InlayPoint::new(row + 1, 0)).0 - 1
+        };
+        (line_end - line_start) as u32
     }
 
     pub fn chunks<'a>(
