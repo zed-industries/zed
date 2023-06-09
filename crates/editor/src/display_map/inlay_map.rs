@@ -297,12 +297,12 @@ impl InlayMap {
                 transform_end += cursor.end(&()) - suggestion_edit.old.end;
                 cursor.next(&());
             }
-            new_transforms.push(
-                Transform::Isomorphic(suggestion_snapshot.text_summary_for_range(
+            push_isomorphic(
+                &mut new_transforms,
+                suggestion_snapshot.text_summary_for_range(
                     suggestion_snapshot.to_point(transform_start)
                         ..suggestion_snapshot.to_point(transform_end),
-                )),
-                &(),
+                ),
             );
         }
 
@@ -549,7 +549,7 @@ impl InlaySnapshot {
 
         match bias {
             Bias::Left => cursor.end(&()),
-            Bias::Right => cursor.start(),
+            Bias::Right => *cursor.start(),
         }
     }
 
@@ -661,6 +661,22 @@ impl InlaySnapshot {
         self.chunks(Default::default()..self.len(), false, None, None)
             .map(|chunk| chunk.text)
             .collect()
+    }
+}
+
+fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
+    let mut summary = Some(summary);
+    sum_tree.update_last(
+        |transform| {
+            if let Transform::Isomorphic(transform) = transform {
+                *transform += summary.take().unwrap();
+            }
+        },
+        &(),
+    );
+
+    if let Some(summary) = summary {
+        sum_tree.push(Transform::Isomorphic(summary), &());
     }
 }
 
