@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod lsp_log_tests;
-
 use collections::HashMap;
 use editor::Editor;
 use futures::{channel::mpsc, StreamExt};
@@ -27,7 +24,7 @@ use workspace::{
 const SEND_LINE: &str = "// Send:\n";
 const RECEIVE_LINE: &str = "// Receive:\n";
 
-struct LogStore {
+pub struct LogStore {
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
     io_tx: mpsc::UnboundedSender<(WeakModelHandle<Project>, LanguageServerId, bool, String)>,
 }
@@ -49,10 +46,10 @@ struct LanguageServerRpcState {
 }
 
 pub struct LspLogView {
+    pub(crate) editor: ViewHandle<Editor>,
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
-    editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
 }
 
@@ -68,13 +65,13 @@ enum MessageKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct LogMenuItem {
-    server_id: LanguageServerId,
-    server_name: LanguageServerName,
-    worktree: ModelHandle<Worktree>,
-    rpc_trace_enabled: bool,
-    rpc_trace_selected: bool,
-    logs_selected: bool,
+pub(crate) struct LogMenuItem {
+    pub server_id: LanguageServerId,
+    pub server_name: LanguageServerName,
+    pub worktree: ModelHandle<Worktree>,
+    pub rpc_trace_enabled: bool,
+    pub rpc_trace_selected: bool,
+    pub logs_selected: bool,
 }
 
 actions!(log, [OpenLanguageServerLogs]);
@@ -114,7 +111,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl LogStore {
-    fn new(cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(cx: &mut ModelContext<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
         let this = Self {
             projects: HashMap::default(),
@@ -320,7 +317,7 @@ impl LogStore {
 }
 
 impl LspLogView {
-    fn new(
+    pub fn new(
         project: ModelHandle<Project>,
         log_store: ModelHandle<LogStore>,
         cx: &mut ViewContext<Self>,
@@ -360,7 +357,7 @@ impl LspLogView {
         editor
     }
 
-    fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
+    pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
         let log_store = self.log_store.read(cx);
         let state = log_store.projects.get(&self.project.downgrade())?;
         let mut rows = self

@@ -83,7 +83,7 @@ ctor.workspace = true
 env_logger.workspace = true
 rand.workspace = true
 unindent.workspace = true
-tree-sitter = "0.20"
+tree-sitter.workspace = true
 tree-sitter-rust = "0.20"
 tree-sitter-html = "0.19"
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }

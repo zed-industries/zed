@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
+use crate::lsp_log::LogMenuItem;
+
 use super::*;
+use futures::StreamExt;
 use gpui::{serde_json::json, TestAppContext};
-use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig};
-use project::FakeFs;
+use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageServerName};
+use project::{FakeFs, Project};
 use settings::SettingsStore;
 
 #[gpui::test]

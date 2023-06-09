@@ -2242,7 +2242,7 @@ fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> Str
     buffer.read_with(cx, |buffer, _| {
         let snapshot = buffer.snapshot();
         let layers = snapshot.syntax.layers(buffer.as_text_snapshot());
-        layers[0].node.to_sexp()
+        layers[0].node().to_sexp()
     })
 }
 
