@@ -116,9 +116,9 @@
   // How to perform a buffer format. This setting can take two values:
   //
   // 1. Format code using the current language server:
-  //     "format_on_save": "language_server"
+  //     "formatter": "language_server"
   // 2. Format code using an external command:
-  //     "format_on_save": {
+  //     "formatter": {
   //       "external": {
   //         "command": "prettier",
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
