@@ -1,7 +1,7 @@
 use editor::{scroll::autoscroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
     actions,
-    elements::{Empty, Label, MouseEventHandler, UniformList, UniformListState},
+    elements::{Empty, Label, MouseEventHandler, ScrollTarget, UniformList, UniformListState},
     fonts::TextStyle,
     platform::MouseButton,
     AppContext, Element, Entity, ModelHandle, View, ViewContext, ViewHandle,
@@ -26,14 +26,24 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct SyntaxTreeView {
-    editor: Option<(ViewHandle<Editor>, gpui::Subscription)>,
-    buffer: Option<(ModelHandle<Buffer>, usize, ExcerptId)>,
-    layer: Option<OwnedSyntaxLayerInfo>,
-    hover_y: Option<f32>,
+    editor: Option<EditorState>,
+    mouse_y: Option<f32>,
     line_height: Option<f32>,
     list_state: UniformListState,
-    active_descendant_ix: Option<usize>,
-    highlighted_active_descendant: bool,
+    selected_descendant_ix: Option<usize>,
+    hovered_descendant_ix: Option<usize>,
+}
+
+struct EditorState {
+    editor: ViewHandle<Editor>,
+    active_buffer: Option<BufferState>,
+    _subscription: gpui::Subscription,
+}
+
+struct BufferState {
+    buffer: ModelHandle<Buffer>,
+    excerpt_id: ExcerptId,
+    active_layer: Option<OwnedSyntaxLayerInfo>,
 }
 
 impl SyntaxTreeView {
@@ -41,12 +51,10 @@ impl SyntaxTreeView {
         let mut this = Self {
             list_state: UniformListState::default(),
             editor: None,
-            buffer: None,
-            layer: None,
-            hover_y: None,
+            mouse_y: None,
             line_height: None,
-            active_descendant_ix: None,
-            highlighted_active_descendant: false,
+            hovered_descendant_ix: None,
+            selected_descendant_ix: None,
         };
 
         this.workspace_updated(workspace.active_item(cx), cx);
@@ -76,112 +84,157 @@ impl SyntaxTreeView {
     }
 
     fn set_editor(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
-        if let Some((current_editor, _)) = &self.editor {
-            if current_editor == &editor {
+        if let Some(state) = &self.editor {
+            if state.editor == editor {
                 return;
             }
             editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights::<Self>(cx);
+                editor.clear_background_highlights::<Self>(cx)
             });
         }
 
-        let subscription = cx.subscribe(&editor, |this, editor, event, cx| {
-            let selection_changed = match event {
-                editor::Event::Reparsed => false,
-                editor::Event::SelectionsChanged { .. } => true,
+        let subscription = cx.subscribe(&editor, |this, _, event, cx| {
+            let reset_layer = match event {
+                editor::Event::Reparsed => true,
+                editor::Event::SelectionsChanged { .. } => false,
                 _ => return,
             };
-            this.editor_updated(&editor, selection_changed, cx);
+            this.editor_updated(reset_layer, cx);
         });
 
-        self.editor_updated(&editor, true, cx);
-        self.editor = Some((editor, subscription));
+        self.editor = Some(EditorState {
+            editor,
+            _subscription: subscription,
+            active_buffer: None,
+        });
+        self.editor_updated(true, cx);
     }
 
-    fn editor_updated(
-        &mut self,
-        editor: &ViewHandle<Editor>,
-        selection_changed: bool,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let editor = editor.read(cx);
-        if selection_changed {
-            let cursor = editor.selections.last::<usize>(cx).end;
-            self.buffer = editor.buffer().read(cx).point_to_buffer_offset(cursor, cx);
-            self.layer = self.buffer.as_ref().and_then(|(buffer, offset, _)| {
-                buffer
-                    .read(cx)
-                    .snapshot()
-                    .syntax_layer_at(*offset)
-                    .map(|l| l.to_owned())
+    fn editor_updated(&mut self, reset_layer: bool, cx: &mut ViewContext<Self>) -> Option<()> {
+        // Find which excerpt the cursor is in, and the position within that excerpted buffer.
+        let editor_state = self.editor.as_mut()?;
+        let editor = &editor_state.editor.read(cx);
+        let selection_range = editor.selections.last::<usize>(cx).range();
+        let multibuffer = editor.buffer().read(cx);
+        let (buffer, range, excerpt_id) = multibuffer
+            .range_to_buffer_ranges(selection_range, cx)
+            .pop()?;
+
+        // If the cursor has moved into a different excerpt, retrieve a new syntax layer
+        // from that buffer.
+        let buffer_state = editor_state
+            .active_buffer
+            .get_or_insert_with(|| BufferState {
+                buffer: buffer.clone(),
+                excerpt_id,
+                active_layer: None,
             });
+        if reset_layer
+            || buffer_state.buffer != buffer
+            || buffer_state.excerpt_id != buffer_state.excerpt_id
+        {
+            buffer_state.buffer = buffer.clone();
+            buffer_state.excerpt_id = excerpt_id;
+            buffer_state.active_layer = None;
         }
+
+        // Within the active layer, find the syntax node under the cursor,
+        // and scroll to it.
+        let layer = match &mut buffer_state.active_layer {
+            Some(layer) => layer,
+            None => {
+                let layer = buffer.read(cx).snapshot().syntax_layer_at(0)?.to_owned();
+                buffer_state.active_layer.insert(layer)
+            }
+        };
+        let mut cursor = layer.node().walk();
+        while cursor.goto_first_child_for_byte(range.start).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that contains the range.
+        loop {
+            let node_range = cursor.node().byte_range();
+            if node_range.start <= range.start && node_range.end >= range.end {
+                break;
+            }
+            if !cursor.goto_parent() {
+                break;
+            }
+        }
+
+        let descendant_ix = cursor.descendant_index();
+        self.selected_descendant_ix = Some(descendant_ix);
+        self.list_state.scroll_to(ScrollTarget::Show(descendant_ix));
+
         cx.notify();
+        Some(())
+    }
+
+    fn handle_click(&mut self, y: f32, cx: &mut ViewContext<SyntaxTreeView>) -> Option<()> {
+        let line_height = self.line_height?;
+        let ix = ((self.list_state.scroll_top() + y) / line_height) as usize;
+
+        self.update_editor_with_range_for_descendant_ix(ix, cx, |editor, range, cx| {
+            editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
+                selections.select_ranges(vec![range]);
+            });
+        });
+        Some(())
     }
 
     fn hover_state_changed(&mut self, cx: &mut ViewContext<SyntaxTreeView>) {
-        if let Some((y, line_height)) = self.hover_y.zip(self.line_height) {
+        if let Some((y, line_height)) = self.mouse_y.zip(self.line_height) {
             let ix = ((self.list_state.scroll_top() + y) / line_height) as usize;
-            if self.active_descendant_ix != Some(ix) {
-                self.active_descendant_ix = Some(ix);
-                self.highlighted_active_descendant = false;
+            if self.hovered_descendant_ix != Some(ix) {
+                self.hovered_descendant_ix = Some(ix);
+                self.update_editor_with_range_for_descendant_ix(ix, cx, |editor, range, cx| {
+                    editor.clear_background_highlights::<Self>(cx);
+                    editor.highlight_background::<Self>(
+                        vec![range],
+                        |theme| theme.editor.document_highlight_write_background,
+                        cx,
+                    );
+                });
                 cx.notify();
             }
         }
     }
 
-    fn handle_click(&mut self, y: f32, cx: &mut ViewContext<SyntaxTreeView>) {
-        if let Some(line_height) = self.line_height {
-            let ix = ((self.list_state.scroll_top() + y) / line_height) as usize;
-            if let Some(layer) = &self.layer {
-                let mut cursor = layer.node().walk();
-                cursor.goto_descendant(ix);
-                let node = cursor.node();
-                self.update_editor_with_node_range(node, cx, |editor, range, cx| {
-                    editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
-                        selections.select_ranges(vec![range]);
-                    });
-                });
-            }
-        }
-    }
-
-    fn update_editor_with_node_range(
+    fn update_editor_with_range_for_descendant_ix(
         &self,
-        node: tree_sitter::Node,
+        descendant_ix: usize,
         cx: &mut ViewContext<Self>,
         mut f: impl FnMut(&mut Editor, Range<Anchor>, &mut ViewContext<Editor>),
-    ) {
-        let range = node.byte_range();
-        if let Some((editor, _)) = &self.editor {
-            if let Some((buffer, _, excerpt_id)) = &self.buffer {
-                let buffer = &buffer.read(cx);
-                let multibuffer = editor.read(cx).buffer();
-                let multibuffer = multibuffer.read(cx).snapshot(cx);
-                let start =
-                    multibuffer.anchor_in_excerpt(*excerpt_id, buffer.anchor_before(range.start));
-                let end =
-                    multibuffer.anchor_in_excerpt(*excerpt_id, buffer.anchor_after(range.end));
-                editor.update(cx, |editor, cx| {
-                    f(editor, start..end, cx);
-                });
-            }
-        }
-    }
+    ) -> Option<()> {
+        let editor_state = self.editor.as_ref()?;
+        let buffer_state = editor_state.active_buffer.as_ref()?;
+        let layer = buffer_state.active_layer.as_ref()?;
 
-    fn node_is_active(&mut self, node: tree_sitter::Node, cx: &mut ViewContext<Self>) {
-        if self.highlighted_active_descendant {
-            return;
-        }
-        self.highlighted_active_descendant = true;
-        self.update_editor_with_node_range(node, cx, |editor, range, cx| {
-            editor.clear_background_highlights::<Self>(cx);
-            editor.highlight_background::<Self>(
-                vec![range],
-                |theme| theme.editor.document_highlight_write_background,
-                cx,
-            );
+        // Find the node.
+        let mut cursor = layer.node().walk();
+        cursor.goto_descendant(descendant_ix);
+        let node = cursor.node();
+        let range = node.byte_range();
+
+        // Build a text anchor range.
+        let buffer = buffer_state.buffer.read(cx);
+        let range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+
+        // Build a multibuffer anchor range.
+        let multibuffer = editor_state.editor.read(cx).buffer();
+        let multibuffer = multibuffer.read(cx).snapshot(cx);
+        let excerpt_id = buffer_state.excerpt_id;
+        let range = multibuffer.anchor_in_excerpt(excerpt_id, range.start)
+            ..multibuffer.anchor_in_excerpt(excerpt_id, range.end);
+
+        // Update the editor with the anchor range.
+        editor_state.editor.update(cx, |editor, cx| {
+            f(editor, range, cx);
         });
+        Some(())
     }
 }
 
@@ -215,18 +268,27 @@ impl View for SyntaxTreeView {
             font_properties: Default::default(),
             underline: Default::default(),
         };
-        self.line_height = Some(cx.font_cache().line_height(font_size));
 
-        self.hover_state_changed(cx);
+        let line_height = Some(cx.font_cache().line_height(font_size));
+        if line_height != self.line_height {
+            self.line_height = line_height;
+            self.hover_state_changed(cx);
+        }
 
-        if let Some(layer) = &self.layer {
+        if let Some(layer) = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.active_buffer.as_ref())
+            .and_then(|buffer| buffer.active_layer.as_ref())
+        {
             let layer = layer.clone();
-            return MouseEventHandler::<Self, Self>::new(0, cx, move |_, cx| {
+            return MouseEventHandler::<Self, Self>::new(0, cx, move |state, cx| {
+                let list_hovered = state.hovered();
                 UniformList::new(
                     self.list_state.clone(),
                     layer.node().descendant_count(),
                     cx,
-                    move |this, range, items, cx| {
+                    move |this, range, items, _| {
                         let mut cursor = layer.node().walk();
                         let mut descendant_ix = range.start as usize;
                         cursor.goto_descendant(descendant_ix);
@@ -243,19 +305,19 @@ impl View for SyntaxTreeView {
                                 }
                             } else {
                                 let node = cursor.node();
-                                let is_hovered = Some(descendant_ix) == this.active_descendant_ix;
-                                if is_hovered {
-                                    this.node_is_active(node, cx);
-                                }
+                                let hovered = Some(descendant_ix) == this.hovered_descendant_ix;
+                                let selected = Some(descendant_ix) == this.selected_descendant_ix;
                                 items.push(
                                     Label::new(node.kind(), style.clone())
                                         .contained()
-                                        .with_background_color(if is_hovered {
+                                        .with_background_color(if selected {
+                                            editor_theme.selection.selection
+                                        } else if hovered && list_hovered {
                                             editor_theme.active_line_background
                                         } else {
                                             Default::default()
                                         })
-                                        .with_padding_left(depth as f32 * 10.0)
+                                        .with_padding_left(depth as f32 * 18.0)
                                         .into_any(),
                                 );
                                 descendant_ix += 1;
@@ -271,13 +333,15 @@ impl View for SyntaxTreeView {
             })
             .on_move(move |event, this, cx| {
                 let y = event.position.y() - event.region.origin_y();
-                this.hover_y = Some(y);
+                this.mouse_y = Some(y);
                 this.hover_state_changed(cx);
             })
             .on_click(MouseButton::Left, move |event, this, cx| {
                 let y = event.position.y() - event.region.origin_y();
                 this.handle_click(y, cx);
             })
+            .contained()
+            .with_background_color(editor_theme.background)
             .into_any();
         }
 

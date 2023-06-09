@@ -1140,7 +1140,7 @@ impl MultiBuffer {
         &self,
         range: Range<T>,
         cx: &AppContext,
-    ) -> Vec<(ModelHandle<Buffer>, Range<usize>)> {
+    ) -> Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)> {
         let snapshot = self.read(cx);
         let start = range.start.to_offset(&snapshot);
         let end = range.end.to_offset(&snapshot);
@@ -1165,7 +1165,7 @@ impl MultiBuffer {
             let start = excerpt_start + (cmp::max(start, *cursor.start()) - *cursor.start());
             let end = excerpt_start + (cmp::min(end, end_before_newline) - *cursor.start());
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
-            result.push((buffer, start..end));
+            result.push((buffer, start..end, excerpt.id));
             cursor.next(&());
         }
 
@@ -5196,7 +5196,7 @@ mod tests {
                     .range_to_buffer_ranges(start_ix..end_ix, cx);
                 let excerpted_buffers_text = excerpted_buffer_ranges
                     .iter()
-                    .map(|(buffer, buffer_range)| {
+                    .map(|(buffer, buffer_range, _)| {
                         buffer
                             .read(cx)
                             .text_for_range(buffer_range.clone())
