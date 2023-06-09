@@ -153,6 +153,7 @@ pub struct InlayChunks<'a> {
     inlay_chunks: Option<text::Chunks<'a>>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
+    highlight_style: Option<HighlightStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +209,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 self.output_offset.0 += chunk.len();
                 Chunk {
                     text: chunk,
+                    highlight_style: self.highlight_style,
                     ..Default::default()
                 }
             }
@@ -796,6 +798,7 @@ impl InlaySnapshot {
             suggestion_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
+            highlight_style: suggestion_highlight,
         }
     }
 
