@@ -42,6 +42,33 @@ export default function workspace(colorScheme: ColorScheme) {
             border: border(layer, "variant", "active"),
         },
     }
+    const signInButton = {
+        cornerRadius: 6,
+        padding: {
+            top: 1,
+            bottom: 1,
+            left: 8,
+            right: 8,
+        },
+        ...text(layer, "sans", "variant", { size: "xs" }),
+        background: background(layer, "variant"),
+        //border: border(layer),
+        hover: {
+            ...text(layer, "sans", "variant", "hovered", { size: "xs" }),
+            background: background(layer, "variant", "hovered"),
+            //border: border(layer, "variant", "hovered"),
+        },
+        clicked: {
+            ...text(layer, "sans", "variant", "pressed", { size: "xs" }),
+            background: background(layer, "variant", "pressed"),
+            //border: border(layer, "variant", "pressed"),
+        },
+        active: {
+            ...text(layer, "sans", "variant", "active", { size: "xs" }),
+            background: background(layer, "variant", "active"),
+            //border: border(layer, "variant", "active"),
+        },
+    }
     const avatarWidth = 18
     const avatarOuterWidth = avatarWidth + 4
     const followerAvatarWidth = 14
@@ -205,7 +232,7 @@ export default function workspace(colorScheme: ColorScheme) {
                 margin: {
                     left: itemSpacing,
                 },
-                ...titlebarButton,
+                ...signInButton,
             },
 
             // Offline Indicator
