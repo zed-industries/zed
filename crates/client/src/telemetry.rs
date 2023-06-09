@@ -4,14 +4,7 @@ use gpui::{executor::Background, serde_json, AppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{
-    env,
-    io::Write,
-    mem,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
@@ -59,7 +52,6 @@ struct ClickhouseEventRequestBody {
 
 #[derive(Serialize, Debug)]
 struct ClickhouseEventWrapper {
-    time: u128,
     signed_in: bool,
     #[serde(flatten)]
     event: ClickhouseEvent,
@@ -193,14 +185,9 @@ impl Telemetry {
 
         let mut state = self.state.lock();
         let signed_in = state.metrics_id.is_some();
-        state.clickhouse_events_queue.push(ClickhouseEventWrapper {
-            time: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-            signed_in,
-            event,
-        });
+        state
+            .clickhouse_events_queue
+            .push(ClickhouseEventWrapper { signed_in, event });
 
         if state.installation_id.is_some() {
             if state.clickhouse_events_queue.len() >= MAX_QUEUE_LEN {
