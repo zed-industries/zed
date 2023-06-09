@@ -282,14 +282,20 @@ impl InlayMap {
         let mut suggestion_edits_iter = suggestion_edits.iter().peekable();
 
         while let Some(suggestion_edit) = suggestion_edits_iter.next() {
-            if suggestion_edit.old.start >= *cursor.start() {
-            if suggestion_edit.old.start >= *cursor.start() {
-                new_snapshot.transforms.push_tree(
-                    cursor.slice(&suggestion_edit.old.start, Bias::Left, &()),
-                    &(),
-                );
+            new_snapshot.transforms.push_tree(
+                cursor.slice(&suggestion_edit.old.start, Bias::Left, &()),
+                &(),
+            );
+            if let Some(Transform::Isomorphic(transform)) = cursor.item() {
+                if cursor.end(&()) == suggestion_edit.old.start {
+                    new_snapshot
+                        .transforms
+                        .push(Transform::Isomorphic(transform.clone()), &());
+                    cursor.next(&());
+                }
             }
 
+            // Remove all the inlays and transforms contained by the edit.
             while suggestion_edit.old.end > cursor.end(&()) {
                 if let Some(Transform::Inlay(inlay)) = cursor.item() {
                     self.inlays.remove(&inlay.id);
@@ -297,16 +303,9 @@ impl InlayMap {
                 cursor.next(&());
             }
 
+            // Apply the edit.
             let transform_start = SuggestionOffset(new_snapshot.transforms.summary().input.len);
             let mut transform_end = suggestion_edit.new.end;
-            if suggestion_edits_iter
-                .peek()
-                .map_or(true, |edit| edit.old.start >= cursor.end(&()))
-            {
-                transform_end += cursor.end(&()) - suggestion_edit.old.end;
-                cursor.next(&());
-            }
-
             push_isomorphic(
                 &mut new_snapshot.transforms,
                 suggestion_snapshot.text_summary_for_range(
@@ -314,6 +313,33 @@ impl InlayMap {
                         ..suggestion_snapshot.to_point(transform_end),
                 ),
             );
+
+            // Push all the inlays starting at the end of the edit.
+            while let Some(Transform::Inlay(inlay)) = cursor.item() {
+                new_snapshot
+                    .transforms
+                    .push(Transform::Inlay(inlay.clone()), &());
+                cursor.next(&());
+            }
+
+            // If the next edit doesn't intersect the current isomorphic transform, then
+            // we can push its remainder.
+            if suggestion_edits_iter
+                .peek()
+                .map_or(true, |edit| edit.old.start >= cursor.end(&()))
+            {
+                let transform_start = SuggestionOffset(new_snapshot.transforms.summary().input.len);
+                let transform_end =
+                    suggestion_edit.new.end + (cursor.end(&()) - suggestion_edit.old.end);
+                push_isomorphic(
+                    &mut new_snapshot.transforms,
+                    suggestion_snapshot.text_summary_for_range(
+                        suggestion_snapshot.to_point(transform_start)
+                            ..suggestion_snapshot.to_point(transform_end),
+                    ),
+                );
+                cursor.next(&());
+            }
         }
 
         new_snapshot.transforms.push_tree(cursor.suffix(&()), &());
