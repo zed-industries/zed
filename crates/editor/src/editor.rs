@@ -7250,11 +7250,11 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                false
+                true
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 cx.emit(Event::ExcerptsRemoved { ids: ids.clone() });
-                false
+                true
             }
             multi_buffer::Event::Reparsed => {
                 cx.emit(Event::Reparsed);
