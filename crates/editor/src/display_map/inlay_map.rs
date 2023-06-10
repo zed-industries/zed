@@ -1,14 +1,3 @@
-#![allow(unused)]
-// TODO kb
-
-use std::{
-    cmp::{self, Reverse},
-    ops::{Add, AddAssign, Range, Sub},
-    sync::atomic::{self, AtomicUsize},
-};
-
-use crate::{Anchor, ExcerptId, InlayHintLocation, MultiBufferSnapshot, ToOffset, ToPoint};
-
 use super::{
     suggestion_map::{
         SuggestionBufferRows, SuggestionChunks, SuggestionEdit, SuggestionOffset, SuggestionPoint,
@@ -16,12 +5,15 @@ use super::{
     },
     TextHighlights,
 };
+use crate::{Anchor, MultiBufferSnapshot, ToPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
 use parking_lot::Mutex;
-use project::InlayHint;
-use rand::Rng;
+use std::{
+    cmp::{self, Reverse},
+    ops::{Add, AddAssign, Range, Sub},
+};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
 use util::post_inc;
@@ -47,12 +39,6 @@ pub struct InlaySnapshot {
 enum Transform {
     Isomorphic(TextSummary),
     Inlay(Inlay),
-}
-
-impl Transform {
-    fn is_inlay(&self) -> bool {
-        matches!(self, Self::Inlay(_))
-    }
 }
 
 impl sum_tree::Item for Transform {
@@ -177,7 +163,7 @@ impl<'a> Iterator for InlayChunks<'a> {
         }
 
         let chunk = match self.transforms.item()? {
-            Transform::Isomorphic(transform) => {
+            Transform::Isomorphic(_) => {
                 let chunk = self
                     .suggestion_chunk
                     .get_or_insert_with(|| self.suggestion_chunks.next().unwrap());
@@ -280,21 +266,19 @@ impl InlayMap {
         }
 
         let mut inlay_edits = Patch::default();
-        new_snapshot.transforms = SumTree::new();
+        let mut new_transforms = SumTree::new();
         let mut cursor = snapshot
             .transforms
             .cursor::<(SuggestionOffset, InlayOffset)>();
         let mut suggestion_edits_iter = suggestion_edits.iter().peekable();
         while let Some(suggestion_edit) = suggestion_edits_iter.next() {
-            new_snapshot.transforms.push_tree(
+            new_transforms.push_tree(
                 cursor.slice(&suggestion_edit.old.start, Bias::Left, &()),
                 &(),
             );
             if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                 if cursor.end(&()).0 == suggestion_edit.old.start {
-                    new_snapshot
-                        .transforms
-                        .push(Transform::Isomorphic(transform.clone()), &());
+                    new_transforms.push(Transform::Isomorphic(transform.clone()), &());
                     cursor.next(&());
                 }
             }
@@ -312,28 +296,26 @@ impl InlayMap {
                 cursor.start().1 + InlayOffset(suggestion_edit.old.end.0 - cursor.start().0 .0);
 
             // Push the unchanged prefix.
-            let prefix_start = SuggestionOffset(new_snapshot.transforms.summary().input.len);
+            let prefix_start = SuggestionOffset(new_transforms.summary().input.len);
             let prefix_end = suggestion_edit.new.start;
             push_isomorphic(
-                &mut new_snapshot.transforms,
+                &mut new_transforms,
                 suggestion_snapshot.text_summary_for_range(
                     suggestion_snapshot.to_point(prefix_start)
                         ..suggestion_snapshot.to_point(prefix_end),
                 ),
             );
 
-            let new_start = InlayOffset(new_snapshot.transforms.summary().output.len);
-            let new_end = InlayOffset(
-                new_snapshot.transforms.summary().output.len + suggestion_edit.new_len().0,
-            );
+            // Apply the edit.
+            let new_start = InlayOffset(new_transforms.summary().output.len);
+            let new_end =
+                InlayOffset(new_transforms.summary().output.len + suggestion_edit.new_len().0);
             inlay_edits.push(Edit {
                 old: old_start..old_end,
                 new: new_start..new_end,
             });
-
-            // Apply the edit.
             push_isomorphic(
-                &mut new_snapshot.transforms,
+                &mut new_transforms,
                 suggestion_snapshot.text_summary_for_range(
                     suggestion_snapshot.to_point(suggestion_edit.new.start)
                         ..suggestion_snapshot.to_point(suggestion_edit.new.end),
@@ -342,9 +324,7 @@ impl InlayMap {
 
             // Push all the inlays starting at the end of the edit.
             while let Some(Transform::Inlay(inlay)) = cursor.item() {
-                new_snapshot
-                    .transforms
-                    .push(Transform::Inlay(inlay.clone()), &());
+                new_transforms.push(Transform::Inlay(inlay.clone()), &());
                 cursor.next(&());
             }
 
@@ -354,11 +334,11 @@ impl InlayMap {
                 .peek()
                 .map_or(true, |edit| edit.old.start >= cursor.end(&()).0)
             {
-                let transform_start = SuggestionOffset(new_snapshot.transforms.summary().input.len);
+                let transform_start = SuggestionOffset(new_transforms.summary().input.len);
                 let transform_end =
                     suggestion_edit.new.end + (cursor.end(&()).0 - suggestion_edit.old.end);
                 push_isomorphic(
-                    &mut new_snapshot.transforms,
+                    &mut new_transforms,
                     suggestion_snapshot.text_summary_for_range(
                         suggestion_snapshot.to_point(transform_start)
                             ..suggestion_snapshot.to_point(transform_end),
@@ -368,12 +348,13 @@ impl InlayMap {
             }
         }
 
-        new_snapshot.transforms.push_tree(cursor.suffix(&()), &());
+        new_transforms.push_tree(cursor.suffix(&()), &());
+        new_snapshot.transforms = new_transforms;
         new_snapshot.suggestion_snapshot = suggestion_snapshot;
+        new_snapshot.check_invariants();
         drop(cursor);
 
         *snapshot = new_snapshot.clone();
-        snapshot.check_invariants();
         (new_snapshot, inlay_edits.into_inner())
     }
 
@@ -471,7 +452,7 @@ impl InlayMap {
 
                 let new_start = InlayOffset(new_transforms.summary().output.len);
                 let new_end = InlayOffset(new_start.0 + inlay.properties.text.len());
-                if let Some(Transform::Isomorphic(transform)) = cursor.item() {
+                if let Some(Transform::Isomorphic(_)) = cursor.item() {
                     let old_start = snapshot.to_offset(InlayPoint(
                         cursor.start().1 .1 .0 + (suggestion_point.0 - cursor.start().0 .0),
                     ));
@@ -514,12 +495,12 @@ impl InlayMap {
         (snapshot.clone(), inlay_edits.into_inner(), new_ids)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn randomly_mutate(
         &mut self,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
-        use rand::seq::IteratorRandom;
+        use rand::prelude::*;
 
         let mut to_remove = HashSet::default();
         let mut to_insert = Vec::default();
@@ -564,7 +545,7 @@ impl InlaySnapshot {
         cursor.seek(&offset, Bias::Right, &());
         let overshoot = offset.0 - cursor.start().0 .0;
         match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => {
+            Some(Transform::Isomorphic(_)) => {
                 let suggestion_offset_start = cursor.start().1 .1;
                 let suggestion_offset_end = SuggestionOffset(suggestion_offset_start.0 + overshoot);
                 let suggestion_start = self.suggestion_snapshot.to_point(suggestion_offset_start);
@@ -594,7 +575,7 @@ impl InlaySnapshot {
         cursor.seek(&point, Bias::Right, &());
         let overshoot = point.0 - cursor.start().0 .0;
         match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => {
+            Some(Transform::Isomorphic(_)) => {
                 let suggestion_point_start = cursor.start().1 .1;
                 let suggestion_point_end = SuggestionPoint(suggestion_point_start.0 + overshoot);
                 let suggestion_start = self.suggestion_snapshot.to_offset(suggestion_point_start);
@@ -617,12 +598,12 @@ impl InlaySnapshot {
     pub fn to_suggestion_point(&self, point: InlayPoint) -> SuggestionPoint {
         let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().0 .0;
         match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => {
+            Some(Transform::Isomorphic(_)) => {
+                let overshoot = point.0 - cursor.start().0 .0;
                 SuggestionPoint(cursor.start().1 .0 + overshoot)
             }
-            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            Some(Transform::Inlay(_)) => cursor.start().1,
             None => self.suggestion_snapshot.max_point(),
         }
     }
@@ -631,69 +612,69 @@ impl InlaySnapshot {
         let mut cursor = self.transforms.cursor::<(InlayOffset, SuggestionOffset)>();
         cursor.seek(&offset, Bias::Right, &());
         match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => {
+            Some(Transform::Isomorphic(_)) => {
                 let overshoot = offset - cursor.start().0;
                 cursor.start().1 + SuggestionOffset(overshoot.0)
             }
-            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            Some(Transform::Inlay(_)) => cursor.start().1,
             None => self.suggestion_snapshot.len(),
-        }
-    }
-
-    pub fn to_inlay_offset(&self, offset: SuggestionOffset) -> InlayOffset {
-        let mut cursor = self.transforms.cursor::<(SuggestionOffset, InlayOffset)>();
-        // TODO kb is the bias right? should we have an external one instead?
-        cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset.0 - cursor.start().0 .0;
-        match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => InlayOffset(cursor.start().1 .0 + overshoot),
-            Some(Transform::Inlay(inlay)) => cursor.start().1,
-            None => self.len(),
         }
     }
 
     pub fn to_inlay_point(&self, point: SuggestionPoint) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<(SuggestionPoint, InlayPoint)>();
-        // TODO kb is the bias right? should we have an external one instead?
-        cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().0 .0;
+        cursor.seek(&point, Bias::Left, &());
         match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => InlayPoint(cursor.start().1 .0 + overshoot),
-            Some(Transform::Inlay(inlay)) => cursor.start().1,
+            Some(Transform::Isomorphic(_)) => {
+                let overshoot = point.0 - cursor.start().0 .0;
+                InlayPoint(cursor.start().1 .0 + overshoot)
+            }
+            Some(Transform::Inlay(_)) => cursor.start().1,
             None => self.max_point(),
         }
     }
 
-    // TODO kb clippig is funky, does not allow to get to left
     pub fn clip_point(&self, point: InlayPoint, bias: Bias) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
-        cursor.seek(&point, bias, &());
-        match cursor.item() {
-            Some(Transform::Isomorphic(_)) => {
-                let overshoot = point.0 - cursor.start().0 .0;
-                let suggestion_point = SuggestionPoint(cursor.start().1 .0 + overshoot);
-                let clipped_suggestion_point =
-                    self.suggestion_snapshot.clip_point(suggestion_point, bias);
-                let clipped_overshoot = clipped_suggestion_point.0 - cursor.start().1 .0;
-                return InlayPoint(cursor.start().0 .0 + clipped_overshoot);
-            }
-            Some(Transform::Inlay(_)) => {}
-            None => return self.max_point(),
-        }
+        cursor.seek(&point, Bias::Left, &());
 
-        while cursor
-            .item()
-            .map_or(false, |transform| transform.is_inlay())
-        {
-            match bias {
-                Bias::Left => cursor.prev(&()),
-                Bias::Right => cursor.next(&()),
+        let mut bias = bias;
+        let mut skipped_inlay = false;
+        loop {
+            match cursor.item() {
+                Some(Transform::Isomorphic(transform)) => {
+                    let overshoot = if skipped_inlay {
+                        match bias {
+                            Bias::Left => transform.lines,
+                            Bias::Right => {
+                                if transform.first_line_chars == 0 {
+                                    Point::new(1, 0)
+                                } else {
+                                    Point::new(0, 1)
+                                }
+                            }
+                        }
+                    } else {
+                        point.0 - cursor.start().0 .0
+                    };
+                    let suggestion_point = SuggestionPoint(cursor.start().1 .0 + overshoot);
+                    let clipped_suggestion_point =
+                        self.suggestion_snapshot.clip_point(suggestion_point, bias);
+                    let clipped_overshoot = clipped_suggestion_point.0 - cursor.start().1 .0;
+                    return InlayPoint(cursor.start().0 .0 + clipped_overshoot);
+                }
+                Some(Transform::Inlay(_)) => skipped_inlay = true,
+                None => match bias {
+                    Bias::Left => return Default::default(),
+                    Bias::Right => bias = Bias::Left,
+                },
             }
-        }
 
-        match bias {
-            Bias::Left => cursor.end(&()).0,
-            Bias::Right => cursor.start().0,
+            if bias == Bias::Left {
+                cursor.prev(&());
+            } else {
+                cursor.next(&());
+            }
         }
     }
 
@@ -705,7 +686,7 @@ impl InlaySnapshot {
 
         let overshoot = range.start.0 - cursor.start().0 .0;
         match cursor.item() {
-            Some(Transform::Isomorphic(transform)) => {
+            Some(Transform::Isomorphic(_)) => {
                 let suggestion_start = cursor.start().1 .0;
                 let suffix_start = SuggestionPoint(suggestion_start + overshoot);
                 let suffix_end = SuggestionPoint(
@@ -736,7 +717,7 @@ impl InlaySnapshot {
 
             let overshoot = range.end.0 - cursor.start().0 .0;
             match cursor.item() {
-                Some(Transform::Isomorphic(transform)) => {
+                Some(Transform::Isomorphic(_)) => {
                     let prefix_start = cursor.start().1;
                     let prefix_end = SuggestionPoint(prefix_start.0 + overshoot);
                     summary += self
@@ -857,7 +838,7 @@ mod tests {
     fn test_basic_inlays(cx: &mut AppContext) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (mut fold_map, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
+        let (fold_map, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
@@ -884,7 +865,7 @@ mod tests {
         );
         assert_eq!(
             inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 3)),
-            InlayPoint::new(0, 8)
+            InlayPoint::new(0, 3)
         );
         assert_eq!(
             inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 4)),
@@ -908,7 +889,7 @@ mod tests {
         );
         assert_eq!(
             inlay_snapshot.clip_point(InlayPoint::new(0, 3), Bias::Right),
-            InlayPoint::new(0, 8)
+            InlayPoint::new(0, 3)
         );
         assert_eq!(
             inlay_snapshot.clip_point(InlayPoint::new(0, 4), Bias::Left),
@@ -916,18 +897,13 @@ mod tests {
         );
         assert_eq!(
             inlay_snapshot.clip_point(InlayPoint::new(0, 4), Bias::Right),
-            InlayPoint::new(0, 8)
-        );
-        assert_eq!(
-            inlay_snapshot.clip_point(InlayPoint::new(0, 9), Bias::Left),
-            InlayPoint::new(0, 9)
-        );
-        assert_eq!(
-            inlay_snapshot.clip_point(InlayPoint::new(0, 9), Bias::Right),
             InlayPoint::new(0, 9)
         );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "XYZ")], None, cx));
+        // Edits before or after the inlay should not affect it.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(2..3, "x"), (3..3, "y"), (4..4, "z")], None, cx)
+        });
         let (fold_snapshot, fold_edits) = fold_map.read(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -935,27 +911,10 @@ mod tests {
         let (suggestion_snapshot, suggestion_edits) =
             suggestion_map.sync(fold_snapshot.clone(), fold_edits);
         let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
-        assert_eq!(inlay_snapshot.text(), "XYZabc|123|defghi");
+        assert_eq!(inlay_snapshot.text(), "abxy|123|dzefghi");
 
-        //////// case: folding and unfolding the text should hine and then return the hint back
-        let (mut fold_map_writer, _, _) = fold_map.write(
-            buffer.read(cx).snapshot(cx),
-            buffer_edits.consume().into_inner(),
-        );
-        let (fold_snapshot, fold_edits) = fold_map_writer.fold([4..8]);
-        let (suggestion_snapshot, suggestion_edits) =
-            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
-        assert_eq!(inlay_snapshot.text(), "XYZa⋯fghi");
-
-        let (fold_snapshot, fold_edits) = fold_map_writer.unfold([4..8], false);
-        let (suggestion_snapshot, suggestion_edits) =
-            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
-        assert_eq!(inlay_snapshot.text(), "XYZabc|123|defghi");
-
-        ////////// case: replacing the anchor that got the hint: it should disappear
-        buffer.update(cx, |buffer, cx| buffer.edit([(2..3, "C")], None, cx));
+        // An edit surrounding the inlay should invalidate it.
+        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "D")], None, cx));
         let (fold_snapshot, fold_edits) = fold_map.read(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
@@ -963,7 +922,7 @@ mod tests {
         let (suggestion_snapshot, suggestion_edits) =
             suggestion_map.sync(fold_snapshot.clone(), fold_edits);
         let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
-        assert_eq!(inlay_snapshot.text(), "XYZabCdefghi");
+        assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
     }
 
     #[gpui::test(iterations = 100)]
@@ -1102,7 +1061,6 @@ mod tests {
 
             assert_eq!(expected_text.max_point(), inlay_snapshot.max_point().0);
             assert_eq!(expected_text.len(), inlay_snapshot.len().0);
-            continue; // TODO kb fix the rest of the test
 
             let mut inlay_point = InlayPoint::default();
             let mut inlay_offset = InlayOffset::default();
@@ -1121,7 +1079,7 @@ mod tests {
                 );
                 assert_eq!(
                     inlay_snapshot.to_inlay_point(inlay_snapshot.to_suggestion_point(inlay_point)),
-                    inlay_snapshot.clip_point(inlay_point, Bias::Right),
+                    inlay_snapshot.clip_point(inlay_point, Bias::Left),
                     "to_suggestion_point({:?}) = {:?}",
                     inlay_point,
                     inlay_snapshot.to_suggestion_point(inlay_point),
@@ -1144,6 +1102,8 @@ mod tests {
                         clipped_left_point,
                         clipped_right_point
                     );
+
+                    // Ensure the clipped points are at valid text locations.
                     assert_eq!(
                         clipped_left_point.0,
                         expected_text.clip_point(clipped_left_point.0, Bias::Left)
@@ -1152,6 +1112,8 @@ mod tests {
                         clipped_right_point.0,
                         expected_text.clip_point(clipped_right_point.0, Bias::Right)
                     );
+
+                    // Ensure the clipped points never overshoot the end of the map.
                     assert!(clipped_left_point <= inlay_snapshot.max_point());
                     assert!(clipped_right_point <= inlay_snapshot.max_point());
                 }
