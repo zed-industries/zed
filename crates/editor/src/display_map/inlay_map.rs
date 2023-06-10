@@ -5,7 +5,7 @@ use super::{
     },
     TextHighlights,
 };
-use crate::{Anchor, MultiBufferSnapshot, ToPoint};
+use crate::{Anchor, MultiBufferSnapshot, ToOffset, ToPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
@@ -52,7 +52,7 @@ impl sum_tree::Item for Transform {
             },
             Transform::Inlay(inlay) => TransformSummary {
                 input: TextSummary::default(),
-                output: inlay.properties.text.summary(),
+                output: inlay.text.summary(),
             },
         }
     }
@@ -145,13 +145,14 @@ pub struct InlayChunks<'a> {
 #[derive(Debug, Clone)]
 pub struct Inlay {
     pub(super) id: InlayId,
-    pub(super) properties: InlayProperties,
+    pub(super) position: Anchor,
+    pub(super) text: Rope,
 }
 
 #[derive(Debug, Clone)]
-pub struct InlayProperties {
-    pub(super) position: Anchor,
-    pub(super) text: Rope,
+pub struct InlayProperties<P, T> {
+    pub position: P,
+    pub text: T,
 }
 
 impl<'a> Iterator for InlayChunks<'a> {
@@ -188,7 +189,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let start = self.output_offset - self.transforms.start().0;
                     let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
                         - self.transforms.start().0;
-                    inlay.properties.text.chunks_in_range(start.0..end.0)
+                    inlay.text.chunks_in_range(start.0..end.0)
                 });
 
                 let chunk = inlay_chunks.next().unwrap();
@@ -358,10 +359,10 @@ impl InlayMap {
         (new_snapshot, inlay_edits.into_inner())
     }
 
-    pub fn splice(
+    pub fn splice<P: ToOffset, T: Into<Rope>>(
         &mut self,
         to_remove: HashSet<InlayId>,
-        to_insert: Vec<InlayProperties>,
+        to_insert: Vec<InlayProperties<P, T>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
         let mut snapshot = self.snapshot.lock();
 
@@ -370,15 +371,13 @@ impl InlayMap {
         for properties in to_insert {
             let inlay = Inlay {
                 id: InlayId(post_inc(&mut self.next_inlay_id)),
-                properties,
+                position: snapshot.buffer_snapshot().anchor_after(properties.position),
+                text: properties.text.into(),
             };
             self.inlays.insert(inlay.id, inlay.clone());
             new_ids.push(inlay.id);
 
-            let buffer_point = inlay
-                .properties
-                .position
-                .to_point(snapshot.buffer_snapshot());
+            let buffer_point = inlay.position.to_point(snapshot.buffer_snapshot());
             let fold_point = snapshot
                 .suggestion_snapshot
                 .fold_snapshot
@@ -390,10 +389,7 @@ impl InlayMap {
 
         for inlay_id in to_remove {
             if let Some(inlay) = self.inlays.remove(&inlay_id) {
-                let buffer_point = inlay
-                    .properties
-                    .position
-                    .to_point(snapshot.buffer_snapshot());
+                let buffer_point = inlay.position.to_point(snapshot.buffer_snapshot());
                 let fold_point = snapshot
                     .suggestion_snapshot
                     .fold_snapshot
@@ -451,7 +447,7 @@ impl InlayMap {
                 );
 
                 let new_start = InlayOffset(new_transforms.summary().output.len);
-                let new_end = InlayOffset(new_start.0 + inlay.properties.text.len());
+                let new_end = InlayOffset(new_start.0 + inlay.text.len());
                 if let Some(Transform::Isomorphic(_)) = cursor.item() {
                     let old_start = snapshot.to_offset(InlayPoint(
                         cursor.start().1 .1 .0 + (suggestion_point.0 - cursor.start().0 .0),
@@ -518,11 +514,7 @@ impl InlayMap {
                     position,
                     text
                 );
-
-                to_insert.push(InlayProperties {
-                    position: buffer_snapshot.anchor_after(position),
-                    text: text.as_str().into(),
-                });
+                to_insert.push(InlayProperties { position, text });
             } else {
                 to_remove.insert(*self.inlays.keys().choose(rng).unwrap());
             }
@@ -553,7 +545,7 @@ impl InlaySnapshot {
                 InlayPoint(cursor.start().1 .0 .0 + (suggestion_end.0 - suggestion_start.0))
             }
             Some(Transform::Inlay(inlay)) => {
-                let overshoot = inlay.properties.text.offset_to_point(overshoot);
+                let overshoot = inlay.text.offset_to_point(overshoot);
                 InlayPoint(cursor.start().1 .0 .0 + overshoot)
             }
             None => self.max_point(),
@@ -583,7 +575,7 @@ impl InlaySnapshot {
                 InlayOffset(cursor.start().1 .0 .0 + (suggestion_end.0 - suggestion_start.0))
             }
             Some(Transform::Inlay(inlay)) => {
-                let overshoot = inlay.properties.text.point_to_offset(overshoot);
+                let overshoot = inlay.text.point_to_offset(overshoot);
                 InlayOffset(cursor.start().1 .0 .0 + overshoot)
             }
             None => self.len(),
@@ -699,12 +691,11 @@ impl InlaySnapshot {
                 cursor.next(&());
             }
             Some(Transform::Inlay(inlay)) => {
-                let text = &inlay.properties.text;
-                let suffix_start = text.point_to_offset(overshoot);
-                let suffix_end = text.point_to_offset(
+                let suffix_start = inlay.text.point_to_offset(overshoot);
+                let suffix_end = inlay.text.point_to_offset(
                     cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0,
                 );
-                summary = text.cursor(suffix_start).summary(suffix_end);
+                summary = inlay.text.cursor(suffix_start).summary(suffix_end);
                 cursor.next(&());
             }
             None => {}
@@ -725,9 +716,8 @@ impl InlaySnapshot {
                         .text_summary_for_range(prefix_start..prefix_end);
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    let text = &inlay.properties.text;
-                    let prefix_end = text.point_to_offset(overshoot);
-                    summary += text.cursor(0).summary::<TextSummary>(prefix_end);
+                    let prefix_end = inlay.text.point_to_offset(overshoot);
+                    summary += inlay.text.cursor(0).summary::<TextSummary>(prefix_end);
                 }
                 None => {}
             }
@@ -846,8 +836,8 @@ mod tests {
         let (inlay_snapshot, _, inlay_ids) = inlay_map.splice(
             HashSet::default(),
             vec![InlayProperties {
-                position: buffer.read(cx).read(cx).anchor_before(3),
-                text: "|123|".into(),
+                position: 3,
+                text: "|123|",
             }],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
@@ -1000,7 +990,7 @@ mod tests {
                 .inlays
                 .values()
                 .map(|inlay| {
-                    let buffer_point = inlay.properties.position.to_point(&buffer_snapshot);
+                    let buffer_point = inlay.position.to_point(&buffer_snapshot);
                     let fold_point = fold_snapshot.to_fold_point(buffer_point, Bias::Left);
                     let suggestion_point = suggestion_snapshot.to_suggestion_point(fold_point);
                     let suggestion_offset = suggestion_snapshot.to_offset(suggestion_point);
@@ -1010,7 +1000,7 @@ mod tests {
             inlays.sort_by_key(|(offset, inlay)| (*offset, Reverse(inlay.id)));
             let mut expected_text = Rope::from(suggestion_snapshot.text().as_str());
             for (offset, inlay) in inlays.into_iter().rev() {
-                expected_text.replace(offset.0..offset.0, &inlay.properties.text.to_string());
+                expected_text.replace(offset.0..offset.0, &inlay.text.to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
             // TODO kb !!!

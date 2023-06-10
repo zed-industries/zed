@@ -309,7 +309,7 @@ impl DisplayMap {
                     buffer_snapshot.anchor_in_excerpt(location.excerpt_id, hint.position);
                 new_inlays.push(InlayProperties {
                     position: hint_anchor,
-                    text: hint.text().trim_end().into(),
+                    text: hint.text(),
                 });
             }
         }
