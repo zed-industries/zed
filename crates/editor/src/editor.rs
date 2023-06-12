@@ -2,7 +2,7 @@ mod blink_manager;
 pub mod display_map;
 mod editor_settings;
 mod element;
-mod inlay_hint_storage;
+mod inlay_cache;
 
 mod git;
 mod highlight_matching_bracket;
@@ -26,8 +26,8 @@ use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
-use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use clock::{Global, ReplicaId};
+use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -53,7 +53,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_hint_storage::InlayHintStorage;
+use inlay_cache::{InlayCache, InlaysUpdate, OrderedByAnchorOffset};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -540,7 +540,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_hint_storage: InlayHintStorage,
+    inlay_hint_cache: InlayCache,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1355,7 +1355,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_storage: InlayHintStorage::default(),
+            inlay_hint_cache: InlayCache::default(),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2604,7 +2604,14 @@ impl Editor {
                 // TODO kb every time I reopen the same buffer, it's different.
                 // Find a way to understand it's the same buffer. Use paths?
                 let buffer_id = buffer_snapshot.remote_id();
+                let buffer_version = buffer_snapshot.version().clone();
                 let buffer_handle = multi_buffer.read(cx).buffer(buffer_id)?;
+                if self
+                    .inlay_hint_cache
+                    .inlays_up_to_date(buffer_id, &buffer_version, excerpt_id)
+                {
+                    return None;
+                }
 
                 let task = cx.spawn(|editor, mut cx| async move {
                     let task = editor
@@ -2622,6 +2629,8 @@ impl Editor {
                         .context("inlay hints fecth task spawn")?;
 
                     anyhow::Ok((
+                        buffer_id,
+                        buffer_version,
                         excerpt_id,
                         match task {
                             Some(task) => task.await.context("inlay hints for buffer task")?,
@@ -2634,29 +2643,52 @@ impl Editor {
             .collect::<Vec<_>>();
 
         cx.spawn(|editor, mut cx| async move {
-            let mut hints_to_draw: Vec<(Anchor, InlayHint)> = Vec::new();
+            let mut hints_response: HashMap<
+                u64,
+                (Global, HashMap<ExcerptId, OrderedByAnchorOffset<InlayHint>>),
+            > = HashMap::default();
             let multi_buffer_snapshot =
                 editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
 
             for task_result in futures::future::join_all(hint_fetch_tasks).await {
                 match task_result {
-                    Ok((excerpt_id, excerpt_hints)) => {
-                        if !excerpt_hints.is_empty() {
-                            hints_to_draw.extend(excerpt_hints.into_iter().map(|hint| {
-                                let anchor = multi_buffer_snapshot
-                                    .anchor_in_excerpt(excerpt_id, hint.position);
-                                (anchor, hint)
-                            }));
+                    Ok((buffer_id, buffer_version, excerpt_id, excerpt_hints)) => {
+                        let excerpt_hints_response = HashMap::from_iter([(
+                            excerpt_id,
+                            excerpt_hints.into_iter().fold(
+                                OrderedByAnchorOffset::default(),
+                                |mut ordered_hints, hint| {
+                                    let anchor = multi_buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id, hint.position);
+                                    ordered_hints.add(anchor, hint);
+                                    ordered_hints
+                                },
+                            ),
+                        )]);
+                        match hints_response.entry(buffer_id) {
+                            hash_map::Entry::Occupied(mut o) => {
+                                o.get_mut().1.extend(excerpt_hints_response);
+                            }
+                            hash_map::Entry::Vacant(v) => {
+                                v.insert((buffer_version, excerpt_hints_response));
+                            }
                         }
                     }
                     Err(e) => error!("Failed to update hints for buffer: {e:#}"),
                 }
             }
 
-            if !hints_to_draw.is_empty() {
+            if !hints_response.is_empty() {
+                let InlaysUpdate {
+                    to_remove,
+                    to_insert,
+                } = editor.update(&mut cx, |editor, _| {
+                    editor.inlay_hint_cache.update_inlays(hints_response)
+                })?;
+
                 editor.update(&mut cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
-                        display_map.splice_inlays(hints_to_draw, cx);
+                        display_map.splice_inlays(to_remove, to_insert, cx);
                     });
                 })?;
             }

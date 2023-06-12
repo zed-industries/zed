@@ -6,8 +6,8 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    display_map::inlay_map::InlayProperties, Anchor, AnchorRangeExt, MultiBuffer,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    display_map::inlay_map::InlayProperties, inlay_cache::InlayId, Anchor, AnchorRangeExt,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
@@ -287,7 +287,8 @@ impl DisplayMap {
 
     pub fn splice_inlays(
         &mut self,
-        new_hints: Vec<(Anchor, project::InlayHint)>,
+        to_remove: Vec<InlayId>,
+        to_insert: Vec<(InlayId, Anchor, project::InlayHint)>,
         cx: &mut ModelContext<Self>,
     ) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -302,18 +303,19 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
 
-        let new_inlays = new_hints
+        let new_inlays = to_insert
             .into_iter()
-            .map(|(hint_anchor, hint)| InlayProperties {
-                position: hint_anchor.bias_left(&buffer_snapshot),
-                text: hint.text(),
+            .map(|(inlay_id, hint_anchor, hint)| {
+                (
+                    inlay_id,
+                    InlayProperties {
+                        position: hint_anchor.bias_left(&buffer_snapshot),
+                        text: hint.text(),
+                    },
+                )
             })
             .collect();
-        let (snapshot, edits, _) = self.inlay_map.splice(
-            // TODO kb this is wrong, calc diffs in the editor instead.
-            self.inlay_map.inlays.keys().copied().collect(),
-            new_inlays,
-        );
+        let (snapshot, edits) = self.inlay_map.splice(to_remove, new_inlays);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
