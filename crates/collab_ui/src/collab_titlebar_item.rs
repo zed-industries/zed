@@ -99,6 +99,7 @@ impl View for CollabTitlebarItem {
             right_container.add_child(self.render_user_menu_button(&theme, avatar, cx));
         } else {
             right_container.add_children(self.render_connection_status(status, cx));
+            right_container.add_child(self.render_sign_in_button(&theme, cx));
             right_container.add_child(self.render_user_menu_button(&theme, None, cx));
         }
 
@@ -319,7 +320,6 @@ impl CollabTitlebarItem {
                         "Share Feedback",
                         feedback::feedback_editor::GiveFeedback,
                     ),
-                    ContextMenuItem::action("Sign in", SignIn),
                 ]
             };
 
