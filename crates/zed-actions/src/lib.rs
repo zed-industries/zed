@@ -1,14 +1,28 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+use gpui::actions;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+actions!(
+    zed,
+    [
+        About,
+        Hide,
+        HideOthers,
+        ShowAll,
+        Minimize,
+        Zoom,
+        ToggleFullScreen,
+        Quit,
+        DebugElements,
+        OpenLog,
+        OpenLicenses,
+        OpenTelemetryLog,
+        OpenKeymap,
+        OpenSettings,
+        OpenLocalSettings,
+        OpenDefaultSettings,
+        OpenDefaultKeymap,
+        IncreaseBufferFontSize,
+        DecreaseBufferFontSize,
+        ResetBufferFontSize,
+        ResetDatabase,
+    ]
+);

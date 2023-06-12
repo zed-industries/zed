@@ -301,7 +301,7 @@ impl CollabTitlebarItem {
         self.user_menu.update(cx, |user_menu, cx| {
             let items = if let Some(_) = self.user_store.read(cx).current_user() {
                 vec![
-                    ContextMenuItem::action("Settings", SignIn),
+                    ContextMenuItem::action("Settings", zed_actions::OpenSettings),
                     ContextMenuItem::action("Theme", theme_selector::Toggle),
                     ContextMenuItem::separator(),
                     ContextMenuItem::action(
@@ -312,7 +312,7 @@ impl CollabTitlebarItem {
                 ]
             } else {
                 vec![
-                    ContextMenuItem::action("Settings", SignIn),
+                    ContextMenuItem::action("Settings", zed_actions::OpenSettings),
                     ContextMenuItem::action("Theme", theme_selector::Toggle),
                     ContextMenuItem::separator(),
                     ContextMenuItem::action(
