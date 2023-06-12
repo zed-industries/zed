@@ -10,9 +10,9 @@ use gpui::{
     AppContext, Element, Entity, ModelHandle, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{Buffer, OwnedSyntaxLayerInfo, SyntaxLayerInfo};
-use std::{ops::Range, sync::Arc};
+use std::{mem, ops::Range, sync::Arc};
 use theme::{Theme, ThemeSettings};
-use tree_sitter::Node;
+use tree_sitter::{Node, TreeCursor};
 use workspace::{
     item::{Item, ItemHandle},
     ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -212,7 +212,10 @@ impl SyntaxTreeView {
         let line_height = self.line_height?;
         let ix = ((self.list_state.scroll_top() + y) / line_height) as usize;
 
-        self.update_editor_with_range_for_descendant_ix(ix, cx, |editor, range, cx| {
+        self.update_editor_with_range_for_descendant_ix(ix, cx, |editor, mut range, cx| {
+            // Put the cursor at the beginning of the node.
+            mem::swap(&mut range.start, &mut range.end);
+
             editor.change_selections(Some(Autoscroll::newest()), cx, |selections| {
                 selections.select_ranges(vec![range]);
             });
@@ -273,7 +276,7 @@ impl SyntaxTreeView {
     }
 
     fn render_node(
-        node: Node,
+        cursor: &TreeCursor,
         depth: u32,
         selected: bool,
         hovered: bool,
@@ -282,23 +285,42 @@ impl SyntaxTreeView {
         editor_theme: &theme::Editor,
         cx: &AppContext,
     ) -> gpui::AnyElement<SyntaxTreeView> {
+        let node = cursor.node();
         let mut range_style = style.clone();
-        let mut anonymous_node_style = style.clone();
         let em_width = style.em_width(cx.font_cache());
         let gutter_padding = (em_width * editor_theme.gutter_padding_factor).round();
 
         range_style.color = editor_theme.line_number;
 
+        let mut anonymous_node_style = style.clone();
         let string_color = editor_theme
             .syntax
             .highlights
             .iter()
             .find_map(|(name, style)| (name == "string").then(|| style.color)?);
+        let property_color = editor_theme
+            .syntax
+            .highlights
+            .iter()
+            .find_map(|(name, style)| (name == "property").then(|| style.color)?);
         if let Some(color) = string_color {
             anonymous_node_style.color = color;
         }
 
-        Flex::row()
+        let mut row = Flex::row();
+        if let Some(field_name) = cursor.field_name() {
+            let mut field_style = style.clone();
+            if let Some(color) = property_color {
+                field_style.color = color;
+            }
+
+            row.add_children([
+                Label::new(field_name, field_style),
+                Label::new(": ", style.clone()),
+            ]);
+        }
+
+        return row
             .with_child(
                 if node.is_named() {
                     Label::new(node.kind(), style.clone())
@@ -318,7 +340,7 @@ impl SyntaxTreeView {
                 Default::default()
             })
             .with_padding_left(gutter_padding + depth as f32 * 18.0)
-            .into_any()
+            .into_any();
     }
 }
 
@@ -390,7 +412,7 @@ impl View for SyntaxTreeView {
                                 }
                             } else {
                                 items.push(Self::render_node(
-                                    cursor.node(),
+                                    &cursor,
                                     depth,
                                     Some(descendant_ix) == this.selected_descendant_ix,
                                     Some(descendant_ix) == this.hovered_descendant_ix,
