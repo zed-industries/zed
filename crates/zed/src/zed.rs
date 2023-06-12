@@ -287,6 +287,9 @@ pub fn initialize_workspace(
                                 let lsp_log_item =
                                     cx.add_view(|_| language_tools::LspLogToolbarItemView::new());
                                 toolbar.add_item(lsp_log_item, cx);
+                                let syntax_tree_item = cx
+                                    .add_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
+                                toolbar.add_item(syntax_tree_item, cx);
                             })
                         });
                     }

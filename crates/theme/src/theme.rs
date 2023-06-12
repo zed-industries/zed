@@ -44,7 +44,7 @@ pub struct Theme {
     pub context_menu: ContextMenu,
     pub contacts_popover: ContactsPopover,
     pub contact_list: ContactList,
-    pub lsp_log_menu: LspLogMenu,
+    pub toolbar_dropdown_menu: DropdownMenu,
     pub copilot: Copilot,
     pub contact_finder: ContactFinder,
     pub project_panel: ProjectPanel,
@@ -246,13 +246,24 @@ pub struct ContactFinder {
 }
 
 #[derive(Deserialize, Default)]
-pub struct LspLogMenu {
+pub struct DropdownMenu {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub header: Interactive<ContainedText>,
-    pub server: ContainedText,
-    pub item: Interactive<ContainedText>,
+    pub header: Interactive<DropdownMenuItem>,
+    pub section_header: ContainedText,
+    pub item: Interactive<DropdownMenuItem>,
     pub row_height: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DropdownMenuItem {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    #[serde(flatten)]
+    pub text: TextStyle,
+    pub secondary_text: Option<TextStyle>,
+    #[serde(default)]
+    pub secondary_text_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]

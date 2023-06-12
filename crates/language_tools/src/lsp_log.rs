@@ -541,12 +541,7 @@ impl View for LspLogToolbarItemView {
         let theme = theme::current(cx).clone();
         let Some(log_view) = self.log_view.as_ref() else { return Empty::new().into_any() };
         let log_view = log_view.read(cx);
-
-        let menu_rows = self
-            .log_view
-            .as_ref()
-            .and_then(|view| view.read(cx).menu_items(cx))
-            .unwrap_or_default();
+        let menu_rows = log_view.menu_items(cx).unwrap_or_default();
 
         let current_server_id = log_view.current_server_id;
         let current_server = current_server_id.and_then(|current_server_id| {
@@ -583,7 +578,7 @@ impl View for LspLogToolbarItemView {
                                     )
                                 }))
                                 .contained()
-                                .with_style(theme.lsp_log_menu.container)
+                                .with_style(theme.toolbar_dropdown_menu.container)
                                 .constrained()
                                 .with_width(400.)
                                 .with_height(400.)
@@ -593,6 +588,7 @@ impl View for LspLogToolbarItemView {
                             cx.notify()
                         }),
                     )
+                    .with_hoverable(true)
                     .with_fit_mode(OverlayFitMode::SwitchAnchor)
                     .with_anchor_corner(AnchorCorner::TopLeft)
                     .with_z_index(999)
@@ -685,7 +681,7 @@ impl LspLogToolbarItemView {
                     )
                 })
                 .unwrap_or_else(|| "No server selected".into());
-            let style = theme.lsp_log_menu.header.style_for(state, false);
+            let style = theme.toolbar_dropdown_menu.header.style_for(state, false);
             Label::new(label, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -711,7 +707,7 @@ impl LspLogToolbarItemView {
 
         Flex::column()
             .with_child({
-                let style = &theme.lsp_log_menu.server;
+                let style = &theme.toolbar_dropdown_menu.section_header;
                 Label::new(
                     format!("{} ({})", name.0, worktree.read(cx).root_name()),
                     style.text.clone(),
@@ -719,16 +715,19 @@ impl LspLogToolbarItemView {
                 .contained()
                 .with_style(style.container)
                 .constrained()
-                .with_height(theme.lsp_log_menu.row_height)
+                .with_height(theme.toolbar_dropdown_menu.row_height)
             })
             .with_child(
                 MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, _| {
-                    let style = theme.lsp_log_menu.item.style_for(state, logs_selected);
+                    let style = theme
+                        .toolbar_dropdown_menu
+                        .item
+                        .style_for(state, logs_selected);
                     Label::new(SERVER_LOGS, style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .constrained()
-                        .with_height(theme.lsp_log_menu.row_height)
+                        .with_height(theme.toolbar_dropdown_menu.row_height)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
@@ -737,12 +736,15 @@ impl LspLogToolbarItemView {
             )
             .with_child(
                 MouseEventHandler::<ActivateRpcTrace, _>::new(id.0, cx, move |state, cx| {
-                    let style = theme.lsp_log_menu.item.style_for(state, rpc_trace_selected);
+                    let style = theme
+                        .toolbar_dropdown_menu
+                        .item
+                        .style_for(state, rpc_trace_selected);
                     Flex::row()
                         .with_child(
                             Label::new(RPC_MESSAGES, style.text.clone())
                                 .constrained()
-                                .with_height(theme.lsp_log_menu.row_height),
+                                .with_height(theme.toolbar_dropdown_menu.row_height),
                         )
                         .with_child(
                             ui::checkbox_with_label::<Self, _, Self, _>(
@@ -761,7 +763,7 @@ impl LspLogToolbarItemView {
                         .contained()
                         .with_style(style.container)
                         .constrained()
-                        .with_height(theme.lsp_log_menu.row_height)
+                        .with_height(theme.toolbar_dropdown_menu.row_height)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
