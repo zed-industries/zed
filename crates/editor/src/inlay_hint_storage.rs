@@ -9,11 +9,14 @@ pub struct InlayHintStorage {
 }
 
 impl InlayHintStorage {
-    // TODO kb calculate the diff instead
     fn insert(&mut self) -> bool {
         todo!("TODO kb")
     }
 }
+// TODO kb need to understand different inlay hint update cases:
+// * new hints from the new excerpt (no need to invalidate the cache)
+// * new hints after /refresh or a text edit (whole cache should be purged)
+// ??? revert/reopened files could get a speedup, if we don't truly delete the hints, but hide them in another var?
 
 // let buffer_version =
 // cx.read(|cx| buffer.read(cx).version().clone());

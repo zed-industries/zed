@@ -2597,86 +2597,62 @@ impl Editor {
         }
 
         let multi_buffer = self.buffer();
-        let hint_fetch_tasks = multi_buffer
-            .read(cx)
-            .all_buffers()
-            .into_iter()
-            .map(|buffer_handle| {
-                let buffer = buffer_handle.read(cx);
+        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+        let hint_fetch_tasks = multi_buffer_snapshot
+            .excerpts()
+            .filter_map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
                 // TODO kb every time I reopen the same buffer, it's different.
                 // Find a way to understand it's the same buffer. Use paths?
-                dbg!(buffer_handle.id());
-                let buffer_id = dbg!(buffer.remote_id());
-                let buffer_len = buffer.len();
+                let buffer_id = buffer_snapshot.remote_id();
+                let buffer_handle = multi_buffer.read(cx).buffer(buffer_id)?;
 
-                cx.spawn(|editor, mut cx| async move {
+                let task = cx.spawn(|editor, mut cx| async move {
                     let task = editor
                         .update(&mut cx, |editor, cx| {
                             editor.project.as_ref().map(|project| {
                                 project.update(cx, |project, cx| {
-                                    project.inlay_hints_for_buffer(buffer_handle, 0..buffer_len, cx)
+                                    project.inlay_hints_for_buffer(
+                                        buffer_handle,
+                                        excerpt_range.context,
+                                        cx,
+                                    )
                                 })
                             })
                         })
                         .context("inlay hints fecth task spawn")?;
 
                     anyhow::Ok((
-                        buffer_id,
+                        excerpt_id,
                         match task {
-                            Some(task) => {
-                                let mut buffer_hints =
-                                    task.await.context("inlay hints for buffer task")?;
-                                buffer_hints.sort_unstable_by_key(|hint| hint.position.offset);
-                                buffer_hints
-                            }
+                            Some(task) => task.await.context("inlay hints for buffer task")?,
                             None => Vec::new(),
                         },
                     ))
-                })
+                });
+                Some(task)
             })
             .collect::<Vec<_>>();
 
         cx.spawn(|editor, mut cx| async move {
             let mut hints_to_draw: Vec<(Anchor, InlayHint)> = Vec::new();
-            let (multi_buffer, multi_buffer_snapshot) = editor.read_with(&cx, |editor, cx| {
-                let multi_buffer = editor.buffer().clone();
-                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                (multi_buffer, multi_buffer_snapshot)
-            })?;
+            let multi_buffer_snapshot =
+                editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
 
             for task_result in futures::future::join_all(hint_fetch_tasks).await {
                 match task_result {
-                    Ok((buffer_id, sorted_buffer_hints)) => {
-                        let Some(buffer_excerpts) = cx.read(|cx| {
-                            let multi_buffer = multi_buffer.read(cx);
-                            multi_buffer.buffer(buffer_id).map(|buffer| multi_buffer.excerpts_for_buffer(&buffer, cx))
-                        }) else { continue };
-                        for (excerpt_id, excerpt_range) in buffer_excerpts {
-                            let excerpt_hints = sorted_buffer_hints
-                                .iter()
-                                .cloned()
-                                .skip_while(|hint| {
-                                    hint.position.offset < excerpt_range.context.start.offset
-                                })
-                                .take_while(|hint| {
-                                    hint.position.offset <= excerpt_range.context.end.offset
-                                })
-                                .collect::<Vec<_>>();
-
-                            if !excerpt_hints.is_empty() {
-                                hints_to_draw.extend(excerpt_hints.into_iter().map(|hint| {
-                                    let anchor = multi_buffer_snapshot
-                                        .anchor_in_excerpt(excerpt_id, hint.position);
-                                    (anchor, hint)
-                                }));
-                            }
+                    Ok((excerpt_id, excerpt_hints)) => {
+                        if !excerpt_hints.is_empty() {
+                            hints_to_draw.extend(excerpt_hints.into_iter().map(|hint| {
+                                let anchor = multi_buffer_snapshot
+                                    .anchor_in_excerpt(excerpt_id, hint.position);
+                                (anchor, hint)
+                            }));
                         }
                     }
                     Err(e) => error!("Failed to update hints for buffer: {e:#}"),
                 }
             }
 
-            // TODO kb calculate diffs using the storage instead
             if !hints_to_draw.is_empty() {
                 editor.update(&mut cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {

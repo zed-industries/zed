@@ -29,7 +29,7 @@ pub struct InlayMap {
 
 #[derive(Clone)]
 pub struct InlaySnapshot {
-    // TODO kb merge these two together?
+    // TODO kb merge these two together
     pub suggestion_snapshot: SuggestionSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
