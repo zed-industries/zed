@@ -209,6 +209,10 @@ impl TestServer {
             .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
         Ok(room.tracks.clone())
     }
+
+    async fn publish_audio_track(&self, _token: String, _local_track: &LocalAudioTrack) -> Result<()> {
+        todo!()
+    }
 }
 
 #[derive(Default)]
@@ -266,6 +270,10 @@ struct RoomState {
         watch::Receiver<ConnectionState>,
     ),
     display_sources: Vec<MacOSDisplay>,
+    audio_track_updates: (
+        async_broadcast::Sender<RemoteAudioTrackUpdate>,
+        async_broadcast::Receiver<RemoteAudioTrackUpdate>,
+    ),
     video_track_updates: (
         async_broadcast::Sender<RemoteVideoTrackUpdate>,
         async_broadcast::Receiver<RemoteVideoTrackUpdate>,
@@ -286,6 +294,7 @@ impl Room {
             connection: watch::channel_with(ConnectionState::Disconnected),
             display_sources: Default::default(),
             video_track_updates: async_broadcast::broadcast(128),
+            audio_track_updates: async_broadcast::broadcast(128),
         })))
     }
 
@@ -327,8 +336,25 @@ impl Room {
             Ok(LocalTrackPublication)
         }
     }
+    pub fn publish_audio_track(
+        self: &Arc<Self>,
+        track: &LocalAudioTrack,
+    ) -> impl Future<Output = Result<LocalTrackPublication>> {
+        let this = self.clone();
+        let track = track.clone();
+        async move {
+            this.test_server()
+                .publish_audio_track(this.token(), &track)
+                .await?;
+            Ok(LocalTrackPublication)
+        }
+    }
 
     pub fn unpublish_track(&self, _: LocalTrackPublication) {}
+
+    pub fn remote_audio_tracks(&self, _publisher_id: &str) -> Vec<Arc<RemoteAudioTrack>> {
+       todo!()
+    }
 
     pub fn remote_video_tracks(&self, publisher_id: &str) -> Vec<Arc<RemoteVideoTrack>> {
         if !self.is_connected() {
@@ -341,6 +367,10 @@ impl Room {
             .into_iter()
             .filter(|track| track.publisher_id() == publisher_id)
             .collect()
+    }
+
+    pub fn remote_audio_track_updates(&self) -> impl Stream<Item = RemoteAudioTrackUpdate> {
+        self.0.lock().audio_track_updates.1.clone()
     }
 
     pub fn remote_video_track_updates(&self) -> impl Stream<Item = RemoteVideoTrackUpdate> {
@@ -404,6 +434,15 @@ impl LocalVideoTrack {
     }
 }
 
+#[derive(Clone)]
+pub struct LocalAudioTrack;
+
+impl LocalAudioTrack {
+    pub fn create() -> Self {
+        Self
+    }
+}
+
 pub struct RemoteVideoTrack {
     sid: Sid,
     publisher_id: Sid,
@@ -424,9 +463,30 @@ impl RemoteVideoTrack {
     }
 }
 
+pub struct RemoteAudioTrack {
+    sid: Sid,
+    publisher_id: Sid,
+}
+
+impl RemoteAudioTrack {
+    pub fn sid(&self) -> &str {
+        &self.sid
+    }
+
+    pub fn publisher_id(&self) -> &str {
+        &self.publisher_id
+    }
+}
+
 #[derive(Clone)]
 pub enum RemoteVideoTrackUpdate {
     Subscribed(Arc<RemoteVideoTrack>),
+    Unsubscribed { publisher_id: Sid, track_id: Sid },
+}
+
+#[derive(Clone)]
+pub enum RemoteAudioTrackUpdate {
+    Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
 
