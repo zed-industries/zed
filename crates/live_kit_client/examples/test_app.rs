@@ -1,3 +1,6 @@
+
+use std::time::Duration;
+
 use futures::StreamExt;
 use gpui::{actions, keymap_matcher::Binding, Menu, MenuItem};
 use live_kit_client::{LocalVideoTrack, RemoteVideoTrackUpdate, Room, LocalAudioTrack, RemoteAudioTrackUpdate};
@@ -68,6 +71,11 @@ fn main() {
             } else {
                 panic!("unexpected message");
             }
+
+            let res = room_b.remote_audio_tracks("test-participant-1")[0].start().await;
+            println!("Attempting to start: {:?}", res);
+            let timer = cx.background().timer(Duration::from_secs(10));
+            timer.await;
 
             let remote_audio_track = room_b
                 .remote_audio_tracks("test-participant-1")
