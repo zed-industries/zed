@@ -1328,6 +1328,7 @@ dependencies = [
  "theme_selector",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
@@ -8894,6 +8895,7 @@ dependencies = [
  "vim",
  "welcome",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
