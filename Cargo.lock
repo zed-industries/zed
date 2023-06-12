@@ -7360,7 +7360,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.10"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=a2119cb6914d62e626fcc40684ef900d7fa90d86#a2119cb6914d62e626fcc40684ef900d7fa90d86"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=49226023693107fba9a1191136a4f47f38cdca73#49226023693107fba9a1191136a4f47f38cdca73"
 dependencies = [
  "cc",
  "regex",
@@ -7560,7 +7560,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=5694b7f290cd9ef998829a0a6d8391a666370886#5694b7f290cd9ef998829a0a6d8391a666370886"
+source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
 dependencies = [
  "cc",
  "tree-sitter",
