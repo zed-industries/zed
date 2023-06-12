@@ -1,0 +1,7 @@
+name = "HEEX"
+path_suffixes = ["heex"]
+autoclose_before = ">})"
+brackets = [
+    { start = "<", end = ">", close = true, newline = true },
+]
+block_comment = ["<%#", "%>"]

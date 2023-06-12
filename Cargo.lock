@@ -7424,6 +7424,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-heex"
+version = "0.0.1"
+source = "git+https://github.com/phoenixframework/tree-sitter-heex?rev=2e1348c3cf2c9323e87c2744796cf3f3868aa82a#2e1348c3cf2c9323e87c2744796cf3f3868aa82a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-html"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8876,6 +8885,7 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-go",
+ "tree-sitter-heex",
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
