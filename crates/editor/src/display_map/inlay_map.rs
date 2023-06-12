@@ -11,7 +11,7 @@ use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
 use parking_lot::Mutex;
 use std::{
-    cmp::{self, Reverse},
+    cmp,
     ops::{Add, AddAssign, Range, Sub},
 };
 use sum_tree::{Bias, Cursor, SumTree};
@@ -394,11 +394,8 @@ impl InlayMap {
                 .fold_snapshot
                 .to_fold_point(buffer_point, Bias::Left);
             let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
-
-            // TODO kb consider changing Reverse to be dynamic depending on whether we appending to to the left or right of the anchor
-            // we want the newer (bigger) IDs to be closer to the "target" of the hint.
             inlays.insert(
-                (suggestion_point, inlay.position.bias(), Reverse(inlay.id)),
+                (suggestion_point, inlay.position.bias(), inlay.id),
                 Some(inlay),
             );
         }
@@ -411,10 +408,7 @@ impl InlayMap {
                     .fold_snapshot
                     .to_fold_point(buffer_point, Bias::Left);
                 let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
-                inlays.insert(
-                    (suggestion_point, inlay.position.bias(), Reverse(inlay.id)),
-                    None,
-                );
+                inlays.insert((suggestion_point, inlay.position.bias(), inlay.id), None);
             }
         }
 
@@ -424,7 +418,7 @@ impl InlayMap {
             .transforms
             .cursor::<(SuggestionPoint, (InlayOffset, InlayPoint))>();
         let mut inlays = inlays.into_iter().peekable();
-        while let Some(((suggestion_point, bias, inlay_id), inlay)) = inlays.next() {
+        while let Some(((suggestion_point, bias, inlay_id), inlay_to_insert)) = inlays.next() {
             new_transforms.push_tree(cursor.slice(&suggestion_point, Bias::Left, &()), &());
 
             while let Some(transform) = cursor.item() {
@@ -438,11 +432,11 @@ impl InlayMap {
                         }
                     }
                     Transform::Inlay(inlay) => {
-                        if (inlay.position.bias(), Reverse(inlay.id)) > (bias, inlay_id) {
+                        if (inlay.position.bias(), inlay.id) < (bias, inlay_id) {
                             new_transforms.push(transform.clone(), &());
                             cursor.next(&());
                         } else {
-                            if inlay.id == inlay_id.0 {
+                            if inlay.id == inlay_id {
                                 let new_start = InlayOffset(new_transforms.summary().output.len);
                                 inlay_edits.push(Edit {
                                     old: cursor.start().1 .0..cursor.end(&()).1 .0,
@@ -456,7 +450,7 @@ impl InlayMap {
                 }
             }
 
-            if let Some(inlay) = inlay {
+            if let Some(inlay) = inlay_to_insert {
                 let prefix_suggestion_start = SuggestionPoint(new_transforms.summary().input.lines);
                 push_isomorphic(
                     &mut new_transforms,
@@ -1052,7 +1046,7 @@ mod tests {
                     (suggestion_offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            inlays.sort_by_key(|(offset, inlay)| (*offset, Reverse(inlay.id)));
+            inlays.sort_by_key(|(offset, inlay)| (*offset, inlay.position.bias(), inlay.id));
             let mut expected_text = Rope::from(suggestion_snapshot.text().as_str());
             for (offset, inlay) in inlays.into_iter().rev() {
                 expected_text.replace(offset.0..offset.0, &inlay.text.to_string());
