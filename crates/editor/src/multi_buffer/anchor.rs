@@ -49,6 +49,10 @@ impl Anchor {
         }
     }
 
+    pub fn bias(&self) -> Bias {
+        self.text_anchor.bias
+    }
+
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
         if self.text_anchor.bias != Bias::Left {
             if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {

@@ -95,33 +95,11 @@ impl<D> fmt::Debug for End<D> {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Hash, Default)]
 pub enum Bias {
+    #[default]
     Left,
     Right,
-}
-
-impl Default for Bias {
-    fn default() -> Self {
-        Bias::Left
-    }
-}
-
-impl PartialOrd for Bias {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Bias {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Self::Left, Self::Left) => Ordering::Equal,
-            (Self::Left, Self::Right) => Ordering::Less,
-            (Self::Right, Self::Right) => Ordering::Equal,
-            (Self::Right, Self::Left) => Ordering::Greater,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

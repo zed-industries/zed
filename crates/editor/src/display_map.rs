@@ -305,10 +305,10 @@ impl DisplayMap {
         let mut new_inlays = Vec::new();
         for (&location, hints) in new_hints {
             for hint in hints {
-                let hint_anchor =
+                let mut hint_anchor =
                     buffer_snapshot.anchor_in_excerpt(location.excerpt_id, hint.position);
                 new_inlays.push(InlayProperties {
-                    position: hint_anchor,
+                    position: hint_anchor.bias_left(&buffer_snapshot),
                     text: hint.text(),
                 });
             }

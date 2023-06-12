@@ -5,7 +5,7 @@ use super::{
     },
     TextHighlights,
 };
-use crate::{Anchor, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{Anchor, MultiBufferSnapshot, ToPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
@@ -150,8 +150,8 @@ pub struct Inlay {
 }
 
 #[derive(Debug, Clone)]
-pub struct InlayProperties<P, T> {
-    pub position: P,
+pub struct InlayProperties<T> {
+    pub position: Anchor,
     pub text: T,
 }
 
@@ -307,6 +307,16 @@ impl InlayMap {
                 ),
             );
 
+            // Leave all the inlays starting at the end of the edit if they have a left bias.
+            while let Some(Transform::Inlay(inlay)) = cursor.item() {
+                if inlay.position.bias() == Bias::Left {
+                    new_transforms.push(Transform::Inlay(inlay.clone()), &());
+                    cursor.next(&());
+                } else {
+                    break;
+                }
+            }
+
             // Apply the edit.
             let new_start = InlayOffset(new_transforms.summary().output.len);
             let new_end =
@@ -323,8 +333,9 @@ impl InlayMap {
                 ),
             );
 
-            // Push all the inlays starting at the end of the edit.
+            // Push all the inlays starting at the end of the edit if they have a right bias.
             while let Some(Transform::Inlay(inlay)) = cursor.item() {
+                debug_assert_eq!(inlay.position.bias(), Bias::Right);
                 new_transforms.push(Transform::Inlay(inlay.clone()), &());
                 cursor.next(&());
             }
@@ -359,10 +370,10 @@ impl InlayMap {
         (new_snapshot, inlay_edits.into_inner())
     }
 
-    pub fn splice<P: ToOffset, T: Into<Rope>>(
+    pub fn splice<T: Into<Rope>>(
         &mut self,
         to_remove: HashSet<InlayId>,
-        to_insert: Vec<InlayProperties<P, T>>,
+        to_insert: Vec<InlayProperties<T>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
         let mut snapshot = self.snapshot.lock();
 
@@ -371,7 +382,7 @@ impl InlayMap {
         for properties in to_insert {
             let inlay = Inlay {
                 id: InlayId(post_inc(&mut self.next_inlay_id)),
-                position: snapshot.buffer_snapshot().anchor_after(properties.position),
+                position: properties.position,
                 text: properties.text.into(),
             };
             self.inlays.insert(inlay.id, inlay.clone());
@@ -384,7 +395,12 @@ impl InlayMap {
                 .to_fold_point(buffer_point, Bias::Left);
             let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
 
-            inlays.insert((suggestion_point, Reverse(inlay.id)), Some(inlay));
+            // TODO kb consider changing Reverse to be dynamic depending on whether we appending to to the left or right of the anchor
+            // we want the newer (bigger) IDs to be closer to the "target" of the hint.
+            inlays.insert(
+                (suggestion_point, inlay.position.bias(), Reverse(inlay.id)),
+                Some(inlay),
+            );
         }
 
         for inlay_id in to_remove {
@@ -395,7 +411,10 @@ impl InlayMap {
                     .fold_snapshot
                     .to_fold_point(buffer_point, Bias::Left);
                 let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
-                inlays.insert((suggestion_point, Reverse(inlay.id)), None);
+                inlays.insert(
+                    (suggestion_point, inlay.position.bias(), Reverse(inlay.id)),
+                    None,
+                );
             }
         }
 
@@ -405,7 +424,7 @@ impl InlayMap {
             .transforms
             .cursor::<(SuggestionPoint, (InlayOffset, InlayPoint))>();
         let mut inlays = inlays.into_iter().peekable();
-        while let Some(((suggestion_point, inlay_id), inlay)) = inlays.next() {
+        while let Some(((suggestion_point, bias, inlay_id), inlay)) = inlays.next() {
             new_transforms.push_tree(cursor.slice(&suggestion_point, Bias::Left, &()), &());
 
             while let Some(transform) = cursor.item() {
@@ -419,7 +438,7 @@ impl InlayMap {
                         }
                     }
                     Transform::Inlay(inlay) => {
-                        if inlay.id > inlay_id.0 {
+                        if (inlay.position.bias(), Reverse(inlay.id)) > (bias, inlay_id) {
                             new_transforms.push(transform.clone(), &());
                             cursor.next(&());
                         } else {
@@ -459,7 +478,7 @@ impl InlayMap {
 
                     new_transforms.push(Transform::Inlay(inlay), &());
 
-                    if inlays.peek().map_or(true, |((suggestion_point, _), _)| {
+                    if inlays.peek().map_or(true, |((suggestion_point, _, _), _)| {
                         *suggestion_point >= cursor.end(&()).0
                     }) {
                         let suffix_suggestion_end = cursor.end(&()).0;
@@ -505,16 +524,21 @@ impl InlayMap {
             if self.inlays.is_empty() || rng.gen() {
                 let buffer_snapshot = snapshot.buffer_snapshot();
                 let position = buffer_snapshot.random_byte_range(0, rng).start;
+                let bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let len = rng.gen_range(1..=5);
                 let text = util::RandomCharIter::new(&mut *rng)
                     .take(len)
                     .collect::<String>();
                 log::info!(
-                    "creating inlay at buffer offset {} with text {:?}",
+                    "creating inlay at buffer offset {} with bias {:?} and text {:?}",
                     position,
+                    bias,
                     text
                 );
-                to_insert.push(InlayProperties { position, text });
+                to_insert.push(InlayProperties {
+                    position: buffer_snapshot.anchor_at(position, bias),
+                    text,
+                });
             } else {
                 to_remove.insert(*self.inlays.keys().choose(rng).unwrap());
             }
@@ -833,10 +857,10 @@ mod tests {
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
 
-        let (inlay_snapshot, _, inlay_ids) = inlay_map.splice(
+        let (inlay_snapshot, _, _) = inlay_map.splice(
             HashSet::default(),
             vec![InlayProperties {
-                position: 3,
+                position: buffer.read(cx).snapshot(cx).anchor_after(3),
                 text: "|123|",
             }],
         );
@@ -913,6 +937,37 @@ mod tests {
             suggestion_map.sync(fold_snapshot.clone(), fold_edits);
         let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
+
+        let (inlay_snapshot, _, inlay_ids) = inlay_map.splice(
+            HashSet::default(),
+            vec![
+                InlayProperties {
+                    position: buffer.read(cx).snapshot(cx).anchor_before(3),
+                    text: "|123|",
+                },
+                InlayProperties {
+                    position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                    text: "|456|",
+                },
+            ],
+        );
+        assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
+
+        // Edits ending where the inlay starts should not move it if it has a left bias.
+        buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "JKL")], None, cx));
+        let (fold_snapshot, fold_edits) = fold_map.read(
+            buffer.read(cx).snapshot(cx),
+            buffer_edits.consume().into_inner(),
+        );
+        let (suggestion_snapshot, suggestion_edits) =
+            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
+        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
+        assert_eq!(inlay_snapshot.text(), "abx|123|JKL|456|yDzefghi");
+
+        // The inlays can be manually removed.
+        let (inlay_snapshot, _, _) =
+            inlay_map.splice::<String>(HashSet::from_iter(inlay_ids), Default::default());
+        assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
     }
 
     #[gpui::test(iterations = 100)]
