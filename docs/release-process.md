@@ -1,6 +1,6 @@
-export const description = 'The process to create and ship a Zed release'
-
 # Zed's Release Process
+
+The process to create and ship a Zed release
 
 ## Overview
 
@@ -79,9 +79,9 @@ This means that when releasing a new version of Zed that has changes to the RPC 
 1. Deploying the server is a two-step process that begins with pushing a tag. 1. Check out the commit you'd like to deploy. Often it will be the head of `main`, but could be on any branch.
 1. Run the following script, which will bump the version of the `collab` crate and create a new tag. The script takes an argument `minor` or `patch`, to indicate how to increment the version. If you're releasing new features, use `minor`. If it's just a bugfix, use `patch`
 
-   ```
-   script/bump-collab-version patch
-   ```
+    ```
+    script/bump-collab-version patch
+    ```
 
 1. This script will make local changes only, and print out a shell command that you can use to push the branch and tag.
 1. Pushing the new tag will trigger a CI build that, when finished will upload a new versioned docker image to the DigitalOcean docker registry.

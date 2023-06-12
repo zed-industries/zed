@@ -1,10 +1,4 @@
-export const description = 'Welcome to Zed!'
-
-# Welcome to Zed
-
-Welcome! These internal docs are a work in progress. You can contribute to them by submitting a PR directly!
-
-## Getting Started
+# Company & Vision
 
 ## Vision
 

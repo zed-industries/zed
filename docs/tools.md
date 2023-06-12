@@ -1,8 +1,6 @@
-export const description = 'Tools to get started at Zed'
-
 # Tools
 
----
+Tools to get started at Zed
 
 ## Calendar
 
