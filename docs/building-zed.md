@@ -1,30 +1,30 @@
-export const description = 'Get your machine set up for the first time'
+# Building Zed
 
-# Setup
+How to build Zed from source for the first time.
 
-## Getting Zed to build
+## Process
 
 Expect this to take 30min to an hour! Some of these steps will take quite a while based on your connection speed, and how long your first build will be.
 
 1. Install the [GitHub CLI](https://cli.github.com/):
    - `brew install gh`
-2. Clone the `zed` repo
+1. Clone the `zed` repo
    - `gh repo clone zed-industries/zed`
-3. Install Xcode from the macOS App Store
-4. Install [Postgres](https://postgresapp.com)
-5. Install rust/rustup
+1. Install Xcode from the macOS App Store
+1. Install [Postgres](https://postgresapp.com)
+1. Install rust/rustup
    - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-6. Install the wasm toolchain
+1. Install the wasm toolchain
    - `rustup target add wasm32-wasi`
-7. Generate an GitHub API Key
+1. Generate an GitHub API Key
    - Go to https://github.com/settings/tokens and Generate new token
    - GitHub currently provides two kinds of tokens:
      - Classic Tokens, where only `repo` (Full control of private repositories) OAuth scope has to be selected
        Unfortunately, unselecting `repo` scope and selecting every its inner scope instead does not allow the token users to read from private repositories
      - (not applicable) Fine-grained Tokens, at the moment of writing, did not allow any kind of access of non-owned private repos
    - Keep the token in the browser tab/editor for the next two steps
-8. Open Postgres.app
-9. From `./path/to/zed/`:
+1. Open Postgres.app
+1. From `./path/to/zed/`:
    - Run:
      - `GITHUB_TOKEN={yourGithubAPIToken} script/bootstrap`
      - Replace `{yourGithubAPIToken}` with the API token you generated above.
@@ -42,7 +42,7 @@ Expect this to take 30min to an hour! Some of these steps will take quite a whil
      - Replace `{username}` with your home folder name (usually your login name)
      - `echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> /Users/{username}/.zprofile`
      - `eval "$(/opt/homebrew/bin/brew shellenv)"`
-10. To run the Zed app:
+1. To run the Zed app:
     - If you are working on zed:
       - `cargo run`
     - If you are just using the latest version, but not working on zed:

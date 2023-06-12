@@ -1,6 +1,4 @@
-export const description = 'A list of useful design tools.'
-
-# Design Tools
+# Design Tools & Links
 
 Generally useful tools and resources for design.
 
