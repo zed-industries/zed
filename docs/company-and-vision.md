@@ -1,3 +1,5 @@
+[⬅ Back to Index](./index.md)
+
 # Company & Vision
 
 ## Vision

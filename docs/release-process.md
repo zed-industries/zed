@@ -1,3 +1,5 @@
+[⬅ Back to Index](./index.md)
+
 # Zed's Release Process
 
 The process to create and ship a Zed release
