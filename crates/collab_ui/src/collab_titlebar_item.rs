@@ -495,27 +495,30 @@ impl CollabTitlebarItem {
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
-        let avatar_style = &theme.workspace.titlebar.leader_avatar;
+        let avatar_style = &theme.workspace.titlebar.follower_avatar;
+        let active = self.user_menu.read(cx).visible();
         Stack::new()
             .with_child(
                 MouseEventHandler::<ToggleUserMenu, Self>::new(0, cx, |state, _| {
-                    let style = titlebar.call_control.style_for(state, false);
+                    let style = titlebar.call_control.style_for(state, active);
 
-                    if let Some(avatar_img) = avatar {
+                    let img = if let Some(avatar_img) = avatar {
                         Self::render_face(avatar_img, *avatar_style, Color::transparent_black())
                     } else {
                         Svg::new("icons/ellipsis_14.svg")
                             .with_color(style.color)
-                            .constrained()
-                            .with_width(style.icon_width)
-                            .aligned()
-                            .constrained()
-                            .with_width(style.button_width)
-                            .with_height(style.button_width)
-                            .contained()
-                            .with_style(style.container)
                             .into_any()
-                    }
+                    };
+
+                    img.constrained()
+                        .with_width(style.icon_width)
+                        .aligned()
+                        .constrained()
+                        .with_width(style.button_width)
+                        .with_height(style.button_width)
+                        .contained()
+                        .with_style(style.container)
+                        .into_any()
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, this, cx| {

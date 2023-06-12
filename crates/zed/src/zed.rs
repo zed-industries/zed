@@ -20,7 +20,6 @@ use feedback::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions,
     anyhow::{self, Result},
     geometry::vector::vec2f,
     impl_actions,
@@ -715,8 +714,8 @@ mod tests {
     use editor::{scroll::autoscroll::Autoscroll, DisplayPoint, Editor};
     use fs::{FakeFs, Fs};
     use gpui::{
-        elements::Empty, executor::Deterministic, Action, AnyElement, AppContext, AssetSource,
-        Element, Entity, TestAppContext, View, ViewHandle,
+        actions, elements::Empty, executor::Deterministic, Action, AnyElement, AppContext,
+        AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
     use node_runtime::NodeRuntime;

@@ -270,6 +270,10 @@ export default function workspace(colorScheme: ColorScheme) {
                     background: background(layer, "variant", "hovered"),
                     color: foreground(layer, "variant", "hovered"),
                 },
+                active: {
+                    background: background(layer, "variant", "active"),
+                    color: foreground(layer, "variant", "active"),
+                },
             },
             toggleContactsButton: {
                 margin: { left: itemSpacing },
