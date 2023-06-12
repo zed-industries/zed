@@ -2,6 +2,7 @@ mod blink_manager;
 pub mod display_map;
 mod editor_settings;
 mod element;
+mod inlay_hint_storage;
 
 mod git;
 mod highlight_matching_bracket;
@@ -25,7 +26,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
-use clock::{Global, ReplicaId};
+use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
@@ -52,6 +53,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
+use inlay_hint_storage::InlayHintStorage;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -71,7 +73,9 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
+use project::{
+    FormatTrigger, InlayHint, Location, LocationLink, Project, ProjectPath, ProjectTransaction,
+};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -536,7 +540,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_hint_versions: InlayHintVersions,
+    inlay_hint_storage: InlayHintStorage,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1153,37 +1157,6 @@ impl CopilotState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InlayHintLocation {
-    pub buffer_id: u64,
-    pub excerpt_id: ExcerptId,
-}
-
-// TODO kb
-#[derive(Debug, Default, Clone)]
-struct InlayHintVersions {
-    last_buffer_versions_with_hints: HashMap<InlayHintLocation, Global>,
-}
-
-impl InlayHintVersions {
-    fn absent_or_newer(&self, location: &InlayHintLocation, new_version: &Global) -> bool {
-        self.last_buffer_versions_with_hints
-            .get(location)
-            .map(|last_version_with_hints| new_version.changed_since(&last_version_with_hints))
-            .unwrap_or(true)
-    }
-
-    fn insert(&mut self, location: InlayHintLocation, new_version: Global) -> bool {
-        if self.absent_or_newer(&location, &new_version) {
-            self.last_buffer_versions_with_hints
-                .insert(location, new_version);
-            true
-        } else {
-            false
-        }
-    }
-}
-
 #[derive(Debug)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
@@ -1324,7 +1297,7 @@ impl Editor {
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     match event {
                         project::Event::ReloadInlayHints => {
-                            editor.try_update_inlay_hints(cx);
+                            editor.reload_inlay_hints(cx);
                         }
                         _ => {}
                     };
@@ -1382,7 +1355,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_versions: InlayHintVersions::default(),
+            inlay_hint_storage: InlayHintStorage::default(),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2618,44 +2591,44 @@ impl Editor {
         }
     }
 
-    fn try_update_inlay_hints(&self, cx: &mut ViewContext<Self>) {
+    fn reload_inlay_hints(&self, cx: &mut ViewContext<Self>) {
         if self.mode != EditorMode::Full {
             return;
         }
 
-        let multi_buffer = self.buffer().read(cx);
-        let buffer_snapshot = multi_buffer.snapshot(cx);
-        let hint_fetch_tasks = buffer_snapshot
-            .excerpts()
-            .map(|(excerpt_id, excerpt_buffer_snapshot, _)| {
-                (excerpt_id, excerpt_buffer_snapshot.clone())
-            })
-            .map(|(excerpt_id, excerpt_buffer_snapshot)| {
+        let multi_buffer = self.buffer();
+        let hint_fetch_tasks = multi_buffer
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .map(|buffer_handle| {
+                let buffer = buffer_handle.read(cx);
+                // TODO kb every time I reopen the same buffer, it's different.
+                // Find a way to understand it's the same buffer. Use paths?
+                dbg!(buffer_handle.id());
+                let buffer_id = dbg!(buffer.remote_id());
+                let buffer_len = buffer.len();
+
                 cx.spawn(|editor, mut cx| async move {
                     let task = editor
                         .update(&mut cx, |editor, cx| {
-                            editor.project.as_ref().and_then(|project| {
+                            editor.project.as_ref().map(|project| {
                                 project.update(cx, |project, cx| {
-                                    Some(
-                                        project.inlay_hints_for_buffer(
-                                            editor
-                                                .buffer()
-                                                .read(cx)
-                                                .buffer(excerpt_buffer_snapshot.remote_id())?,
-                                            0..excerpt_buffer_snapshot.len(),
-                                            cx,
-                                        ),
-                                    )
+                                    project.inlay_hints_for_buffer(buffer_handle, 0..buffer_len, cx)
                                 })
                             })
                         })
                         .context("inlay hints fecth task spawn")?;
 
                     anyhow::Ok((
-                        excerpt_id,
-                        excerpt_buffer_snapshot,
+                        buffer_id,
                         match task {
-                            Some(task) => task.await.context("inlay hints for buffer task")?,
+                            Some(task) => {
+                                let mut buffer_hints =
+                                    task.await.context("inlay hints for buffer task")?;
+                                buffer_hints.sort_unstable_by_key(|hint| hint.position.offset);
+                                buffer_hints
+                            }
                             None => Vec::new(),
                         },
                     ))
@@ -2664,52 +2637,57 @@ impl Editor {
             .collect::<Vec<_>>();
 
         cx.spawn(|editor, mut cx| async move {
-            let mut new_hints: HashMap<InlayHintLocation, Vec<project::InlayHint>> =
-                HashMap::default();
+            let mut hints_to_draw: Vec<(Anchor, InlayHint)> = Vec::new();
+            let (multi_buffer, multi_buffer_snapshot) = editor.read_with(&cx, |editor, cx| {
+                let multi_buffer = editor.buffer().clone();
+                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                (multi_buffer, multi_buffer_snapshot)
+            })?;
+
             for task_result in futures::future::join_all(hint_fetch_tasks).await {
                 match task_result {
-                    Ok((excerpt_id, excerpt_buffer_snapshot, excerpt_hints)) => {
-                        let buffer_id = excerpt_buffer_snapshot.remote_id();
-                        let should_update_hints = editor
-                            .update(&mut cx, |editor, _| {
-                                // TODO kb wrong: need to query hints per buffer, not per excerpt
-                                // need to store the previous state and calculate the diff between them, and calculate anchors here too.
-                                editor.inlay_hint_versions.insert(
-                                    InlayHintLocation {
-                                        buffer_id,
-                                        excerpt_id,
-                                    },
-                                    excerpt_buffer_snapshot.version().clone(),
-                                )
-                            })
-                            .log_err()
-                            .unwrap_or(false);
-                        if should_update_hints {
-                            new_hints
-                                .entry(InlayHintLocation {
-                                    buffer_id,
-                                    excerpt_id,
+                    Ok((buffer_id, sorted_buffer_hints)) => {
+                        let Some(buffer_excerpts) = cx.read(|cx| {
+                            let multi_buffer = multi_buffer.read(cx);
+                            multi_buffer.buffer(buffer_id).map(|buffer| multi_buffer.excerpts_for_buffer(&buffer, cx))
+                        }) else { continue };
+                        for (excerpt_id, excerpt_range) in buffer_excerpts {
+                            let excerpt_hints = sorted_buffer_hints
+                                .iter()
+                                .cloned()
+                                .skip_while(|hint| {
+                                    hint.position.offset < excerpt_range.context.start.offset
                                 })
-                                .or_default()
-                                .extend(excerpt_hints);
+                                .take_while(|hint| {
+                                    hint.position.offset <= excerpt_range.context.end.offset
+                                })
+                                .collect::<Vec<_>>();
+
+                            if !excerpt_hints.is_empty() {
+                                hints_to_draw.extend(excerpt_hints.into_iter().map(|hint| {
+                                    let anchor = multi_buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id, hint.position);
+                                    (anchor, hint)
+                                }));
+                            }
                         }
                     }
                     Err(e) => error!("Failed to update hints for buffer: {e:#}"),
                 }
             }
 
-            if !new_hints.is_empty() {
-                editor
-                    .update(&mut cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.splice_inlays(&new_hints, cx);
-                        });
-                    })
-                    .log_err()
-                    .unwrap_or(())
+            // TODO kb calculate diffs using the storage instead
+            if !hints_to_draw.is_empty() {
+                editor.update(&mut cx, |editor, cx| {
+                    editor.display_map.update(cx, |display_map, cx| {
+                        display_map.splice_inlays(hints_to_draw, cx);
+                    });
+                })?;
             }
+
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn trigger_on_type_formatting(
@@ -7292,7 +7270,7 @@ impl Editor {
         };
 
         if update_inlay_hints {
-            self.try_update_inlay_hints(cx);
+            self.reload_inlay_hints(cx);
         }
     }
 
