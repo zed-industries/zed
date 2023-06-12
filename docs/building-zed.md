@@ -1,3 +1,5 @@
+[⬅ Back to Index](./index.md)
+
 # Building Zed
 
 How to build Zed from source for the first time.

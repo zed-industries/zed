@@ -1,3 +1,5 @@
+[⬅ Back to Index](./index.md)
+
 # Welcome to Zed
 
 Welcome! These internal docs are a work in progress. You can contribute to them by submitting a PR directly!

@@ -1,3 +1,5 @@
+[⬅ Back to Index](./index.md)
+
 # Tools
 
 Tools to get started at Zed
