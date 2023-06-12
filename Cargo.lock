@@ -3516,6 +3516,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lsp",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "tree-sitter",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3757,28 +3780,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
-]
-
-[[package]]
-name = "lsp_log"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "env_logger 0.9.3",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "project",
- "serde",
- "settings",
- "theme",
- "unindent",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -7358,8 +7359,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.9"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14#c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14"
+version = "0.20.10"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=49226023693107fba9a1191136a4f47f38cdca73#49226023693107fba9a1191136a4f47f38cdca73"
 dependencies = [
  "cc",
  "regex",
@@ -7559,7 +7560,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=5694b7f290cd9ef998829a0a6d8391a666370886#5694b7f290cd9ef998829a0a6d8391a666370886"
+source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -8829,11 +8830,11 @@ dependencies = [
  "journal",
  "language",
  "language_selector",
+ "language_tools",
  "lazy_static",
  "libc",
  "log",
  "lsp",
- "lsp_log",
  "node_runtime",
  "num_cpus",
  "outline",

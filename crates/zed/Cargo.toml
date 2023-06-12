@@ -45,7 +45,7 @@ journal = { path = "../journal" }
 language = { path = "../language" }
 language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
-lsp_log = { path = "../lsp_log" }
+language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
 ai = { path = "../ai" }
 outline = { path = "../outline" }
@@ -102,7 +102,7 @@ tempdir.workspace = true
 thiserror.workspace = true
 tiny_http = "0.8"
 toml.workspace = true
-tree-sitter = "0.20"
+tree-sitter.workspace = true
 tree-sitter-c = "0.20.1"
 tree-sitter-cpp = "0.20.0"
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }

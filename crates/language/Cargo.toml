@@ -55,7 +55,7 @@ serde_json.workspace = true
 similar = "1.3"
 smallvec.workspace = true
 smol.workspace = true
-tree-sitter = "0.20"
+tree-sitter.workspace = true
 tree-sitter-rust = { version = "*", optional = true }
 tree-sitter-typescript = { version = "*", optional = true }
 unicase = "2.6"

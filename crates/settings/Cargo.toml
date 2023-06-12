@@ -31,7 +31,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 toml.workspace = true
-tree-sitter = "*"
+tree-sitter.workspace = true
 tree-sitter-json = "*"
 
 [dev-dependencies]

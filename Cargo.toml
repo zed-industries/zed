@@ -32,10 +32,10 @@ members = [
     "crates/journal",
     "crates/language",
     "crates/language_selector",
+    "crates/language_tools",
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
-    "crates/lsp_log",
     "crates/media",
     "crates/menu",
     "crates/node_runtime",
@@ -98,10 +98,11 @@ tempdir = { version = "0.3.7" }
 thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 toml = { version = "0.5" }
+tree-sitter = "0.20"
 unindent = { version = "0.1.7" }
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "49226023693107fba9a1191136a4f47f38cdca73" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
