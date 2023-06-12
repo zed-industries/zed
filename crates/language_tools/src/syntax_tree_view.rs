@@ -18,7 +18,7 @@ use workspace::{
     ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
-actions!(log, [OpenSyntaxTreeView]);
+actions!(debug, [OpenSyntaxTreeView]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(

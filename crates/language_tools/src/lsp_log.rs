@@ -74,7 +74,7 @@ pub(crate) struct LogMenuItem {
     pub logs_selected: bool,
 }
 
-actions!(log, [OpenLanguageServerLogs]);
+actions!(debug, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
     let log_store = cx.add_model(|cx| LogStore::new(cx));
