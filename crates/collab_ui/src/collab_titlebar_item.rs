@@ -85,9 +85,9 @@ impl View for CollabTitlebarItem {
             left_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
 
-            right_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
-            right_container
+            left_container
                 .add_child(self.render_current_user(&workspace, &theme, &user, peer_id, cx));
+            left_container.add_children(self.render_collaborators(&workspace, &theme, &room, cx));
             right_container.add_child(self.render_toggle_screen_sharing_button(&theme, &room, cx));
         }
 
@@ -95,7 +95,13 @@ impl View for CollabTitlebarItem {
         let status = &*status.borrow();
         if matches!(status, client::Status::Connected { .. }) {
             right_container.add_child(self.render_toggle_contacts_button(&theme, cx));
-            let avatar = user.as_ref().map(|user| user.avatar.clone()).flatten();
+            let avatar = ActiveCall::global(cx)
+                .read(cx)
+                .room()
+                .is_none()
+                .then(|| user.as_ref())
+                .flatten()
+                .and_then(|user| user.avatar.clone());
             right_container.add_child(self.render_user_menu_button(&theme, avatar, cx));
         } else {
             right_container.add_children(self.render_connection_status(status, cx));
