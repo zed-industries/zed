@@ -11,9 +11,12 @@ use serde::{
     Deserialize, Deserializer,
 };
 use serde_json::json;
+use ts_rs::TS;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
+#[derive(TS)]
+#[ts(export, export_to = "theme/types/")]
 pub struct Color(ColorU);
 
 impl Color {

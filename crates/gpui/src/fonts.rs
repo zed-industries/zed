@@ -15,8 +15,11 @@ use schemars::JsonSchema;
 use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::{cell::RefCell, sync::Arc};
+use ts_rs::TS;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(TS)]
+#[ts(export, export_to = "theme/types/")]
 pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
@@ -60,6 +63,8 @@ pub struct Features {
 }
 
 #[derive(Clone, Debug)]
+#[derive(TS)]
+#[ts(export, export_to = "theme/types/")]
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
@@ -82,6 +87,8 @@ pub struct HighlightStyle {
 impl Eq for HighlightStyle {}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(TS)]
+#[ts(export, export_to = "theme/types/")]
 pub struct Underline {
     pub color: Option<Color>,
     pub thickness: OrderedFloat<f32>,

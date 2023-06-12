@@ -12,8 +12,11 @@ use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
 };
+use ts_rs::TS;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(TS)]
+#[ts(export, export_to = "theme/types/")]
 pub struct FamilyId(usize);
 
 struct Family {
