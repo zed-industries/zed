@@ -103,7 +103,7 @@ tree-sitter = "0.20"
 unindent = { version = "0.1.7" }
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "a2119cb6914d62e626fcc40684ef900d7fa90d86" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "49226023693107fba9a1191136a4f47f38cdca73" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457
