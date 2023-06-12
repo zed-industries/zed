@@ -2117,6 +2117,10 @@ impl BufferSnapshot {
         }
     }
 
+    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayerInfo> + '_ {
+        self.syntax.layers_for_range(0..self.len(), &self.text)
+    }
+
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayerInfo> {
         let offset = position.to_offset(self);
         self.syntax
