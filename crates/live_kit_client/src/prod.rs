@@ -84,7 +84,17 @@ extern "C" {
     ) -> *const c_void;
 
     fn LKRemoteAudioTrackGetSid(track: *const c_void) -> CFStringRef;
-    fn LKVideoTrackAddRenderer(track: *const c_void, renderer: *const c_void);
+    fn LKRemoteAudioTrackStart(
+        track: *const c_void,
+        callback: extern "C" fn(*mut c_void, bool),
+        callback_data: *mut c_void
+    );
+
+    fn LKVideoTrackAddRenderer(
+        track: *const c_void,
+        renderer: *const c_void
+       ,
+    );
     fn LKRemoteVideoTrackGetSid(track: *const c_void) -> CFStringRef;
 
     fn LKDisplaySources(
@@ -306,7 +316,6 @@ impl Room {
             }
         }
     }
-
 
     pub fn remote_audio_track_updates(&self) -> mpsc::UnboundedReceiver<RemoteAudioTrackUpdate> {
         let (tx, rx) = mpsc::unbounded();
@@ -552,8 +561,25 @@ impl RemoteAudioTrack {
     pub fn publisher_id(&self) -> &str {
         &self.publisher_id
     }
-}
 
+    pub fn start(&self) -> futures::channel::oneshot::Receiver<bool> {
+        let (tx, rx) = futures::channel::oneshot::channel();
+
+        extern "C" fn on_start(callback_data: *mut c_void, success: bool) {
+            unsafe {
+                let tx =
+                    Box::from_raw(callback_data as *mut futures::channel::oneshot::Sender<bool>);
+                tx.send(success).ok();
+            }
+        }
+
+        unsafe {
+            LKRemoteAudioTrackStart(self.native_track, on_start, Box::into_raw(Box::new(tx)) as *mut c_void)
+        }
+
+        rx
+    }
+}
 
 #[derive(Debug)]
 pub struct RemoteVideoTrack {
@@ -638,7 +664,6 @@ pub enum RemoteAudioTrackUpdate {
     Subscribed(Arc<RemoteAudioTrack>),
     Unsubscribed { publisher_id: Sid, track_id: Sid },
 }
-
 
 pub struct MacOSDisplay(*const c_void);
 

@@ -183,14 +183,6 @@ public func LKRoomVideoTracksForRemoteParticipant(room: UnsafeRawPointer, partic
     return nil;
 }
 
-@_cdecl("LKCreateScreenShareTrackForDisplay")
-public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-    let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeUnretainedValue()
-    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display, preferredMethod: .legacy)
-    return Unmanaged.passRetained(track).toOpaque()
-}
-
-
 @_cdecl("LKLocalAudioTrackCreateTrack")
 public func LKLocalAudioTrackCreateTrack() -> UnsafeMutableRawPointer {
     let track = LocalAudioTrack.createTrack(options: AudioCaptureOptions(
@@ -200,6 +192,27 @@ public func LKLocalAudioTrackCreateTrack() -> UnsafeMutableRawPointer {
     
     return Unmanaged.passRetained(track).toOpaque()
 }
+
+
+@_cdecl("LKCreateScreenShareTrackForDisplay")
+public func LKCreateScreenShareTrackForDisplay(display: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+    let display = Unmanaged<MacOSDisplay>.fromOpaque(display).takeUnretainedValue()
+    let track = LocalVideoTrack.createMacOSScreenShareTrack(source: display, preferredMethod: .legacy)
+    return Unmanaged.passRetained(track).toOpaque()
+}
+
+@_cdecl("LKRemoteAudioTrackStart")
+public func LKRemoteAudioTrackStart(track: UnsafeRawPointer, onStart: @escaping @convention(c) (UnsafeRawPointer, Bool) -> Void, callbackData: UnsafeRawPointer) {
+    let track = Unmanaged<Track>.fromOpaque(track).takeUnretainedValue() as! RemoteAudioTrack
+
+    track.start().then { success in
+        onStart(callbackData, success)
+    }
+    .catch { _ in
+        onStart(callbackData, false)
+    }
+}
+
 
 @_cdecl("LKVideoRendererCreate")
 public func LKVideoRendererCreate(data: UnsafeRawPointer, onFrame: @escaping @convention(c) (UnsafeRawPointer, CVPixelBuffer) -> Bool, onDrop: @escaping @convention(c) (UnsafeRawPointer) -> Void) -> UnsafeMutableRawPointer {

@@ -476,6 +476,10 @@ impl RemoteAudioTrack {
     pub fn publisher_id(&self) -> &str {
         &self.publisher_id
     }
+
+    pub fn start(&self)  -> futures::channel::oneshot::Receiver<bool> {
+        todo!();
+    }
 }
 
 #[derive(Clone)]
