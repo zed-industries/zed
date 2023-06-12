@@ -45,7 +45,7 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerId,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, OneOf,
 };
 use lsp_command::*;
 use postage::watch;
@@ -65,6 +65,7 @@ use std::{
     num::NonZeroU32,
     ops::Range,
     path::{Component, Path, PathBuf},
+    process::Stdio,
     rc::Rc,
     str,
     sync::{
@@ -277,6 +278,7 @@ pub enum Event {
 }
 
 pub enum LanguageServerState {
+    Validating(Task<Option<Arc<LanguageServer>>>),
     Starting(Task<Option<Arc<LanguageServer>>>),
     Running {
         language: Arc<Language>,
@@ -2447,7 +2449,7 @@ impl Project {
 
                         Err(err) => {
                             log::warn!("Error starting language server {:?}: {}", server_name, err);
-                            // TODO: Prompt installation validity check
+                            // TODO: Prompt installation validity check LSP ERROR
                             None
                         }
                     }
@@ -2831,10 +2833,8 @@ impl Project {
                 let mut root_path = None;
 
                 let server = match server_state {
-                    Some(LanguageServerState::Starting(started_language_server)) => {
-                        started_language_server.await
-                    }
-
+                    Some(LanguageServerState::Validating(task)) => task.await,
+                    Some(LanguageServerState::Starting(task)) => task.await,
                     Some(LanguageServerState::Running { server, .. }) => Some(server),
                     None => None,
                 };
@@ -2943,6 +2943,15 @@ impl Project {
             });
         })
         .detach();
+    }
+
+    fn check_errored_lsp_installation(
+        &self,
+        language_server: Arc<LanguageServer>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.languages
+            .check_errored_lsp_installation(language_server, cx);
     }
 
     fn on_lsp_progress(
@@ -3716,29 +3725,26 @@ impl Project {
         tab_size: NonZeroU32,
         cx: &mut AsyncAppContext,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
-        let text_document =
-            lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(abs_path).unwrap());
+        let uri = lsp::Url::from_file_path(abs_path)
+            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
         let capabilities = &language_server.capabilities();
-        let lsp_edits = if capabilities
-            .document_formatting_provider
-            .as_ref()
-            .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
-        {
+
+        let formatting_provider = capabilities.document_formatting_provider.as_ref();
+        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+
+        let result = if !matches!(formatting_provider, Some(OneOf::Left(false))) {
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
                     options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
-                .await?
-        } else if capabilities
-            .document_range_formatting_provider
-            .as_ref()
-            .map_or(false, |provider| *provider != lsp::OneOf::Left(false))
-        {
+                .await
+        } else if !matches!(range_formatting_provider, Some(OneOf::Left(false))) {
             let buffer_start = lsp::Position::new(0, 0);
-            let buffer_end =
-                buffer.read_with(cx, |buffer, _| point_to_lsp(buffer.max_point_utf16()));
+            let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()));
+
             language_server
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                     text_document,
@@ -3746,9 +3752,27 @@ impl Project {
                     options: lsp_command::lsp_formatting_options(tab_size.get()),
                     work_done_progress_params: Default::default(),
                 })
-                .await?
+                .await
         } else {
-            None
+            Ok(None)
+        };
+
+        let lsp_edits = match result {
+            Ok(lsp_edits) => lsp_edits,
+
+            Err(err) => {
+                log::warn!(
+                    "Error firing format request to {}: {}",
+                    language_server.name(),
+                    err
+                );
+
+                this.update(cx, |this, cx| {
+                    this.check_errored_lsp_installation(language_server.clone(), cx);
+                });
+
+                None
+            }
         };
 
         if let Some(lsp_edits) = lsp_edits {
@@ -3757,7 +3781,7 @@ impl Project {
             })
             .await
         } else {
-            Ok(Default::default())
+            Ok(Vec::new())
         }
     }
 
@@ -3865,80 +3889,89 @@ impl Project {
             let mut requests = Vec::new();
             for ((worktree_id, _), server_id) in self.language_server_ids.iter() {
                 let worktree_id = *worktree_id;
-                if let Some(worktree) = self
-                    .worktree_for_id(worktree_id, cx)
-                    .and_then(|worktree| worktree.read(cx).as_local())
-                {
-                    if let Some(LanguageServerState::Running {
+                let worktree_handle = self.worktree_for_id(worktree_id, cx);
+                let worktree = match worktree_handle.and_then(|tree| tree.read(cx).as_local()) {
+                    Some(worktree) => worktree,
+                    None => continue,
+                };
+                let worktree_abs_path = worktree.abs_path().clone();
+
+                let (adapter, language, server) = match self.language_servers.get(server_id) {
+                    Some(LanguageServerState::Running {
                         adapter,
                         language,
                         server,
                         ..
-                    }) = self.language_servers.get(server_id)
-                    {
-                        let adapter = adapter.clone();
-                        let language = language.clone();
-                        let worktree_abs_path = worktree.abs_path().clone();
-                        requests.push(
-                            server
-                                .request::<lsp::request::WorkspaceSymbolRequest>(
-                                    lsp::WorkspaceSymbolParams {
-                                        query: query.to_string(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .log_err()
-                                .map(move |response| {
-                                    let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
-                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                            flat_responses.into_iter().map(|lsp_symbol| {
-                                                (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                            }).collect::<Vec<_>>()
-                                        }
-                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
-                                                let location = match lsp_symbol.location {
-                                                    lsp::OneOf::Left(location) => location,
-                                                    lsp::OneOf::Right(_) => {
-                                                        error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                        return None
-                                                    }
-                                                };
-                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                            }).collect::<Vec<_>>()
-                                        }
-                                    }).unwrap_or_default();
+                    }) => (adapter.clone(), language.clone(), server),
 
-                                    (
-                                        adapter,
-                                        language,
-                                        worktree_id,
-                                        worktree_abs_path,
-                                        lsp_symbols,
-                                    )
-                                }),
-                        );
-                    }
-                }
+                    _ => continue,
+                };
+
+                requests.push(
+                    server
+                        .request::<lsp::request::WorkspaceSymbolRequest>(
+                            lsp::WorkspaceSymbolParams {
+                                query: query.to_string(),
+                                ..Default::default()
+                            },
+                        )
+                        .map_ok(move |response| {
+                            let lsp_symbols = response.map(|symbol_response| match symbol_response {
+                                lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                    flat_responses.into_iter().map(|lsp_symbol| {
+                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                    }).collect::<Vec<_>>()
+                                }
+                                lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                    nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                        let location = match lsp_symbol.location {
+                                            OneOf::Left(location) => location,
+                                            OneOf::Right(_) => {
+                                                error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                return None
+                                            }
+                                        };
+                                        Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                    }).collect::<Vec<_>>()
+                                }
+                            }).unwrap_or_default();
+
+                            (
+                                adapter,
+                                language,
+                                worktree_id,
+                                worktree_abs_path,
+                                lsp_symbols,
+                            )
+                        }),
+                );
             }
 
             cx.spawn_weak(|this, cx| async move {
                 let responses = futures::future::join_all(requests).await;
-                let this = if let Some(this) = this.upgrade(&cx) {
-                    this
-                } else {
-                    return Ok(Default::default());
+                let this = match this.upgrade(&cx) {
+                    Some(this) => this,
+                    None => return Ok(Vec::new()),
                 };
+
                 let symbols = this.read_with(&cx, |this, cx| {
                     let mut symbols = Vec::new();
-                    for (
-                        adapter,
-                        adapter_language,
-                        source_worktree_id,
-                        worktree_abs_path,
-                        lsp_symbols,
-                    ) in responses
-                    {
+                    for response in responses {
+                        let (
+                            adapter,
+                            adapter_language,
+                            source_worktree_id,
+                            worktree_abs_path,
+                            lsp_symbols,
+                        ) = match response {
+                            Ok(response) => response,
+
+                            Err(err) => {
+                                // TODO: Prompt installation validity check LSP ERROR
+                                return Vec::new();
+                            }
+                        };
+
                         symbols.extend(lsp_symbols.into_iter().filter_map(
                             |(symbol_name, symbol_kind, symbol_location)| {
                                 let abs_path = symbol_location.uri.to_file_path().ok()?;
@@ -3985,8 +4018,10 @@ impl Project {
                             },
                         ));
                     }
+
                     symbols
                 });
+
                 Ok(futures::future::join_all(symbols).await)
             })
         } else if let Some(project_id) = self.remote_id() {
@@ -4111,9 +4146,17 @@ impl Project {
             };
 
             cx.spawn(|this, mut cx| async move {
-                let resolved_completion = lang_server
+                let resolved_completion = match lang_server
                     .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await?;
+                    .await
+                {
+                    Ok(resolved_completion) => resolved_completion,
+
+                    Err(err) => {
+                        // TODO: LSP ERROR
+                        return Ok(None);
+                    }
+                };
 
                 if let Some(edits) = resolved_completion.additional_text_edits {
                     let edits = this
@@ -4232,9 +4275,17 @@ impl Project {
                     .and_then(|d| d.get_mut("range"))
                 {
                     *lsp_range = serde_json::to_value(&range_to_lsp(range)).unwrap();
-                    action.lsp_action = lang_server
+                    action.lsp_action = match lang_server
                         .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                        .await?;
+                        .await
+                    {
+                        Ok(lsp_action) => lsp_action,
+
+                        Err(err) => {
+                            // LSP ERROR
+                            return Err(err);
+                        }
+                    };
                 } else {
                     let actions = this
                         .update(&mut cx, |this, cx| {
@@ -4267,13 +4318,20 @@ impl Project {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id());
                     });
-                    lang_server
+
+                    let result = lang_server
                         .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
                             command: command.command,
                             arguments: command.arguments.unwrap_or_default(),
                             ..Default::default()
                         })
-                        .await?;
+                        .await;
+
+                    if let Err(err) = result {
+                        // TODO: LSP ERROR
+                        return Err(err);
+                    }
+
                     return Ok(this.update(&mut cx, |this, _| {
                         this.last_workspace_edits_by_language_server
                             .remove(&lang_server.server_id())
@@ -4433,7 +4491,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(lsp::OneOf::Left).collect(),
+                    edits: edits.into_iter().map(OneOf::Left).collect(),
                 })
             }));
         }
@@ -4503,8 +4561,8 @@ impl Project {
                     let edits = this
                         .update(cx, |this, cx| {
                             let edits = op.edits.into_iter().map(|edit| match edit {
-                                lsp::OneOf::Left(edit) => edit,
-                                lsp::OneOf::Right(edit) => edit.text_edit,
+                                OneOf::Left(edit) => edit,
+                                OneOf::Right(edit) => edit.text_edit,
                             });
                             this.edits_from_lsp(
                                 &buffer_to_edit,
@@ -4841,10 +4899,20 @@ impl Project {
                         return Ok(Default::default());
                     }
 
-                    let response = language_server
-                        .request::<R::LspRequest>(lsp_params)
-                        .await
-                        .context("lsp request failed")?;
+                    let result = language_server.request::<R::LspRequest>(lsp_params).await;
+                    let response = match result {
+                        Ok(response) => response,
+
+                        Err(err) => {
+                            log::warn!(
+                                "Generic lsp request to {} failed: {}",
+                                language_server.name(),
+                                err
+                            );
+                            return Err(err);
+                        }
+                    };
+
                     request
                         .response_from_lsp(
                             response,
@@ -7211,11 +7279,10 @@ impl Entity for Project {
             .language_servers
             .drain()
             .map(|(_, server_state)| async {
+                use LanguageServerState::*;
                 match server_state {
-                    LanguageServerState::Running { server, .. } => server.shutdown()?.await,
-                    LanguageServerState::Starting(starting_server) => {
-                        starting_server.await?.shutdown()?.await
-                    }
+                    Running { server, .. } => server.shutdown()?.await,
+                    Starting(task) | Validating(task) => task.await?.shutdown()?.await,
                 }
             })
             .collect::<Vec<_>>();

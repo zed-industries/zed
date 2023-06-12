@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures::{io::BufReader, StreamExt};
 pub use language::*;
 use lazy_static::lazy_static;
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, str, sync::Arc};

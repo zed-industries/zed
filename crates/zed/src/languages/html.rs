@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter};
+use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::json;
 use smol::fs;

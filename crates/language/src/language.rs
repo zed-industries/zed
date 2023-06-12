@@ -20,7 +20,7 @@ use futures::{
 use gpui::{executor::Background, AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp::CodeActionKind;
+use lsp::{CodeActionKind, LanguageServer, LanguageServerBinaries, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
@@ -30,17 +30,18 @@ use std::{
     any::Any,
     borrow::Cow,
     cell::RefCell,
-    ffi::OsString,
     fmt::Debug,
     hash::Hash,
     mem,
     ops::{Not, Range},
     path::{Path, PathBuf},
+    process::Stdio,
     str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
@@ -85,12 +86,6 @@ pub trait ToLspPosition {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LanguageServerName(pub Arc<str>);
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LanguageServerBinary {
-    pub path: PathBuf,
-    pub arguments: Vec<OsString>,
-}
 
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
@@ -146,6 +141,10 @@ impl CachedLspAdapter {
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
         self.adapter.cached_server_binary(container_dir).await
+    }
+
+    async fn installation_test_binary(&self, container_dir: PathBuf) -> LanguageServerBinary {
+        self.adapter.installation_test_binary(container_dir)
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -204,6 +203,10 @@ pub trait LspAdapter: 'static + Send + Sync {
     ) -> Result<LanguageServerBinary>;
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary>;
+
+    fn installation_test_binary(&self, _container_dir: PathBuf) -> LanguageServerBinary {
+        unimplemented!();
+    }
 
     async fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
@@ -485,6 +488,7 @@ struct BracketConfig {
 
 #[derive(Clone)]
 pub enum LanguageServerBinaryStatus {
+    Validating,
     CheckingForUpdate,
     Downloading,
     Downloaded,
@@ -515,7 +519,7 @@ pub struct LanguageRegistry {
     lsp_binary_paths: Mutex<
         HashMap<
             LanguageServerName,
-            Shared<BoxFuture<'static, Result<LanguageServerBinary, Arc<anyhow::Error>>>>,
+            Shared<BoxFuture<'static, Result<LanguageServerBinaries, Arc<anyhow::Error>>>>,
         >,
     >,
     executor: Option<Arc<Background>>,
@@ -891,8 +895,7 @@ impl LanguageRegistry {
             let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
             let server = lsp::LanguageServer::new(
                 server_id,
-                &binary.path,
-                &binary.arguments,
+                binary,
                 &root_path,
                 adapter.code_action_kinds(),
                 cx,
@@ -908,6 +911,56 @@ impl LanguageRegistry {
         &self,
     ) -> async_broadcast::Receiver<(Arc<Language>, LanguageServerBinaryStatus)> {
         self.lsp_binary_statuses_rx.clone()
+    }
+
+    pub async fn check_errored_lsp_installation(
+        &self,
+        language_server: Arc<LanguageServer>,
+        cx: &mut AppContext,
+    ) {
+        // Check if child process is running
+        if !language_server.is_dead() {
+            return;
+        }
+
+        // If not, get check binary
+        let test_binary = match language_server.test_installation_binary() {
+            Some(test_binary) => test_binary.clone(),
+            None => return,
+        };
+
+        // Run
+        const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
+        let mut timeout = cx.background().timer(PROCESS_TIMEOUT).fuse();
+
+        let mut errored = false;
+        let result = smol::process::Command::new(&test_binary.path)
+            .current_dir(&test_binary.path)
+            .args(test_binary.arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn();
+
+        if let Ok(mut process) = result {
+            futures::select! {
+                _ = process.status().fuse() => {}
+                _ = timeout => errored = true,
+            }
+        } else {
+            errored = true;
+        }
+
+        dbg!(errored);
+
+        // If failure clear container dir
+
+        // Prompt binary retrieval
+
+        // Start language server
+ 
+        // Update project server state
     }
 }
 
@@ -961,7 +1014,7 @@ async fn get_binary(
     http_client: Arc<dyn HttpClient>,
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
-) -> Result<LanguageServerBinary> {
+) -> Result<LanguageServerBinaries> {
     let container_dir = download_dir.join(adapter.name.0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
@@ -979,11 +1032,15 @@ async fn get_binary(
     .await;
 
     if let Err(error) = binary.as_ref() {
-        if let Some(cached) = adapter.cached_server_binary(container_dir).await {
+        if let Some(binary) = adapter.cached_server_binary(container_dir.clone()).await {
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
                 .await?;
-            return Ok(cached);
+            let installation_test_binary = adapter.installation_test_binary(container_dir).await;
+            return Ok(LanguageServerBinaries {
+                binary,
+                installation_test_binary,
+            });
         } else {
             statuses
                 .broadcast((
@@ -995,6 +1052,7 @@ async fn get_binary(
                 .await?;
         }
     }
+
     binary
 }
 
@@ -1004,7 +1062,7 @@ async fn fetch_latest_binary(
     http_client: Arc<dyn HttpClient>,
     container_dir: &Path,
     lsp_binary_statuses_tx: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
-) -> Result<LanguageServerBinary> {
+) -> Result<LanguageServerBinaries> {
     let container_dir: Arc<Path> = container_dir.into();
     lsp_binary_statuses_tx
         .broadcast((
@@ -1012,19 +1070,28 @@ async fn fetch_latest_binary(
             LanguageServerBinaryStatus::CheckingForUpdate,
         ))
         .await?;
+
     let version_info = adapter
         .fetch_latest_server_version(http_client.clone())
         .await?;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloading))
         .await?;
+
     let binary = adapter
         .fetch_server_binary(version_info, http_client, container_dir.to_path_buf())
         .await?;
+    let installation_test_binary = adapter
+        .installation_test_binary(container_dir.to_path_buf())
+        .await;
     lsp_binary_statuses_tx
         .broadcast((language.clone(), LanguageServerBinaryStatus::Downloaded))
         .await?;
-    Ok(binary)
+
+    Ok(LanguageServerBinaries {
+        binary,
+        installation_test_binary,
+    })
 }
 
 impl Language {

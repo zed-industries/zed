@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 pub use language::*;
+use lsp::LanguageServerBinary;
 use smol::fs::{self, File};
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::fs::remove_matching;

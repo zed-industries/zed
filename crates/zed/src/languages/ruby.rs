@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use language::{LanguageServerBinary, LanguageServerName, LspAdapter};
+use language::{LanguageServerName, LspAdapter};
+use lsp::LanguageServerBinary;
 use std::{any::Any, path::PathBuf, sync::Arc};
 use util::http::HttpClient;
 

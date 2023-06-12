@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 pub use language::*;
 use lazy_static::lazy_static;
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::{fs, process};
 use std::ffi::{OsStr, OsString};

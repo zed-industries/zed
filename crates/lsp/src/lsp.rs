@@ -16,6 +16,7 @@ use smol::{
     process::{self, Child},
 };
 use std::{
+    ffi::OsString,
     fmt,
     future::Future,
     io::Write,
@@ -36,6 +37,18 @@ type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppCon
 type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(bool, &str)>;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageServerBinary {
+    pub path: PathBuf,
+    pub arguments: Vec<OsString>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageServerBinaries {
+    pub binary: LanguageServerBinary,
+    pub installation_test_binary: LanguageServerBinary,
+}
+
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicUsize,
@@ -51,7 +64,8 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
-    _server: Option<Child>,
+    server: Option<Mutex<Child>>,
+    test_installation_binary: Option<LanguageServerBinary>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -119,10 +133,9 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn new<T: AsRef<std::ffi::OsStr>>(
+    pub fn new(
         server_id: LanguageServerId,
-        binary_path: &Path,
-        arguments: &[T],
+        binaries: LanguageServerBinaries,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -133,9 +146,9 @@ impl LanguageServer {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
 
-        let mut server = process::Command::new(binary_path)
+        let mut server = process::Command::new(&binaries.binary.path)
             .current_dir(working_dir)
-            .args(arguments)
+            .args(binaries.binary.arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -149,6 +162,7 @@ impl LanguageServer {
             stdin,
             stout,
             Some(server),
+            Some(binaries.installation_test_binary),
             root_path,
             code_action_kinds,
             cx,
@@ -164,7 +178,7 @@ impl LanguageServer {
             },
         );
 
-        if let Some(name) = binary_path.file_name() {
+        if let Some(name) = binaries.binary.path.file_name() {
             server.name = name.to_string_lossy().to_string();
         }
 
@@ -176,6 +190,7 @@ impl LanguageServer {
         stdin: Stdin,
         stdout: Stdout,
         server: Option<Child>,
+        test_installation_binary: Option<LanguageServerBinary>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -229,8 +244,26 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
-            _server: server,
+            server: server.map(|server| Mutex::new(server)),
+            test_installation_binary,
         }
+    }
+
+    pub fn is_dead(&self) -> bool {
+        let server = match self.server.as_ref() {
+            Some(server) => server,
+            None => return false, // Fake server for tests
+        };
+
+        match server.lock().try_status() {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(_) => true,
+        }
+    }
+
+    pub fn test_installation_binary(&self) -> &Option<LanguageServerBinary> {
+        &self.test_installation_binary
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -813,6 +846,7 @@ impl LanguageServer {
             stdin_writer,
             stdout_reader,
             None,
+            None,
             Path::new("/"),
             None,
             cx.clone(),
@@ -823,6 +857,7 @@ impl LanguageServer {
                 LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
+                None,
                 None,
                 Path::new("/"),
                 None,
