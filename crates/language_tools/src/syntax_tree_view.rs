@@ -530,6 +530,7 @@ impl SyntaxTreeToolbarItemView {
             let layer = snapshot.syntax_layers().nth(layer_ix)?;
             buffer_state.active_layer = Some(layer.to_owned());
             view.selected_descendant_ix = None;
+            self.menu_open = false;
             cx.notify();
             Some(())
         })
