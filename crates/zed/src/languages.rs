@@ -10,6 +10,7 @@ mod elixir;
 mod go;
 mod html;
 mod json;
+#[cfg(feature = "plugin_runtime")]
 mod language_plugin;
 mod lua;
 mod python;

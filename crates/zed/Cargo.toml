@@ -49,7 +49,7 @@ lsp_log = { path = "../lsp_log" }
 node_runtime = { path = "../node_runtime" }
 ai = { path = "../ai" }
 outline = { path = "../outline" }
-plugin_runtime = { path = "../plugin_runtime" }
+plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
 project_symbols = { path = "../project_symbols" }
