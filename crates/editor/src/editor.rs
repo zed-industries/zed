@@ -74,7 +74,8 @@ pub use multi_buffer::{
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{
-    FormatTrigger, InlayHint, Location, LocationLink, Project, ProjectPath, ProjectTransaction,
+    FormatTrigger, InlayHint, InlayHintKind, Location, LocationLink, Project, ProjectPath,
+    ProjectTransaction,
 };
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
@@ -2590,8 +2591,17 @@ impl Editor {
         }
     }
 
-    fn refresh_inlays(&self, cx: &mut ViewContext<Self>) {
+    fn refresh_inlays(&mut self, cx: &mut ViewContext<Self>) {
         if self.mode != EditorMode::Full {
+            return;
+        }
+
+        let inlay_hint_settings = settings::get::<EditorSettings>(cx).inlay_hints;
+        if !inlay_hint_settings.enabled {
+            let to_remove = self.inlay_cache.clear();
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.splice_inlays(to_remove, Vec::new(), cx);
+            });
             return;
         }
 
@@ -2619,6 +2629,9 @@ impl Editor {
                     excerpt_id,
                 };
 
+                // TODO kb split this into 2 different steps:
+                // 1. cache population
+                // 2. cache querying + hint filters on top (needs to store previous filter settings)
                 let task = cx.spawn(|editor, mut cx| async move {
                     if inlays_up_to_date {
                         anyhow::Ok((key, None))
@@ -2646,9 +2659,20 @@ impl Editor {
                             Some(task) => {
                                 match task.await.context("inlays for buffer task")? {
                                     Some(mut new_inlays) => {
+                                        let mut allowed_inlay_hint_types = Vec::new();
+                                        if inlay_hint_settings.show_type_hints {
+                                            allowed_inlay_hint_types.push(Some(InlayHintKind::Type));
+                                        }
+                                        if inlay_hint_settings.show_parameter_hints {
+                                            allowed_inlay_hint_types.push(Some(InlayHintKind::Parameter));
+                                        }
+                                        if inlay_hint_settings.show_other_hints {
+                                            allowed_inlay_hint_types.push(None);
+                                        }
                                         new_inlays.retain(|inlay| {
                                             let inlay_offset = inlay.position.offset;
-                                            query_start <= inlay_offset && inlay_offset <= query_end
+                                            allowed_inlay_hint_types.contains(&inlay.kind)
+                                                && query_start <= inlay_offset && inlay_offset <= query_end
                                         });
                                         Some(new_inlays)
                                     },
@@ -2713,7 +2737,7 @@ impl Editor {
                     to_remove,
                     to_insert,
                 } = editor.update(&mut cx, |editor, _| {
-                    editor.inlay_cache.update_inlays(inlay_updates)
+                    dbg!(editor.inlay_cache.update_inlays(inlay_updates))
                 })?;
 
                 editor.update(&mut cx, |editor, cx| {
@@ -7318,6 +7342,7 @@ impl Editor {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.refresh_copilot_suggestions(true, cx);
+        self.refresh_inlays(cx);
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {

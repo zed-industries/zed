@@ -229,4 +229,22 @@ impl InlayCache {
             to_insert,
         }
     }
+
+    pub fn clear(&mut self) -> Vec<InlayId> {
+        self.inlays_per_buffer
+            .drain()
+            .map(|(_, buffer_inlays)| {
+                buffer_inlays
+                    .inlays_per_excerpts
+                    .into_iter()
+                    .map(|(_, excerpt_inlays)| {
+                        excerpt_inlays
+                            .into_ordered_elements()
+                            .map(|(_, (id, _))| id)
+                    })
+                    .flatten()
+            })
+            .flatten()
+            .collect()
+    }
 }
