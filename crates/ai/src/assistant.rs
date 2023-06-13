@@ -640,40 +640,10 @@ impl Assistant {
         self.pending_completions.pop().is_some()
     }
 
-    fn remove_empty_messages<'a>(
-        &mut self,
-        messages: HashSet<MessageId>,
-        protected_offsets: HashSet<usize>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        // let mut offset = 0;
-        // let mut excerpts_to_remove = Vec::new();
-        // self.messages.retain(|message| {
-        //     let range = offset..offset + message.content.read(cx).len();
-        //     offset = range.end + 1;
-        //     if range.is_empty()
-        //         && !protected_offsets.contains(&range.start)
-        //         && messages.contains(&message.id)
-        //     {
-        //         excerpts_to_remove.push(message.excerpt_id);
-        //         self.messages_metadata.remove(&message.excerpt_id);
-        //         false
-        //     } else {
-        //         true
-        //     }
-        // });
-
-        // if !excerpts_to_remove.is_empty() {
-        //     self.buffer.update(cx, |buffer, cx| {
-        //         buffer.remove_excerpts(excerpts_to_remove, cx)
-        //     });
-        //     cx.notify();
-        // }
-    }
-
     fn cycle_message_role(&mut self, id: MessageId, cx: &mut ModelContext<Self>) {
         if let Some(metadata) = self.messages_metadata.get_mut(&id) {
             metadata.role.cycle();
+            cx.emit(AssistantEvent::MessagesEdited);
             cx.notify();
         }
     }
