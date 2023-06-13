@@ -278,7 +278,7 @@ pub enum Event {
         new_peer_id: proto::PeerId,
     },
     CollaboratorLeft(proto::PeerId),
-    ReloadInlayHints,
+    RefreshInlays,
 }
 
 pub enum LanguageServerState {
@@ -329,7 +329,7 @@ pub struct Location {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
-    pub buffer_id: usize,
+    pub buffer_id: u64,
     pub position: Anchor,
     pub label: InlayHintLabel,
     pub kind: Option<String>,
@@ -2830,7 +2830,7 @@ impl Project {
                             .upgrade(&cx)
                             .ok_or_else(|| anyhow!("project dropped"))?;
                         this.update(&mut cx, |_, cx| {
-                            cx.emit(Event::ReloadInlayHints);
+                            cx.emit(Event::RefreshInlays);
                         });
                         Ok(())
                     }
@@ -4908,10 +4908,65 @@ impl Project {
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<InlayHint>>> {
+    ) -> Task<Result<Option<Vec<InlayHint>>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.request_lsp(buffer_handle, InlayHints { range }, cx)
+        let range_start = range.start;
+        let range_end = range.end;
+        let buffer_id = buffer.remote_id();
+        let buffer_version = buffer.version().clone();
+        let lsp_request = InlayHints { range };
+
+        if self.is_local() {
+            let lsp_request_task = self.request_lsp(buffer_handle.clone(), lsp_request, cx);
+            cx.spawn(|_, mut cx| async move {
+                buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
+                    })
+                    .await
+                    .context("waiting for inlay hint request range edits")?;
+
+                match lsp_request_task.await {
+                    Ok(hints) => Ok(Some(hints)),
+                    Err(e) if is_content_modified_error(&e) => Ok(None),
+                    Err(other_e) => Err(other_e).context("inlay hints LSP request"),
+                }
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::InlayHints {
+                project_id,
+                buffer_id,
+                start: Some(serialize_anchor(&range_start)),
+                end: Some(serialize_anchor(&range_end)),
+                version: serialize_version(&buffer_version),
+            };
+            cx.spawn(|project, cx| async move {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("inlay hints proto request")?;
+                let hints_request_result = LspCommand::response_from_proto(
+                    lsp_request,
+                    response,
+                    project,
+                    buffer_handle,
+                    cx,
+                )
+                .await;
+
+                match hints_request_result {
+                    Ok(hints) => Ok(Some(hints)),
+                    Err(e) if is_content_modified_error(&e) => Ok(None),
+                    Err(other_err) => {
+                        Err(other_err).context("inlay hints proto response conversion")
+                    }
+                }
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
     }
 
     #[allow(clippy::type_complexity)]
@@ -6686,11 +6741,23 @@ impl Project {
 
         let buffer_hints = this
             .update(&mut cx, |project, cx| {
-                let end = buffer.read(cx).len();
-                project.inlay_hints_for_buffer(buffer, 0..end, cx)
+                let buffer_end = buffer.read(cx).len();
+                project.inlay_hints_for_buffer(
+                    buffer,
+                    envelope
+                        .payload
+                        .start
+                        .map_or(0, |anchor| anchor.offset as usize)
+                        ..envelope
+                            .payload
+                            .end
+                            .map_or(buffer_end, |anchor| anchor.offset as usize),
+                    cx,
+                )
             })
             .await
-            .context("inlay hints fetch")?;
+            .context("inlay hints fetch")?
+            .unwrap_or_default();
 
         Ok(this.update(&mut cx, |project, cx| {
             InlayHints::response_to_proto(buffer_hints, project, sender_id, &buffer_version, cx)
@@ -7764,4 +7831,9 @@ async fn wait_for_loading_buffer(
         }
         receiver.next().await;
     }
+}
+
+// TODO kb what are better ways?
+fn is_content_modified_error(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("content modified")
 }

@@ -540,7 +540,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_hint_cache: InlayCache,
+    inlay_cache: InlayCache,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1295,16 +1295,10 @@ impl Editor {
                     cx.emit(Event::TitleChanged);
                 }));
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
-                    match event {
-                        project::Event::ReloadInlayHints => {
-                            editor.reload_inlay_hints(cx);
-                        }
-                        project::Event::ActiveEntryChanged(Some(_)) => {
-                            editor.reload_inlay_hints(cx);
-                        }
-                        _ => {}
+                    if let project::Event::RefreshInlays = event {
+                        editor.refresh_inlays(cx);
+                        cx.notify()
                     };
-                    cx.notify()
                 }));
             }
         }
@@ -1358,7 +1352,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_hint_cache: InlayCache::default(),
+            inlay_cache: InlayCache::default(),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2594,12 +2588,12 @@ impl Editor {
         }
     }
 
-    fn reload_inlay_hints(&self, cx: &mut ViewContext<Self>) {
+    fn refresh_inlays(&self, cx: &mut ViewContext<Self>) {
         if self.mode != EditorMode::Full {
             return;
         }
 
-        struct HintRequestKey {
+        struct InlayRequestKey {
             buffer_id: u64,
             buffer_version: Global,
             excerpt_id: ExcerptId,
@@ -2607,7 +2601,7 @@ impl Editor {
 
         let multi_buffer = self.buffer();
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let hint_fetch_tasks = multi_buffer_snapshot
+        let inlay_fetch_tasks = multi_buffer_snapshot
             .excerpts()
             .map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
                 // TODO kb every time I reopen the same buffer, it's different.
@@ -2615,17 +2609,17 @@ impl Editor {
                 let buffer_id = buffer_snapshot.remote_id();
                 let buffer_version = buffer_snapshot.version().clone();
                 let buffer_handle = multi_buffer.read(cx).buffer(buffer_id);
-                let hints_up_to_date =
-                    self.inlay_hint_cache
+                let inlays_up_to_date =
+                    self.inlay_cache
                         .inlays_up_to_date(buffer_id, &buffer_version, excerpt_id);
-                let key = HintRequestKey {
+                let key = InlayRequestKey {
                     buffer_id,
                     buffer_version,
                     excerpt_id,
                 };
 
                 cx.spawn(|editor, mut cx| async move {
-                    if hints_up_to_date {
+                    if inlays_up_to_date {
                         anyhow::Ok((key, None))
                     } else {
                         let Some(buffer_handle) = buffer_handle else { return Ok((key, Some(Vec::new()))) };
@@ -2645,19 +2639,24 @@ impl Editor {
                                     })
                                 })
                             })
-                            .context("inlay hints fecth task spawn")?;
+                            .context("inlays fecth task spawn")?;
 
-                        Ok((key, Some(match task {
+                        Ok((key, match task {
                             Some(task) => {
-                                let mut new_hints = task.await.context("inlay hints for buffer task")?;
-                                new_hints.retain(|hint| {
-                                    let hint_offset = hint.position.offset;
-                                    query_start <= hint_offset && hint_offset <= query_end
-                                });
-                                new_hints
+                                match task.await.context("inlays for buffer task")? {
+                                    Some(mut new_inlays) => {
+                                        new_inlays.retain(|inlay| {
+                                            let inlay_offset = inlay.position.offset;
+                                            query_start <= inlay_offset && inlay_offset <= query_end
+                                        });
+                                        Some(new_inlays)
+                                    },
+                                    None => None,
+                                }
+
                             },
-                            None => Vec::new(),
-                        })))
+                            None => Some(Vec::new()),
+                        }))
                     }
                 })
             })
@@ -2674,35 +2673,35 @@ impl Editor {
             let multi_buffer_snapshot =
                 editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
 
-            for task_result in futures::future::join_all(hint_fetch_tasks).await {
+            for task_result in futures::future::join_all(inlay_fetch_tasks).await {
                 match task_result {
                     Ok((request_key, response_inlays)) => {
-                        let excerpt_hints_response = HashMap::from_iter([(
+                        let inlays_per_excerpt = HashMap::from_iter([(
                             request_key.excerpt_id,
-                            response_inlays.map(|excerpt_hints| {
-                                excerpt_hints.into_iter().fold(
+                            response_inlays.map(|excerpt_inlays| {
+                                excerpt_inlays.into_iter().fold(
                                     OrderedByAnchorOffset::default(),
-                                    |mut ordered_hints, hint| {
+                                    |mut ordered_inlays, inlay| {
                                         let anchor = multi_buffer_snapshot.anchor_in_excerpt(
                                             request_key.excerpt_id,
-                                            hint.position,
+                                            inlay.position,
                                         );
-                                        ordered_hints.add(anchor, hint);
-                                        ordered_hints
+                                        ordered_inlays.add(anchor, inlay);
+                                        ordered_inlays
                                     },
                                 )
                             }),
                         )]);
                         match inlay_updates.entry(request_key.buffer_id) {
                             hash_map::Entry::Occupied(mut o) => {
-                                o.get_mut().1.extend(excerpt_hints_response);
+                                o.get_mut().1.extend(inlays_per_excerpt);
                             }
                             hash_map::Entry::Vacant(v) => {
-                                v.insert((request_key.buffer_version, excerpt_hints_response));
+                                v.insert((request_key.buffer_version, inlays_per_excerpt));
                             }
                         }
                     }
-                    Err(e) => error!("Failed to update hints for buffer: {e:#}"),
+                    Err(e) => error!("Failed to update inlays for buffer: {e:#}"),
                 }
             }
 
@@ -2711,7 +2710,7 @@ impl Editor {
                     to_remove,
                     to_insert,
                 } = editor.update(&mut cx, |editor, _| {
-                    editor.inlay_hint_cache.update_inlays(inlay_updates)
+                    editor.inlay_cache.update_inlays(inlay_updates)
                 })?;
 
                 editor.update(&mut cx, |editor, cx| {
@@ -7306,7 +7305,7 @@ impl Editor {
         };
 
         if update_inlay_hints {
-            self.reload_inlay_hints(cx);
+            self.refresh_inlays(cx);
         }
     }
 

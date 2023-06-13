@@ -1834,7 +1834,7 @@ impl LspCommand for InlayHints {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|lsp_hint| InlayHint {
-                    buffer_id: buffer.id(),
+                    buffer_id: origin_buffer.remote_id(),
                     position: origin_buffer.anchor_after(
                         origin_buffer
                             .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left),
@@ -1931,7 +1931,7 @@ impl LspCommand for InlayHints {
         _: &mut Project,
         _: PeerId,
         buffer_version: &clock::Global,
-        _: &mut AppContext,
+        cx: &mut AppContext,
     ) -> proto::InlayHintsResponse {
         proto::InlayHintsResponse {
             hints: response
@@ -1958,7 +1958,7 @@ impl LspCommand for InlayHints {
                                         location: label_part.location.map(|location| proto::Location {
                                             start: Some(serialize_anchor(&location.range.start)),
                                             end: Some(serialize_anchor(&location.range.end)),
-                                            buffer_id: location.buffer.id() as u64,
+                                            buffer_id: location.buffer.read(cx).remote_id(),
                                         }),
                                     }).collect()
                                 })
@@ -2005,8 +2005,13 @@ impl LspCommand for InlayHints {
 
         let mut hints = Vec::new();
         for message_hint in message.hints {
+            let buffer_id = message_hint
+                .position
+                .as_ref()
+                .and_then(|location| location.buffer_id)
+                .context("missing buffer id")?;
             let hint = InlayHint {
-                buffer_id: buffer.id(),
+                buffer_id,
                 position: message_hint
                     .position
                     .and_then(language::proto::deserialize_anchor)
