@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use collections::{HashMap, HashSet};
 use editor::{
-    display_map::ToDisplayPoint,
+    display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint},
     scroll::{
         autoscroll::{Autoscroll, AutoscrollStrategy},
         ScrollAnchor,
@@ -818,6 +818,7 @@ enum AssistantEditorEvent {
 struct AssistantEditor {
     assistant: ModelHandle<Assistant>,
     editor: ViewHandle<Editor>,
+    blocks: HashSet<BlockId>,
     scroll_bottom: ScrollAnchor,
     _subscriptions: Vec<Subscription>,
 }
@@ -845,6 +846,7 @@ impl AssistantEditor {
         Self {
             assistant,
             editor,
+            blocks: Default::default(),
             scroll_bottom: ScrollAnchor {
                 offset: Default::default(),
                 anchor: Anchor::max(),
@@ -905,19 +907,115 @@ impl AssistantEditor {
     ) {
         match event {
             AssistantEvent::MessagesEdited => {
-                let selections = self.editor.read(cx).selections.all::<usize>(cx);
-                let selection_heads = selections
-                    .iter()
-                    .map(|selection| selection.head())
-                    .collect::<HashSet<usize>>();
-                // let ids = ids.iter().copied().collect::<HashSet<_>>();
-                // self.assistant.update(cx, |assistant, cx| {
-                //     assistant.remove_empty_messages(ids, selection_heads, cx)
-                // });
+                self.editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let excerpt_id = *buffer.as_singleton().unwrap().0;
+                    let old_blocks = std::mem::take(&mut self.blocks);
+                    let new_blocks =
+                        self.assistant
+                            .read(cx)
+                            .messages(cx)
+                            .map(|(message, metadata, _)| BlockProperties {
+                                position: buffer.anchor_in_excerpt(excerpt_id, message.start),
+                                height: 2,
+                                style: BlockStyle::Sticky,
+                                render: Arc::new({
+                                    let assistant = self.assistant.clone();
+                                    let metadata = metadata.clone();
+                                    let message = message.clone();
+                                    move |cx| {
+                                        enum Sender {}
+                                        enum ErrorTooltip {}
+
+                                        let theme = theme::current(cx);
+                                        let style = &theme.assistant;
+                                        let message_id = message.id;
+                                        let sender = MouseEventHandler::<Sender, _>::new(
+                                            message_id.0,
+                                            cx,
+                                            |state, _| match metadata.role {
+                                                Role::User => {
+                                                    let style =
+                                                        style.user_sender.style_for(state, false);
+                                                    Label::new("You", style.text.clone())
+                                                        .contained()
+                                                        .with_style(style.container)
+                                                }
+                                                Role::Assistant => {
+                                                    let style = style
+                                                        .assistant_sender
+                                                        .style_for(state, false);
+                                                    Label::new("Assistant", style.text.clone())
+                                                        .contained()
+                                                        .with_style(style.container)
+                                                }
+                                                Role::System => {
+                                                    let style =
+                                                        style.system_sender.style_for(state, false);
+                                                    Label::new("System", style.text.clone())
+                                                        .contained()
+                                                        .with_style(style.container)
+                                                }
+                                            },
+                                        )
+                                        .with_cursor_style(CursorStyle::PointingHand)
+                                        .on_down(MouseButton::Left, {
+                                            let assistant = assistant.clone();
+                                            move |_, _, cx| {
+                                                assistant.update(cx, |assistant, cx| {
+                                                    assistant.cycle_message_role(message_id, cx)
+                                                })
+                                            }
+                                        });
+
+                                        Flex::row()
+                                            .with_child(sender.aligned())
+                                            .with_child(
+                                                Label::new(
+                                                    metadata.sent_at.format("%I:%M%P").to_string(),
+                                                    style.sent_at.text.clone(),
+                                                )
+                                                .contained()
+                                                .with_style(style.sent_at.container)
+                                                .aligned(),
+                                            )
+                                            .with_children(metadata.error.clone().map(|error| {
+                                                Svg::new("icons/circle_x_mark_12.svg")
+                                                    .with_color(style.error_icon.color)
+                                                    .constrained()
+                                                    .with_width(style.error_icon.width)
+                                                    .contained()
+                                                    .with_style(style.error_icon.container)
+                                                    .with_tooltip::<ErrorTooltip>(
+                                                        message_id.0,
+                                                        error,
+                                                        None,
+                                                        theme.tooltip.clone(),
+                                                        cx,
+                                                    )
+                                                    .aligned()
+                                            }))
+                                            .aligned()
+                                            .left()
+                                            .contained()
+                                            .with_style(style.header)
+                                            .into_any()
+                                    }
+                                }),
+                                disposition: BlockDisposition::Above,
+                            })
+                            .collect::<Vec<_>>();
+
+                    editor.remove_blocks(old_blocks, cx);
+                    let ids = editor.insert_blocks(new_blocks, cx);
+                    self.blocks = HashSet::from_iter(ids);
+                });
             }
+
             AssistantEvent::SummaryChanged => {
                 cx.emit(AssistantEditorEvent::TabContentChanged);
             }
+
             AssistantEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(cx);
