@@ -34,110 +34,109 @@ mod yaml;
 struct LanguageDir;
 
 pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
-    fn adapter_arc(adapter: impl LspAdapter) -> Arc<dyn LspAdapter> {
-        Arc::new(adapter)
-    }
+    let language = |name, grammar, adapters| {
+        languages.register(name, load_config(name), grammar, adapters, load_queries)
+    };
 
-    let languages_list = [
-        (
-            "c",
-            tree_sitter_c::language(),
-            vec![adapter_arc(c::CLspAdapter)],
-        ),
-        (
-            "cpp",
-            tree_sitter_cpp::language(),
-            vec![adapter_arc(c::CLspAdapter)],
-        ),
-        ("css", tree_sitter_css::language(), vec![]),
-        (
-            "elixir",
-            tree_sitter_elixir::language(),
-            vec![adapter_arc(elixir::ElixirLspAdapter)],
-        ),
-        (
-            "go",
-            tree_sitter_go::language(),
-            vec![adapter_arc(go::GoLspAdapter)],
-        ),
-        (
-            "json",
-            tree_sitter_json::language(),
-            vec![adapter_arc(json::JsonLspAdapter::new(
-                node_runtime.clone(),
-                languages.clone(),
-            ))],
-        ),
-        ("markdown", tree_sitter_markdown::language(), vec![]),
-        (
-            "python",
-            tree_sitter_python::language(),
-            vec![adapter_arc(python::PythonLspAdapter::new(
-                node_runtime.clone(),
-            ))],
-        ),
-        (
-            "rust",
-            tree_sitter_rust::language(),
-            vec![adapter_arc(rust::RustLspAdapter)],
-        ),
-        ("toml", tree_sitter_toml::language(), vec![]),
-        (
-            "tsx",
-            tree_sitter_typescript::language_tsx(),
-            vec![
-                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            ],
-        ),
-        (
-            "typescript",
-            tree_sitter_typescript::language_typescript(),
-            vec![
-                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            ],
-        ),
-        (
-            "javascript",
-            tree_sitter_typescript::language_tsx(),
-            vec![
-                adapter_arc(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                adapter_arc(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-            ],
-        ),
-        (
-            "html",
-            tree_sitter_html::language(),
-            vec![adapter_arc(html::HtmlLspAdapter::new(node_runtime.clone()))],
-        ),
-        (
-            "ruby",
-            tree_sitter_ruby::language(),
-            vec![adapter_arc(ruby::RubyLanguageServer)],
-        ),
-        (
-            "erb",
-            tree_sitter_embedded_template::language(),
-            vec![adapter_arc(ruby::RubyLanguageServer)],
-        ),
-        ("scheme", tree_sitter_scheme::language(), vec![]),
-        ("racket", tree_sitter_racket::language(), vec![]),
-        (
-            "lua",
-            tree_sitter_lua::language(),
-            vec![adapter_arc(lua::LuaLspAdapter)],
-        ),
-        (
-            "yaml",
-            tree_sitter_yaml::language(),
-            vec![adapter_arc(yaml::YamlLspAdapter::new(node_runtime))],
-        ),
-    ];
-
-    for (name, grammar, lsp_adapters) in languages_list {
-        languages.register(name, load_config(name), grammar, lsp_adapters, load_queries);
-    }
+    language(
+        "c",
+        tree_sitter_c::language(),
+        vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>],
+    );
+    language(
+        "cpp",
+        tree_sitter_cpp::language(),
+        vec![Arc::new(c::CLspAdapter)],
+    );
+    language("css", tree_sitter_css::language(), vec![]);
+    language(
+        "elixir",
+        tree_sitter_elixir::language(),
+        vec![Arc::new(elixir::ElixirLspAdapter)],
+    );
+    language(
+        "go",
+        tree_sitter_go::language(),
+        vec![Arc::new(go::GoLspAdapter)],
+    );
+    language(
+        "heex",
+        tree_sitter_heex::language(),
+        vec![Arc::new(elixir::ElixirLspAdapter)],
+    );
+    language(
+        "json",
+        tree_sitter_json::language(),
+        vec![Arc::new(json::JsonLspAdapter::new(
+            node_runtime.clone(),
+            languages.clone(),
+        ))],
+    );
+    language("markdown", tree_sitter_markdown::language(), vec![]);
+    language(
+        "python",
+        tree_sitter_python::language(),
+        vec![Arc::new(python::PythonLspAdapter::new(
+            node_runtime.clone(),
+        ))],
+    );
+    language(
+        "rust",
+        tree_sitter_rust::language(),
+        vec![Arc::new(rust::RustLspAdapter)],
+    );
+    language("toml", tree_sitter_toml::language(), vec![]);
+    language(
+        "tsx",
+        tree_sitter_typescript::language_tsx(),
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+        ],
+    );
+    language(
+        "typescript",
+        tree_sitter_typescript::language_typescript(),
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+        ],
+    );
+    language(
+        "javascript",
+        tree_sitter_typescript::language_tsx(),
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+        ],
+    );
+    language(
+        "html",
+        tree_sitter_html::language(),
+        vec![Arc::new(html::HtmlLspAdapter::new(node_runtime.clone()))],
+    );
+    language(
+        "ruby",
+        tree_sitter_ruby::language(),
+        vec![Arc::new(ruby::RubyLanguageServer)],
+    );
+    language(
+        "erb",
+        tree_sitter_embedded_template::language(),
+        vec![Arc::new(ruby::RubyLanguageServer)],
+    );
+    language("scheme", tree_sitter_scheme::language(), vec![]);
+    language("racket", tree_sitter_racket::language(), vec![]);
+    language(
+        "lua",
+        tree_sitter_lua::language(),
+        vec![Arc::new(lua::LuaLspAdapter)],
+    );
+    language(
+        "yaml",
+        tree_sitter_yaml::language(),
+        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime))],
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]

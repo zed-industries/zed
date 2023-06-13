@@ -72,6 +72,8 @@ ctor.workspace = true
 env_logger.workspace = true
 indoc.workspace = true
 rand.workspace = true
+unindent.workspace = true
+
 tree-sitter-embedded-template = "*"
 tree-sitter-html = "*"
 tree-sitter-javascript = "*"
@@ -81,4 +83,3 @@ tree-sitter-rust = "*"
 tree-sitter-python = "*"
 tree-sitter-typescript = "*"
 tree-sitter-ruby = "*"
-unindent.workspace = true
