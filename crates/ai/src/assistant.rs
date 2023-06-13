@@ -661,8 +661,9 @@ impl Assistant {
         {
             let start = self.buffer.update(cx, |buffer, cx| {
                 let offset = self
-                    .messages
-                    .get(prev_message_ix + 1)
+                    .messages[prev_message_ix + 1..]
+                    .iter()
+                    .find(|message| message.start.is_valid(buffer))
                     .map_or(buffer.len(), |message| message.start.to_offset(buffer) - 1);
                 buffer.edit([(offset..offset, "\n")], None, cx);
                 buffer.anchor_before(offset + 1)
@@ -1451,6 +1452,7 @@ mod tests {
             ]
         );
 
+        // Undoing the deletion should also undo the merge.
         buffer.update(cx, |buffer, cx| buffer.undo(cx));
         assert_eq!(
             messages(&assistant, cx),
@@ -1459,6 +1461,31 @@ mod tests {
                 (message_2.id, Role::Assistant, 2..4),
                 (message_4.id, Role::User, 4..6),
                 (message_3.id, Role::User, 6..7),
+            ]
+        );
+
+        // Redoing the deletion should also redo the merge.
+        buffer.update(cx, |buffer, cx| buffer.redo(cx));
+        assert_eq!(
+            messages(&assistant, cx),
+            vec![
+                (message_1.id, Role::User, 0..3),
+                (message_3.id, Role::User, 3..4),
+            ]
+        );
+
+        // Ensure we can still insert after a merged message.
+        let message_5 = assistant.update(cx, |assistant, cx| {
+            assistant
+                .insert_message_after(message_1.id, Role::System, cx)
+                .unwrap()
+        });
+        assert_eq!(
+            messages(&assistant, cx),
+            vec![
+                (message_1.id, Role::User, 0..3),
+                (message_5.id, Role::System, 3..4),
+                (message_3.id, Role::User, 4..5)
             ]
         );
     }
