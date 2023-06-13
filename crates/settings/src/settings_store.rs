@@ -843,11 +843,8 @@ fn to_pretty_json(value: &impl Serialize, indent_size: usize, indent_prefix_len:
 }
 
 pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
-    Ok(serde_json::from_reader(
-        json_comments::CommentSettings::c_style().strip_comments(content.as_bytes()),
-    )?)
+    Ok(serde_json_lenient::from_str(content).unwrap())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

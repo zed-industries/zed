@@ -593,7 +593,7 @@ dependencies = [
  "http",
  "http-body",
  "hyper",
- "itoa",
+ "itoa 1.0.6",
  "matchit",
  "memchr",
  "mime",
@@ -3011,7 +3011,7 @@ checksum = "bd6effc99afb63425aff9b05836f029929e345a6148a14b7ecd5ab67af944482"
 dependencies = [
  "bytes 1.4.0",
  "fnv",
- "itoa",
+ "itoa 1.0.6",
 ]
 
 [[package]]
@@ -3070,7 +3070,7 @@ dependencies = [
  "http-body",
  "httparse",
  "httpdate",
- "itoa",
+ "itoa 1.0.6",
  "pin-project-lite 0.2.9",
  "socket2",
  "tokio",
@@ -3338,6 +3338,12 @@ dependencies = [
 
 [[package]]
 name = "itoa"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b71991ff56294aa922b450139ee08b3bfc70982c6b2c7562771375cf73542dd4"
+
+[[package]]
+name = "itoa"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "453ad9f582a441959e5f0d088b02ce04cfe8d51a8eaf077f12ac6d3e94164ca6"
@@ -3395,12 +3401,6 @@ checksum = "68c16e1bfd491478ab155fd8b4896b86f9ede344949b641e61501e07c2b8b4d5"
 dependencies = [
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "json_comments"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41ee439ee368ba4a77ac70d04f14015415af8600d6c894dc1f11bd79758c57d5"
 
 [[package]]
 name = "jwt"
@@ -5667,7 +5667,7 @@ dependencies = [
  "bitflags",
  "errno 0.2.8",
  "io-lifetimes 0.5.3",
- "itoa",
+ "itoa 1.0.6",
  "libc",
  "linux-raw-sys 0.0.42",
  "once_cell",
@@ -6099,7 +6099,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "057d394a50403bcac12672b2b18fb387ab6d289d957dab67dd201875391e52f1"
 dependencies = [
  "indexmap",
- "itoa",
+ "itoa 1.0.6",
+ "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serde_json_lenient"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d7b9ce5b0a63c6269b9623ed828b39259545a6ec0d8a35d6135ad6af6232add"
+dependencies = [
+ "indexmap",
+ "itoa 0.4.8",
  "ryu",
  "serde",
 ]
@@ -6122,7 +6134,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd"
 dependencies = [
  "form_urlencoded",
- "itoa",
+ "itoa 1.0.6",
  "ryu",
  "serde",
 ]
@@ -6148,8 +6160,9 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
- "json_comments",
+ "indoc",
  "lazy_static",
+ "log",
  "postage",
  "pretty_assertions",
  "rust-embed",
@@ -6157,6 +6170,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "serde_json_lenient",
  "smallvec",
  "sqlez",
  "staff_mode",
@@ -6507,7 +6521,7 @@ dependencies = [
  "hkdf",
  "hmac 0.12.1",
  "indexmap",
- "itoa",
+ "itoa 1.0.6",
  "libc",
  "libsqlite3-sys",
  "log",
@@ -6993,7 +7007,7 @@ version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f3403384eaacbca9923fa06940178ac13e4edb725486d70e8e15881d0c836cc"
 dependencies = [
- "itoa",
+ "itoa 1.0.6",
  "serde",
  "time-core",
  "time-macros",
