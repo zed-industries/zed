@@ -541,6 +541,15 @@ impl SyntaxSnapshot {
                             .to_ts_point();
                     }
 
+                    if included_ranges.is_empty() {
+                        included_ranges.push(tree_sitter::Range {
+                            start_byte: 0,
+                            end_byte: 0,
+                            start_point: Default::default(),
+                            end_point: Default::default(),
+                        });
+                    }
+
                     if let Some(SyntaxLayerContent::Parsed { tree: old_tree, .. }) =
                         old_layer.map(|layer| &layer.content)
                     {
