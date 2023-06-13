@@ -1299,6 +1299,9 @@ impl Editor {
                         project::Event::ReloadInlayHints => {
                             editor.reload_inlay_hints(cx);
                         }
+                        project::Event::ActiveEntryChanged(Some(_)) => {
+                            editor.reload_inlay_hints(cx);
+                        }
                         _ => {}
                     };
                     cx.notify()
@@ -7299,7 +7302,7 @@ impl Editor {
                 self.refresh_active_diagnostics(cx);
                 false
             }
-            _ => true,
+            _ => false,
         };
 
         if update_inlay_hints {
