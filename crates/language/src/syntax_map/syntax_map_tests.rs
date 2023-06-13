@@ -655,6 +655,34 @@ fn test_combined_injections_inside_injections() {
     );
 }
 
+#[gpui::test]
+fn test_empty_combined_injections_inside_injections() {
+    let (buffer, syntax_map) = test_edit_sequence(
+        "Markdown",
+        &[r#"
+            ```erb
+            hello
+            ```
+
+            goodbye
+        "#],
+    );
+
+    assert_layers_for_range(
+        &syntax_map,
+        &buffer,
+        Point::new(0, 0)..Point::new(5, 0),
+        &[
+            "...(paragraph)...",
+            "(template...",
+            "(fragment...",
+            // The ruby syntax tree should be empty, since there are
+            // no interpolations in the ERB template.
+            "(program)",
+        ],
+    );
+}
+
 #[gpui::test(iterations = 50)]
 fn test_random_syntax_map_edits(mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
