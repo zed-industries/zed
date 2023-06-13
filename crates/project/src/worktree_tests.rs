@@ -1,10 +1,10 @@
 use crate::{
-    worktree::{Event, WorktreeHandle},
+    worktree::{Event, Snapshot, WorktreeHandle},
     EntryKind, PathChange, Worktree,
 };
 use anyhow::Result;
 use client::Client;
-use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
 use gpui::{executor::Deterministic, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
@@ -728,9 +728,9 @@ fn randomly_mutate_worktree(
             } else {
                 other_entry.path.parent().unwrap().into()
             };
-            let mut new_path = new_parent_path.join(gen_name(rng));
+            let mut new_path = new_parent_path.join(random_filename(rng));
             if new_path.starts_with(&entry.path) {
-                new_path = gen_name(rng).into();
+                new_path = random_filename(rng).into();
             }
 
             log::info!(
@@ -747,7 +747,7 @@ fn randomly_mutate_worktree(
         }
         _ => {
             let task = if entry.is_dir() {
-                let child_path = entry.path.join(gen_name(rng));
+                let child_path = entry.path.join(random_filename(rng));
                 let is_dir = rng.gen_bool(0.3);
                 log::info!(
                     "creating {} at {:?}",
@@ -788,7 +788,7 @@ async fn randomly_mutate_fs(
 
     if (files.is_empty() && dirs.len() == 1) || rng.gen_bool(insertion_probability) {
         let path = dirs.choose(rng).unwrap();
-        let new_path = path.join(gen_name(rng));
+        let new_path = path.join(random_filename(rng));
 
         if rng.gen() {
             log::info!(
@@ -880,7 +880,7 @@ async fn randomly_mutate_fs(
                 .unwrap();
                 new_path_parent.to_path_buf()
             } else {
-                new_path_parent.join(gen_name(rng))
+                new_path_parent.join(random_filename(rng))
             };
 
             log::info!(
@@ -927,606 +927,597 @@ async fn randomly_mutate_fs(
     }
 }
 
-fn gen_name(rng: &mut impl Rng) -> String {
+fn random_filename(rng: &mut impl Rng) -> String {
     (0..6)
         .map(|_| rng.sample(rand::distributions::Alphanumeric))
         .map(char::from)
         .collect()
 }
 
-mod git_tests {
-    use crate::{worktree::WorktreeHandle, Snapshot};
+#[gpui::test]
+async fn test_rename_work_directory(cx: &mut TestAppContext) {
+    let root = temp_tree(json!({
+        "projects": {
+            "project1": {
+                "a": "",
+                "b": "",
+            }
+        },
 
-    use super::*;
-    use collections::HashMap;
-    use fs::repository::GitFileStatus;
-    use pretty_assertions::assert_eq;
+    }));
+    let root_path = root.path();
 
-    #[gpui::test]
-    async fn test_rename_work_directory(cx: &mut TestAppContext) {
-        let root = temp_tree(json!({
-            "projects": {
-                "project1": {
-                    "a": "",
-                    "b": "",
-                }
-            },
+    let http_client = FakeHttpClient::with_404_response();
+    let client = cx.read(|cx| Client::new(http_client, cx));
+    let tree = Worktree::local(
+        client,
+        root_path,
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
 
-        }));
-        let root_path = root.path();
+    let repo = git_init(&root_path.join("projects/project1"));
+    git_add("a", &repo);
+    git_commit("init", &repo);
+    std::fs::write(root_path.join("projects/project1/a"), "aa").ok();
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = cx.read(|cx| Client::new(http_client, cx));
-        let tree = Worktree::local(
-            client,
-            root_path,
-            true,
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        let repo = git_init(&root_path.join("projects/project1"));
-        git_add("a", &repo);
-        git_commit("init", &repo);
-        std::fs::write(root_path.join("projects/project1/a"), "aa").ok();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        tree.flush_fs_events(cx).await;
-
-        cx.read(|cx| {
-            let tree = tree.read(cx);
-            let (work_dir, _) = tree.repositories().next().unwrap();
-            assert_eq!(work_dir.as_ref(), Path::new("projects/project1"));
-            assert_eq!(
-                tree.status_for_file(Path::new("projects/project1/a")),
-                Some(GitFileStatus::Modified)
-            );
-            assert_eq!(
-                tree.status_for_file(Path::new("projects/project1/b")),
-                Some(GitFileStatus::Added)
-            );
-        });
-
-        std::fs::rename(
-            root_path.join("projects/project1"),
-            root_path.join("projects/project2"),
-        )
-        .ok();
-        tree.flush_fs_events(cx).await;
-
-        cx.read(|cx| {
-            let tree = tree.read(cx);
-            let (work_dir, _) = tree.repositories().next().unwrap();
-            assert_eq!(work_dir.as_ref(), Path::new("projects/project2"));
-            assert_eq!(
-                tree.status_for_file(Path::new("projects/project2/a")),
-                Some(GitFileStatus::Modified)
-            );
-            assert_eq!(
-                tree.status_for_file(Path::new("projects/project2/b")),
-                Some(GitFileStatus::Added)
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_git_repository_for_path(cx: &mut TestAppContext) {
-        let root = temp_tree(json!({
-            "c.txt": "",
-            "dir1": {
-                ".git": {},
-                "deps": {
-                    "dep1": {
-                        ".git": {},
-                        "src": {
-                            "a.txt": ""
-                        }
-                    }
-                },
-                "src": {
-                    "b.txt": ""
-                }
-            },
-        }));
-
-        let http_client = FakeHttpClient::with_404_response();
-        let client = cx.read(|cx| Client::new(http_client, cx));
-        let tree = Worktree::local(
-            client,
-            root.path(),
-            true,
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-        tree.flush_fs_events(cx).await;
-
-        tree.read_with(cx, |tree, _cx| {
-            let tree = tree.as_local().unwrap();
-
-            assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
-
-            let entry = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
-            assert_eq!(
-                entry
-                    .work_directory(tree)
-                    .map(|directory| directory.as_ref().to_owned()),
-                Some(Path::new("dir1").to_owned())
-            );
-
-            let entry = tree
-                .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
-                .unwrap();
-            assert_eq!(
-                entry
-                    .work_directory(tree)
-                    .map(|directory| directory.as_ref().to_owned()),
-                Some(Path::new("dir1/deps/dep1").to_owned())
-            );
-
-            let entries = tree.files(false, 0);
-
-            let paths_with_repos = tree
-                .entries_with_repositories(entries)
-                .map(|(entry, repo)| {
-                    (
-                        entry.path.as_ref(),
-                        repo.and_then(|repo| {
-                            repo.work_directory(&tree)
-                                .map(|work_directory| work_directory.0.to_path_buf())
-                        }),
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            assert_eq!(
-                paths_with_repos,
-                &[
-                    (Path::new("c.txt"), None),
-                    (
-                        Path::new("dir1/deps/dep1/src/a.txt"),
-                        Some(Path::new("dir1/deps/dep1").into())
-                    ),
-                    (Path::new("dir1/src/b.txt"), Some(Path::new("dir1").into())),
-                ]
-            );
-        });
-
-        let repo_update_events = Arc::new(Mutex::new(vec![]));
-        tree.update(cx, |_, cx| {
-            let repo_update_events = repo_update_events.clone();
-            cx.subscribe(&tree, move |_, _, event, _| {
-                if let Event::UpdatedGitRepositories(update) = event {
-                    repo_update_events.lock().push(update.clone());
-                }
-            })
-            .detach();
-        });
-
-        std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
-        tree.flush_fs_events(cx).await;
-
-        assert_eq!(
-            repo_update_events.lock()[0]
-                .iter()
-                .map(|e| e.0.clone())
-                .collect::<Vec<Arc<Path>>>(),
-            vec![Path::new("dir1").into()]
-        );
-
-        std::fs::remove_dir_all(root.path().join("dir1/.git")).unwrap();
-        tree.flush_fs_events(cx).await;
-
-        tree.read_with(cx, |tree, _cx| {
-            let tree = tree.as_local().unwrap();
-
-            assert!(tree
-                .repository_for_path("dir1/src/b.txt".as_ref())
-                .is_none());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
-        const IGNORE_RULE: &'static str = "**/target";
-
-        let root = temp_tree(json!({
-            "project": {
-                "a.txt": "a",
-                "b.txt": "bb",
-                "c": {
-                    "d": {
-                        "e.txt": "eee"
-                    }
-                },
-                "f.txt": "ffff",
-                "target": {
-                    "build_file": "???"
-                },
-                ".gitignore": IGNORE_RULE
-            },
-
-        }));
-
-        let http_client = FakeHttpClient::with_404_response();
-        let client = cx.read(|cx| Client::new(http_client, cx));
-        let tree = Worktree::local(
-            client,
-            root.path(),
-            true,
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        const A_TXT: &'static str = "a.txt";
-        const B_TXT: &'static str = "b.txt";
-        const E_TXT: &'static str = "c/d/e.txt";
-        const F_TXT: &'static str = "f.txt";
-        const DOTGITIGNORE: &'static str = ".gitignore";
-        const BUILD_FILE: &'static str = "target/build_file";
-        let project_path: &Path = &Path::new("project");
-
-        let work_dir = root.path().join("project");
-        let mut repo = git_init(work_dir.as_path());
-        repo.add_ignore_rule(IGNORE_RULE).unwrap();
-        git_add(Path::new(A_TXT), &repo);
-        git_add(Path::new(E_TXT), &repo);
-        git_add(Path::new(DOTGITIGNORE), &repo);
-        git_commit("Initial commit", &repo);
-
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        // Check that the right git state is observed on startup
-        tree.read_with(cx, |tree, _cx| {
-            let snapshot = tree.snapshot();
-            assert_eq!(snapshot.repositories().count(), 1);
-            let (dir, _) = snapshot.repositories().next().unwrap();
-            assert_eq!(dir.as_ref(), Path::new("project"));
-
-            assert_eq!(
-                snapshot.status_for_file(project_path.join(B_TXT)),
-                Some(GitFileStatus::Added)
-            );
-            assert_eq!(
-                snapshot.status_for_file(project_path.join(F_TXT)),
-                Some(GitFileStatus::Added)
-            );
-        });
-
-        std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
-
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        tree.read_with(cx, |tree, _cx| {
-            let snapshot = tree.snapshot();
-
-            assert_eq!(
-                snapshot.status_for_file(project_path.join(A_TXT)),
-                Some(GitFileStatus::Modified)
-            );
-        });
-
-        git_add(Path::new(A_TXT), &repo);
-        git_add(Path::new(B_TXT), &repo);
-        git_commit("Committing modified and added", &repo);
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        // Check that repo only changes are tracked
-        tree.read_with(cx, |tree, _cx| {
-            let snapshot = tree.snapshot();
-
-            assert_eq!(
-                snapshot.status_for_file(project_path.join(F_TXT)),
-                Some(GitFileStatus::Added)
-            );
-
-            assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
-            assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
-        });
-
-        git_reset(0, &repo);
-        git_remove_index(Path::new(B_TXT), &repo);
-        git_stash(&mut repo);
-        std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
-        std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        // Check that more complex repo changes are tracked
-        tree.read_with(cx, |tree, _cx| {
-            let snapshot = tree.snapshot();
-
-            assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
-            assert_eq!(
-                snapshot.status_for_file(project_path.join(B_TXT)),
-                Some(GitFileStatus::Added)
-            );
-            assert_eq!(
-                snapshot.status_for_file(project_path.join(E_TXT)),
-                Some(GitFileStatus::Modified)
-            );
-        });
-
-        std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
-        std::fs::remove_dir_all(work_dir.join("c")).unwrap();
-        std::fs::write(
-            work_dir.join(DOTGITIGNORE),
-            [IGNORE_RULE, "f.txt"].join("\n"),
-        )
-        .unwrap();
-
-        git_add(Path::new(DOTGITIGNORE), &repo);
-        git_commit("Committing modified git ignore", &repo);
-
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        let mut renamed_dir_name = "first_directory/second_directory";
-        const RENAMED_FILE: &'static str = "rf.txt";
-
-        std::fs::create_dir_all(work_dir.join(renamed_dir_name)).unwrap();
-        std::fs::write(
-            work_dir.join(renamed_dir_name).join(RENAMED_FILE),
-            "new-contents",
-        )
-        .unwrap();
-
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        tree.read_with(cx, |tree, _cx| {
-            let snapshot = tree.snapshot();
-            assert_eq!(
-                snapshot.status_for_file(&project_path.join(renamed_dir_name).join(RENAMED_FILE)),
-                Some(GitFileStatus::Added)
-            );
-        });
-
-        renamed_dir_name = "new_first_directory/second_directory";
-
-        std::fs::rename(
-            work_dir.join("first_directory"),
-            work_dir.join("new_first_directory"),
-        )
-        .unwrap();
-
-        tree.flush_fs_events(cx).await;
-        deterministic.run_until_parked();
-
-        tree.read_with(cx, |tree, _cx| {
-            let snapshot = tree.snapshot();
-
-            assert_eq!(
-                snapshot.status_for_file(
-                    project_path
-                        .join(Path::new(renamed_dir_name))
-                        .join(RENAMED_FILE)
-                ),
-                Some(GitFileStatus::Added)
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
-        let fs = FakeFs::new(cx.background());
-        fs.insert_tree(
-            "/root",
-            json!({
-                ".git": {},
-                "a": {
-                    "b": {
-                        "c1.txt": "",
-                        "c2.txt": "",
-                    },
-                    "d": {
-                        "e1.txt": "",
-                        "e2.txt": "",
-                        "e3.txt": "",
-                    }
-                },
-                "f": {
-                    "no-status.txt": ""
-                },
-                "g": {
-                    "h1.txt": "",
-                    "h2.txt": ""
-                },
-
-            }),
-        )
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-        fs.set_status_for_repo_via_git_operation(
-            &Path::new("/root/.git"),
-            &[
-                (Path::new("a/b/c1.txt"), GitFileStatus::Added),
-                (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
-                (Path::new("g/h2.txt"), GitFileStatus::Conflict),
-            ],
+    tree.flush_fs_events(cx).await;
+
+    cx.read(|cx| {
+        let tree = tree.read(cx);
+        let (work_dir, _) = tree.repositories().next().unwrap();
+        assert_eq!(work_dir.as_ref(), Path::new("projects/project1"));
+        assert_eq!(
+            tree.status_for_file(Path::new("projects/project1/a")),
+            Some(GitFileStatus::Modified)
+        );
+        assert_eq!(
+            tree.status_for_file(Path::new("projects/project1/b")),
+            Some(GitFileStatus::Added)
+        );
+    });
+
+    std::fs::rename(
+        root_path.join("projects/project1"),
+        root_path.join("projects/project2"),
+    )
+    .ok();
+    tree.flush_fs_events(cx).await;
+
+    cx.read(|cx| {
+        let tree = tree.read(cx);
+        let (work_dir, _) = tree.repositories().next().unwrap();
+        assert_eq!(work_dir.as_ref(), Path::new("projects/project2"));
+        assert_eq!(
+            tree.status_for_file(Path::new("projects/project2/a")),
+            Some(GitFileStatus::Modified)
+        );
+        assert_eq!(
+            tree.status_for_file(Path::new("projects/project2/b")),
+            Some(GitFileStatus::Added)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_git_repository_for_path(cx: &mut TestAppContext) {
+    let root = temp_tree(json!({
+        "c.txt": "",
+        "dir1": {
+            ".git": {},
+            "deps": {
+                "dep1": {
+                    ".git": {},
+                    "src": {
+                        "a.txt": ""
+                    }
+                }
+            },
+            "src": {
+                "b.txt": ""
+            }
+        },
+    }));
+
+    let http_client = FakeHttpClient::with_404_response();
+    let client = cx.read(|cx| Client::new(http_client, cx));
+    let tree = Worktree::local(
+        client,
+        root.path(),
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _cx| {
+        let tree = tree.as_local().unwrap();
+
+        assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
+
+        let entry = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
+        assert_eq!(
+            entry
+                .work_directory(tree)
+                .map(|directory| directory.as_ref().to_owned()),
+            Some(Path::new("dir1").to_owned())
         );
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = cx.read(|cx| Client::new(http_client, cx));
-        let tree = Worktree::local(
-            client,
-            Path::new("/root"),
-            true,
-            fs.clone(),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        cx.foreground().run_until_parked();
-        let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
-
-        check_propagated_statuses(
-            &snapshot,
-            &[
-                (Path::new(""), Some(GitFileStatus::Conflict)),
-                (Path::new("a"), Some(GitFileStatus::Modified)),
-                (Path::new("a/b"), Some(GitFileStatus::Added)),
-                (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-                (Path::new("a/b/c2.txt"), None),
-                (Path::new("a/d"), Some(GitFileStatus::Modified)),
-                (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-                (Path::new("f"), None),
-                (Path::new("f/no-status.txt"), None),
-                (Path::new("g"), Some(GitFileStatus::Conflict)),
-                (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
-            ],
+        let entry = tree
+            .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
+            .unwrap();
+        assert_eq!(
+            entry
+                .work_directory(tree)
+                .map(|directory| directory.as_ref().to_owned()),
+            Some(Path::new("dir1/deps/dep1").to_owned())
         );
 
-        check_propagated_statuses(
-            &snapshot,
-            &[
-                (Path::new("a/b"), Some(GitFileStatus::Added)),
-                (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-                (Path::new("a/b/c2.txt"), None),
-                (Path::new("a/d"), Some(GitFileStatus::Modified)),
-                (Path::new("a/d/e1.txt"), None),
-                (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-                (Path::new("f"), None),
-                (Path::new("f/no-status.txt"), None),
-                (Path::new("g"), Some(GitFileStatus::Conflict)),
-            ],
-        );
+        let entries = tree.files(false, 0);
 
-        check_propagated_statuses(
-            &snapshot,
-            &[
-                (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-                (Path::new("a/b/c2.txt"), None),
-                (Path::new("a/d/e1.txt"), None),
-                (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-                (Path::new("f/no-status.txt"), None),
-            ],
-        );
-
-        #[track_caller]
-        fn check_propagated_statuses(
-            snapshot: &Snapshot,
-            expected_statuses: &[(&Path, Option<GitFileStatus>)],
-        ) {
-            let mut entries = expected_statuses
-                .iter()
-                .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
-                .collect::<Vec<_>>();
-            snapshot.propagate_git_statuses(&mut entries);
-            assert_eq!(
-                entries
-                    .iter()
-                    .map(|e| (e.path.as_ref(), e.git_status))
-                    .collect::<Vec<_>>(),
-                expected_statuses
-            );
-        }
-    }
-
-    #[track_caller]
-    fn git_init(path: &Path) -> git2::Repository {
-        git2::Repository::init(path).expect("Failed to initialize git repository")
-    }
-
-    #[track_caller]
-    fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
-        let path = path.as_ref();
-        let mut index = repo.index().expect("Failed to get index");
-        index.add_path(path).expect("Failed to add a.txt");
-        index.write().expect("Failed to write index");
-    }
-
-    #[track_caller]
-    fn git_remove_index(path: &Path, repo: &git2::Repository) {
-        let mut index = repo.index().expect("Failed to get index");
-        index.remove_path(path).expect("Failed to add a.txt");
-        index.write().expect("Failed to write index");
-    }
-
-    #[track_caller]
-    fn git_commit(msg: &'static str, repo: &git2::Repository) {
-        use git2::Signature;
-
-        let signature = Signature::now("test", "test@zed.dev").unwrap();
-        let oid = repo.index().unwrap().write_tree().unwrap();
-        let tree = repo.find_tree(oid).unwrap();
-        if let Some(head) = repo.head().ok() {
-            let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
-
-            let parent_commit = parent_obj.as_commit().unwrap();
-
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                msg,
-                &tree,
-                &[parent_commit],
-            )
-            .expect("Failed to commit with parent");
-        } else {
-            repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
-                .expect("Failed to commit");
-        }
-    }
-
-    #[track_caller]
-    fn git_stash(repo: &mut git2::Repository) {
-        use git2::Signature;
-
-        let signature = Signature::now("test", "test@zed.dev").unwrap();
-        repo.stash_save(&signature, "N/A", None)
-            .expect("Failed to stash");
-    }
-
-    #[track_caller]
-    fn git_reset(offset: usize, repo: &git2::Repository) {
-        let head = repo.head().expect("Couldn't get repo head");
-        let object = head.peel(git2::ObjectType::Commit).unwrap();
-        let commit = object.as_commit().unwrap();
-        let new_head = commit
-            .parents()
-            .inspect(|parnet| {
-                parnet.message();
+        let paths_with_repos = tree
+            .entries_with_repositories(entries)
+            .map(|(entry, repo)| {
+                (
+                    entry.path.as_ref(),
+                    repo.and_then(|repo| {
+                        repo.work_directory(&tree)
+                            .map(|work_directory| work_directory.0.to_path_buf())
+                    }),
+                )
             })
-            .skip(offset)
-            .next()
-            .expect("Not enough history");
-        repo.reset(&new_head.as_object(), git2::ResetType::Soft, None)
-            .expect("Could not reset");
-    }
+            .collect::<Vec<_>>();
 
-    #[allow(dead_code)]
-    #[track_caller]
-    fn git_status(repo: &git2::Repository) -> HashMap<String, git2::Status> {
-        repo.statuses(None)
-            .unwrap()
+        assert_eq!(
+            paths_with_repos,
+            &[
+                (Path::new("c.txt"), None),
+                (
+                    Path::new("dir1/deps/dep1/src/a.txt"),
+                    Some(Path::new("dir1/deps/dep1").into())
+                ),
+                (Path::new("dir1/src/b.txt"), Some(Path::new("dir1").into())),
+            ]
+        );
+    });
+
+    let repo_update_events = Arc::new(Mutex::new(vec![]));
+    tree.update(cx, |_, cx| {
+        let repo_update_events = repo_update_events.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedGitRepositories(update) = event {
+                repo_update_events.lock().push(update.clone());
+            }
+        })
+        .detach();
+    });
+
+    std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
+    tree.flush_fs_events(cx).await;
+
+    assert_eq!(
+        repo_update_events.lock()[0]
             .iter()
-            .map(|status| (status.path().unwrap().to_string(), status.status()))
-            .collect()
+            .map(|e| e.0.clone())
+            .collect::<Vec<Arc<Path>>>(),
+        vec![Path::new("dir1").into()]
+    );
+
+    std::fs::remove_dir_all(root.path().join("dir1/.git")).unwrap();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _cx| {
+        let tree = tree.as_local().unwrap();
+
+        assert!(tree
+            .repository_for_path("dir1/src/b.txt".as_ref())
+            .is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_git_status(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    const IGNORE_RULE: &'static str = "**/target";
+
+    let root = temp_tree(json!({
+        "project": {
+            "a.txt": "a",
+            "b.txt": "bb",
+            "c": {
+                "d": {
+                    "e.txt": "eee"
+                }
+            },
+            "f.txt": "ffff",
+            "target": {
+                "build_file": "???"
+            },
+            ".gitignore": IGNORE_RULE
+        },
+
+    }));
+
+    let http_client = FakeHttpClient::with_404_response();
+    let client = cx.read(|cx| Client::new(http_client, cx));
+    let tree = Worktree::local(
+        client,
+        root.path(),
+        true,
+        Arc::new(RealFs),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    const A_TXT: &'static str = "a.txt";
+    const B_TXT: &'static str = "b.txt";
+    const E_TXT: &'static str = "c/d/e.txt";
+    const F_TXT: &'static str = "f.txt";
+    const DOTGITIGNORE: &'static str = ".gitignore";
+    const BUILD_FILE: &'static str = "target/build_file";
+    let project_path: &Path = &Path::new("project");
+
+    let work_dir = root.path().join("project");
+    let mut repo = git_init(work_dir.as_path());
+    repo.add_ignore_rule(IGNORE_RULE).unwrap();
+    git_add(Path::new(A_TXT), &repo);
+    git_add(Path::new(E_TXT), &repo);
+    git_add(Path::new(DOTGITIGNORE), &repo);
+    git_commit("Initial commit", &repo);
+
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    // Check that the right git state is observed on startup
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories().count(), 1);
+        let (dir, _) = snapshot.repositories().next().unwrap();
+        assert_eq!(dir.as_ref(), Path::new("project"));
+
+        assert_eq!(
+            snapshot.status_for_file(project_path.join(B_TXT)),
+            Some(GitFileStatus::Added)
+        );
+        assert_eq!(
+            snapshot.status_for_file(project_path.join(F_TXT)),
+            Some(GitFileStatus::Added)
+        );
+    });
+
+    std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
+
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+
+        assert_eq!(
+            snapshot.status_for_file(project_path.join(A_TXT)),
+            Some(GitFileStatus::Modified)
+        );
+    });
+
+    git_add(Path::new(A_TXT), &repo);
+    git_add(Path::new(B_TXT), &repo);
+    git_commit("Committing modified and added", &repo);
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    // Check that repo only changes are tracked
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+
+        assert_eq!(
+            snapshot.status_for_file(project_path.join(F_TXT)),
+            Some(GitFileStatus::Added)
+        );
+
+        assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
+        assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
+    });
+
+    git_reset(0, &repo);
+    git_remove_index(Path::new(B_TXT), &repo);
+    git_stash(&mut repo);
+    std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
+    std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    // Check that more complex repo changes are tracked
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+
+        assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
+        assert_eq!(
+            snapshot.status_for_file(project_path.join(B_TXT)),
+            Some(GitFileStatus::Added)
+        );
+        assert_eq!(
+            snapshot.status_for_file(project_path.join(E_TXT)),
+            Some(GitFileStatus::Modified)
+        );
+    });
+
+    std::fs::remove_file(work_dir.join(B_TXT)).unwrap();
+    std::fs::remove_dir_all(work_dir.join("c")).unwrap();
+    std::fs::write(
+        work_dir.join(DOTGITIGNORE),
+        [IGNORE_RULE, "f.txt"].join("\n"),
+    )
+    .unwrap();
+
+    git_add(Path::new(DOTGITIGNORE), &repo);
+    git_commit("Committing modified git ignore", &repo);
+
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    let mut renamed_dir_name = "first_directory/second_directory";
+    const RENAMED_FILE: &'static str = "rf.txt";
+
+    std::fs::create_dir_all(work_dir.join(renamed_dir_name)).unwrap();
+    std::fs::write(
+        work_dir.join(renamed_dir_name).join(RENAMED_FILE),
+        "new-contents",
+    )
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        assert_eq!(
+            snapshot.status_for_file(&project_path.join(renamed_dir_name).join(RENAMED_FILE)),
+            Some(GitFileStatus::Added)
+        );
+    });
+
+    renamed_dir_name = "new_first_directory/second_directory";
+
+    std::fs::rename(
+        work_dir.join("first_directory"),
+        work_dir.join("new_first_directory"),
+    )
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    deterministic.run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+
+        assert_eq!(
+            snapshot.status_for_file(
+                project_path
+                    .join(Path::new(renamed_dir_name))
+                    .join(RENAMED_FILE)
+            ),
+            Some(GitFileStatus::Added)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            "a": {
+                "b": {
+                    "c1.txt": "",
+                    "c2.txt": "",
+                },
+                "d": {
+                    "e1.txt": "",
+                    "e2.txt": "",
+                    "e3.txt": "",
+                }
+            },
+            "f": {
+                "no-status.txt": ""
+            },
+            "g": {
+                "h1.txt": "",
+                "h2.txt": ""
+            },
+
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        &Path::new("/root/.git"),
+        &[
+            (Path::new("a/b/c1.txt"), GitFileStatus::Added),
+            (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
+            (Path::new("g/h2.txt"), GitFileStatus::Conflict),
+        ],
+    );
+
+    let http_client = FakeHttpClient::with_404_response();
+    let client = cx.read(|cx| Client::new(http_client, cx));
+    let tree = Worktree::local(
+        client,
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    cx.foreground().run_until_parked();
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), Some(GitFileStatus::Conflict)),
+            (Path::new("a"), Some(GitFileStatus::Modified)),
+            (Path::new("a/b"), Some(GitFileStatus::Added)),
+            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+            (Path::new("a/b/c2.txt"), None),
+            (Path::new("a/d"), Some(GitFileStatus::Modified)),
+            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("f"), None),
+            (Path::new("f/no-status.txt"), None),
+            (Path::new("g"), Some(GitFileStatus::Conflict)),
+            (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+        ],
+    );
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("a/b"), Some(GitFileStatus::Added)),
+            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+            (Path::new("a/b/c2.txt"), None),
+            (Path::new("a/d"), Some(GitFileStatus::Modified)),
+            (Path::new("a/d/e1.txt"), None),
+            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("f"), None),
+            (Path::new("f/no-status.txt"), None),
+            (Path::new("g"), Some(GitFileStatus::Conflict)),
+        ],
+    );
+
+    check_propagated_statuses(
+        &snapshot,
+        &[
+            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
+            (Path::new("a/b/c2.txt"), None),
+            (Path::new("a/d/e1.txt"), None),
+            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("f/no-status.txt"), None),
+        ],
+    );
+
+    #[track_caller]
+    fn check_propagated_statuses(
+        snapshot: &Snapshot,
+        expected_statuses: &[(&Path, Option<GitFileStatus>)],
+    ) {
+        let mut entries = expected_statuses
+            .iter()
+            .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
+            .collect::<Vec<_>>();
+        snapshot.propagate_git_statuses(&mut entries);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| (e.path.as_ref(), e.git_status))
+                .collect::<Vec<_>>(),
+            expected_statuses
+        );
     }
+}
+
+#[track_caller]
+fn git_init(path: &Path) -> git2::Repository {
+    git2::Repository::init(path).expect("Failed to initialize git repository")
+}
+
+#[track_caller]
+fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
+    let path = path.as_ref();
+    let mut index = repo.index().expect("Failed to get index");
+    index.add_path(path).expect("Failed to add a.txt");
+    index.write().expect("Failed to write index");
+}
+
+#[track_caller]
+fn git_remove_index(path: &Path, repo: &git2::Repository) {
+    let mut index = repo.index().expect("Failed to get index");
+    index.remove_path(path).expect("Failed to add a.txt");
+    index.write().expect("Failed to write index");
+}
+
+#[track_caller]
+fn git_commit(msg: &'static str, repo: &git2::Repository) {
+    use git2::Signature;
+
+    let signature = Signature::now("test", "test@zed.dev").unwrap();
+    let oid = repo.index().unwrap().write_tree().unwrap();
+    let tree = repo.find_tree(oid).unwrap();
+    if let Some(head) = repo.head().ok() {
+        let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
+
+        let parent_commit = parent_obj.as_commit().unwrap();
+
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            msg,
+            &tree,
+            &[parent_commit],
+        )
+        .expect("Failed to commit with parent");
+    } else {
+        repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
+            .expect("Failed to commit");
+    }
+}
+
+#[track_caller]
+fn git_stash(repo: &mut git2::Repository) {
+    use git2::Signature;
+
+    let signature = Signature::now("test", "test@zed.dev").unwrap();
+    repo.stash_save(&signature, "N/A", None)
+        .expect("Failed to stash");
+}
+
+#[track_caller]
+fn git_reset(offset: usize, repo: &git2::Repository) {
+    let head = repo.head().expect("Couldn't get repo head");
+    let object = head.peel(git2::ObjectType::Commit).unwrap();
+    let commit = object.as_commit().unwrap();
+    let new_head = commit
+        .parents()
+        .inspect(|parnet| {
+            parnet.message();
+        })
+        .skip(offset)
+        .next()
+        .expect("Not enough history");
+    repo.reset(&new_head.as_object(), git2::ResetType::Soft, None)
+        .expect("Could not reset");
+}
+
+#[allow(dead_code)]
+#[track_caller]
+fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
+    repo.statuses(None)
+        .unwrap()
+        .iter()
+        .map(|status| (status.path().unwrap().to_string(), status.status()))
+        .collect()
 }
