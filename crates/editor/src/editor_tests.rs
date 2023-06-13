@@ -1732,26 +1732,40 @@ async fn test_newline_comments(cx: &mut gpui::TestAppContext) {
         },
         None,
     ));
-
-    let mut cx = EditorTestContext::new(cx).await;
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-    cx.set_state(indoc! {"
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
         // Fooˇ
     "});
 
-    cx.update_editor(|e, cx| e.newline(&Newline, cx));
-    cx.assert_editor_state(indoc! {"
+        cx.update_editor(|e, cx| e.newline(&Newline, cx));
+        cx.assert_editor_state(indoc! {"
         // Foo
         //ˇ
     "});
-    // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
-    cx.set_state(indoc! {"
+        // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
+        cx.set_state(indoc! {"
         ˇ// Foo
+    "});
+        cx.update_editor(|e, cx| e.newline(&Newline, cx));
+        cx.assert_editor_state(indoc! {"
+
+        ˇ// Foo
+    "});
+    }
+    // Ensure that comment continuations can be disabled.
+    update_test_settings(cx, |settings| {
+        settings.defaults.extend_comment_on_newline = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        // Fooˇ
     "});
     cx.update_editor(|e, cx| e.newline(&Newline, cx));
     cx.assert_editor_state(indoc! {"
-
-        ˇ// Foo
+        // Foo
+        ˇ
     "});
 }
 
