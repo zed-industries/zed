@@ -7,6 +7,8 @@ pub mod worktree;
 
 #[cfg(test)]
 mod project_tests;
+#[cfg(test)]
+mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, TypedEnvelope, UserStore};
