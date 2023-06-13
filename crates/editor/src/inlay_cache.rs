@@ -1,7 +1,7 @@
 use std::cmp;
 
 use crate::{Anchor, ExcerptId};
-use clock::Global;
+use clock::{Global, Local};
 use project::InlayHint;
 use util::post_inc;
 
@@ -13,12 +13,22 @@ pub struct InlayCache {
     next_inlay_id: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AnchorKey {
+    offset: usize,
+    version: Local,
+}
+
 #[derive(Clone, Debug)]
-pub struct OrderedByAnchorOffset<T>(pub BTreeMap<usize, (Anchor, T)>);
+pub struct OrderedByAnchorOffset<T>(pub BTreeMap<AnchorKey, (Anchor, T)>);
 
 impl<T> OrderedByAnchorOffset<T> {
     pub fn add(&mut self, anchor: Anchor, t: T) {
-        self.0.insert(anchor.text_anchor.offset, (anchor, t));
+        let key = AnchorKey {
+            offset: anchor.text_anchor.offset,
+            version: anchor.text_anchor.timestamp,
+        };
+        self.0.insert(key, (anchor, t));
     }
 
     fn into_ordered_elements(self) -> impl Iterator<Item = (Anchor, T)> {
@@ -62,13 +72,19 @@ impl InlayCache {
 
     pub fn update_inlays(
         &mut self,
-        new_inlays: HashMap<u64, (Global, HashMap<ExcerptId, OrderedByAnchorOffset<InlayHint>>)>,
+        inlay_updates: HashMap<
+            u64,
+            (
+                Global,
+                HashMap<ExcerptId, Option<OrderedByAnchorOffset<InlayHint>>>,
+            ),
+        >,
     ) -> InlaysUpdate {
         let mut old_inlays = self.inlays_per_buffer.clone();
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
 
-        for (buffer_id, (buffer_version, new_buffer_inlays)) in new_inlays {
+        for (buffer_id, (buffer_version, new_buffer_inlays)) in inlay_updates {
             match old_inlays.remove(&buffer_id) {
                 Some(mut old_buffer_inlays) => {
                     for (excerpt_id, new_excerpt_inlays) in new_buffer_inlays {
@@ -80,8 +96,12 @@ impl InlayCache {
                             .inlays_per_buffer
                             .get_mut(&buffer_id)
                             .expect("element expected: `old_inlays.remove` returned `Some`");
-                        let mut new_excerpt_inlays =
-                            new_excerpt_inlays.into_ordered_elements().fuse().peekable();
+                        let mut new_excerpt_inlays = match new_excerpt_inlays {
+                            Some(new_inlays) => {
+                                new_inlays.into_ordered_elements().fuse().peekable()
+                            }
+                            None => continue,
+                        };
                         if old_buffer_inlays
                             .inlays_per_excerpts
                             .remove(&excerpt_id)
@@ -168,13 +188,17 @@ impl InlayCache {
                         OrderedByAnchorOffset<(InlayId, InlayHint)>,
                     > = HashMap::default();
                     for (new_excerpt_id, new_ordered_inlays) in new_buffer_inlays {
-                        for (new_anchor, new_inlay) in new_ordered_inlays.into_ordered_elements() {
-                            let id = InlayId(post_inc(&mut self.next_inlay_id));
-                            inlays_per_excerpts
-                                .entry(new_excerpt_id)
-                                .or_default()
-                                .add(new_anchor, (id, new_inlay.clone()));
-                            to_insert.push((id, new_anchor, new_inlay));
+                        if let Some(new_ordered_inlays) = new_ordered_inlays {
+                            for (new_anchor, new_inlay) in
+                                new_ordered_inlays.into_ordered_elements()
+                            {
+                                let id = InlayId(post_inc(&mut self.next_inlay_id));
+                                inlays_per_excerpts
+                                    .entry(new_excerpt_id)
+                                    .or_default()
+                                    .add(new_anchor, (id, new_inlay.clone()));
+                                to_insert.push((id, new_anchor, new_inlay));
+                            }
                         }
                     }
                     self.inlays_per_buffer.insert(

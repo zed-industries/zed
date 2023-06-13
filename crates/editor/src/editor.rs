@@ -2596,81 +2596,106 @@ impl Editor {
             return;
         }
 
+        struct HintRequestKey {
+            buffer_id: u64,
+            buffer_version: Global,
+            excerpt_id: ExcerptId,
+        }
+
         let multi_buffer = self.buffer();
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
         let hint_fetch_tasks = multi_buffer_snapshot
             .excerpts()
-            .filter_map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
+            .map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
                 // TODO kb every time I reopen the same buffer, it's different.
                 // Find a way to understand it's the same buffer. Use paths?
                 let buffer_id = buffer_snapshot.remote_id();
                 let buffer_version = buffer_snapshot.version().clone();
-                let buffer_handle = multi_buffer.read(cx).buffer(buffer_id)?;
-                if self
-                    .inlay_hint_cache
-                    .inlays_up_to_date(buffer_id, &buffer_version, excerpt_id)
-                {
-                    return None;
-                }
+                let buffer_handle = multi_buffer.read(cx).buffer(buffer_id);
+                let hints_up_to_date =
+                    self.inlay_hint_cache
+                        .inlays_up_to_date(buffer_id, &buffer_version, excerpt_id);
+                let key = HintRequestKey {
+                    buffer_id,
+                    buffer_version,
+                    excerpt_id,
+                };
 
-                let task = cx.spawn(|editor, mut cx| async move {
-                    let task = editor
-                        .update(&mut cx, |editor, cx| {
-                            editor.project.as_ref().map(|project| {
-                                project.update(cx, |project, cx| {
-                                    project.inlay_hints_for_buffer(
-                                        buffer_handle,
-                                        excerpt_range.context,
-                                        cx,
-                                    )
+                cx.spawn(|editor, mut cx| async move {
+                    if hints_up_to_date {
+                        anyhow::Ok((key, None))
+                    } else {
+                        let Some(buffer_handle) = buffer_handle else { return Ok((key, Some(Vec::new()))) };
+                        let max_buffer_offset = cx.read(|cx| buffer_handle.read(cx).len());
+                        let excerpt_range = excerpt_range.context;
+                        let query_start = excerpt_range.start.offset;
+                        let query_end = excerpt_range.end.offset.min(max_buffer_offset);
+                        let task = editor
+                            .update(&mut cx, |editor, cx| {
+                                editor.project.as_ref().map(|project| {
+                                    project.update(cx, |project, cx| {
+                                        project.inlay_hints_for_buffer(
+                                            buffer_handle,
+                                            query_start..query_end,
+                                            cx,
+                                        )
+                                    })
                                 })
                             })
-                        })
-                        .context("inlay hints fecth task spawn")?;
+                            .context("inlay hints fecth task spawn")?;
 
-                    anyhow::Ok((
-                        buffer_id,
-                        buffer_version,
-                        excerpt_id,
-                        match task {
-                            Some(task) => task.await.context("inlay hints for buffer task")?,
+                        Ok((key, Some(match task {
+                            Some(task) => {
+                                let mut new_hints = task.await.context("inlay hints for buffer task")?;
+                                new_hints.retain(|hint| {
+                                    let hint_offset = hint.position.offset;
+                                    query_start <= hint_offset && hint_offset <= query_end
+                                });
+                                new_hints
+                            },
                             None => Vec::new(),
-                        },
-                    ))
-                });
-                Some(task)
+                        })))
+                    }
+                })
             })
             .collect::<Vec<_>>();
 
         cx.spawn(|editor, mut cx| async move {
-            let mut hints_response: HashMap<
+            let mut inlay_updates: HashMap<
                 u64,
-                (Global, HashMap<ExcerptId, OrderedByAnchorOffset<InlayHint>>),
+                (
+                    Global,
+                    HashMap<ExcerptId, Option<OrderedByAnchorOffset<InlayHint>>>,
+                ),
             > = HashMap::default();
             let multi_buffer_snapshot =
                 editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
 
             for task_result in futures::future::join_all(hint_fetch_tasks).await {
                 match task_result {
-                    Ok((buffer_id, buffer_version, excerpt_id, excerpt_hints)) => {
+                    Ok((request_key, response_inlays)) => {
                         let excerpt_hints_response = HashMap::from_iter([(
-                            excerpt_id,
-                            excerpt_hints.into_iter().fold(
-                                OrderedByAnchorOffset::default(),
-                                |mut ordered_hints, hint| {
-                                    let anchor = multi_buffer_snapshot
-                                        .anchor_in_excerpt(excerpt_id, hint.position);
-                                    ordered_hints.add(anchor, hint);
-                                    ordered_hints
-                                },
-                            ),
+                            request_key.excerpt_id,
+                            response_inlays.map(|excerpt_hints| {
+                                excerpt_hints.into_iter().fold(
+                                    OrderedByAnchorOffset::default(),
+                                    |mut ordered_hints, hint| {
+                                        let anchor = multi_buffer_snapshot.anchor_in_excerpt(
+                                            request_key.excerpt_id,
+                                            hint.position,
+                                        );
+                                        ordered_hints.add(anchor, hint);
+                                        ordered_hints
+                                    },
+                                )
+                            }),
                         )]);
-                        match hints_response.entry(buffer_id) {
+                        match inlay_updates.entry(request_key.buffer_id) {
                             hash_map::Entry::Occupied(mut o) => {
                                 o.get_mut().1.extend(excerpt_hints_response);
                             }
                             hash_map::Entry::Vacant(v) => {
-                                v.insert((buffer_version, excerpt_hints_response));
+                                v.insert((request_key.buffer_version, excerpt_hints_response));
                             }
                         }
                     }
@@ -2678,12 +2703,12 @@ impl Editor {
                 }
             }
 
-            if !hints_response.is_empty() {
+            if !inlay_updates.is_empty() {
                 let InlaysUpdate {
                     to_remove,
                     to_insert,
                 } = editor.update(&mut cx, |editor, _| {
-                    editor.inlay_hint_cache.update_inlays(hints_response)
+                    editor.inlay_hint_cache.update_inlays(inlay_updates)
                 })?;
 
                 editor.update(&mut cx, |editor, cx| {
@@ -7244,7 +7269,7 @@ impl Editor {
             }
             multi_buffer::Event::Reparsed => {
                 cx.emit(Event::Reparsed);
-                true
+                false
             }
             multi_buffer::Event::DirtyChanged => {
                 cx.emit(Event::DirtyChanged);
