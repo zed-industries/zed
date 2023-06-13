@@ -1756,7 +1756,7 @@ async fn test_newline_comments(cx: &mut gpui::TestAppContext) {
     }
     // Ensure that comment continuations can be disabled.
     update_test_settings(cx, |settings| {
-        settings.defaults.comment_continuations = Some(false);
+        settings.defaults.extend_comment_on_newline = Some(false);
     });
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state(indoc! {"

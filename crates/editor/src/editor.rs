@@ -2215,9 +2215,9 @@ impl Editor {
                                 });
                             // Comment extension on newline is allowed only for cursor selections
                             let comment_delimiter = language.line_comment_prefix().filter(|_| {
-                                let are_comment_continuations_enabled =
-                                    multi_buffer.settings_at(0, cx).comment_continuations;
-                                is_cursor && are_comment_continuations_enabled
+                                let is_comment_extension_enabled =
+                                    multi_buffer.settings_at(0, cx).extend_comment_on_newline;
+                                is_cursor && is_comment_extension_enabled
                             });
                             let comment_delimiter = if let Some(delimiter) = comment_delimiter {
                                 buffer
