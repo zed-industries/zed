@@ -332,8 +332,33 @@ pub struct InlayHint {
     pub buffer_id: u64,
     pub position: Anchor,
     pub label: InlayHintLabel,
-    pub kind: Option<String>,
+    pub kind: Option<InlayHintKind>,
+    pub padding_left: bool,
+    pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InlayHintKind {
+    Type,
+    Parameter,
+}
+
+impl InlayHintKind {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "type" => Some(InlayHintKind::Type),
+            "parameter" => Some(InlayHintKind::Parameter),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            InlayHintKind::Type => "type",
+            InlayHintKind::Parameter => "parameter",
+        }
+    }
 }
 
 impl InlayHint {

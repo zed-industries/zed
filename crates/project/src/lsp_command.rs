@@ -1,5 +1,5 @@
 use crate::{
-    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
+    DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintKind, InlayHintLabel,
     InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
     MarkupContent, Project, ProjectTransaction,
 };
@@ -1839,6 +1839,8 @@ impl LspCommand for InlayHints {
                         origin_buffer
                             .clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left),
                     ),
+                    padding_left: lsp_hint.padding_left.unwrap_or(false),
+                    padding_right: lsp_hint.padding_right.unwrap_or(false),
                     label: match lsp_hint.label {
                         lsp::InlayHintLabel::String(s) => InlayHintLabel::String(s),
                         lsp::InlayHintLabel::LabelParts(lsp_parts) => InlayHintLabel::LabelParts(
@@ -1878,7 +1880,11 @@ impl LspCommand for InlayHints {
                                 .collect(),
                         ),
                     },
-                    kind: lsp_hint.kind.map(|kind| format!("{kind:?}")),
+                    kind: lsp_hint.kind.and_then(|kind| match kind {
+                        lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
+                        lsp::InlayHintKind::PARAMETER => Some(InlayHintKind::Parameter),
+                        _ => None,
+                    }),
                     tooltip: lsp_hint.tooltip.map(|tooltip| match tooltip {
                         lsp::InlayHintTooltip::String(s) => InlayHintTooltip::String(s),
                         lsp::InlayHintTooltip::MarkupContent(markup_content) => {
@@ -1938,6 +1944,8 @@ impl LspCommand for InlayHints {
                 .into_iter()
                 .map(|response_hint| proto::InlayHint {
                     position: Some(language::proto::serialize_anchor(&response_hint.position)),
+                    padding_left: response_hint.padding_left,
+                    padding_right: response_hint.padding_right,
                     label: Some(proto::InlayHintLabel {
                         label: Some(match response_hint.label {
                             InlayHintLabel::String(s) => proto::inlay_hint_label::Label::Value(s),
@@ -1965,7 +1973,7 @@ impl LspCommand for InlayHints {
                             }
                         }),
                     }),
-                    kind: response_hint.kind,
+                    kind: response_hint.kind.map(|kind| kind.name().to_string()),
                     tooltip: response_hint.tooltip.map(|response_tooltip| {
                         let proto_tooltip = match response_tooltip {
                             InlayHintTooltip::String(s) => {
@@ -2061,7 +2069,12 @@ impl LspCommand for InlayHints {
                         InlayHintLabel::LabelParts(label_parts)
                     }
                 },
-                kind: message_hint.kind,
+                padding_left: message_hint.padding_left,
+                padding_right: message_hint.padding_right,
+                kind: message_hint
+                    .kind
+                    .as_deref()
+                    .and_then(InlayHintKind::from_name),
                 tooltip: message_hint.tooltip.and_then(|tooltip| {
                     Some(match tooltip.content? {
                         proto::inlay_hint_tooltip::Content::Value(s) => InlayHintTooltip::String(s),

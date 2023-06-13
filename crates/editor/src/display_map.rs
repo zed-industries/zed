@@ -306,11 +306,20 @@ impl DisplayMap {
         let new_inlays = to_insert
             .into_iter()
             .map(|(inlay_id, hint_anchor, hint)| {
+                let mut text = hint.text();
+                // TODO kb styling instead?
+                if hint.padding_right {
+                    text.push(' ');
+                }
+                if hint.padding_left {
+                    text.insert(0, ' ');
+                }
+
                 (
                     inlay_id,
                     InlayProperties {
                         position: hint_anchor.bias_left(&buffer_snapshot),
-                        text: hint.text(),
+                        text,
                     },
                 )
             })

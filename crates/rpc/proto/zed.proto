@@ -725,7 +725,9 @@ message InlayHint {
     Anchor position = 1;
     InlayHintLabel label = 2;
     optional string kind = 3;
-    InlayHintTooltip tooltip = 4;
+    bool padding_left = 4;
+    bool padding_right = 5;
+    InlayHintTooltip tooltip = 6;
 }
 
 message InlayHintLabel {
