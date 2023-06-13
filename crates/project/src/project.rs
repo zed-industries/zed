@@ -321,13 +321,13 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: ModelHandle<Buffer>,
     pub range: Range<language::Anchor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InlayHint {
     pub buffer_id: u64,
     pub position: Anchor,
@@ -338,7 +338,7 @@ pub struct InlayHint {
     pub tooltip: Option<InlayHintTooltip>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InlayHintKind {
     Type,
     Parameter,
@@ -370,32 +370,32 @@ impl InlayHint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InlayHintLabel {
     String(String),
     LabelParts(Vec<InlayHintLabelPart>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
     pub location: Option<Location>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InlayHintTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InlayHintLabelPartTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MarkupContent {
     pub kind: String,
     pub value: String,
@@ -4975,7 +4975,7 @@ impl Project {
                     lsp_request,
                     response,
                     project,
-                    buffer_handle,
+                    buffer_handle.clone(),
                     cx,
                 )
                 .await;

@@ -1,4 +1,5 @@
 mod blink_manager;
+
 pub mod display_map;
 mod editor_settings;
 mod element;
@@ -26,8 +27,8 @@ use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
 use client::{ClickhouseEvent, TelemetrySettings};
-use clock::{Global, ReplicaId};
-use collections::{hash_map, BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use clock::ReplicaId;
+use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -53,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_cache::{InlayCache, InlaysUpdate, OrderedByAnchorOffset};
+use inlay_cache::{InlayCache, InlayRefreshReason, InlaysUpdate, QueryInlaysRange};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -73,10 +74,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
-use project::{
-    FormatTrigger, InlayHint, InlayHintKind, Location, LocationLink, Project, ProjectPath,
-    ProjectTransaction,
-};
+use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -85,7 +83,6 @@ use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::path::PathBuf;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -1291,14 +1288,16 @@ impl Editor {
             (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
 
         let mut project_subscriptions = Vec::new();
-        if mode == EditorMode::Full && buffer.read(cx).is_singleton() {
+        if mode == EditorMode::Full {
             if let Some(project) = project.as_ref() {
-                project_subscriptions.push(cx.observe(project, |_, _, cx| {
-                    cx.emit(Event::TitleChanged);
-                }));
+                if buffer.read(cx).is_singleton() {
+                    project_subscriptions.push(cx.observe(project, |_, _, cx| {
+                        cx.emit(Event::TitleChanged);
+                    }));
+                }
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlays = event {
-                        editor.refresh_inlays(cx);
+                        editor.refresh_inlays(InlayRefreshReason::Regular, cx);
                     };
                 }));
             }
@@ -1353,8 +1352,8 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            // TODO kb has to live between editors
-            inlay_cache: InlayCache::default(),
+            // TODO kb has to live between editor reopens
+            inlay_cache: InlayCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -1379,7 +1378,7 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
-        this.refresh_inlays(cx);
+        this.refresh_inlays(InlayRefreshReason::Regular, cx);
         this
     }
 
@@ -2591,13 +2590,12 @@ impl Editor {
         }
     }
 
-    fn refresh_inlays(&mut self, cx: &mut ViewContext<Self>) {
+    fn refresh_inlays(&mut self, reason: InlayRefreshReason, cx: &mut ViewContext<Self>) {
         if self.mode != EditorMode::Full {
             return;
         }
 
-        let inlay_hint_settings = settings::get::<EditorSettings>(cx).inlay_hints;
-        if !inlay_hint_settings.enabled {
+        if !settings::get::<EditorSettings>(cx).inlay_hints.enabled {
             let to_remove = self.inlay_cache.clear();
             self.display_map.update(cx, |display_map, cx| {
                 display_map.splice_inlays(to_remove, Vec::new(), cx);
@@ -2605,151 +2603,63 @@ impl Editor {
             return;
         }
 
-        struct InlayRequestKey {
-            buffer_path: PathBuf,
-            buffer_version: Global,
-            excerpt_id: ExcerptId,
-        }
-
-        let multi_buffer = self.buffer();
-        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let inlay_fetch_tasks = multi_buffer_snapshot
-            .excerpts()
-            .filter_map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
-                let buffer_path = buffer_snapshot.resolve_file_path(cx, true)?;
-                let buffer_id = buffer_snapshot.remote_id();
-                let buffer_version = buffer_snapshot.version().clone();
-                let buffer_handle = multi_buffer.read(cx).buffer(buffer_id);
-                let inlays_up_to_date =
-                    self.inlay_cache
-                        .inlays_up_to_date(&buffer_path, &buffer_version, excerpt_id);
-                let key = InlayRequestKey {
-                    buffer_path,
-                    buffer_version,
-                    excerpt_id,
-                };
-
-                // TODO kb split this into 2 different steps:
-                // 1. cache population
-                // 2. cache querying + hint filters on top (needs to store previous filter settings)
-                let task = cx.spawn(|editor, mut cx| async move {
-                    if inlays_up_to_date {
-                        anyhow::Ok((key, None))
-                    } else {
-                        let Some(buffer_handle) = buffer_handle else { return Ok((key, Some(Vec::new()))) };
-                        let max_buffer_offset = cx.read(|cx| buffer_handle.read(cx).len());
-                        let excerpt_range = excerpt_range.context;
-                        let query_start = excerpt_range.start.offset;
-                        let query_end = excerpt_range.end.offset.min(max_buffer_offset);
-                        let task = editor
-                            .update(&mut cx, |editor, cx| {
-                                editor.project.as_ref().map(|project| {
-                                    project.update(cx, |project, cx| {
-                                        project.query_inlay_hints_for_buffer(
-                                            buffer_handle,
-                                            query_start..query_end,
-                                            cx,
-                                        )
-                                    })
-                                })
-                            })
-                            .context("inlays fecth task spawn")?;
-
-                        Ok((key, match task {
-                            Some(task) => {
-                                match task.await.context("inlays for buffer task")? {
-                                    Some(mut new_inlays) => {
-                                        let mut allowed_inlay_hint_types = Vec::new();
-                                        if inlay_hint_settings.show_type_hints {
-                                            allowed_inlay_hint_types.push(Some(InlayHintKind::Type));
-                                        }
-                                        if inlay_hint_settings.show_parameter_hints {
-                                            allowed_inlay_hint_types.push(Some(InlayHintKind::Parameter));
-                                        }
-                                        if inlay_hint_settings.show_other_hints {
-                                            allowed_inlay_hint_types.push(None);
-                                        }
-                                        new_inlays.retain(|inlay| {
-                                            let inlay_offset = inlay.position.offset;
-                                            allowed_inlay_hint_types.contains(&inlay.kind)
-                                                && query_start <= inlay_offset && inlay_offset <= query_end
-                                        });
-                                        Some(new_inlays)
-                                    },
-                                    None => None,
-                                }
-
-                            },
-                            None => Some(Vec::new()),
-                        }))
-                    }
-                });
-
-                Some(task)
-            })
-            .collect::<Vec<_>>();
-
-        cx.spawn(|editor, mut cx| async move {
-            let mut inlay_updates: HashMap<
-                PathBuf,
-                (
-                    Global,
-                    HashMap<ExcerptId, Option<OrderedByAnchorOffset<InlayHint>>>,
-                ),
-            > = HashMap::default();
-            let multi_buffer_snapshot =
-                editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
-
-            for task_result in futures::future::join_all(inlay_fetch_tasks).await {
-                match task_result {
-                    Ok((request_key, response_inlays)) => {
-                        let inlays_per_excerpt = HashMap::from_iter([(
-                            request_key.excerpt_id,
-                            response_inlays.map(|excerpt_inlays| {
-                                excerpt_inlays.into_iter().fold(
-                                    OrderedByAnchorOffset::default(),
-                                    |mut ordered_inlays, inlay| {
-                                        let anchor = multi_buffer_snapshot.anchor_in_excerpt(
-                                            request_key.excerpt_id,
-                                            inlay.position,
-                                        );
-                                        ordered_inlays.add(anchor, inlay);
-                                        ordered_inlays
-                                    },
-                                )
-                            }),
-                        )]);
-                        match inlay_updates.entry(request_key.buffer_path) {
-                            hash_map::Entry::Occupied(mut o) => {
-                                o.get_mut().1.extend(inlays_per_excerpt);
-                            }
-                            hash_map::Entry::Vacant(v) => {
-                                v.insert((request_key.buffer_version, inlays_per_excerpt));
-                            }
-                        }
-                    }
-                    Err(e) => error!("Failed to update inlays for buffer: {e:#}"),
-                }
-            }
-
-            if !inlay_updates.is_empty() {
+        match reason {
+            InlayRefreshReason::Settings(new_settings) => {
                 let InlaysUpdate {
                     to_remove,
                     to_insert,
-                } = editor.update(&mut cx, |editor, _| {
-                    dbg!(editor.inlay_cache.update_inlays(inlay_updates))
-                })?;
-
-                editor.update(&mut cx, |editor, cx| {
-                    editor.display_map.update(cx, |display_map, cx| {
-                        display_map.splice_inlays(to_remove, to_insert, cx);
-                    });
-                })?;
+                } = self.inlay_cache.apply_settings(new_settings);
+                self.display_map.update(cx, |display_map, cx| {
+                    display_map.splice_inlays(to_remove, to_insert, cx);
+                });
             }
+            InlayRefreshReason::Regular => {
+                let buffer_handle = self.buffer().clone();
+                let inlay_fetch_ranges = buffer_handle
+                    .read(cx)
+                    .snapshot(cx)
+                    .excerpts()
+                    .filter_map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
+                        let buffer_path = buffer_snapshot.resolve_file_path(cx, true)?;
+                        let buffer_id = buffer_snapshot.remote_id();
+                        let buffer_version = buffer_snapshot.version().clone();
+                        let max_buffer_offset = buffer_snapshot.len();
+                        let excerpt_range = excerpt_range.context;
+                        Some(QueryInlaysRange {
+                            buffer_path,
+                            buffer_id,
+                            buffer_version,
+                            excerpt_id,
+                            excerpt_offset_range: excerpt_range.start.offset
+                                ..excerpt_range.end.offset.min(max_buffer_offset),
+                        })
+                    })
+                    .collect::<Vec<_>>();
 
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                cx.spawn(|editor, mut cx| async move {
+                    let InlaysUpdate {
+                        to_remove,
+                        to_insert,
+                    } = editor
+                        .update(&mut cx, |editor, cx| {
+                            editor.inlay_cache.fetch_inlays(
+                                buffer_handle,
+                                inlay_fetch_ranges.into_iter(),
+                                cx,
+                            )
+                        })?
+                        .await
+                        .context("inlay cache hint fetch")?;
+
+                    editor.update(&mut cx, |editor, cx| {
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.splice_inlays(to_remove, to_insert, cx);
+                        });
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+        }
     }
 
     fn trigger_on_type_formatting(
@@ -5688,6 +5598,7 @@ impl Editor {
             }
 
             // TODO: Handle selections that cross excerpts
+            // TODO: Handle selections that cross excerpts
             for selection in &mut selections {
                 let start_column = snapshot.indent_size_for_line(selection.start.row).len;
                 let language = if let Some(language) =
@@ -7332,7 +7243,7 @@ impl Editor {
         };
 
         if refresh_inlay_hints {
-            self.refresh_inlays(cx);
+            self.refresh_inlays(InlayRefreshReason::Regular, cx);
         }
     }
 
@@ -7342,7 +7253,10 @@ impl Editor {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.refresh_copilot_suggestions(true, cx);
-        self.refresh_inlays(cx);
+        self.refresh_inlays(
+            InlayRefreshReason::Settings(settings::get::<EditorSettings>(cx).inlay_hints),
+            cx,
+        );
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {

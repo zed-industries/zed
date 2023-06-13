@@ -303,7 +303,7 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
 
-        let new_inlays = to_insert
+        let new_inlays: Vec<(InlayId, InlayProperties<String>)> = to_insert
             .into_iter()
             .map(|(inlay_id, hint_anchor, hint)| {
                 let mut text = hint.text();
