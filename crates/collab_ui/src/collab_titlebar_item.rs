@@ -82,7 +82,7 @@ impl View for CollabTitlebarItem {
             .zip(peer_id)
             .zip(ActiveCall::global(cx).read(cx).room().cloned())
         {
-            left_container
+            right_container
                 .add_children(self.render_in_call_share_unshare_button(&workspace, &theme, cx));
 
             left_container
