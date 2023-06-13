@@ -62,6 +62,8 @@ message Envelope {
         RenameProjectEntry rename_project_entry = 46;
         CopyProjectEntry copy_project_entry = 47;
         DeleteProjectEntry delete_project_entry = 48;
+        ExpandProjectEntry expand_project_entry = 114;
+        CollapseProjectEntry collapse_project_entry = 115;
         ProjectEntryResponse project_entry_response = 49;
 
         UpdateDiagnosticSummary update_diagnostic_summary = 50;
@@ -368,6 +370,16 @@ message CopyProjectEntry {
 }
 
 message DeleteProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message CollapseProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
 }

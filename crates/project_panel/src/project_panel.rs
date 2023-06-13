@@ -431,18 +431,23 @@ impl ProjectPanel {
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, mut entry)) = self.selected_entry(cx) {
+            let worktree_id = worktree.id();
             let expanded_dir_ids =
-                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
+                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
                     expanded_dir_ids
                 } else {
                     return;
                 };
 
             loop {
-                match expanded_dir_ids.binary_search(&entry.id) {
+                let entry_id = entry.id;
+                match expanded_dir_ids.binary_search(&entry_id) {
                     Ok(ix) => {
                         expanded_dir_ids.remove(ix);
-                        self.update_visible_entries(Some((worktree.id(), entry.id)), cx);
+                        self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                        self.project.update(cx, |project, cx| {
+                            project.mark_entry_collapsed(worktree_id, entry_id, cx);
+                        });
                         cx.notify();
                         break;
                     }
@@ -938,10 +943,19 @@ impl ProjectPanel {
     }
 
     fn selected_entry<'a>(&self, cx: &'a AppContext) -> Option<(&'a Worktree, &'a project::Entry)> {
+        let (worktree, entry) = self.selected_entry_handle(cx)?;
+        Some((worktree.read(cx), entry))
+    }
+
+    fn selected_entry_handle<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> Option<(ModelHandle<Worktree>, &'a project::Entry)> {
         let selection = self.selection?;
         let project = self.project.read(cx);
-        let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
-        Some((worktree, worktree.entry_for_id(selection.entry_id)?))
+        let worktree = project.worktree_for_id(selection.worktree_id, cx)?;
+        let entry = worktree.read(cx).entry_for_id(selection.entry_id)?;
+        Some((worktree, entry))
     }
 
     fn update_visible_entries(
@@ -1058,29 +1072,31 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
-        let project = self.project.read(cx);
-        if let Some((worktree, expanded_dir_ids)) = project
-            .worktree_for_id(worktree_id, cx)
-            .zip(self.expanded_dir_ids.get_mut(&worktree_id))
-        {
-            let worktree = worktree.read(cx);
+        self.project.update(cx, |project, cx| {
+            if let Some((worktree, expanded_dir_ids)) = project
+                .worktree_for_id(worktree_id, cx)
+                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
+            {
+                project.mark_entry_expanded(worktree_id, entry_id, cx);
+                let worktree = worktree.read(cx);
 
-            if let Some(mut entry) = worktree.entry_for_id(entry_id) {
-                loop {
-                    if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                        expanded_dir_ids.insert(ix, entry.id);
-                    }
+                if let Some(mut entry) = worktree.entry_for_id(entry_id) {
+                    loop {
+                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                            expanded_dir_ids.insert(ix, entry.id);
+                        }
 
-                    if let Some(parent_entry) =
-                        entry.path.parent().and_then(|p| worktree.entry_for_path(p))
-                    {
-                        entry = parent_entry;
-                    } else {
-                        break;
+                        if let Some(parent_entry) =
+                            entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                        {
+                            entry = parent_entry;
+                        } else {
+                            break;
+                        }
                     }
                 }
             }
-        }
+        });
     }
 
     fn for_each_visible_entry(
