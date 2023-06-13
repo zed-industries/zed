@@ -1,4 +1,7 @@
-use std::cmp;
+use std::{
+    cmp,
+    path::{Path, PathBuf},
+};
 
 use crate::{Anchor, ExcerptId};
 use clock::{Global, Local};
@@ -9,7 +12,7 @@ use collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug, Default)]
 pub struct InlayCache {
-    inlays_per_buffer: HashMap<u64, BufferInlays>,
+    inlays_per_buffer: HashMap<PathBuf, BufferInlays>,
     next_inlay_id: usize,
 }
 
@@ -60,11 +63,11 @@ pub struct InlaysUpdate {
 impl InlayCache {
     pub fn inlays_up_to_date(
         &self,
-        buffer_id: u64,
+        buffer_path: &Path,
         buffer_version: &Global,
         excerpt_id: ExcerptId,
     ) -> bool {
-        let Some(buffer_inlays) = self.inlays_per_buffer.get(&buffer_id) else { return false };
+        let Some(buffer_inlays) = self.inlays_per_buffer.get(buffer_path) else { return false };
         let buffer_up_to_date = buffer_version == &buffer_inlays.buffer_version
             || buffer_inlays.buffer_version.changed_since(buffer_version);
         buffer_up_to_date && buffer_inlays.inlays_per_excerpts.contains_key(&excerpt_id)
@@ -73,7 +76,7 @@ impl InlayCache {
     pub fn update_inlays(
         &mut self,
         inlay_updates: HashMap<
-            u64,
+            PathBuf,
             (
                 Global,
                 HashMap<ExcerptId, Option<OrderedByAnchorOffset<InlayHint>>>,
@@ -84,17 +87,17 @@ impl InlayCache {
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
 
-        for (buffer_id, (buffer_version, new_buffer_inlays)) in inlay_updates {
-            match old_inlays.remove(&buffer_id) {
+        for (buffer_path, (buffer_version, new_buffer_inlays)) in inlay_updates {
+            match old_inlays.remove(&buffer_path) {
                 Some(mut old_buffer_inlays) => {
                     for (excerpt_id, new_excerpt_inlays) in new_buffer_inlays {
-                        if self.inlays_up_to_date(buffer_id, &buffer_version, excerpt_id) {
+                        if self.inlays_up_to_date(&buffer_path, &buffer_version, excerpt_id) {
                             continue;
                         }
 
                         let self_inlays_per_buffer = self
                             .inlays_per_buffer
-                            .get_mut(&buffer_id)
+                            .get_mut(&buffer_path)
                             .expect("element expected: `old_inlays.remove` returned `Some`");
                         let mut new_excerpt_inlays = match new_excerpt_inlays {
                             Some(new_inlays) => {
@@ -112,6 +115,7 @@ impl InlayCache {
                                 .get_mut(&excerpt_id)
                                 .expect("element expected: `old_excerpt_inlays` is `Some`");
                             let mut hints_to_add = Vec::<(Anchor, (InlayId, InlayHint))>::new();
+                            // TODO kb update inner buffer_id and version with the new data?
                             self_excerpt_inlays.0.retain(
                                 |_, (old_anchor, (old_inlay_id, old_inlay))| {
                                     let mut retain = false;
@@ -202,7 +206,7 @@ impl InlayCache {
                         }
                     }
                     self.inlays_per_buffer.insert(
-                        buffer_id,
+                        buffer_path,
                         BufferInlays {
                             buffer_version,
                             inlays_per_excerpts,

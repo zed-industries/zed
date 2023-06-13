@@ -84,6 +84,7 @@ use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smallvec::SmallVec;
 use snippet::Snippet;
+use std::path::PathBuf;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -1297,7 +1298,6 @@ impl Editor {
                 project_subscriptions.push(cx.subscribe(project, |editor, _, event, cx| {
                     if let project::Event::RefreshInlays = event {
                         editor.refresh_inlays(cx);
-                        cx.notify()
                     };
                 }));
             }
@@ -1352,6 +1352,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
+            // TODO kb has to live between editors
             inlay_cache: InlayCache::default(),
             gutter_hovered: false,
             _subscriptions: vec![
@@ -1377,6 +1378,7 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
+        this.refresh_inlays(cx);
         this
     }
 
@@ -2594,7 +2596,7 @@ impl Editor {
         }
 
         struct InlayRequestKey {
-            buffer_id: u64,
+            buffer_path: PathBuf,
             buffer_version: Global,
             excerpt_id: ExcerptId,
         }
@@ -2603,22 +2605,21 @@ impl Editor {
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
         let inlay_fetch_tasks = multi_buffer_snapshot
             .excerpts()
-            .map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
-                // TODO kb every time I reopen the same buffer, it's different.
-                // Find a way to understand it's the same buffer. Use paths?
+            .filter_map(|(excerpt_id, buffer_snapshot, excerpt_range)| {
+                let buffer_path = buffer_snapshot.resolve_file_path(cx, true)?;
                 let buffer_id = buffer_snapshot.remote_id();
                 let buffer_version = buffer_snapshot.version().clone();
                 let buffer_handle = multi_buffer.read(cx).buffer(buffer_id);
                 let inlays_up_to_date =
                     self.inlay_cache
-                        .inlays_up_to_date(buffer_id, &buffer_version, excerpt_id);
+                        .inlays_up_to_date(&buffer_path, &buffer_version, excerpt_id);
                 let key = InlayRequestKey {
-                    buffer_id,
+                    buffer_path,
                     buffer_version,
                     excerpt_id,
                 };
 
-                cx.spawn(|editor, mut cx| async move {
+                let task = cx.spawn(|editor, mut cx| async move {
                     if inlays_up_to_date {
                         anyhow::Ok((key, None))
                     } else {
@@ -2631,7 +2632,7 @@ impl Editor {
                             .update(&mut cx, |editor, cx| {
                                 editor.project.as_ref().map(|project| {
                                     project.update(cx, |project, cx| {
-                                        project.inlay_hints_for_buffer(
+                                        project.query_inlay_hints_for_buffer(
                                             buffer_handle,
                                             query_start..query_end,
                                             cx,
@@ -2658,13 +2659,15 @@ impl Editor {
                             None => Some(Vec::new()),
                         }))
                     }
-                })
+                });
+
+                Some(task)
             })
             .collect::<Vec<_>>();
 
         cx.spawn(|editor, mut cx| async move {
             let mut inlay_updates: HashMap<
-                u64,
+                PathBuf,
                 (
                     Global,
                     HashMap<ExcerptId, Option<OrderedByAnchorOffset<InlayHint>>>,
@@ -2692,7 +2695,7 @@ impl Editor {
                                 )
                             }),
                         )]);
-                        match inlay_updates.entry(request_key.buffer_id) {
+                        match inlay_updates.entry(request_key.buffer_path) {
                             hash_map::Entry::Occupied(mut o) => {
                                 o.get_mut().1.extend(inlays_per_excerpt);
                             }
@@ -7243,7 +7246,7 @@ impl Editor {
         event: &multi_buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        let update_inlay_hints = match event {
+        let refresh_inlay_hints = match event {
             multi_buffer::Event::Edited => {
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
@@ -7304,7 +7307,7 @@ impl Editor {
             _ => false,
         };
 
-        if update_inlay_hints {
+        if refresh_inlay_hints {
             self.refresh_inlays(cx);
         }
     }

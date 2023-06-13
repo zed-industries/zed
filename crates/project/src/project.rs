@@ -4928,7 +4928,7 @@ impl Project {
         )
     }
 
-    pub fn inlay_hints_for_buffer<T: ToOffset>(
+    pub fn query_inlay_hints_for_buffer<T: ToOffset>(
         &self,
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
@@ -4951,7 +4951,6 @@ impl Project {
                     })
                     .await
                     .context("waiting for inlay hint request range edits")?;
-
                 match lsp_request_task.await {
                     Ok(hints) => Ok(Some(hints)),
                     Err(e) if is_content_modified_error(&e) => Ok(None),
@@ -6767,7 +6766,8 @@ impl Project {
         let buffer_hints = this
             .update(&mut cx, |project, cx| {
                 let buffer_end = buffer.read(cx).len();
-                project.inlay_hints_for_buffer(
+                // TODO kb use cache before querying?
+                project.query_inlay_hints_for_buffer(
                     buffer,
                     envelope
                         .payload
