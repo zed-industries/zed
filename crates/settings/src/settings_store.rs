@@ -86,9 +86,9 @@ pub struct SettingsJsonSchemaParams<'a> {
 /// A set of strongly-typed setting values defined via multiple JSON files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    default_deserialized_settings: serde_json::Value,
-    user_deserialized_settings: serde_json::Value,
-    local_deserialized_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
+    raw_default_settings: serde_json::Value,
+    raw_user_settings: serde_json::Value,
+    raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
     tab_size_callback: Option<(TypeId, Box<dyn Fn(&dyn Any) -> Option<usize>>)>,
 }
 
@@ -96,9 +96,9 @@ impl Default for SettingsStore {
     fn default() -> Self {
         SettingsStore {
             setting_values: Default::default(),
-            default_deserialized_settings: serde_json::json!({}),
-            user_deserialized_settings: serde_json::json!({}),
-            local_deserialized_settings: Default::default(),
+            raw_default_settings: serde_json::json!({}),
+            raw_user_settings: serde_json::json!({}),
+            raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
         }
     }
@@ -148,13 +148,13 @@ impl SettingsStore {
         }));
 
         if let Some(default_settings) = setting_value
-            .deserialize_setting(&self.default_deserialized_settings)
+            .deserialize_setting(&self.raw_default_settings)
             .log_err()
         {
             let mut user_values_stack = Vec::new();
 
             if let Some(user_settings) = setting_value
-                .deserialize_setting(&self.user_deserialized_settings)
+                .deserialize_setting(&self.raw_user_settings)
                 .log_err()
             {
                 user_values_stack = vec![user_settings];
@@ -196,8 +196,8 @@ impl SettingsStore {
     ///
     /// This is only for debugging and reporting. For user-facing functionality,
     /// use the typed setting interface.
-    pub fn untyped_user_settings(&self) -> &serde_json::Value {
-        &self.user_deserialized_settings
+    pub fn raw_user_settings(&self) -> &serde_json::Value {
+        &self.raw_user_settings
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -219,7 +219,7 @@ impl SettingsStore {
         cx: &AppContext,
         update: impl FnOnce(&mut T::FileContent),
     ) {
-        let old_text = serde_json::to_string(&self.user_deserialized_settings).unwrap();
+        let old_text = serde_json::to_string(&self.raw_user_settings).unwrap();
         let new_text = self.new_text_for_update::<T>(old_text, update);
         self.set_user_settings(&new_text, cx).unwrap();
     }
@@ -248,25 +248,19 @@ impl SettingsStore {
     ) -> Vec<(Range<usize>, String)> {
         let setting_type_id = TypeId::of::<T>();
 
-        let old_content = self
+        let setting = self
             .setting_values
             .get(&setting_type_id)
-            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
-            .deserialize_setting(&self.user_deserialized_settings)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "could not deserialize setting type {} from user settings: {}",
-                    type_name::<T>(),
-                    e
-                )
-            })
-            .0
-            .downcast::<T::FileContent>()
-            .unwrap();
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()));
+        let raw_settings = parse_json_with_comments::<serde_json::Value>(text).unwrap_or_default();
+        let old_content = match setting.deserialize_setting(&raw_settings) {
+            Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
+            Err(_) => Box::new(T::FileContent::default()),
+        };
         let mut new_content = old_content.clone();
         update(&mut new_content);
 
-        let old_value = &serde_json::to_value(&old_content).unwrap();
+        let old_value = serde_json::to_value(&old_content).unwrap();
         let new_value = serde_json::to_value(new_content).unwrap();
 
         let mut key_path = Vec::new();
@@ -323,7 +317,7 @@ impl SettingsStore {
     ) -> Result<()> {
         let settings: serde_json::Value = parse_json_with_comments(default_settings_content)?;
         if settings.is_object() {
-            self.default_deserialized_settings = settings;
+            self.raw_default_settings = settings;
             self.recompute_values(None, cx)?;
             Ok(())
         } else {
@@ -339,7 +333,7 @@ impl SettingsStore {
     ) -> Result<()> {
         let settings: serde_json::Value = parse_json_with_comments(user_settings_content)?;
         if settings.is_object() {
-            self.user_deserialized_settings = settings;
+            self.raw_user_settings = settings;
             self.recompute_values(None, cx)?;
             Ok(())
         } else {
@@ -356,11 +350,10 @@ impl SettingsStore {
         cx: &AppContext,
     ) -> Result<()> {
         if let Some(content) = settings_content {
-            self.local_deserialized_settings
+            self.raw_local_settings
                 .insert((root_id, path.clone()), parse_json_with_comments(content)?);
         } else {
-            self.local_deserialized_settings
-                .remove(&(root_id, path.clone()));
+            self.raw_local_settings.remove(&(root_id, path.clone()));
         }
         self.recompute_values(Some((root_id, &path)), cx)?;
         Ok(())
@@ -368,14 +361,13 @@ impl SettingsStore {
 
     /// Add or remove a set of local settings via a JSON string.
     pub fn clear_local_settings(&mut self, root_id: usize, cx: &AppContext) -> Result<()> {
-        self.local_deserialized_settings
-            .retain(|k, _| k.0 != root_id);
+        self.raw_local_settings.retain(|k, _| k.0 != root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
     }
 
     pub fn local_settings(&self, root_id: usize) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
-        self.local_deserialized_settings
+        self.raw_local_settings
             .range((root_id, Path::new("").into())..(root_id + 1, Path::new("").into()))
             .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
     }
@@ -466,14 +458,13 @@ impl SettingsStore {
         let mut user_settings_stack = Vec::<DeserializedSetting>::new();
         let mut paths_stack = Vec::<Option<(usize, &Path)>>::new();
         for setting_value in self.setting_values.values_mut() {
-            let default_settings =
-                setting_value.deserialize_setting(&self.default_deserialized_settings)?;
+            let default_settings = setting_value.deserialize_setting(&self.raw_default_settings)?;
 
             user_settings_stack.clear();
             paths_stack.clear();
 
             if let Some(user_settings) = setting_value
-                .deserialize_setting(&self.user_deserialized_settings)
+                .deserialize_setting(&self.raw_user_settings)
                 .log_err()
             {
                 user_settings_stack.push(user_settings);
@@ -491,7 +482,7 @@ impl SettingsStore {
             }
 
             // Reload the local values for the setting.
-            for ((root_id, path), local_settings) in &self.local_deserialized_settings {
+            for ((root_id, path), local_settings) in &self.raw_local_settings {
                 // Build a stack of all of the local values for that setting.
                 while let Some(prev_entry) = paths_stack.last() {
                     if let Some((prev_root_id, prev_path)) = prev_entry {
@@ -542,9 +533,9 @@ impl Debug for SettingsStore {
                     .map(|value| value.setting_type_name())
                     .collect::<Vec<_>>(),
             )
-            .field("default_settings", &self.default_deserialized_settings)
-            .field("user_settings", &self.user_deserialized_settings)
-            .field("local_settings", &self.local_deserialized_settings)
+            .field("default_settings", &self.raw_default_settings)
+            .field("user_settings", &self.raw_user_settings)
+            .field("local_settings", &self.raw_local_settings)
             .finish_non_exhaustive()
     }
 }

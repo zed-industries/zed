@@ -7272,7 +7272,7 @@ impl Editor {
 
         let vim_mode = cx
             .global::<SettingsStore>()
-            .untyped_user_settings()
+            .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
