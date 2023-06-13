@@ -784,14 +784,24 @@ impl Assistant {
         let buffer = self.buffer.read(cx);
         let mut messages = self.messages.iter().peekable();
         iter::from_fn(move || {
-            let message = messages.next()?;
-            let metadata = self.messages_metadata.get(&message.id)?;
-            let message_start = message.start.to_offset(buffer);
-            let message_end = messages
-                .peek()
-                .map_or(language::Anchor::MAX, |message| message.start)
-                .to_offset(buffer);
-            Some((message, metadata, message_start..message_end))
+            while let Some(message) = messages.next() {
+                let metadata = self.messages_metadata.get(&message.id)?;
+                let message_start = message.start.to_offset(buffer);
+                let mut message_end = None;
+                while let Some(next_message) = messages.peek() {
+                    if next_message.start.is_valid(buffer) {
+                        message_end = Some(next_message.start);
+                        break;
+                    } else {
+                        messages.next();
+                    }
+                }
+                let message_end = message_end
+                    .unwrap_or(language::Anchor::MAX)
+                    .to_offset(buffer);
+                return Some((message, metadata, message_start..message_end));
+            }
+            None
         })
     }
 }
@@ -1368,7 +1378,18 @@ mod tests {
         assert_eq!(
             messages(&assistant, cx),
             vec![
-                (message_1.id, Role::User, 0..6),
+                (message_1.id, Role::User, 0..3),
+                (message_3.id, Role::User, 3..4),
+            ]
+        );
+
+        buffer.update(cx, |buffer, cx| buffer.undo(cx));
+        assert_eq!(
+            messages(&assistant, cx),
+            vec![
+                (message_1.id, Role::User, 0..2),
+                (message_2.id, Role::Assistant, 2..4),
+                (message_4.id, Role::User, 4..6),
                 (message_3.id, Role::User, 6..7),
             ]
         );
