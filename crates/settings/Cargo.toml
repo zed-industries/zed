@@ -26,7 +26,6 @@ lazy_static.workspace = true
 postage.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
-log.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

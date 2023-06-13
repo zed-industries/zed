@@ -47,7 +47,6 @@ impl KeymapFile {
     }
 
     pub fn parse(content: &str) -> Result<Self> {
-        log::error!("{}", content);
         parse_json_with_comments::<Self>(content)
     }
 

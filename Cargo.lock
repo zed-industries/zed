@@ -6162,7 +6162,6 @@ dependencies = [
  "gpui",
  "indoc",
  "lazy_static",
- "log",
  "postage",
  "pretty_assertions",
  "rust-embed",
