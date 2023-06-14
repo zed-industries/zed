@@ -142,20 +142,24 @@ workspace = { path = "../workspace", features = ["test-support"] }
 
 unindent.workspace = true
 
-[package.metadata.bundle-dev]
+[package.metadata.bundle]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
 identifier = "dev.zed.Zed-Preview"
 name = "Zed Preview"
 osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
+
 
 [package.metadata.bundle-stable]
 icon = ["resources/app-icon@2x.png", "resources/app-icon.png"]
 identifier = "dev.zed.Zed"
 name = "Zed"
 osx_minimum_system_version = "10.15.7"
+osx_info_plist_exts = ["resources/info/*"]
