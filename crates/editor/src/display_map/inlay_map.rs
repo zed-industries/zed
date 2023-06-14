@@ -253,13 +253,29 @@ impl InlayMap {
     pub fn sync(
         &mut self,
         suggestion_snapshot: SuggestionSnapshot,
-        suggestion_edits: Vec<SuggestionEdit>,
+        mut suggestion_edits: Vec<SuggestionEdit>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let mut snapshot = self.snapshot.lock();
 
         let mut new_snapshot = snapshot.clone();
         if new_snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
             new_snapshot.version += 1;
+        }
+
+        if suggestion_snapshot
+            .buffer_snapshot()
+            .trailing_excerpt_update_count()
+            != snapshot
+                .suggestion_snapshot
+                .buffer_snapshot()
+                .trailing_excerpt_update_count()
+        {
+            if suggestion_edits.is_empty() {
+                suggestion_edits.push(Edit {
+                    old: snapshot.suggestion_snapshot.len()..snapshot.suggestion_snapshot.len(),
+                    new: suggestion_snapshot.len()..suggestion_snapshot.len(),
+                });
+            }
         }
 
         let mut inlay_edits = Patch::default();
@@ -393,7 +409,8 @@ impl InlayMap {
         to_remove: Vec<InlayId>,
         to_insert: Vec<(InlayId, InlayProperties<T>)>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
-        let snapshot = self.snapshot.lock();
+        let mut snapshot = self.snapshot.lock();
+        snapshot.version += 1;
 
         let mut edits = BTreeSet::new();
         for (id, properties) in to_insert {

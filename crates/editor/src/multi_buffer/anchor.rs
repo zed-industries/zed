@@ -90,15 +90,10 @@ impl Anchor {
         if *self == Anchor::min() || *self == Anchor::max() {
             true
         } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-            self.text_anchor.is_valid(&excerpt.buffer)
-                && self
-                    .text_anchor
-                    .cmp(&excerpt.range.context.start, &excerpt.buffer)
-                    .is_ge()
-                && self
-                    .text_anchor
-                    .cmp(&excerpt.range.context.end, &excerpt.buffer)
-                    .is_le()
+            excerpt.contains(self)
+                && (self.text_anchor == excerpt.range.context.start
+                    || self.text_anchor == excerpt.range.context.end
+                    || self.text_anchor.is_valid(&excerpt.buffer))
         } else {
             false
         }
