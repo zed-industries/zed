@@ -91,39 +91,15 @@ impl SelectionLayout {
     }
 }
 
-pub struct RenderExcerptHeaderParams<'a> {
-    pub id: crate::ExcerptId,
-    pub buffer: &'a language::BufferSnapshot,
-    pub range: &'a crate::ExcerptRange<text::Anchor>,
-    pub starts_new_buffer: bool,
-    pub gutter_padding: f32,
-    pub editor_style: &'a EditorStyle,
-}
-
-pub type RenderExcerptHeader = Arc<
-    dyn Fn(
-        &mut Editor,
-        RenderExcerptHeaderParams,
-        &mut LayoutContext<Editor>,
-    ) -> AnyElement<Editor>,
->;
-
 pub struct EditorElement {
     style: Arc<EditorStyle>,
-    render_excerpt_header: RenderExcerptHeader,
 }
 
 impl EditorElement {
     pub fn new(style: EditorStyle) -> Self {
         Self {
             style: Arc::new(style),
-            render_excerpt_header: Arc::new(render_excerpt_header),
         }
-    }
-
-    pub fn with_render_excerpt_header(mut self, render: RenderExcerptHeader) -> Self {
-        self.render_excerpt_header = render;
-        self
     }
 
     fn attach_mouse_handlers(
@@ -1531,18 +1507,117 @@ impl EditorElement {
                     range,
                     starts_new_buffer,
                     ..
-                } => (self.render_excerpt_header)(
-                    editor,
-                    RenderExcerptHeaderParams {
-                        id: *id,
-                        buffer,
-                        range,
-                        starts_new_buffer: *starts_new_buffer,
-                        gutter_padding,
-                        editor_style: style,
-                    },
-                    cx,
-                ),
+                } => {
+                    let tooltip_style = theme::current(cx).tooltip.clone();
+                    let include_root = editor
+                        .project
+                        .as_ref()
+                        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                        .unwrap_or_default();
+                    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
+                        let jump_path = ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path.clone(),
+                        };
+                        let jump_anchor = range
+                            .primary
+                            .as_ref()
+                            .map_or(range.context.start, |primary| primary.start);
+                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+
+                        enum JumpIcon {}
+                        MouseEventHandler::<JumpIcon, _>::new((*id).into(), cx, |state, _| {
+                            let style = style.jump_icon.style_for(state, false);
+                            Svg::new("icons/arrow_up_right_8.svg")
+                                .with_color(style.color)
+                                .constrained()
+                                .with_width(style.icon_width)
+                                .aligned()
+                                .contained()
+                                .with_style(style.container)
+                                .constrained()
+                                .with_width(style.button_width)
+                                .with_height(style.button_width)
+                        })
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, move |_, editor, cx| {
+                            if let Some(workspace) = editor
+                                .workspace
+                                .as_ref()
+                                .and_then(|(workspace, _)| workspace.upgrade(cx))
+                            {
+                                workspace.update(cx, |workspace, cx| {
+                                    Editor::jump(
+                                        workspace,
+                                        jump_path.clone(),
+                                        jump_position,
+                                        jump_anchor,
+                                        cx,
+                                    );
+                                });
+                            }
+                        })
+                        .with_tooltip::<JumpIcon>(
+                            (*id).into(),
+                            "Jump to Buffer".to_string(),
+                            Some(Box::new(crate::OpenExcerpts)),
+                            tooltip_style.clone(),
+                            cx,
+                        )
+                        .aligned()
+                        .flex_float()
+                    });
+
+                    if *starts_new_buffer {
+                        let editor_font_size = style.text.font_size;
+                        let style = &style.diagnostic_path_header;
+                        let font_size = (style.text_scale_factor * editor_font_size).round();
+
+                        let path = buffer.resolve_file_path(cx, include_root);
+                        let mut filename = None;
+                        let mut parent_path = None;
+                        // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
+                        if let Some(path) = path {
+                            filename = path.file_name().map(|f| f.to_string_lossy().to_string());
+                            parent_path =
+                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                        }
+
+                        Flex::row()
+                            .with_child(
+                                Label::new(
+                                    filename.unwrap_or_else(|| "untitled".to_string()),
+                                    style.filename.text.clone().with_font_size(font_size),
+                                )
+                                .contained()
+                                .with_style(style.filename.container)
+                                .aligned(),
+                            )
+                            .with_children(parent_path.map(|path| {
+                                Label::new(path, style.path.text.clone().with_font_size(font_size))
+                                    .contained()
+                                    .with_style(style.path.container)
+                                    .aligned()
+                            }))
+                            .with_children(jump_icon)
+                            .contained()
+                            .with_style(style.container)
+                            .with_padding_left(gutter_padding)
+                            .with_padding_right(gutter_padding)
+                            .expanded()
+                            .into_any_named("path header block")
+                    } else {
+                        let text_style = style.text.clone();
+                        Flex::row()
+                            .with_child(Label::new("⋯", text_style))
+                            .with_children(jump_icon)
+                            .contained()
+                            .with_padding_left(gutter_padding)
+                            .with_padding_right(gutter_padding)
+                            .expanded()
+                            .into_any_named("collapsed context")
+                    }
+                }
             };
 
             element.layout(
@@ -2679,121 +2754,6 @@ impl HighlightedRange {
     }
 }
 
-fn render_excerpt_header(
-    editor: &mut Editor,
-    RenderExcerptHeaderParams {
-        id,
-        buffer,
-        range,
-        starts_new_buffer,
-        gutter_padding,
-        editor_style,
-    }: RenderExcerptHeaderParams,
-    cx: &mut LayoutContext<Editor>,
-) -> AnyElement<Editor> {
-    let tooltip_style = theme::current(cx).tooltip.clone();
-    let include_root = editor
-        .project
-        .as_ref()
-        .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-        .unwrap_or_default();
-    let jump_icon = project::File::from_dyn(buffer.file()).map(|file| {
-        let jump_path = ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path.clone(),
-        };
-        let jump_anchor = range
-            .primary
-            .as_ref()
-            .map_or(range.context.start, |primary| primary.start);
-        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-
-        enum JumpIcon {}
-        MouseEventHandler::<JumpIcon, _>::new(id.into(), cx, |state, _| {
-            let style = editor_style.jump_icon.style_for(state, false);
-            Svg::new("icons/arrow_up_right_8.svg")
-                .with_color(style.color)
-                .constrained()
-                .with_width(style.icon_width)
-                .aligned()
-                .contained()
-                .with_style(style.container)
-                .constrained()
-                .with_width(style.button_width)
-                .with_height(style.button_width)
-        })
-        .with_cursor_style(CursorStyle::PointingHand)
-        .on_click(MouseButton::Left, move |_, editor, cx| {
-            if let Some(workspace) = editor
-                .workspace
-                .as_ref()
-                .and_then(|(workspace, _)| workspace.upgrade(cx))
-            {
-                workspace.update(cx, |workspace, cx| {
-                    Editor::jump(workspace, jump_path.clone(), jump_position, jump_anchor, cx);
-                });
-            }
-        })
-        .with_tooltip::<JumpIcon>(
-            id.into(),
-            "Jump to Buffer".to_string(),
-            Some(Box::new(crate::OpenExcerpts)),
-            tooltip_style.clone(),
-            cx,
-        )
-        .aligned()
-        .flex_float()
-    });
-
-    if starts_new_buffer {
-        let style = &editor_style.diagnostic_path_header;
-        let font_size = (style.text_scale_factor * editor_style.text.font_size).round();
-
-        let path = buffer.resolve_file_path(cx, include_root);
-        let mut filename = None;
-        let mut parent_path = None;
-        // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
-        if let Some(path) = path {
-            filename = path.file_name().map(|f| f.to_string_lossy().to_string());
-            parent_path = path.parent().map(|p| p.to_string_lossy().to_string() + "/");
-        }
-
-        Flex::row()
-            .with_child(
-                Label::new(
-                    filename.unwrap_or_else(|| "untitled".to_string()),
-                    style.filename.text.clone().with_font_size(font_size),
-                )
-                .contained()
-                .with_style(style.filename.container)
-                .aligned(),
-            )
-            .with_children(parent_path.map(|path| {
-                Label::new(path, style.path.text.clone().with_font_size(font_size))
-                    .contained()
-                    .with_style(style.path.container)
-                    .aligned()
-            }))
-            .with_children(jump_icon)
-            .contained()
-            .with_style(style.container)
-            .with_padding_left(gutter_padding)
-            .with_padding_right(gutter_padding)
-            .expanded()
-            .into_any_named("path header block")
-    } else {
-        let text_style = editor_style.text.clone();
-        Flex::row()
-            .with_child(Label::new("⋯", text_style))
-            .with_children(jump_icon)
-            .contained()
-            .with_padding_left(gutter_padding)
-            .with_padding_right(gutter_padding)
-            .expanded()
-            .into_any_named("collapsed context")
-    }
-}
-
 fn position_to_display_point(
     position: Vector2F,
     text_bounds: RectF,
@@ -2923,6 +2883,7 @@ mod tests {
                     position: Anchor::min(),
                     render: Arc::new(|_| Empty::new().into_any()),
                 }],
+                None,
                 cx,
             );
 

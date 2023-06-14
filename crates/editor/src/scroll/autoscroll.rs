@@ -136,23 +136,23 @@ impl Editor {
 
                 if target_top < start_row {
                     scroll_position.set_y(target_top);
-                    self.set_scroll_position_internal(scroll_position, local, cx);
+                    self.set_scroll_position_internal(scroll_position, local, true, cx);
                 } else if target_bottom >= end_row {
                     scroll_position.set_y(target_bottom - visible_lines);
-                    self.set_scroll_position_internal(scroll_position, local, cx);
+                    self.set_scroll_position_internal(scroll_position, local, true, cx);
                 }
             }
             AutoscrollStrategy::Center => {
                 scroll_position.set_y((first_cursor_top - margin).max(0.0));
-                self.set_scroll_position_internal(scroll_position, local, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {
                 scroll_position.set_y((first_cursor_top).max(0.0));
-                self.set_scroll_position_internal(scroll_position, local, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Bottom => {
                 scroll_position.set_y((last_cursor_bottom - visible_lines).max(0.0));
-                self.set_scroll_position_internal(scroll_position, local, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
         }
 
