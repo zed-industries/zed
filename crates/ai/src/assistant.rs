@@ -1233,19 +1233,19 @@ impl AssistantEditor {
                                 cx,
                                 |state, _| match message.role {
                                     Role::User => {
-                                        let style = style.user_sender.style_for(state, false);
+                                        let style = style.user_sender.style_for(state);
                                         Label::new("You", style.text.clone())
                                             .contained()
                                             .with_style(style.container)
                                     }
                                     Role::Assistant => {
-                                        let style = style.assistant_sender.style_for(state, false);
+                                        let style = style.assistant_sender.style_for(state);
                                         Label::new("Assistant", style.text.clone())
                                             .contained()
                                             .with_style(style.container)
                                     }
                                     Role::System => {
-                                        let style = style.system_sender.style_for(state, false);
+                                        let style = style.system_sender.style_for(state);
                                         Label::new("System", style.text.clone())
                                             .contained()
                                             .with_style(style.container)
@@ -1484,7 +1484,7 @@ impl View for AssistantEditor {
                 Flex::row()
                     .with_child(
                         MouseEventHandler::<Model, _>::new(0, cx, |state, _| {
-                            let style = theme.model.style_for(state, false);
+                            let style = theme.model.style_for(state);
                             Label::new(model, style.text.clone())
                                 .contained()
                                 .with_style(style.container)

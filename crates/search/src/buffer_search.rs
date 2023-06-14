@@ -328,7 +328,11 @@ impl BufferSearchBar {
         Some(
             MouseEventHandler::<Self, _>::new(option as usize, cx, |state, cx| {
                 let theme = theme::current(cx);
-                let style = theme.search.option_button.style_for(state, is_active);
+                let style = theme
+                    .search
+                    .option_button
+                    .in_state(is_active)
+                    .style_for(state);
                 Label::new(icon, style.text.clone())
                     .contained()
                     .with_style(style.container)
@@ -371,7 +375,7 @@ impl BufferSearchBar {
         enum NavButton {}
         MouseEventHandler::<NavButton, _>::new(direction as usize, cx, |state, cx| {
             let theme = theme::current(cx);
-            let style = theme.search.option_button.style_for(state, false);
+            let style = theme.search.option_button.off_state().style_for(state);
             Label::new(icon, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -403,7 +407,7 @@ impl BufferSearchBar {
 
         enum CloseButton {}
         MouseEventHandler::<CloseButton, _>::new(0, cx, |state, _| {
-            let style = theme.dismiss_button.style_for(state, false);
+            let style = theme.dismiss_button.style_for(state);
             Svg::new("icons/x_mark_8.svg")
                 .with_color(style.color)
                 .constrained()

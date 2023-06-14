@@ -185,8 +185,12 @@ impl PickerDelegate for CommandPaletteDelegate {
         let mat = &self.matches[ix];
         let command = &self.actions[mat.candidate_id];
         let theme = theme::current(cx);
-        let style = theme.picker.item.style_for(mouse_state, selected);
-        let key_style = &theme.command_palette.key.style_for(mouse_state, selected);
+        let style = theme.picker.item.in_state(selected).style_for(mouse_state);
+        let key_style = &theme
+            .command_palette
+            .key
+            .in_state(selected)
+            .style_for(mouse_state);
         let keystroke_spacing = theme.command_palette.keystroke_spacing;
 
         Flex::row()

@@ -2090,7 +2090,7 @@ impl Element<Editor> for EditorElement {
                     .folds
                     .ellipses
                     .background
-                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize), false)
+                    .style_for(&mut cx.mouse_state::<FoldMarkers>(id as usize))
                     .color;
 
                 (id, fold, color)
