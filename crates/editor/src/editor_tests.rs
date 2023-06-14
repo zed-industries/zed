@@ -2481,6 +2481,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 height: 1,
                 render: Arc::new(|_| Empty::new().into_any()),
             }],
+            Some(Autoscroll::fit()),
             cx,
         );
         editor.change_selections(None, cx, |s| {
