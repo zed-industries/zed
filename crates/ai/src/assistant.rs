@@ -7,11 +7,8 @@ use chrono::{DateTime, Local};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint},
-    scroll::{
-        autoscroll::{Autoscroll, AutoscrollStrategy},
-        ScrollAnchor,
-    },
-    Anchor, DisplayPoint, Editor, ToOffset as _,
+    scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
+    Anchor, Editor, ToOffset as _,
 };
 use fs::Fs;
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
@@ -19,7 +16,7 @@ use gpui::{
     actions,
     elements::*,
     executor::Background,
-    geometry::vector::vec2f,
+    geometry::vector::{vec2f, Vector2F},
     platform::{CursorStyle, MouseButton},
     Action, AppContext, AsyncAppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
@@ -801,11 +798,17 @@ enum AssistantEditorEvent {
     TabContentChanged,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct ScrollPosition {
+    offset_before_cursor: Vector2F,
+    cursor: Anchor,
+}
+
 struct AssistantEditor {
     assistant: ModelHandle<Assistant>,
     editor: ViewHandle<Editor>,
     blocks: HashSet<BlockId>,
-    scroll_bottom: ScrollAnchor,
+    scroll_position: Option<ScrollPosition>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -833,10 +836,7 @@ impl AssistantEditor {
             assistant,
             editor,
             blocks: Default::default(),
-            scroll_bottom: ScrollAnchor {
-                offset: Default::default(),
-                anchor: Anchor::max(),
-            },
+            scroll_position: None,
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -874,7 +874,7 @@ impl AssistantEditor {
                     |selections| selections.select_ranges([cursor..cursor]),
                 );
             });
-            self.update_scroll_bottom(cx);
+            self.scroll_position = self.cursor_scroll_position(cx);
         }
     }
 
@@ -900,18 +900,16 @@ impl AssistantEditor {
             }
             AssistantEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
-                    let scroll_bottom_row = self
-                        .scroll_bottom
-                        .anchor
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
-
-                    let scroll_bottom = scroll_bottom_row as f32 + self.scroll_bottom.offset.y();
-                    let visible_line_count = editor.visible_line_count().unwrap_or(0.);
-                    let scroll_top = scroll_bottom - visible_line_count;
-                    editor
-                        .set_scroll_position(vec2f(self.scroll_bottom.offset.x(), scroll_top), cx);
+                    if let Some(scroll_position) = self.scroll_position {
+                        let snapshot = editor.snapshot(cx);
+                        let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
+                        let scroll_top =
+                            cursor_point.row() as f32 - scroll_position.offset_before_cursor.y();
+                        editor.set_scroll_position(
+                            vec2f(scroll_position.offset_before_cursor.x(), scroll_top),
+                            cx,
+                        );
+                    }
                 });
             }
         }
@@ -924,9 +922,41 @@ impl AssistantEditor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::ScrollPositionChanged { .. } => self.update_scroll_bottom(cx),
+            editor::Event::ScrollPositionChanged { .. } => {
+                if self.cursor_scroll_position(cx) != self.scroll_position {
+                    self.scroll_position = None;
+                }
+            }
+            editor::Event::SelectionsChanged { .. } => {
+                self.scroll_position = self.cursor_scroll_position(cx);
+            }
             _ => {}
         }
+    }
+
+    fn cursor_scroll_position(&self, cx: &mut ViewContext<Self>) -> Option<ScrollPosition> {
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let cursor = editor.selections.newest_anchor().head();
+            let cursor_row = cursor.to_display_point(&snapshot.display_snapshot).row() as f32;
+            let scroll_position = editor
+                .scroll_manager
+                .anchor()
+                .scroll_position(&snapshot.display_snapshot);
+
+            let scroll_bottom = scroll_position.y() + editor.visible_line_count().unwrap_or(0.);
+            if (scroll_position.y()..scroll_bottom).contains(&cursor_row) {
+                Some(ScrollPosition {
+                    cursor,
+                    offset_before_cursor: vec2f(
+                        scroll_position.x(),
+                        cursor_row - scroll_position.y(),
+                    ),
+                })
+            } else {
+                None
+            }
+        })
     }
 
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
@@ -1028,32 +1058,6 @@ impl AssistantEditor {
             editor.remove_blocks(old_blocks, cx);
             let ids = editor.insert_blocks(new_blocks, cx);
             self.blocks = HashSet::from_iter(ids);
-        });
-    }
-
-    fn update_scroll_bottom(&mut self, cx: &mut ViewContext<Self>) {
-        self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            let scroll_position = editor
-                .scroll_manager
-                .anchor()
-                .scroll_position(&snapshot.display_snapshot);
-            let scroll_bottom = scroll_position.y() + editor.visible_line_count().unwrap_or(0.);
-            let scroll_bottom_point = cmp::min(
-                DisplayPoint::new(scroll_bottom.floor() as u32, 0),
-                snapshot.display_snapshot.max_point(),
-            );
-            let scroll_bottom_anchor = snapshot
-                .buffer_snapshot
-                .anchor_after(scroll_bottom_point.to_point(&snapshot.display_snapshot));
-            let scroll_bottom_offset = vec2f(
-                scroll_position.x(),
-                scroll_bottom - scroll_bottom_point.row() as f32,
-            );
-            self.scroll_bottom = ScrollAnchor {
-                anchor: scroll_bottom_anchor,
-                offset: scroll_bottom_offset,
-            };
         });
     }
 
