@@ -872,7 +872,6 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
     {
         #[derive(Deserialize)]
         struct Helper {
-            #[serde(flatten)]
             default: Value,
             hover: Option<Value>,
             clicked: Option<Value>,
