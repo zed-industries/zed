@@ -6268,6 +6268,7 @@ impl Editor {
                             }),
                             disposition: BlockDisposition::Below,
                         }],
+                        Some(Autoscroll::fit()),
                         cx,
                     )[0];
                     this.pending_rename = Some(RenameState {
@@ -6334,7 +6335,11 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
-        self.remove_blocks([rename.block_id].into_iter().collect(), cx);
+        self.remove_blocks(
+            [rename.block_id].into_iter().collect(),
+            Some(Autoscroll::fit()),
+            cx,
+        );
         self.clear_text_highlights::<Rename>(cx);
         self.show_local_selections = true;
 
@@ -6720,29 +6725,43 @@ impl Editor {
     pub fn insert_blocks(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
+        autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) -> Vec<BlockId> {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
-        self.request_autoscroll(Autoscroll::fit(), cx);
+        if let Some(autoscroll) = autoscroll {
+            self.request_autoscroll(autoscroll, cx);
+        }
         blocks
     }
 
     pub fn replace_blocks(
         &mut self,
         blocks: HashMap<BlockId, RenderBlock>,
+        autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) {
         self.display_map
             .update(cx, |display_map, _| display_map.replace_blocks(blocks));
-        self.request_autoscroll(Autoscroll::fit(), cx);
+        if let Some(autoscroll) = autoscroll {
+            self.request_autoscroll(autoscroll, cx);
+        }
     }
 
-    pub fn remove_blocks(&mut self, block_ids: HashSet<BlockId>, cx: &mut ViewContext<Self>) {
+    pub fn remove_blocks(
+        &mut self,
+        block_ids: HashSet<BlockId>,
+        autoscroll: Option<Autoscroll>,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.display_map.update(cx, |display_map, cx| {
             display_map.remove_blocks(block_ids, cx)
         });
+        if let Some(autoscroll) = autoscroll {
+            self.request_autoscroll(autoscroll, cx);
+        }
     }
 
     pub fn longest_row(&self, cx: &mut AppContext) -> u32 {
