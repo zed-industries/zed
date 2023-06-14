@@ -125,7 +125,9 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for SuggestionPoint {
 
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
+    transforms: Cursor<'a, Transform, (InlayPoint, SuggestionPoint)>,
     suggestion_rows: SuggestionBufferRows<'a>,
+    inlay_row: u32,
 }
 
 pub struct InlayChunks<'a> {
@@ -211,7 +213,28 @@ impl<'a> Iterator for InlayBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.suggestion_rows.next()
+        let mut buffer_row = None;
+        while let Some(transform) = self.transforms.item() {
+            match transform {
+                Transform::Inlay(inlay) => {
+                    if self.inlay_row == self.transforms.end(&()).0.row() {
+                        self.transforms.next(&());
+                    } else {
+                        buffer_row = Some(None);
+                        break;
+                    }
+                }
+                Transform::Isomorphic(_) => {
+                    buffer_row = Some(self.suggestion_rows.next().unwrap());
+                    break;
+                }
+            }
+        }
+        self.inlay_row += 1;
+        self.transforms
+            .seek(&InlayPoint::new(self.inlay_row, 0), Bias::Right, &());
+
+        buffer_row
     }
 }
 
@@ -712,10 +735,20 @@ impl InlaySnapshot {
         summary
     }
 
-    // TODO kb copied from suggestion_snapshot
     pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+        let inlay_point = InlayPoint::new(row, 0);
+        cursor.seek(&inlay_point, Bias::Right, &());
+        let mut suggestion_point = cursor.start().1;
+        if let Some(Transform::Isomorphic(_)) = cursor.item() {
+            suggestion_point.0 += inlay_point.0 - cursor.start().0 .0;
+        }
+
         InlayBufferRows {
-            suggestion_rows: self.suggestion_snapshot.buffer_rows(row),
+            transforms: cursor,
+            inlay_row: inlay_point.row(),
+            suggestion_row,
+            suggestion_rows: self.suggestion_snapshot.buffer_rows(suggestion_point.row()),
         }
     }
 
@@ -1032,18 +1065,19 @@ mod tests {
                 expected_text.replace(offset.0..offset.0, &inlay.text.to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
-            // TODO kb !!!
-            // let mut expected_buffer_rows = suggestion_snapshot.buffer_rows(0).collect::<Vec<_>>();
-            // for row_start in 0..expected_buffer_rows.len() {
-            //     assert_eq!(
-            //         inlay_snapshot
-            //             .buffer_rows(row_start as u32)
-            //             .collect::<Vec<_>>(),
-            //         &expected_buffer_rows[row_start..],
-            //         "incorrect buffer rows starting at {}",
-            //         row_start
-            //     );
-            // }
+
+            let expected_buffer_rows = inlay_snapshot.buffer_rows(0).collect::<Vec<_>>();
+            dbg!(&expected_buffer_rows);
+            for row_start in 0..expected_buffer_rows.len() {
+                assert_eq!(
+                    inlay_snapshot
+                        .buffer_rows(row_start as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[row_start..],
+                    "incorrect buffer rows starting at {}",
+                    row_start
+                );
+            }
 
             for _ in 0..5 {
                 let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
