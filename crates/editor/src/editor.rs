@@ -7449,6 +7449,7 @@ pub enum Event {
     },
     ScrollPositionChanged {
         local: bool,
+        autoscroll: bool,
     },
     Closed,
 }

@@ -693,6 +693,7 @@ impl Assistant {
                     error: None,
                 },
             );
+            cx.emit(AssistantEvent::MessagesEdited);
             Some(message)
         } else {
             None
@@ -874,7 +875,6 @@ impl AssistantEditor {
                     |selections| selections.select_ranges([cursor..cursor]),
                 );
             });
-            self.scroll_position = self.cursor_scroll_position(cx);
         }
     }
 
@@ -922,8 +922,11 @@ impl AssistantEditor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::ScrollPositionChanged { .. } => {
-                if self.cursor_scroll_position(cx) != self.scroll_position {
+            editor::Event::ScrollPositionChanged { autoscroll, .. } => {
+                let cursor_scroll_position = self.cursor_scroll_position(cx);
+                if *autoscroll {
+                    self.scroll_position = cursor_scroll_position;
+                } else if self.scroll_position != cursor_scroll_position {
                     self.scroll_position = None;
                 }
             }
