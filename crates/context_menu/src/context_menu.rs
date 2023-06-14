@@ -330,9 +330,9 @@ impl ContextMenu {
                     match item {
                         ContextMenuItem::Item { label, .. } => {
                             let toggle_state = if Some(ix) == self.selected_index {
-                                ToggleState::On
+                                ToggleState::Active
                             } else {
-                                ToggleState::Off
+                                ToggleState::Inactive
                             };
                             let style = style.item.in_state(toggle_state);
                             let style = style.style_for(&mut Default::default());
@@ -368,9 +368,9 @@ impl ContextMenu {
                         match item {
                             ContextMenuItem::Item { action, .. } => {
                                 let toggle_state = if Some(ix) == self.selected_index {
-                                    ToggleState::On
+                                    ToggleState::Active
                                 } else {
-                                    ToggleState::Off
+                                    ToggleState::Inactive
                                 };
                                 let style = style.item.in_state(toggle_state);
                                 let style = style.style_for(&mut Default::default());
@@ -420,9 +420,9 @@ impl ContextMenu {
                             let view_id = self.parent_view_id;
                             MouseEventHandler::<MenuItem, ContextMenu>::new(ix, cx, |state, _| {
                                 let toggle_state = if Some(ix) == self.selected_index {
-                                    ToggleState::On
+                                    ToggleState::Active
                                 } else {
-                                    ToggleState::Off
+                                    ToggleState::Inactive
                                 };
                                 let style = style.item.in_state(toggle_state);
                                 let style = style.style_for(state);

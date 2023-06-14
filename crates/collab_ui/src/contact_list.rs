@@ -798,7 +798,7 @@ impl ContactList {
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.project_row.off_state().default;
+        let row = &theme.project_row.inactive_state().default;
         let tree_branch = theme.tree_branch;
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);
@@ -897,7 +897,7 @@ impl ContactList {
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.project_row.off_state().default;
+        let row = &theme.project_row.inactive_state().default;
         let tree_branch = theme.tree_branch;
         let line_height = row.name.text.line_height(font_cache);
         let cap_height = row.name.text.cap_height(font_cache);

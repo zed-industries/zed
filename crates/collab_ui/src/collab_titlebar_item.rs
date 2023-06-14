@@ -299,7 +299,12 @@ impl CollabTitlebarItem {
     pub fn toggle_user_menu(&mut self, _: &ToggleUserMenu, cx: &mut ViewContext<Self>) {
         let theme = theme::current(cx).clone();
         let avatar_style = theme.workspace.titlebar.leader_avatar.clone();
-        let item_style = theme.context_menu.item.off_state().disabled_style().clone();
+        let item_style = theme
+            .context_menu
+            .item
+            .inactive_state()
+            .disabled_style()
+            .clone();
         self.user_menu.update(cx, |user_menu, cx| {
             let items = if let Some(user) = self.user_store.read(cx).current_user() {
                 vec![
@@ -364,14 +369,14 @@ impl CollabTitlebarItem {
                     .with_margin_left(
                         titlebar
                             .toggle_contacts_button
-                            .off_state()
+                            .inactive_state()
                             .default
                             .icon_width,
                     )
                     .with_margin_top(
                         titlebar
                             .toggle_contacts_button
-                            .off_state()
+                            .inactive_state()
                             .default
                             .icon_width,
                     )

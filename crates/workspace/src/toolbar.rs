@@ -231,9 +231,9 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
 ) -> AnyElement<Toolbar> {
     MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
-            style.off_state().style_for(state)
+            style.inactive_state().style_for(state)
         } else {
-            style.off_state().disabled_style()
+            style.inactive_state().disabled_style()
         };
         Svg::new(svg_path)
             .with_color(style.color)

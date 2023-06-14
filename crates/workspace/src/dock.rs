@@ -499,9 +499,9 @@ impl View for PanelButtons {
                         .with_child(
                             MouseEventHandler::<Self, _>::new(panel_ix, cx, |state, cx| {
                                 let toggle_state = if is_active {
-                                    ToggleState::On
+                                    ToggleState::Active
                                 } else {
-                                    ToggleState::Off
+                                    ToggleState::Inactive
                                 };
                                 let style = button_style.in_state(toggle_state);
 

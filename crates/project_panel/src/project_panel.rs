@@ -1267,7 +1267,7 @@ impl ProjectPanel {
                     .filter(|destination| details.path.starts_with(destination))
                     .is_some()
             {
-                style = entry_style.on_state().default.clone();
+                style = entry_style.active_state().default.clone();
             }
 
             let row_container_style = if show_editor {
@@ -1409,8 +1409,10 @@ impl View for ProjectPanel {
                         let context_menu_item_style = theme::current(cx).context_menu.item.clone();
                         move |state, cx| {
                             let button_style = button_style.style_for(state).clone();
-                            let context_menu_item =
-                                context_menu_item_style.on_state().style_for(state).clone();
+                            let context_menu_item = context_menu_item_style
+                                .active_state()
+                                .style_for(state)
+                                .clone();
 
                             theme::ui::keystroke_label(
                                 "Open a project",
