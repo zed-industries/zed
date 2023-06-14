@@ -437,7 +437,6 @@ struct Assistant {
     pending_summary: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    languages: Arc<LanguageRegistry>,
     model: String,
     token_count: Option<usize>,
     max_token_count: usize,
@@ -457,7 +456,24 @@ impl Assistant {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let model = "gpt-3.5-turbo";
-        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
+        let markdown = language_registry.language_for_name("Markdown");
+        let buffer = cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, "", cx);
+            buffer.set_language_registry(language_registry);
+            cx.spawn_weak(|buffer, mut cx| async move {
+                let markdown = markdown.await?;
+                let buffer = buffer
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_language(Some(markdown), cx)
+                });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+            buffer
+        });
+
         let mut this = Self {
             messages: Default::default(),
             messages_metadata: Default::default(),
@@ -466,7 +482,6 @@ impl Assistant {
             pending_summary: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
-            languages: language_registry,
             token_count: None,
             max_token_count: tiktoken_rs::model::get_context_size(model),
             pending_token_count: Task::ready(None),
@@ -660,8 +675,7 @@ impl Assistant {
             .position(|message| message.id == message_id)
         {
             let start = self.buffer.update(cx, |buffer, cx| {
-                let offset = self
-                    .messages[prev_message_ix + 1..]
+                let offset = self.messages[prev_message_ix + 1..]
                     .iter()
                     .find(|message| message.start.is_valid(buffer))
                     .map_or(buffer.len(), |message| message.start.to_offset(buffer) - 1);
