@@ -5,7 +5,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{BTreeSet, HashMap, VecDeque};
 use fs::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     Fs, LineEnding,
@@ -226,7 +226,7 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
-    expanded_dirs: HashSet<(ProjectEntryId, ReplicaId)>,
+    expanded_dirs: BTreeSet<(ProjectEntryId, ReplicaId)>,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
@@ -2209,6 +2209,15 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
+    fn is_entry_expanded(&self, entry: &Entry) -> bool {
+        let expanded = self
+            .expanded_dirs
+            .range((entry.id, 0)..=(entry.id, ReplicaId::MAX))
+            .next()
+            .is_some();
+        expanded
+    }
+
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
         if let Some(removed_entry_id) = self.removed_entry_ids.remove(&entry.inode) {
             entry.id = removed_entry_id;
@@ -2661,15 +2670,25 @@ impl Entry {
     }
 
     pub fn is_dir(&self) -> bool {
-        matches!(self.kind, EntryKind::Dir | EntryKind::PendingDir)
+        self.kind.is_dir()
     }
 
     pub fn is_file(&self) -> bool {
-        matches!(self.kind, EntryKind::File(_))
+        self.kind.is_file()
     }
 
     pub fn git_status(&self) -> Option<GitFileStatus> {
         self.git_status
+    }
+}
+
+impl EntryKind {
+    pub fn is_dir(&self) -> bool {
+        matches!(self, EntryKind::Dir | EntryKind::PendingDir)
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self, EntryKind::File(_))
     }
 }
 
@@ -2901,6 +2920,7 @@ impl BackgroundScanner {
             path: Arc::from(Path::new("")),
             ignore_stack,
             ancestor_inodes: TreeSet::from_ordered_entries(root_inode),
+            is_outside_root: false,
             scan_queue: scan_job_tx.clone(),
         }))
         .unwrap();
@@ -2961,15 +2981,27 @@ impl BackgroundScanner {
                 replica_id,
                 is_expanded,
             } => {
-                let mut state = self.state.lock();
-                if is_expanded {
-                    state.expanded_dirs.insert((entry_id, replica_id));
-                } else {
-                    state.expanded_dirs.remove(&(entry_id, replica_id));
+                let path = {
+                    let mut state = self.state.lock();
+                    if is_expanded {
+                        state.expanded_dirs.insert((entry_id, replica_id));
+                    } else {
+                        state.expanded_dirs.remove(&(entry_id, replica_id));
+                    }
+                    state
+                        .snapshot
+                        .entry_for_id(entry_id)
+                        .map(|e| state.snapshot.absolutize(&e.path))
+                };
+                if let Some(path) = path {
+                    let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
+                    self.reload_entries_for_paths(vec![path.clone()], Some(scan_job_tx))
+                        .await;
+                    if let Some(job) = scan_job_rx.next().await {
+                        self.scan_dir(&job).await.log_err();
+                        self.send_status_update(false, None);
+                    }
                 }
-
-                // todo
-
                 true
             }
         }
@@ -3120,7 +3152,16 @@ impl BackgroundScanner {
         let mut ignore_stack = job.ignore_stack.clone();
         let mut new_ignore = None;
         let (root_abs_path, root_char_bag, next_entry_id, repository) = {
-            let snapshot = &self.state.lock().snapshot;
+            let state = self.state.lock();
+            if job.is_outside_root || job.ignore_stack.is_all() {
+                if let Some(entry) = state.snapshot.entry_for_path(&job.path) {
+                    if !state.is_entry_expanded(entry) {
+                        return Ok(());
+                    }
+                }
+            }
+
+            let snapshot = &state.snapshot;
             (
                 snapshot.abs_path().clone(),
                 snapshot.root_char_bag,
@@ -3131,6 +3172,7 @@ impl BackgroundScanner {
             )
         };
 
+        let mut root_canonical_path = None;
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
         while let Some(child_abs_path) = child_paths.next().await {
             let child_abs_path: Arc<Path> = match child_abs_path {
@@ -3198,6 +3240,38 @@ impl BackgroundScanner {
                 root_char_bag,
             );
 
+            let mut is_outside_root = false;
+            if child_metadata.is_symlink {
+                let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
+                    Ok(path) => path,
+                    Err(err) => {
+                        log::error!(
+                            "error reading target of symlink {:?}: {:?}",
+                            child_abs_path,
+                            err
+                        );
+                        continue;
+                    }
+                };
+
+                // lazily canonicalize the root path in order to determine if
+                // symlinks point outside of the worktree.
+                let root_canonical_path = match &root_canonical_path {
+                    Some(path) => path,
+                    None => match self.fs.canonicalize(&root_abs_path).await {
+                        Ok(path) => root_canonical_path.insert(path),
+                        Err(err) => {
+                            log::error!("error canonicalizing root {:?}: {:?}", root_abs_path, err);
+                            continue;
+                        }
+                    },
+                };
+
+                if !canonical_path.starts_with(root_canonical_path) {
+                    is_outside_root = true;
+                }
+            }
+
             if child_entry.is_dir() {
                 let is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_ignored = is_ignored;
@@ -3210,6 +3284,7 @@ impl BackgroundScanner {
                     new_jobs.push(Some(ScanJob {
                         abs_path: child_abs_path,
                         path: child_path,
+                        is_outside_root,
                         ignore_stack: if is_ignored {
                             IgnoreStack::all()
                         } else {
@@ -3259,7 +3334,7 @@ impl BackgroundScanner {
 
         for new_job in new_jobs {
             if let Some(new_job) = new_job {
-                job.scan_queue.send(new_job).await.unwrap();
+                job.scan_queue.send(new_job).await.ok();
             }
         }
 
@@ -3354,12 +3429,14 @@ impl BackgroundScanner {
                     if let Some(scan_queue_tx) = &scan_queue_tx {
                         let mut ancestor_inodes = state.snapshot.ancestor_inodes_for_path(&path);
                         if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
+                            let is_outside_root = !abs_path.starts_with(&root_canonical_path);
                             ancestor_inodes.insert(metadata.inode);
                             smol::block_on(scan_queue_tx.send(ScanJob {
                                 abs_path,
                                 path,
                                 ignore_stack,
                                 ancestor_inodes,
+                                is_outside_root,
                                 scan_queue: scan_queue_tx.clone(),
                             }))
                             .unwrap();
@@ -3748,6 +3825,7 @@ struct ScanJob {
     ignore_stack: Arc<IgnoreStack>,
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
+    is_outside_root: bool,
 }
 
 struct UpdateIgnoreStatusJob {

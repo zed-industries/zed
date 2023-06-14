@@ -410,17 +410,23 @@ impl ProjectPanel {
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             if entry.is_dir() {
+                let worktree_id = worktree.id();
+                let entry_id = entry.id;
                 let expanded_dir_ids =
-                    if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree.id()) {
+                    if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
                         expanded_dir_ids
                     } else {
                         return;
                     };
 
-                match expanded_dir_ids.binary_search(&entry.id) {
+                match expanded_dir_ids.binary_search(&entry_id) {
                     Ok(_) => self.select_next(&SelectNext, cx),
                     Err(ix) => {
-                        expanded_dir_ids.insert(ix, entry.id);
+                        self.project.update(cx, |project, cx| {
+                            project.mark_entry_expanded(worktree_id, entry_id, cx);
+                        });
+
+                        expanded_dir_ids.insert(ix, entry_id);
                         self.update_visible_entries(None, cx);
                         cx.notify();
                     }
@@ -468,14 +474,18 @@ impl ProjectPanel {
     fn toggle_expanded(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
-                match expanded_dir_ids.binary_search(&entry_id) {
-                    Ok(ix) => {
-                        expanded_dir_ids.remove(ix);
+                self.project.update(cx, |project, cx| {
+                    match expanded_dir_ids.binary_search(&entry_id) {
+                        Ok(ix) => {
+                            project.mark_entry_collapsed(worktree_id, entry_id, cx);
+                            expanded_dir_ids.remove(ix);
+                        }
+                        Err(ix) => {
+                            project.mark_entry_expanded(worktree_id, entry_id, cx);
+                            expanded_dir_ids.insert(ix, entry_id);
+                        }
                     }
-                    Err(ix) => {
-                        expanded_dir_ids.insert(ix, entry_id);
-                    }
-                }
+                });
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                 cx.focus_self();
                 cx.notify();
@@ -1206,7 +1216,7 @@ impl ProjectPanel {
 
         Flex::row()
             .with_child(
-                if kind == EntryKind::Dir {
+                if kind.is_dir() {
                     if details.is_expanded {
                         Svg::new("icons/chevron_down_8.svg").with_color(style.icon_color)
                     } else {
@@ -1303,7 +1313,7 @@ impl ProjectPanel {
         })
         .on_click(MouseButton::Left, move |event, this, cx| {
             if !show_editor {
-                if kind == EntryKind::Dir {
+                if kind.is_dir() {
                     this.toggle_expanded(entry_id, cx);
                 } else {
                     this.open_entry(entry_id, event.click_count > 1, cx);

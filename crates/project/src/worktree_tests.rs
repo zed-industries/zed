@@ -256,6 +256,74 @@ async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppCo
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "deps": {
+                    // symlinks here
+                },
+                "src": {
+                    "a.rs": "",
+                    "b.rs": "",
+                },
+            },
+            "dir2": {
+                "src": {
+                    "c.rs": "",
+                    "d.rs": "",
+                }
+            },
+            "dir3": {
+                "src": {
+                    "e.rs": "",
+                    "f.rs": "",
+                }
+            }
+        }),
+    )
+    .await;
+    fs.insert_symlink("/root/dir1/deps/dep-dir2", "../../dir2".into())
+        .await;
+    fs.insert_symlink("/root/dir1/deps/dep-dir3", "../../dir3".into())
+        .await;
+
+    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+    let tree = Worktree::local(
+        client,
+        Path::new("/root/dir1"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(false)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                Path::new(""),
+                Path::new("deps"),
+                Path::new("deps/dep-dir2"),
+                Path::new("deps/dep-dir3"),
+                Path::new("src"),
+                Path::new("src/a.rs"),
+                Path::new("src/b.rs"),
+            ]
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     // .gitignores are handled explicitly by Zed and do not use the git
