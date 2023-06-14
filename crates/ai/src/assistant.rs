@@ -29,7 +29,7 @@ use std::{
     borrow::Cow, cell::RefCell, cmp, fmt::Write, io, iter, ops::Range, rc::Rc, sync::Arc,
     time::Duration,
 };
-use util::{post_inc, truncate_and_trailoff, ResultExt, TryFutureExt};
+use util::{channel::ReleaseChannel, post_inc, truncate_and_trailoff, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
     item::Item,
@@ -44,6 +44,12 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    if *util::channel::RELEASE_CHANNEL == ReleaseChannel::Stable {
+        cx.update_default_global::<collections::CommandPaletteFilter, _, _>(move |filter, _cx| {
+            filter.filtered_namespaces.insert("assistant");
+        });
+    }
+
     settings::register::<AssistantSettings>(cx);
     cx.add_action(
         |workspace: &mut Workspace, _: &NewContext, cx: &mut ViewContext<Workspace>| {
@@ -60,6 +66,11 @@ pub fn init(cx: &mut AppContext) {
     cx.capture_action(AssistantEditor::copy);
     cx.add_action(AssistantPanel::save_api_key);
     cx.add_action(AssistantPanel::reset_api_key);
+    cx.add_action(
+        |workspace: &mut Workspace, _: &ToggleFocus, cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        },
+    );
 }
 
 pub enum AssistantPanelEvent {
