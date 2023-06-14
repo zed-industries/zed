@@ -1131,25 +1131,19 @@ impl AssistantEditor {
             let mut offset = 0;
             let mut copied_text = String::new();
             let mut spanned_messages = 0;
-            for message in &assistant.messages {
-                todo!();
-                // let message_range = offset..offset + message.content.read(cx).len() + 1;
-                let message_range = offset..offset + 1;
-
+            for (message, metadata, message_range) in assistant.messages(cx) {
                 if message_range.start >= selection.range().end {
                     break;
                 } else if message_range.end >= selection.range().start {
                     let range = cmp::max(message_range.start, selection.range().start)
                         ..cmp::min(message_range.end, selection.range().end);
                     if !range.is_empty() {
-                        if let Some(metadata) = assistant.messages_metadata.get(&message.id) {
-                            spanned_messages += 1;
-                            write!(&mut copied_text, "## {}\n\n", metadata.role).unwrap();
-                            for chunk in assistant.buffer.read(cx).text_for_range(range) {
-                                copied_text.push_str(&chunk);
-                            }
-                            copied_text.push('\n');
+                        spanned_messages += 1;
+                        write!(&mut copied_text, "## {}\n\n", metadata.role).unwrap();
+                        for chunk in assistant.buffer.read(cx).text_for_range(range) {
+                            copied_text.push_str(&chunk);
                         }
+                        copied_text.push('\n');
                     }
                 }
 
