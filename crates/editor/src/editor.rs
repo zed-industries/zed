@@ -54,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_cache::{InlayCache, InlayRefreshReason, InlaysUpdate, QueryInlaysRange};
+use inlay_cache::{InlayCache, InlayRefreshReason, InlaySplice, QueryInlaysRange};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -2605,7 +2605,7 @@ impl Editor {
 
         match reason {
             InlayRefreshReason::Settings(new_settings) => {
-                let InlaysUpdate {
+                let InlaySplice {
                     to_remove,
                     to_insert,
                 } = self.inlay_cache.apply_settings(new_settings);
@@ -2637,7 +2637,7 @@ impl Editor {
                     .collect::<Vec<_>>();
 
                 cx.spawn(|editor, mut cx| async move {
-                    let InlaysUpdate {
+                    let InlaySplice {
                         to_remove,
                         to_insert,
                     } = editor

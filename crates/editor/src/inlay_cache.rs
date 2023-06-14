@@ -70,24 +70,9 @@ struct BufferInlays {
 pub struct InlayId(pub usize);
 
 #[derive(Debug, Default)]
-pub struct InlaysUpdate {
+pub struct InlaySplice {
     pub to_remove: Vec<InlayId>,
     pub to_insert: Vec<(InlayId, Anchor, InlayHint)>,
-}
-impl InlaysUpdate {
-    fn merge(&mut self, other: Self) {
-        let mut new_to_remove = other.to_remove.iter().copied().collect::<HashSet<_>>();
-        self.to_insert
-            .retain(|(inlay_id, _, _)| !new_to_remove.remove(&inlay_id));
-        self.to_remove.extend(new_to_remove);
-        self.to_insert
-            .extend(other.to_insert.into_iter().filter(|(inlay_id, _, _)| {
-                !self
-                    .to_remove
-                    .iter()
-                    .any(|removed_inlay_id| removed_inlay_id == inlay_id)
-            }));
-    }
 }
 
 pub struct QueryInlaysRange {
@@ -112,7 +97,7 @@ impl InlayCache {
         multi_buffer: ModelHandle<MultiBuffer>,
         inlay_fetch_ranges: impl Iterator<Item = QueryInlaysRange>,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<InlaysUpdate>> {
+    ) -> Task<anyhow::Result<InlaySplice>> {
         let mut inlay_fetch_tasks = Vec::new();
         for inlay_fetch_range in inlay_fetch_ranges {
             let inlays_up_to_date = self.inlays_up_to_date(
@@ -203,7 +188,7 @@ impl InlayCache {
                 })?;
                 inlays_update
             } else {
-                InlaysUpdate::default()
+                InlaySplice::default()
             };
 
             anyhow::Ok(updates)
@@ -233,7 +218,7 @@ impl InlayCache {
                 HashMap<ExcerptId, Option<(Range<usize>, OrderedByAnchorOffset<InlayHint>)>>,
             ),
         >,
-    ) -> InlaysUpdate {
+    ) -> InlaySplice {
         let mut old_inlays = self.inlays_per_buffer.clone();
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
@@ -377,7 +362,9 @@ impl InlayCache {
             }
         }
 
-        InlaysUpdate {
+        to_insert.retain(|(_, _, new_hint)| self.allowed_hint_kinds.contains(&new_hint.kind));
+
+        InlaySplice {
             to_remove,
             to_insert,
         }
@@ -386,7 +373,7 @@ impl InlayCache {
     pub fn apply_settings(
         &mut self,
         inlay_hint_settings: editor_settings::InlayHints,
-    ) -> InlaysUpdate {
+    ) -> InlaySplice {
         let new_allowed_inlay_hint_types = allowed_inlay_hint_types(inlay_hint_settings);
 
         let new_allowed_hint_kinds = new_allowed_inlay_hint_types
@@ -420,7 +407,7 @@ impl InlayCache {
 
         self.allowed_hint_kinds = new_allowed_hint_kinds;
 
-        InlaysUpdate {
+        InlaySplice {
             to_remove,
             to_insert,
         }
