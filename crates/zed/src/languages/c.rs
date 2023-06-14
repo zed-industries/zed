@@ -109,6 +109,10 @@ impl super::LspAdapter for CLspAdapter {
         .await
         .log_err()
     }
+    
+    fn installation_test_binary(&self, container_dir: PathBuf) -> LanguageServerBinary {
+        unimplemented!();
+    }
 
     async fn label_for_completion(
         &self,

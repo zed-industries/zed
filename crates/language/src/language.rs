@@ -20,7 +20,7 @@ use futures::{
 use gpui::{executor::Background, AppContext, Task};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp::{CodeActionKind, LanguageServer, LanguageServerBinaries, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinaries, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use regex::Regex;
@@ -35,13 +35,11 @@ use std::{
     mem,
     ops::{Not, Range},
     path::{Path, PathBuf},
-    process::Stdio,
     str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
-    time::Duration,
 };
 use syntax_map::SyntaxSnapshot;
 use theme::{SyntaxTheme, Theme};
@@ -860,7 +858,7 @@ impl LanguageRegistry {
         let download_dir = self
             .language_server_download_dir
             .clone()
-            .ok_or_else(|| anyhow!("language server download directory has not been assigned"))
+            .ok_or_else(|| anyhow!("language server download directory has not been assigned before starting server"))
             .log_err()?;
         let this = self.clone();
         let language = language.clone();
@@ -913,54 +911,26 @@ impl LanguageRegistry {
         self.lsp_binary_statuses_rx.clone()
     }
 
-    pub async fn check_errored_lsp_installation(
+    pub fn delete_server_container(
         &self,
-        language_server: Arc<LanguageServer>,
+        adapter: Arc<CachedLspAdapter>,
         cx: &mut AppContext,
-    ) {
-        // Check if child process is running
-        if !language_server.is_dead() {
-            return;
-        }
+    ) -> Task<()> {
+        let mut lock = self.lsp_binary_paths.lock();
+        lock.remove(&adapter.name);
 
-        // If not, get check binary
-        let test_binary = match language_server.test_installation_binary() {
-            Some(test_binary) => test_binary.clone(),
-            None => return,
-        };
+        let download_dir = self
+            .language_server_download_dir
+            .clone()
+            .expect("language server download directory has not been assigned before deleting server container");
 
-        // Run
-        const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
-        let mut timeout = cx.background().timer(PROCESS_TIMEOUT).fuse();
-
-        let mut errored = false;
-        let result = smol::process::Command::new(&test_binary.path)
-            .current_dir(&test_binary.path)
-            .args(test_binary.arguments)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn();
-
-        if let Ok(mut process) = result {
-            futures::select! {
-                _ = process.status().fuse() => {}
-                _ = timeout => errored = true,
-            }
-        } else {
-            errored = true;
-        }
-
-        dbg!(errored);
-
-        // If failure clear container dir
-
-        // Prompt binary retrieval
-
-        // Start language server
- 
-        // Update project server state
+        cx.spawn(|_| async move {
+            let container_dir = download_dir.join(adapter.name.0.as_ref());
+            smol::fs::remove_dir_all(container_dir)
+                .await
+                .context("server container removal")
+                .log_err();
+        })
     }
 }
 

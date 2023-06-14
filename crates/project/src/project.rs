@@ -2461,6 +2461,54 @@ impl Project {
         }
     }
 
+    fn reinstall_language_server(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<()>> {
+        let (adapter, language, server) = match self.language_servers.remove(&server_id) {
+            Some(LanguageServerState::Running {
+                adapter,
+                language,
+                server,
+                ..
+            }) => (adapter.clone(), language.clone(), server),
+
+            _ => return None,
+        };
+
+        Some(cx.spawn(move |this, mut cx| async move {
+            if let Some(task) = server.shutdown() {
+                task.await;
+            }
+
+            // TODO: This is race-safe with regards to preventing new instances from
+            // starting while deleting, but existing instances in other projects are going
+            // to be very confused and messed up
+            this.update(&mut cx, |this, cx| {
+                this.languages.delete_server_container(adapter.clone(), cx)
+            })
+            .await;
+
+            this.update(&mut cx, |this, mut cx| {
+                for worktree in &this.worktrees {
+                    let root_path = match worktree.upgrade(cx) {
+                        Some(worktree) => worktree.read(cx).abs_path(),
+                        None => continue,
+                    };
+
+                    this.languages.start_language_server(
+                        language.clone(),
+                        adapter.clone(),
+                        root_path,
+                        this.client.http_client(),
+                        &mut cx,
+                    );
+                }
+            })
+        }))
+    }
+
     async fn setup_and_insert_language_server(
         this: WeakModelHandle<Self>,
         initialization_options: Option<serde_json::Value>,
@@ -2950,8 +2998,54 @@ impl Project {
         language_server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.languages
-            .check_errored_lsp_installation(language_server, cx);
+        cx.spawn(|this, mut cx| async move {
+            if !language_server.is_dead() {
+                return;
+            }
+
+            let server_id = language_server.server_id();
+            let test_binary = match language_server.test_installation_binary() {
+                Some(test_binary) => test_binary.clone(),
+                None => return,
+            };
+
+            const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
+            let mut timeout = cx.background().timer(PROCESS_TIMEOUT).fuse();
+
+            let mut errored = false;
+            let result = smol::process::Command::new(&test_binary.path)
+                .current_dir(&test_binary.path)
+                .args(test_binary.arguments)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn();
+
+            if let Ok(mut process) = result {
+                futures::select! {
+                    status = process.status().fuse() => match status {
+                        Ok(status) => errored = !status.success(),
+                        Err(_) => errored = true,
+                    },
+
+                    _ = timeout => {}
+                }
+            } else {
+                errored = true;
+            }
+
+            if errored {
+                let task = this.update(&mut cx, move |this, mut cx| {
+                    this.reinstall_language_server(server_id, &mut cx)
+                });
+
+                if let Some(task) = task {
+                    task.await;
+                }
+            }
+        })
+        .detach();
     }
 
     fn on_lsp_progress(
