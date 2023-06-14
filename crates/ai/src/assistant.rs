@@ -1055,8 +1055,8 @@ impl AssistantEditor {
                 })
                 .collect::<Vec<_>>();
 
-            editor.remove_blocks(old_blocks, cx);
-            let ids = editor.insert_blocks(new_blocks, cx);
+            editor.remove_blocks(old_blocks, None, cx);
+            let ids = editor.insert_blocks(new_blocks, None, cx);
             self.blocks = HashSet::from_iter(ids);
         });
     }

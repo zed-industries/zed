@@ -430,7 +430,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, cx);
+            editor.remove_blocks(blocks_to_remove, None, cx);
             let block_ids = editor.insert_blocks(
                 blocks_to_add.into_iter().map(|block| {
                     let (excerpt_id, text_anchor) = block.position;
@@ -442,6 +442,7 @@ impl ProjectDiagnosticsEditor {
                         disposition: block.disposition,
                     }
                 }),
+                Some(Autoscroll::fit()),
                 cx,
             );
 
