@@ -108,6 +108,7 @@ pub trait Fs: Send + Sync {
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
+    async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
         &self,
         path: &Path,
@@ -323,6 +324,11 @@ impl Fs for RealFs {
         }))
     }
 
+    async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+        let path = smol::fs::read_link(path).await?;
+        Ok(path)
+    }
+
     async fn read_dir(
         &self,
         path: &Path,
@@ -407,46 +413,51 @@ enum FakeFsEntry {
 impl FakeFsState {
     fn read_path<'a>(&'a self, target: &Path) -> Result<Arc<Mutex<FakeFsEntry>>> {
         Ok(self
-            .try_read_path(target)
+            .try_read_path(target, true)
             .ok_or_else(|| anyhow!("path does not exist: {}", target.display()))?
             .0)
     }
 
-    fn try_read_path<'a>(&'a self, target: &Path) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
+    fn try_read_path<'a>(
+        &'a self,
+        target: &Path,
+        follow_symlink: bool,
+    ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
         let mut path = target.to_path_buf();
-        let mut real_path = PathBuf::new();
+        let mut canonical_path = PathBuf::new();
         let mut entry_stack = Vec::new();
         'outer: loop {
-            let mut path_components = path.components().collect::<collections::VecDeque<_>>();
-            while let Some(component) = path_components.pop_front() {
+            let mut path_components = path.components().peekable();
+            while let Some(component) = path_components.next() {
                 match component {
                     Component::Prefix(_) => panic!("prefix paths aren't supported"),
                     Component::RootDir => {
                         entry_stack.clear();
                         entry_stack.push(self.root.clone());
-                        real_path.clear();
-                        real_path.push("/");
+                        canonical_path.clear();
+                        canonical_path.push("/");
                     }
                     Component::CurDir => {}
                     Component::ParentDir => {
                         entry_stack.pop()?;
-                        real_path.pop();
+                        canonical_path.pop();
                     }
                     Component::Normal(name) => {
                         let current_entry = entry_stack.last().cloned()?;
                         let current_entry = current_entry.lock();
                         if let FakeFsEntry::Dir { entries, .. } = &*current_entry {
                             let entry = entries.get(name.to_str().unwrap()).cloned()?;
-                            let _entry = entry.lock();
-                            if let FakeFsEntry::Symlink { target, .. } = &*_entry {
-                                let mut target = target.clone();
-                                target.extend(path_components);
-                                path = target;
-                                continue 'outer;
-                            } else {
-                                entry_stack.push(entry.clone());
-                                real_path.push(name);
+                            if path_components.peek().is_some() || follow_symlink {
+                                let entry = entry.lock();
+                                if let FakeFsEntry::Symlink { target, .. } = &*entry {
+                                    let mut target = target.clone();
+                                    target.extend(path_components);
+                                    path = target;
+                                    continue 'outer;
+                                }
                             }
+                            entry_stack.push(entry.clone());
+                            canonical_path.push(name);
                         } else {
                             return None;
                         }
@@ -455,7 +466,7 @@ impl FakeFsState {
             }
             break;
         }
-        entry_stack.pop().map(|entry| (entry, real_path))
+        Some((entry_stack.pop()?, canonical_path))
     }
 
     fn write_path<Fn, T>(&self, path: &Path, callback: Fn) -> Result<T>
@@ -776,6 +787,10 @@ impl FakeFsEntry {
         matches!(self, Self::File { .. })
     }
 
+    fn is_symlink(&self) -> bool {
+        matches!(self, Self::Symlink { .. })
+    }
+
     fn file_content(&self, path: &Path) -> Result<&String> {
         if let Self::File { content, .. } = self {
             Ok(content)
@@ -1056,8 +1071,8 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        if let Some((_, real_path)) = state.try_read_path(&path) {
-            Ok(real_path)
+        if let Some((_, canonical_path)) = state.try_read_path(&path, true) {
+            Ok(canonical_path)
         } else {
             Err(anyhow!("path does not exist: {}", path.display()))
         }
@@ -1067,7 +1082,7 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        if let Some((entry, _)) = state.try_read_path(&path) {
+        if let Some((entry, _)) = state.try_read_path(&path, true) {
             entry.lock().is_file()
         } else {
             false
@@ -1078,10 +1093,17 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let state = self.state.lock();
-        if let Some((entry, real_path)) = state.try_read_path(&path) {
-            let entry = entry.lock();
-            let is_symlink = real_path != path;
+        if let Some((mut entry, _)) = state.try_read_path(&path, false) {
+            let is_symlink = entry.lock().is_symlink();
+            if is_symlink {
+                if let Some(e) = state.try_read_path(&path, true).map(|e| e.0) {
+                    entry = e;
+                } else {
+                    return Ok(None);
+                }
+            }
 
+            let entry = entry.lock();
             Ok(Some(match &*entry {
                 FakeFsEntry::File { inode, mtime, .. } => Metadata {
                     inode: *inode,
@@ -1099,6 +1121,22 @@ impl Fs for FakeFs {
             }))
         } else {
             Ok(None)
+        }
+    }
+
+    async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path);
+        let state = self.state.lock();
+        if let Some((entry, _)) = state.try_read_path(&path, false) {
+            let entry = entry.lock();
+            if let FakeFsEntry::Symlink { target } = &*entry {
+                Ok(target.clone())
+            } else {
+                Err(anyhow!("not a symlink: {}", path.display()))
+            }
+        } else {
+            Err(anyhow!("path does not exist: {}", path.display()))
         }
     }
 
