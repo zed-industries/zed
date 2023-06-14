@@ -398,7 +398,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon_path(&self) -> &'static str {
-        "icons/speech_bubble_12.svg"
+        "icons/robot_14.svg"
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
