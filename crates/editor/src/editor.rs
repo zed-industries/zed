@@ -31,13 +31,11 @@ use copilot::Copilot;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use editor_settings::EditorSettings;
-pub use element::RenderExcerptHeaderParams;
 pub use element::{
     Cursor, EditorElement, HighlightedRange, HighlightedRangeLine, LineWithInvisibles,
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::LayoutContext;
 use gpui::{
     actions,
     color::Color,
@@ -511,7 +509,6 @@ pub struct Editor {
     mode: EditorMode,
     show_gutter: bool,
     placeholder_text: Option<Arc<str>>,
-    render_excerpt_header: Option<element::RenderExcerptHeader>,
     highlighted_rows: Option<Range<u32>>,
     #[allow(clippy::type_complexity)]
     background_highlights: BTreeMap<TypeId, (fn(&Theme) -> Color, Vec<Range<Anchor>>)>,
@@ -1317,7 +1314,6 @@ impl Editor {
             mode,
             show_gutter: mode == EditorMode::Full,
             placeholder_text: None,
-            render_excerpt_header: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
             nav_history: None,
@@ -6827,20 +6823,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_render_excerpt_header(
-        &mut self,
-        render_excerpt_header: impl 'static
-            + Fn(
-                &mut Editor,
-                RenderExcerptHeaderParams,
-                &mut LayoutContext<Editor>,
-            ) -> AnyElement<Editor>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.render_excerpt_header = Some(Arc::new(render_excerpt_header));
-        cx.notify();
-    }
-
     pub fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local()) {
@@ -7479,12 +7461,8 @@ impl View for Editor {
             });
         }
 
-        let mut editor = EditorElement::new(style.clone());
-        if let Some(render_excerpt_header) = self.render_excerpt_header.clone() {
-            editor = editor.with_render_excerpt_header(render_excerpt_header);
-        }
         Stack::new()
-            .with_child(editor)
+            .with_child(EditorElement::new(style.clone()))
             .with_child(ChildView::new(&self.mouse_context_menu, cx))
             .into_any()
     }
