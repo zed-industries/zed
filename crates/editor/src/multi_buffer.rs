@@ -1118,7 +1118,7 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &AppContext,
-    ) -> Option<(ModelHandle<Buffer>, usize)> {
+    ) -> Option<(ModelHandle<Buffer>, usize, ExcerptId)> {
         let snapshot = self.read(cx);
         let offset = point.to_offset(&snapshot);
         let mut cursor = snapshot.excerpts.cursor::<usize>();
@@ -1132,7 +1132,7 @@ impl MultiBuffer {
             let buffer_point = excerpt_start + offset - *cursor.start();
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
 
-            (buffer, buffer_point)
+            (buffer, buffer_point, excerpt.id)
         })
     }
 
@@ -1140,7 +1140,7 @@ impl MultiBuffer {
         &self,
         range: Range<T>,
         cx: &AppContext,
-    ) -> Vec<(ModelHandle<Buffer>, Range<usize>)> {
+    ) -> Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)> {
         let snapshot = self.read(cx);
         let start = range.start.to_offset(&snapshot);
         let end = range.end.to_offset(&snapshot);
@@ -1165,7 +1165,7 @@ impl MultiBuffer {
             let start = excerpt_start + (cmp::max(start, *cursor.start()) - *cursor.start());
             let end = excerpt_start + (cmp::min(end, end_before_newline) - *cursor.start());
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
-            result.push((buffer, start..end));
+            result.push((buffer, start..end, excerpt.id));
             cursor.next(&());
         }
 
@@ -1387,7 +1387,7 @@ impl MultiBuffer {
         cx: &'a AppContext,
     ) -> Option<Arc<Language>> {
         self.point_to_buffer_offset(point, cx)
-            .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
+            .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
     }
 
     pub fn settings_at<'a, T: ToOffset>(
@@ -1397,7 +1397,7 @@ impl MultiBuffer {
     ) -> &'a LanguageSettings {
         let mut language = None;
         let mut file = None;
-        if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
+        if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
             let buffer = buffer.read(cx);
             language = buffer.language_at(offset);
             file = buffer.file();
@@ -5196,7 +5196,7 @@ mod tests {
                     .range_to_buffer_ranges(start_ix..end_ix, cx);
                 let excerpted_buffers_text = excerpted_buffer_ranges
                     .iter()
-                    .map(|(buffer, buffer_range)| {
+                    .map(|(buffer, buffer_range, _)| {
                         buffer
                             .read(cx)
                             .text_for_range(buffer_range.clone())

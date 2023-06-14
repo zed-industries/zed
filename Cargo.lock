@@ -3516,6 +3516,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "env_logger 0.9.3",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lsp",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "tree-sitter",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3757,28 +3780,6 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "url",
-]
-
-[[package]]
-name = "lsp_log"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "collections",
- "editor",
- "env_logger 0.9.3",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "project",
- "serde",
- "settings",
- "theme",
- "unindent",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -7358,8 +7359,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.9"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14#c51896d32dcc11a38e41f36e3deb1a6a9c4f4b14"
+version = "0.20.10"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=49226023693107fba9a1191136a4f47f38cdca73#49226023693107fba9a1191136a4f47f38cdca73"
 dependencies = [
  "cc",
  "regex",
@@ -7417,6 +7418,15 @@ dependencies = [
 name = "tree-sitter-go"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-go?rev=aeb2f33b366fd78d5789ff104956ce23508b85db#aeb2f33b366fd78d5789ff104956ce23508b85db"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-heex"
+version = "0.0.1"
+source = "git+https://github.com/phoenixframework/tree-sitter-heex?rev=2e1348c3cf2c9323e87c2744796cf3f3868aa82a#2e1348c3cf2c9323e87c2744796cf3f3868aa82a"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -8829,11 +8839,11 @@ dependencies = [
  "journal",
  "language",
  "language_selector",
+ "language_tools",
  "lazy_static",
  "libc",
  "log",
  "lsp",
- "lsp_log",
  "node_runtime",
  "num_cpus",
  "outline",
@@ -8875,6 +8885,7 @@ dependencies = [
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-go",
+ "tree-sitter-heex",
  "tree-sitter-html",
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",

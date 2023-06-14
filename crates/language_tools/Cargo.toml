@@ -1,11 +1,11 @@
 [package]
-name = "lsp_log"
+name = "language_tools"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/lsp_log.rs"
+path = "src/language_tools.rs"
 doctest = false
 
 [dependencies]
@@ -22,6 +22,7 @@ lsp = { path = "../lsp" }
 futures.workspace = true
 serde.workspace = true
 anyhow.workspace = true
+tree-sitter.workspace = true
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }

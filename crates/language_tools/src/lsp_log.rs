@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod lsp_log_tests;
-
 use collections::HashMap;
 use editor::Editor;
 use futures::{channel::mpsc, StreamExt};
@@ -27,7 +24,7 @@ use workspace::{
 const SEND_LINE: &str = "// Send:\n";
 const RECEIVE_LINE: &str = "// Receive:\n";
 
-struct LogStore {
+pub struct LogStore {
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
     io_tx: mpsc::UnboundedSender<(WeakModelHandle<Project>, LanguageServerId, bool, String)>,
 }
@@ -49,10 +46,10 @@ struct LanguageServerRpcState {
 }
 
 pub struct LspLogView {
+    pub(crate) editor: ViewHandle<Editor>,
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
-    editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
 }
 
@@ -68,16 +65,16 @@ enum MessageKind {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct LogMenuItem {
-    server_id: LanguageServerId,
-    server_name: LanguageServerName,
-    worktree: ModelHandle<Worktree>,
-    rpc_trace_enabled: bool,
-    rpc_trace_selected: bool,
-    logs_selected: bool,
+pub(crate) struct LogMenuItem {
+    pub server_id: LanguageServerId,
+    pub server_name: LanguageServerName,
+    pub worktree: ModelHandle<Worktree>,
+    pub rpc_trace_enabled: bool,
+    pub rpc_trace_selected: bool,
+    pub logs_selected: bool,
 }
 
-actions!(log, [OpenLanguageServerLogs]);
+actions!(debug, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut AppContext) {
     let log_store = cx.add_model(|cx| LogStore::new(cx));
@@ -114,7 +111,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl LogStore {
-    fn new(cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(cx: &mut ModelContext<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
         let this = Self {
             projects: HashMap::default(),
@@ -320,7 +317,7 @@ impl LogStore {
 }
 
 impl LspLogView {
-    fn new(
+    pub fn new(
         project: ModelHandle<Project>,
         log_store: ModelHandle<LogStore>,
         cx: &mut ViewContext<Self>,
@@ -360,7 +357,7 @@ impl LspLogView {
         editor
     }
 
-    fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
+    pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
         let log_store = self.log_store.read(cx);
         let state = log_store.projects.get(&self.project.downgrade())?;
         let mut rows = self
@@ -544,12 +541,7 @@ impl View for LspLogToolbarItemView {
         let theme = theme::current(cx).clone();
         let Some(log_view) = self.log_view.as_ref() else { return Empty::new().into_any() };
         let log_view = log_view.read(cx);
-
-        let menu_rows = self
-            .log_view
-            .as_ref()
-            .and_then(|view| view.read(cx).menu_items(cx))
-            .unwrap_or_default();
+        let menu_rows = log_view.menu_items(cx).unwrap_or_default();
 
         let current_server_id = log_view.current_server_id;
         let current_server = current_server_id.and_then(|current_server_id| {
@@ -586,7 +578,7 @@ impl View for LspLogToolbarItemView {
                                     )
                                 }))
                                 .contained()
-                                .with_style(theme.lsp_log_menu.container)
+                                .with_style(theme.toolbar_dropdown_menu.container)
                                 .constrained()
                                 .with_width(400.)
                                 .with_height(400.)
@@ -596,6 +588,7 @@ impl View for LspLogToolbarItemView {
                             cx.notify()
                         }),
                     )
+                    .with_hoverable(true)
                     .with_fit_mode(OverlayFitMode::SwitchAnchor)
                     .with_anchor_corner(AnchorCorner::TopLeft)
                     .with_z_index(999)
@@ -688,7 +681,7 @@ impl LspLogToolbarItemView {
                     )
                 })
                 .unwrap_or_else(|| "No server selected".into());
-            let style = theme.lsp_log_menu.header.style_for(state, false);
+            let style = theme.toolbar_dropdown_menu.header.style_for(state, false);
             Label::new(label, style.text.clone())
                 .contained()
                 .with_style(style.container)
@@ -714,7 +707,7 @@ impl LspLogToolbarItemView {
 
         Flex::column()
             .with_child({
-                let style = &theme.lsp_log_menu.server;
+                let style = &theme.toolbar_dropdown_menu.section_header;
                 Label::new(
                     format!("{} ({})", name.0, worktree.read(cx).root_name()),
                     style.text.clone(),
@@ -722,16 +715,19 @@ impl LspLogToolbarItemView {
                 .contained()
                 .with_style(style.container)
                 .constrained()
-                .with_height(theme.lsp_log_menu.row_height)
+                .with_height(theme.toolbar_dropdown_menu.row_height)
             })
             .with_child(
                 MouseEventHandler::<ActivateLog, _>::new(id.0, cx, move |state, _| {
-                    let style = theme.lsp_log_menu.item.style_for(state, logs_selected);
+                    let style = theme
+                        .toolbar_dropdown_menu
+                        .item
+                        .style_for(state, logs_selected);
                     Label::new(SERVER_LOGS, style.text.clone())
                         .contained()
                         .with_style(style.container)
                         .constrained()
-                        .with_height(theme.lsp_log_menu.row_height)
+                        .with_height(theme.toolbar_dropdown_menu.row_height)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
@@ -740,12 +736,15 @@ impl LspLogToolbarItemView {
             )
             .with_child(
                 MouseEventHandler::<ActivateRpcTrace, _>::new(id.0, cx, move |state, cx| {
-                    let style = theme.lsp_log_menu.item.style_for(state, rpc_trace_selected);
+                    let style = theme
+                        .toolbar_dropdown_menu
+                        .item
+                        .style_for(state, rpc_trace_selected);
                     Flex::row()
                         .with_child(
                             Label::new(RPC_MESSAGES, style.text.clone())
                                 .constrained()
-                                .with_height(theme.lsp_log_menu.row_height),
+                                .with_height(theme.toolbar_dropdown_menu.row_height),
                         )
                         .with_child(
                             ui::checkbox_with_label::<Self, _, Self, _>(
@@ -764,7 +763,7 @@ impl LspLogToolbarItemView {
                         .contained()
                         .with_style(style.container)
                         .constrained()
-                        .with_height(theme.lsp_log_menu.row_height)
+                        .with_height(theme.toolbar_dropdown_menu.row_height)
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
                 .on_click(MouseButton::Left, move |_, view, cx| {
