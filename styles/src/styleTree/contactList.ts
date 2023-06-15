@@ -192,24 +192,27 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         },
       }
     ),
-    projectRow: {
-      ...projectRow,
-      background: background(layer),
-      icon: {
-        margin: { left: nameMargin },
-        color: foreground(layer, "variant"),
-        width: 12,
-      },
-      name: {
-        ...projectRow.name,
-        ...text(layer, "mono", { size: "sm" }),
-      },
-      hover: {
-        background: background(layer, "hovered"),
-      },
-      active: {
-        background: background(layer, "active"),
-      },
-    },
+    projectRow: toggleable(interactive({
+      base: {
+        ...projectRow,
+        background: background(layer),
+        icon: {
+          margin: { left: nameMargin },
+          color: foreground(layer, "variant"),
+          width: 12,
+        },
+        name: {
+          ...projectRow.name,
+          ...text(layer, "mono", { size: "sm" }),
+        },
+      }, state: {
+        hovered: {
+          background: background(layer, "hovered"),
+        },
+      }
+    }),
+      {
+        default: { background: background(layer, "active") }
+      })
   }
 }
