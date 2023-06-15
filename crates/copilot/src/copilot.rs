@@ -368,7 +368,7 @@ impl Copilot {
                 };
                 let binaries = LanguageServerBinaries {
                     binary: binary.clone(),
-                    installation_test_binary: binary,
+                    installation_test_binary: Some(binary),
                 };
                 let server = LanguageServer::new(
                     LanguageServerId(0),

@@ -141,8 +141,11 @@ impl CachedLspAdapter {
         self.adapter.cached_server_binary(container_dir).await
     }
 
-    async fn installation_test_binary(&self, container_dir: PathBuf) -> LanguageServerBinary {
-        self.adapter.installation_test_binary(container_dir)
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        self.adapter.installation_test_binary(container_dir).await
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -202,7 +205,10 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn cached_server_binary(&self, container_dir: PathBuf) -> Option<LanguageServerBinary>;
 
-    fn installation_test_binary(&self, _container_dir: PathBuf) -> LanguageServerBinary {
+    async fn installation_test_binary(
+        &self,
+        _container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
         unimplemented!();
     }
 

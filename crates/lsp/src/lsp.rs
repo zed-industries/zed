@@ -46,7 +46,7 @@ pub struct LanguageServerBinary {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageServerBinaries {
     pub binary: LanguageServerBinary,
-    pub installation_test_binary: LanguageServerBinary,
+    pub installation_test_binary: Option<LanguageServerBinary>,
 }
 
 pub struct LanguageServer {
@@ -162,7 +162,7 @@ impl LanguageServer {
             stdin,
             stout,
             Some(server),
-            Some(binaries.installation_test_binary),
+            binaries.installation_test_binary,
             root_path,
             code_action_kinds,
             cx,

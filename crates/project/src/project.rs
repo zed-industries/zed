@@ -3002,27 +3002,29 @@ impl Project {
             if !language_server.is_dead() {
                 return;
             }
-
             let server_id = language_server.server_id();
-            let test_binary = match language_server.test_installation_binary() {
-                Some(test_binary) => test_binary.clone(),
-                None => return,
-            };
+
+            // A lack of test binary counts as a failure
+            let process = language_server
+                .test_installation_binary()
+                .as_ref()
+                .and_then(|binary| {
+                    smol::process::Command::new(&binary.path)
+                        .current_dir(&binary.path)
+                        .args(&binary.arguments)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::inherit())
+                        .kill_on_drop(true)
+                        .spawn()
+                        .ok()
+                });
 
             const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
             let mut timeout = cx.background().timer(PROCESS_TIMEOUT).fuse();
 
             let mut errored = false;
-            let result = smol::process::Command::new(&test_binary.path)
-                .current_dir(&test_binary.path)
-                .args(test_binary.arguments)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .kill_on_drop(true)
-                .spawn();
-
-            if let Ok(mut process) = result {
+            if let Some(mut process) = process {
                 futures::select! {
                     status = process.status().fuse() => match status {
                         Ok(status) => errored = !status.success(),

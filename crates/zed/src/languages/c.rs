@@ -109,9 +109,17 @@ impl super::LspAdapter for CLspAdapter {
         .await
         .log_err()
     }
-    
-    fn installation_test_binary(&self, container_dir: PathBuf) -> LanguageServerBinary {
-        unimplemented!();
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        self.cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
+            })
     }
 
     async fn label_for_completion(
