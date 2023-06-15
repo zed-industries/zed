@@ -72,9 +72,8 @@ fn main() {
                 panic!("unexpected message");
             }
 
-            let res = room_b.remote_audio_tracks("test-participant-1")[0].start().await;
-            println!("Attempting to start: {:?}", res);
-            let timer = cx.background().timer(Duration::from_secs(10));
+            println!("Pausing for 5 seconds to test audio, make some noise!");
+            let timer = cx.background().timer(Duration::from_secs(5));
             timer.await;
 
             let remote_audio_track = room_b
