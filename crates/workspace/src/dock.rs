@@ -598,8 +598,8 @@ impl StatusItemView for PanelButtons {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod test {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test {
     use super::*;
     use gpui::{ViewContext, WindowContext};
 
