@@ -70,11 +70,11 @@ use link_go_to_definition::{
     hide_link_definition, show_link_definition, LinkDefinitionKind, LinkGoToDefinitionState,
 };
 use log::error;
+use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
-use multi_buffer::{MultiBufferChunks, ToOffsetUtf16};
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, LocationLink, Project, ProjectPath, ProjectTransaction};
 use scroll::{
