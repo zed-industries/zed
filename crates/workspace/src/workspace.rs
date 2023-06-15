@@ -1598,9 +1598,7 @@ impl Workspace {
                         focus_center = true;
                     }
                 } else {
-                    if active_panel.is_zoomed(cx) {
-                        cx.focus(active_panel.as_any());
-                    }
+                    cx.focus(active_panel.as_any());
                     reveal_dock = true;
                 }
             }
