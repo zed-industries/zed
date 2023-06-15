@@ -11,4 +11,4 @@ Welcome! These internal docs are a work in progress. You can contribute to them 
 - [Building Zed](./building-zed.md)
 - [Release Process](./release-process.md)
 - [Backend Development](./backend-development.md)
-- [Design Tools & Links](design-tools.md)
+- [Design Tools & Links](./design-tools.md)
