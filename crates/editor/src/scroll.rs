@@ -18,6 +18,7 @@ use workspace::WorkspaceId;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
+    inlay_cache::InlayRefreshReason,
     persistence::DB,
     Anchor, DisplayPoint, Editor, EditorMode, Event, MultiBufferSnapshot, ToPoint,
 };
@@ -176,7 +177,7 @@ impl ScrollManager {
         autoscroll: bool,
         workspace_id: Option<i64>,
         cx: &mut ViewContext<Editor>,
-    ) {
+    ) -> ScrollAnchor {
         let (new_anchor, top_row) = if scroll_position.y() <= 0. {
             (
                 ScrollAnchor {
@@ -205,6 +206,7 @@ impl ScrollManager {
         };
 
         self.set_anchor(new_anchor, top_row, local, autoscroll, workspace_id, cx);
+        new_anchor
     }
 
     fn set_anchor(
@@ -312,7 +314,7 @@ impl Editor {
 
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().map(|workspace| workspace.1);
-        self.scroll_manager.set_scroll_position(
+        let scroll_anchor = self.scroll_manager.set_scroll_position(
             scroll_position,
             &map,
             local,
@@ -320,6 +322,7 @@ impl Editor {
             workspace_id,
             cx,
         );
+        self.refresh_inlays(InlayRefreshReason::Scroll(scroll_anchor), cx);
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {

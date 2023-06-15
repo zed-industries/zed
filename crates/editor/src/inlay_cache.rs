@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{editor_settings, Anchor, Editor, ExcerptId, MultiBuffer};
+use crate::{editor_settings, scroll::ScrollAnchor, Anchor, Editor, ExcerptId, MultiBuffer};
 use anyhow::Context;
 use clock::{Global, Local};
 use gpui::{ModelHandle, Task, ViewContext};
@@ -29,8 +29,9 @@ pub struct InlayProperties<T> {
 
 #[derive(Debug, Copy, Clone)]
 pub enum InlayRefreshReason {
-    Settings(editor_settings::InlayHints),
-    Regular,
+    SettingsChange(editor_settings::InlayHints),
+    Scroll(ScrollAnchor),
+    OpenExcerptsChange,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -88,12 +89,12 @@ pub struct InlaySplice {
     pub to_insert: Vec<(InlayId, Anchor, InlayHint)>,
 }
 
-pub struct QueryInlaysRange {
+pub struct InlayFetchRange {
     pub buffer_id: u64,
     pub buffer_path: PathBuf,
     pub buffer_version: Global,
     pub excerpt_id: ExcerptId,
-    pub excerpt_offset_range: Range<usize>,
+    pub excerpt_offset_query_range: Range<usize>,
 }
 
 impl InlayCache {
@@ -105,10 +106,29 @@ impl InlayCache {
         }
     }
 
-    pub fn fetch_inlays(
+    pub fn append_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        inlay_fetch_ranges: impl Iterator<Item = QueryInlaysRange>,
+        ranges_to_add: impl Iterator<Item = InlayFetchRange>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<InlaySplice>> {
+        self.fetch_inlays(multi_buffer, ranges_to_add, false, cx)
+    }
+
+    pub fn replace_inlays(
+        &mut self,
+        multi_buffer: ModelHandle<MultiBuffer>,
+        new_ranges: impl Iterator<Item = InlayFetchRange>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Task<anyhow::Result<InlaySplice>> {
+        self.fetch_inlays(multi_buffer, new_ranges, true, cx)
+    }
+
+    fn fetch_inlays(
+        &mut self,
+        multi_buffer: ModelHandle<MultiBuffer>,
+        inlay_fetch_ranges: impl Iterator<Item = InlayFetchRange>,
+        replace_old: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
         let mut inlay_fetch_tasks = Vec::new();
@@ -127,13 +147,11 @@ impl InlayCache {
                         else { return Ok((inlay_fetch_range, Some(Vec::new()))) };
                     let task = editor
                         .update(&mut cx, |editor, cx| {
-                            let max_buffer_offset = buffer_handle.read(cx).len();
-                            let excerpt_offset_range = &inlay_fetch_range.excerpt_offset_range;
                             editor.project.as_ref().map(|project| {
                                 project.update(cx, |project, cx| {
                                     project.query_inlay_hints_for_buffer(
                                         buffer_handle,
-                                        excerpt_offset_range.start..excerpt_offset_range.end.min(max_buffer_offset),
+                                        inlay_fetch_range.excerpt_offset_query_range.clone(),
                                         cx,
                                     )
                                 })
@@ -163,16 +181,17 @@ impl InlayCache {
 
             for task_result in futures::future::join_all(inlay_fetch_tasks).await {
                 match task_result {
-                    Ok((request_key, response_inlays)) => {
+                    Ok((inlay_fetch_range, response_inlays)) => {
+                        // TODO kb different caching now
                         let inlays_per_excerpt = HashMap::from_iter([(
-                            request_key.excerpt_id,
+                            inlay_fetch_range.excerpt_id,
                             response_inlays
                                 .map(|excerpt_inlays| {
                                     excerpt_inlays.into_iter().fold(
                                         OrderedByAnchorOffset::default(),
                                         |mut ordered_inlays, inlay| {
                                             let anchor = multi_buffer_snapshot.anchor_in_excerpt(
-                                                request_key.excerpt_id,
+                                                inlay_fetch_range.excerpt_id,
                                                 inlay.position,
                                             );
                                             ordered_inlays.add(anchor, inlay);
@@ -180,14 +199,16 @@ impl InlayCache {
                                         },
                                     )
                                 })
-                                .map(|inlays| (request_key.excerpt_offset_range, inlays)),
+                                .map(|inlays| {
+                                    (inlay_fetch_range.excerpt_offset_query_range, inlays)
+                                }),
                         )]);
-                        match inlay_updates.entry(request_key.buffer_path) {
+                        match inlay_updates.entry(inlay_fetch_range.buffer_path) {
                             hash_map::Entry::Occupied(mut o) => {
                                 o.get_mut().1.extend(inlays_per_excerpt);
                             }
                             hash_map::Entry::Vacant(v) => {
-                                v.insert((request_key.buffer_version, inlays_per_excerpt));
+                                v.insert((inlay_fetch_range.buffer_version, inlays_per_excerpt));
                             }
                         }
                     }
