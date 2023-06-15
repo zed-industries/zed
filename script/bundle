@@ -81,12 +81,12 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}" -v
+    /usr/bin/codesign --force --deep --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    codesign --force --deep --sign - "${app_path}" -v
+    codesign --force --deep --entitlements crates/zed/resources/zed.entitlements --sign - "${app_path}" -v
 fi
 
 if [ "$target_dir" = "debug" ]; then
