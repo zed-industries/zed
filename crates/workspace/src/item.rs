@@ -710,8 +710,8 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod test {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test {
     use super::{Item, ItemEvent};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
