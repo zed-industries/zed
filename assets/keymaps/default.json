@@ -200,7 +200,8 @@
     "context": "AssistantEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
-      "cmd->": "assistant::QuoteSelection"
+      "cmd->": "assistant::QuoteSelection",
+      "shift-enter": "assistant::Split"
     }
   },
   {
