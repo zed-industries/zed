@@ -1,10 +1,18 @@
-import { DeepPartial } from "utility-types";
 import merge from "ts-deepmerge"
-interface Interactive<T> {
+
+type InteractiveState = "default" | "hovered" | "clicked" | "selected" | "disabled";
+
+type Interactive<T> = {
     default: T,
-    hover?: T,
+    hovered?: T,
     clicked?: T,
+    selected?: T,
     disabled?: T,
+};
+
+interface InteractiveProps<T> {
+    base?: T,
+    state: Partial<Record<InteractiveState, T>>
 }
 
 /**
@@ -18,23 +26,45 @@ interface Interactive<T> {
  * @param modifications Object containing modified fields to be included in the resulting object.
  * @returns Interactive<T> object with fields from `base` and `modifications`.
  */
-export function interactive<T extends Object>(base: T, modifications: DeepPartial<Interactive<T>>): Interactive<T> {
+export function interactive<T extends Object>({ base, state }: InteractiveProps<T>): Interactive<T> {
+    if (!base && !state.default) throw new Error("An interactive object must have a default state, or a base property.");
+
+    let defaultState: T;
+
+    if (state.default && base) {
+        defaultState = merge(base, state.default) as T;
+    } else {
+        defaultState = base ? base : state.default as T;
+    }
+
     let interactiveObj: Interactive<T> = {
-        default: base,
+        default: defaultState,
     };
-    if (modifications.default !== undefined) {
-        interactiveObj.default = merge(interactiveObj.default, modifications.default) as T;
-    }
-    if (modifications.hover !== undefined) {
-        interactiveObj.hover = merge(interactiveObj.default, modifications.hover) as T;
+
+    let stateCount = 0;
+
+    if (state.hovered !== undefined) {
+        interactiveObj.hovered = merge(interactiveObj.default, state.hovered) as T;
+        stateCount++;
     }
 
-    if (modifications.clicked !== undefined) {
-        interactiveObj.clicked = merge(interactiveObj.default, modifications.clicked) as T;
+    if (state.clicked !== undefined) {
+        interactiveObj.clicked = merge(interactiveObj.default, state.clicked) as T;
+        stateCount++;
     }
 
-    if (modifications.disabled !== undefined) {
-        interactiveObj.disabled = merge(interactiveObj.default, modifications.disabled) as T;
+    if (state.selected !== undefined) {
+        interactiveObj.selected = merge(interactiveObj.default, state.selected) as T;
+        stateCount++;
+    }
+
+    if (state.disabled !== undefined) {
+        interactiveObj.disabled = merge(interactiveObj.default, state.disabled) as T;
+        stateCount++;
+    }
+
+    if (stateCount < 1) {
+        throw new Error("An interactive object must have a default and at least one other state.");
     }
 
     return interactiveObj;
