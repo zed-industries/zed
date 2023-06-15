@@ -6,7 +6,8 @@
     "scripts": {
         "build": "ts-node ./src/buildThemes.ts",
         "build-licenses": "ts-node ./src/buildLicenses.ts",
-        "build-tokens": "ts-node ./src/buildTokens.ts"
+        "build-tokens": "ts-node ./src/buildTokens.ts",
+        "test": "vitest"
     },
     "author": "",
     "license": "ISC",
@@ -22,12 +23,16 @@
         "toml": "^3.0.0",
         "ts-deepmerge": "^6.0.3",
         "ts-node": "^10.9.1",
-        "utility-types": "^3.10.0"
+        "utility-types": "^3.10.0",
+        "vitest": "^0.32.0"
     },
     "prettier": {
         "semi": false,
         "printWidth": 80,
         "htmlWhitespaceSensitivity": "strict",
         "tabWidth": 4
+    },
+    "devDependencies": {
+        "@vitest/coverage-v8": "^0.32.0"
     }
 }

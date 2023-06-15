@@ -10,24 +10,27 @@ type Interactive<T> = {
     disabled?: T,
 };
 
+export const NO_DEFAULT_OR_BASE_ERROR = "An interactive object must have a default state, or a base property."
+export const NOT_ENOUGH_STATES_ERROR = "An interactive object must have a default and at least one other state."
+
 interface InteractiveProps<T> {
     base?: T,
     state: Partial<Record<InteractiveState, T>>
 }
 
 /**
- * Helper function for creating Interactive<T> objects that works pretty much like Toggle<T>.
- * It takes a object to be used as a value for `default` field and then fills out other fields
- * with fields from either `base` or `modifications`.
- * Notably, it does not touch `hover`, `clicked` and `disabled` if there are no modifications for it.
+ * Helper function for creating Interactive<T> objects that works with Toggle<T>-like behavior.
+ * It takes a default object to be used as the value for `default` field and fills out other fields
+ * with fields from either `base` or from the `state` object which contains values for specific states.
+ * Notably, it does not touch `hover`, `clicked`, `selected` and `disabled` states if there are no modifications for them.
  *
- * @param defaultObj Object to be used as the value for `default` field.
- * @param base Object containing base fields to be included in the resulting object.
- * @param modifications Object containing modified fields to be included in the resulting object.
- * @returns Interactive<T> object with fields from `base` and `modifications`.
+ * @param defaultObj Object to be used as the value for the `default` field.
+ * @param base Optional object containing base fields to be included in the resulting object.
+ * @param state Object containing optional modified fields to be included in the resulting object for each state.
+ * @returns Interactive<T> object with fields from `base` and `state`.
  */
 export function interactive<T extends Object>({ base, state }: InteractiveProps<T>): Interactive<T> {
-    if (!base && !state.default) throw new Error("An interactive object must have a default state, or a base property.");
+    if (!base && !state.default) throw new Error(NO_DEFAULT_OR_BASE_ERROR);
 
     let defaultState: T;
 
@@ -64,7 +67,7 @@ export function interactive<T extends Object>({ base, state }: InteractiveProps<
     }
 
     if (stateCount < 1) {
-        throw new Error("An interactive object must have a default and at least one other state.");
+        throw new Error(NOT_ENOUGH_STATES_ERROR);
     }
 
     return interactiveObj;
