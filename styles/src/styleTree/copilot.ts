@@ -9,53 +9,57 @@ export default function copilot(colorScheme: ColorScheme) {
   let ctaButton =
     // Copied from welcome screen. FIXME: Move this into a ZDS component
     interactive({
-      background: background(layer),
-      border: border(layer, "default"),
-      cornerRadius: 4,
-      margin: {
-        top: 4,
-        bottom: 4,
-        left: 8,
-        right: 8,
+      base: {
+        background: background(layer),
+        border: border(layer, "default"),
+        cornerRadius: 4,
+        margin: {
+          top: 4,
+          bottom: 4,
+          left: 8,
+          right: 8,
+        },
+        padding: {
+          top: 3,
+          bottom: 3,
+          left: 7,
+          right: 7,
+        },
+        ...text(layer, "sans", "default", { size: "sm" })
       },
-      padding: {
-        top: 3,
-        bottom: 3,
-        left: 7,
-        right: 7,
-      },
-      ...text(layer, "sans", "default", { size: "sm" })
-    },
-      {
-        hover: {
+      state: {
+        hovered: {
           ...text(layer, "sans", "default", { size: "sm" }),
           background: background(layer, "hovered"),
           border: border(layer, "active"),
         },
-      });
+      }
+    });
 
   return {
     outLinkIcon:
       interactive({
-        icon: svg(
-          foreground(layer, "variant"),
-          "icons/link_out_12.svg",
-          12,
-          12
-        ),
-        container: {
-          cornerRadius: 6,
-          padding: { left: 6 },
+        base: {
+          icon: svg(
+            foreground(layer, "variant"),
+            "icons/link_out_12.svg",
+            12,
+            12
+          ),
+          container: {
+            cornerRadius: 6,
+            padding: { left: 6 },
+          },
         },
-      },
-        {
-          hover: {
+        state: {
+          hovered: {
             icon: {
               color:
                 foreground(layer, "hovered")
             }
           },
-        }),
+        }
+      }),
 
     modal: {
       titleText: {
@@ -82,7 +86,8 @@ export default function copilot(colorScheme: ColorScheme) {
           bottom: 8,
         },
       },
-      closeIcon: interactive(
+      closeIcon: interactive({
+        base:
         {
           icon: svg(
             foreground(layer, "variant"),
@@ -103,8 +108,8 @@ export default function copilot(colorScheme: ColorScheme) {
             },
           }
         },
-        {
-          hover: {
+        state: {
+          hovered: {
             icon: svg(
               foreground(layer, "on"),
               "icons/x_mark_8.svg",
@@ -120,7 +125,8 @@ export default function copilot(colorScheme: ColorScheme) {
               8
             ),
           },
-        }),
+        }
+      }),
       dimensions: {
         width: 280,
         height: 280,
@@ -196,27 +202,29 @@ export default function copilot(colorScheme: ColorScheme) {
           },
           right: (content_width * 1) / 3,
           rightContainer: interactive({
-            border: border(colorScheme.lowest, "inverted", {
-              bottom: false,
-              right: false,
-              top: false,
-              left: true,
-            }),
-            padding: {
-              top: 3,
-              bottom: 5,
-              left: 8,
-              right: 0,
-            }
-          }, {
-            hover: {
-              border: border(layer, "active", {
+            base: {
+              border: border(colorScheme.lowest, "inverted", {
                 bottom: false,
                 right: false,
                 top: false,
                 left: true,
               }),
-            },
+              padding: {
+                top: 3,
+                bottom: 5,
+                left: 8,
+                right: 0,
+              }
+            }, state: {
+              hovered: {
+                border: border(layer, "active", {
+                  bottom: false,
+                  right: false,
+                  top: false,
+                  left: true,
+                }),
+              },
+            }
           })
         },
       },

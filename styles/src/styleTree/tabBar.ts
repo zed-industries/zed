@@ -90,15 +90,17 @@ export default function tabBar(colorScheme: ColorScheme) {
     },
     draggedTab,
     paneButton: toggleable(interactive({
-      color: foreground(layer, "variant"),
-      iconWidth: 12,
-      buttonWidth: activePaneActiveTab.height,
-    },
-      {
-        hover: {
+      base: {
+        color: foreground(layer, "variant"),
+        iconWidth: 12,
+        buttonWidth: activePaneActiveTab.height,
+      },
+      state: {
+        hovered: {
           color: foreground(layer, "hovered"),
         }
-      }),
+      }
+    }),
       {
         default: {
           color: foreground(layer, "accent"),

@@ -73,14 +73,17 @@ export default function contactsPanel(colorScheme: ColorScheme) {
     rowHeight: 28,
     sectionIconSize: 8,
     headerRow: toggleable(interactive({
-      ...text(layer, "mono", { size: "sm" }),
-      margin: { top: 14 },
-      padding: {
-        left: sidePadding,
-        right: sidePadding,
-      },
-      background: background(layer, "default"),// posiewic: breaking change
-    }, {}),
+      base: {
+        ...text(layer, "mono", { size: "sm" }),
+        margin: { top: 14 },
+        padding: {
+          left: sidePadding,
+          right: sidePadding,
+        },
+        background: background(layer, "default"),// posiewic: breaking change
+      }
+      , state: { hovered: { background: background(layer, "default") } } // hack, we want headerRow to be interactive for whatever reason. It probably shouldn't be interactive in the first place.
+    }),
       {
         default: {
           ...text(layer, "mono", "active", { size: "sm" }),
@@ -88,27 +91,30 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         },
       }),
     leaveCall: interactive({
-      background: background(layer),
-      border: border(layer),
-      cornerRadius: 6,
-      margin: {
-        top: 1,
-      },
-      padding: {
-        top: 1,
-        bottom: 1,
-        left: 7,
-        right: 7,
-      },
-      ...text(layer, "sans", "variant", { size: "xs" }),
-    },
-      {
-        hover: {
+      base: {
+        background: background(layer),
+        border: border(layer),
+        cornerRadius: 6,
+        margin: {
+          top: 1,
+        },
+        padding: {
+          top: 1,
+          bottom: 1,
+          left: 7,
+          right: 7,
+        },
+        ...text(layer, "sans", "variant", { size: "xs" }),
+      }
+      ,
+      state: {
+        hovered: {
           ...text(layer, "sans", "hovered", { size: "xs" }),
           background: background(layer, "hovered"),
           border: border(layer, "hovered"),
         }
       }
+    }
     ),
     contactRow: {
       inactive: {
@@ -153,13 +159,14 @@ export default function contactsPanel(colorScheme: ColorScheme) {
       },
     },
     contactButtonSpacing: nameMargin,
-    contactButton: interactive(
-      contactButton,
-      {
-        hover: {
+    contactButton: interactive({
+      base: { ...contactButton },
+      state: {
+        hovered: {
           background: background(layer, "hovered"),
         },
-      }),
+      }
+    }),
     disabledButton: {
       ...contactButton,
       background: background(layer, "on"),
@@ -169,14 +176,16 @@ export default function contactsPanel(colorScheme: ColorScheme) {
       ...text(layer, "mono", "variant", { size: "xs" }),
     },
     treeBranch: toggleable(interactive({
-      color: borderColor(layer),
-      width: 1,
-    },
-      {
-        hover: {
+      base: {
+        color: borderColor(layer),
+        width: 1,
+      },
+      state: {
+        hovered: {
           color: borderColor(layer),
         },
-      }),
+      }
+    }),
       {
         default: {
           color: borderColor(layer),

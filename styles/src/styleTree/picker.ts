@@ -41,23 +41,26 @@ export default function picker(colorScheme: ColorScheme): any {
       padding: {},
     },
     item: toggleable(interactive({
-      padding: {
-        bottom: 4,
-        left: 12,
-        right: 12,
-        top: 4,
-      },
-      margin: {
-        top: 1,
-        left: 4,
-        right: 4,
-      },
-      cornerRadius: 8,
-      text: text(layer, "sans", "variant"),
-      highlightText: text(layer, "sans", "accent", { weight: "bold" }),
-    }, {
-      hover: {
-        background: withOpacity(background(layer, "hovered"), 0.5),
+      base: {
+        padding: {
+          bottom: 4,
+          left: 12,
+          right: 12,
+          top: 4,
+        },
+        margin: {
+          top: 1,
+          left: 4,
+          right: 4,
+        },
+        cornerRadius: 8,
+        text: text(layer, "sans", "variant"),
+        highlightText: text(layer, "sans", "accent", { weight: "bold" }),
+      }
+      , state: {
+        hovered: {
+          background: withOpacity(background(layer, "hovered"), 0.5),
+        }
       }
     }),
       {

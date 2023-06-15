@@ -27,74 +27,82 @@ export default function statusBar(colorScheme: ColorScheme) {
     border: border(layer, { top: true, overlay: true }),
     cursorPosition: text(layer, "sans", "variant"),
     activeLanguage: interactive({
-      padding: { left: 6, right: 6 },
-      ...text(layer, "sans", "variant")
-    },
-      {
-        hover: {
+      base: {
+        padding: { left: 6, right: 6 },
+        ...text(layer, "sans", "variant")
+      },
+      state: {
+        hovered: {
           ...text(layer, "sans", "on"),
         }
-      },
+      }
+    },
     ),
     autoUpdateProgressMessage: text(layer, "sans", "variant"),
     autoUpdateDoneMessage: text(layer, "sans", "variant"),
     lspStatus: interactive({
-      ...diagnosticStatusContainer,
-      iconSpacing: 4,
-      iconWidth: 14,
-      height: 18,
-      message: text(layer, "sans"),
-      iconColor: foreground(layer)
-    },
-      {
-        hover: {
+      base: {
+        ...diagnosticStatusContainer,
+        iconSpacing: 4,
+        iconWidth: 14,
+        height: 18,
+        message: text(layer, "sans"),
+        iconColor: foreground(layer)
+      },
+      state: {
+        hovered: {
           message: text(layer, "sans"),
           iconColor: foreground(layer),
           background: background(layer, "hovered"),
         }
-      }),
+      }
+    }),
     diagnosticMessage: interactive({
-      ...text(layer, "sans")
+      base: {
+        ...text(layer, "sans")
+      },
+      state: { hovered: text(layer, "sans", "hovered") }
     },
-      { hover: text(layer, "sans", "hovered") },
     ),
     diagnosticSummary:
       interactive({
-        height: 20,
-        iconWidth: 16,
-        iconSpacing: 2,
-        summarySpacing: 6,
-        text: text(layer, "sans", { size: "sm" }),
-        iconColorOk: foreground(layer, "variant"),
-        iconColorWarning: foreground(layer, "warning"),
-        iconColorError: foreground(layer, "negative"),
-        containerOk: {
-          cornerRadius: 6,
-          padding: { top: 3, bottom: 3, left: 7, right: 7 },
-        },
-        containerWarning: {
-          ...diagnosticStatusContainer,
-          background: background(layer, "warning"),
-          border: border(layer, "warning"),
-        },
-        containerError: {
-          ...diagnosticStatusContainer,
-          background: background(layer, "negative"),
-          border: border(layer, "negative"),
-        }
-      }, {
-        hover: {
-          iconColorOk: foreground(layer, "on"),
+        base: {
+          height: 20,
+          iconWidth: 16,
+          iconSpacing: 2,
+          summarySpacing: 6,
+          text: text(layer, "sans", { size: "sm" }),
+          iconColorOk: foreground(layer, "variant"),
+          iconColorWarning: foreground(layer, "warning"),
+          iconColorError: foreground(layer, "negative"),
           containerOk: {
-            background: background(layer, "on", "hovered"),
+            cornerRadius: 6,
+            padding: { top: 3, bottom: 3, left: 7, right: 7 },
           },
           containerWarning: {
-            background: background(layer, "warning", "hovered"),
-            border: border(layer, "warning", "hovered"),
+            ...diagnosticStatusContainer,
+            background: background(layer, "warning"),
+            border: border(layer, "warning"),
           },
           containerError: {
-            background: background(layer, "negative", "hovered"),
-            border: border(layer, "negative", "hovered"),
+            ...diagnosticStatusContainer,
+            background: background(layer, "negative"),
+            border: border(layer, "negative"),
+          }
+        }, state: {
+          hovered: {
+            iconColorOk: foreground(layer, "on"),
+            containerOk: {
+              background: background(layer, "on", "hovered"),
+            },
+            containerWarning: {
+              background: background(layer, "warning", "hovered"),
+              border: border(layer, "warning", "hovered"),
+            },
+            containerError: {
+              background: background(layer, "negative", "hovered"),
+              border: border(layer, "negative", "hovered"),
+            }
           }
         }
       }
@@ -104,17 +112,19 @@ export default function statusBar(colorScheme: ColorScheme) {
       groupBottom: {},
       groupRight: {},
       button: toggleable(interactive({
-        ...statusContainer,
-        iconSize: 16,
-        iconColor: foreground(layer, "variant"),
-        label: {
-          margin: { left: 6 },
-          ...text(layer, "sans", { size: "sm" }),
-        },
-      }, {
-        hover: {
-          iconColor: foreground(layer, "hovered"),
-          background: background(layer, "variant"),
+        base: {
+          ...statusContainer,
+          iconSize: 16,
+          iconColor: foreground(layer, "variant"),
+          label: {
+            margin: { left: 6 },
+            ...text(layer, "sans", { size: "sm" }),
+          },
+        }, state: {
+          hovered: {
+            iconColor: foreground(layer, "hovered"),
+            background: background(layer, "variant"),
+          }
         }
       }),
         {

@@ -23,18 +23,20 @@ export default function contactNotification(colorScheme: ColorScheme): Object {
     },
     button:
       interactive({
-        ...text(layer, "sans", "on", { size: "xs" }),
-        background: background(layer, "on"),
-        padding: 4,
-        cornerRadius: 6,
-        margin: { left: 6 }
-      },
+        base: {
+          ...text(layer, "sans", "on", { size: "xs" }),
+          background: background(layer, "on"),
+          padding: 4,
+          cornerRadius: 6,
+          margin: { left: 6 }
+        },
 
-        {
-          hover: {
+        state: {
+          hovered: {
             background: background(layer, "on", "hovered"),
           }
-        }),
+        }
+      }),
 
     dismissButton: {
       default: {

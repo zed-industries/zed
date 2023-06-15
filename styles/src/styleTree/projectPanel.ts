@@ -30,15 +30,17 @@ export default function projectPanel(colorScheme: ColorScheme) {
   }
 
   let entry = toggleable(interactive({
-    ...baseEntry,
-    text: text(layer, "mono", "variant", { size: "sm" }),
-    status,
-  },
+    base: {
+      ...baseEntry,
+      text: text(layer, "mono", "variant", { size: "sm" }),
+      status,
+    }, state:
     {
-      hover: {
+      hovered: {
         background: background(layer, "variant", "hovered"),
       }
-    }),
+    }
+  }),
     {
       default: {
         /*background: colorScheme.isLight
@@ -46,7 +48,7 @@ export default function projectPanel(colorScheme: ColorScheme) {
           : background(layer, "active") ,*/ // todo posiewic
         text: text(layer, "mono", "active", { size: "sm" }),
       },
-      hover: {
+      hovered: {
         //background: background(layer, "active"),
         text: text(layer, "mono", "active", { size: "sm" }),
       },
@@ -55,27 +57,29 @@ export default function projectPanel(colorScheme: ColorScheme) {
 
   return {
     openProjectButton: interactive({
-      background: background(layer),
-      border: border(layer, "active"),
-      cornerRadius: 4,
-      margin: {
-        top: 16,
-        left: 16,
-        right: 16,
-      },
-      padding: {
-        top: 3,
-        bottom: 3,
-        left: 7,
-        right: 7,
-      },
-      ...text(layer, "sans", "default", { size: "sm" })
-    }, {
-      hover: {
-        ...text(layer, "sans", "default", { size: "sm" }),
-        background: background(layer, "hovered"),
+      base: {
+        background: background(layer),
         border: border(layer, "active"),
-      },
+        cornerRadius: 4,
+        margin: {
+          top: 16,
+          left: 16,
+          right: 16,
+        },
+        padding: {
+          top: 3,
+          bottom: 3,
+          left: 7,
+          right: 7,
+        },
+        ...text(layer, "sans", "default", { size: "sm" })
+      }, state: {
+        hovered: {
+          ...text(layer, "sans", "default", { size: "sm" }),
+          background: background(layer, "hovered"),
+          border: border(layer, "active"),
+        },
+      }
     }),
     background: background(layer),
     padding: { left: 6, right: 6, top: 0, bottom: 6 },

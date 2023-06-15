@@ -65,24 +65,26 @@ export default function welcome(colorScheme: ColorScheme) {
       },
     },
     button: interactive({
-      background: background(layer),
-      border: border(layer, "active"),
-      cornerRadius: 4,
-      margin: {
-        top: 4,
-        bottom: 4,
-      },
-      padding: {
-        top: 3,
-        bottom: 3,
-        left: 7,
-        right: 7,
-      },
-      ...text(layer, "sans", "default", interactive_text_size)
-    }, {
-      hover: {
-        ...text(layer, "sans", "default", interactive_text_size),
-        background: background(layer, "hovered"),
+      base: {
+        background: background(layer),
+        border: border(layer, "active"),
+        cornerRadius: 4,
+        margin: {
+          top: 4,
+          bottom: 4,
+        },
+        padding: {
+          top: 3,
+          bottom: 3,
+          left: 7,
+          right: 7,
+        },
+        ...text(layer, "sans", "default", interactive_text_size)
+      }, state: {
+        hovered: {
+          ...text(layer, "sans", "default", interactive_text_size),
+          background: background(layer, "hovered"),
+        }
       }
     }),
 

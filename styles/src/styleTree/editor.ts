@@ -51,14 +51,16 @@ export default function editor(colorScheme: ColorScheme) {
     suggestion: syntax.predictive,
     codeActions: {
       indicator: toggleable(interactive({
-        color: foreground(layer, "variant"),
-      }, {
-        clicked: {
-          color: foreground(layer, "base"),
-        },
-        hover: {
-          color: foreground(layer, "on"),
-        },
+        base: {
+          color: foreground(layer, "variant"),
+        }, state: {
+          clicked: {
+            color: foreground(layer, "base"),
+          },
+          hovered: {
+            color: foreground(layer, "on"),
+          },
+        }
       }),
         {
           default: {
@@ -73,14 +75,16 @@ export default function editor(colorScheme: ColorScheme) {
       foldedIcon: "icons/chevron_right_8.svg",
       foldableIcon: "icons/chevron_down_8.svg",
       indicator: toggleable(interactive({
-        color: foreground(layer, "variant"),
-      }, {
-        clicked: {
-          color: foreground(layer, "base"),
-        },
-        hover: {
-          color: foreground(layer, "on"),
-        },
+        base: {
+          color: foreground(layer, "variant"),
+        }, state: {
+          clicked: {
+            color: foreground(layer, "base"),
+          },
+          hovered: {
+            color: foreground(layer, "on"),
+          },
+        }
       }),
         {
           default: {
@@ -231,19 +235,21 @@ export default function editor(colorScheme: ColorScheme) {
       underline: syntax.linkUri.underline,
     },
     jumpIcon: interactive({
-      color: foreground(layer, "on"),
-      iconWidth: 20,
-      buttonWidth: 20,
-      cornerRadius: 6,
-      padding: {
-        top: 6,
-        bottom: 6,
-        left: 6,
-        right: 6,
-      }
-    }, {
-      hover: {
-        background: background(layer, "on", "hovered"),
+      base: {
+        color: foreground(layer, "on"),
+        iconWidth: 20,
+        buttonWidth: 20,
+        cornerRadius: 6,
+        padding: {
+          top: 6,
+          bottom: 6,
+          left: 6,
+          right: 6,
+        }
+      }, state: {
+        hovered: {
+          background: background(layer, "on", "hovered"),
+        }
       }
     }),
 

@@ -18,26 +18,28 @@ export default function workspace(colorScheme: ColorScheme) {
   const isLight = colorScheme.isLight
   const itemSpacing = 8
   const titlebarButton = toggleable(interactive({
-    cornerRadius: 6,
-    padding: {
-      top: 1,
-      bottom: 1,
-      left: 8,
-      right: 8,
-    },
-    ...text(layer, "sans", "variant", { size: "xs" }),
-    background: background(layer, "variant"),
-    border: border(layer),
-  }, {
-    hover: {
-      ...text(layer, "sans", "variant", "hovered", { size: "xs" }),
-      background: background(layer, "variant", "hovered"),
-      border: border(layer, "variant", "hovered"),
-    },
-    clicked: {
-      ...text(layer, "sans", "variant", "pressed", { size: "xs" }),
-      background: background(layer, "variant", "pressed"),
-      border: border(layer, "variant", "pressed"),
+    base: {
+      cornerRadius: 6,
+      padding: {
+        top: 1,
+        bottom: 1,
+        left: 8,
+        right: 8,
+      },
+      ...text(layer, "sans", "variant", { size: "xs" }),
+      background: background(layer, "variant"),
+      border: border(layer),
+    }, state: {
+      hovered: {
+        ...text(layer, "sans", "variant", "hovered", { size: "xs" }),
+        background: background(layer, "variant", "hovered"),
+        border: border(layer, "variant", "hovered"),
+      },
+      clicked: {
+        ...text(layer, "sans", "variant", "pressed", { size: "xs" }),
+        background: background(layer, "variant", "pressed"),
+        border: border(layer, "variant", "pressed"),
+      }
     }
   }),
     {
@@ -86,17 +88,19 @@ export default function workspace(colorScheme: ColorScheme) {
       },
       keyboardHint:
         interactive({
-          ...text(layer, "sans", "variant", { size: "sm" }),
-          padding: {
-            top: 3,
-            left: 8,
-            right: 8,
-            bottom: 3,
-          },
-          cornerRadius: 8
-        }, {
-          hover: {
-            ...text(layer, "sans", "active", { size: "sm" }),
+          base: {
+            ...text(layer, "sans", "variant", { size: "sm" }),
+            padding: {
+              top: 3,
+              left: 8,
+              right: 8,
+              bottom: 3,
+            },
+            cornerRadius: 8
+          }, state: {
+            hovered: {
+              ...text(layer, "sans", "active", { size: "sm" }),
+            }
           }
         }),
 
@@ -250,33 +254,37 @@ export default function workspace(colorScheme: ColorScheme) {
         cornerRadius: 6,
       },
       callControl: interactive({
-        cornerRadius: 6,
-        color: foreground(layer, "variant"),
-        iconWidth: 12,
-        buttonWidth: 20,
-      }, {
-        hover: {
-          background: background(layer, "variant", "hovered"),
-          color: foreground(layer, "variant", "hovered"),
-        },
+        base: {
+          cornerRadius: 6,
+          color: foreground(layer, "variant"),
+          iconWidth: 12,
+          buttonWidth: 20,
+        }, state: {
+          hovered: {
+            background: background(layer, "variant", "hovered"),
+            color: foreground(layer, "variant", "hovered"),
+          },
+        }
       }),
       toggleContactsButton: toggleable(interactive({
-        margin: { left: itemSpacing },
-        cornerRadius: 6,
-        color: foreground(layer, "variant"),
-        iconWidth: 14,
-        buttonWidth: 20,
-      },
-        {
+        base: {
+          margin: { left: itemSpacing },
+          cornerRadius: 6,
+          color: foreground(layer, "variant"),
+          iconWidth: 14,
+          buttonWidth: 20,
+        },
+        state: {
           clicked: {
             background: background(layer, "variant", "pressed"),
             color: foreground(layer, "variant", "pressed"),
           },
-          hover: {
+          hovered: {
             background: background(layer, "variant", "hovered"),
             color: foreground(layer, "variant", "hovered"),
           }
-        }),
+        }
+      }),
         {
           default: {
             background: background(layer, "variant", "active"),
@@ -318,38 +326,42 @@ export default function workspace(colorScheme: ColorScheme) {
       itemSpacing: 8,
       navButton: interactive(
         {
-          color: foreground(colorScheme.highest, "on"),
-          iconWidth: 12,
-          buttonWidth: 24,
-          cornerRadius: 6,
-        }, {
-        hover: {
-          color: foreground(colorScheme.highest, "on", "hovered"),
-          background: background(
-            colorScheme.highest,
-            "on",
-            "hovered"
-          ),
-        },
-        disabled: {
-          color: foreground(colorScheme.highest, "on", "disabled"),
-        },
-      }),
+          base: {
+            color: foreground(colorScheme.highest, "on"),
+            iconWidth: 12,
+            buttonWidth: 24,
+            cornerRadius: 6,
+          }, state: {
+            hovered: {
+              color: foreground(colorScheme.highest, "on", "hovered"),
+              background: background(
+                colorScheme.highest,
+                "on",
+                "hovered"
+              ),
+            },
+            disabled: {
+              color: foreground(colorScheme.highest, "on", "disabled"),
+            },
+          }
+        }),
       padding: { left: 8, right: 8, top: 4, bottom: 4 },
     },
     breadcrumbHeight: 24,
     breadcrumbs: interactive({
-      ...text(colorScheme.highest, "sans", "variant"),
-      cornerRadius: 6,
-      padding: {
-        left: 6,
-        right: 6,
+      base: {
+        ...text(colorScheme.highest, "sans", "variant"),
+        cornerRadius: 6,
+        padding: {
+          left: 6,
+          right: 6,
+        }
+      }, state: {
+        hovered: {
+          color: foreground(colorScheme.highest, "on", "hovered"),
+          background: background(colorScheme.highest, "on", "hovered"),
+        },
       }
-    }, {
-      hover: {
-        color: foreground(colorScheme.highest, "on", "hovered"),
-        background: background(colorScheme.highest, "on", "hovered"),
-      },
     }),
     disconnectedOverlay: {
       ...text(layer, "sans"),
