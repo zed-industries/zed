@@ -20,7 +20,9 @@
         "chroma-js": "^2.4.2",
         "deepmerge": "^4.3.0",
         "toml": "^3.0.0",
-        "ts-node": "^10.9.1"
+        "ts-deepmerge": "^6.0.3",
+        "ts-node": "^10.9.1",
+        "utility-types": "^3.10.0"
     },
     "prettier": {
         "semi": false,
