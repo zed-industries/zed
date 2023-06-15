@@ -727,15 +727,15 @@ impl Assistant {
         let start_message = self.message_for_offset(range.start, cx);
         let end_message = self.message_for_offset(range.end, cx);
         if let Some((start_message, end_message)) = start_message.zip(end_message) {
-            let (start_message_ix, _, start_message_metadata) = start_message;
-            let (end_message_ix, _, _) = end_message;
+            let (start_message_ix, _, metadata, message_range) = start_message;
+            let (end_message_ix, _, _, _) = end_message;
 
             // Prevent splitting when range spans multiple messages.
             if start_message_ix != end_message_ix {
                 return (None, None);
             }
 
-            let role = start_message_metadata.role;
+            let role = metadata.role;
             self.buffer.update(cx, |buffer, cx| {
                 buffer.edit([(range.end..range.end, "\n")], None, cx)
             });
@@ -753,7 +753,7 @@ impl Assistant {
                 },
             );
 
-            if range.start == range.end {
+            if range.start == range.end || range.start == message_range.start {
                 (None, Some(suffix))
             } else {
                 self.buffer.update(cx, |buffer, cx| {
@@ -835,11 +835,11 @@ impl Assistant {
         &'a self,
         offset: usize,
         cx: &'a AppContext,
-    ) -> Option<(usize, &Message, &MessageMetadata)> {
+    ) -> Option<(usize, &Message, &MessageMetadata, Range<usize>)> {
         let mut messages = self.messages(cx).peekable();
         while let Some((ix, message, metadata, range)) = messages.next() {
             if range.contains(&offset) || messages.peek().is_none() {
-                return Some((ix, message, metadata));
+                return Some((ix, message, metadata, range));
             }
         }
         None
@@ -1598,6 +1598,23 @@ mod tests {
                 (message_7.id, Role::User, 5..6),
                 (message_5.id, Role::System, 6..7),
                 (message_3.id, Role::User, 7..8)
+            ]
+        );
+
+        // Don't include an empty prefix when splitting with a non-empty range
+        let (no_message, message_8) =
+            assistant.update(cx, |assistant, cx| assistant.split_message(3..4, cx));
+        assert!(no_message.is_none());
+        let message_8 = message_8.unwrap();
+        assert_eq!(
+            messages(&assistant, cx),
+            vec![
+                (message_1.id, Role::User, 0..3),
+                (message_6.id, Role::User, 3..5),
+                (message_8.id, Role::User, 5..6),
+                (message_7.id, Role::User, 6..7),
+                (message_5.id, Role::System, 7..8),
+                (message_3.id, Role::User, 8..9)
             ]
         );
     }
