@@ -2836,7 +2836,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn serialize_workspace(&self, cx: &AppContext) {
+    fn serialize_workspace(&self, cx: &ViewContext<Self>) {
         fn serialize_pane_handle(
             pane_handle: &ViewHandle<Pane>,
             cx: &AppContext,
@@ -2879,7 +2879,7 @@ impl Workspace {
             }
         }
 
-        fn build_serialized_docks(this: &Workspace, cx: &AppContext) -> DockStructure {
+        fn build_serialized_docks(this: &Workspace, cx: &ViewContext<Workspace>) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
             let left_active_panel = left_dock.visible_panel().and_then(|panel| {
@@ -2888,6 +2888,10 @@ impl Workspace {
                         .to_string(),
                 )
             });
+            let left_dock_zoom = left_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
@@ -2897,6 +2901,11 @@ impl Workspace {
                         .to_string(),
                 )
             });
+            let right_dock_zoom = right_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
+
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
@@ -2906,19 +2915,27 @@ impl Workspace {
                         .to_string(),
                 )
             });
+            let bottom_dock_zoom = bottom_dock
+                .visible_panel()
+                .map(|panel| panel.is_zoomed(cx))
+                .unwrap_or(false);
+
 
             DockStructure {
                 left: DockData {
                     visible: left_visible,
                     active_panel: left_active_panel,
+                    zoom: left_dock_zoom
                 },
                 right: DockData {
                     visible: right_visible,
                     active_panel: right_active_panel,
+                    zoom: right_dock_zoom
                 },
                 bottom: DockData {
                     visible: bottom_visible,
                     active_panel: bottom_active_panel,
+                    zoom: bottom_dock_zoom
                 },
             }
         }
@@ -3029,6 +3046,10 @@ impl Workspace {
                         if let Some(active_panel) = docks.left.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
+                                dock.active_panel()
+                                    .map(|panel| {
+                                        panel.set_zoomed(docks.left.zoom, cx)
+                                    });
                             }
                         }
                     });
@@ -3037,6 +3058,11 @@ impl Workspace {
                         if let Some(active_panel) = docks.right.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
+                                dock.active_panel()
+                                    .map(|panel| {
+                                        panel.set_zoomed(docks.right.zoom, cx)
+                                    });
+
                             }
                         }
                     });
@@ -3045,6 +3071,11 @@ impl Workspace {
                         if let Some(active_panel) = docks.bottom.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
+                                dock.active_panel()
+                                    .map(|panel| {
+                                        panel.set_zoomed(docks.bottom.zoom, cx)
+                                    });
+
                             }
                         }
                     });
