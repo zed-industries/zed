@@ -224,6 +224,7 @@ enum OpenBuffer {
     Operations(Vec<Operation>),
 }
 
+#[derive(Clone)]
 enum WorktreeHandle {
     Strong(ModelHandle<Worktree>),
     Weak(WeakModelHandle<Worktree>),
@@ -2393,72 +2394,87 @@ impl Project {
 
         let worktree_id = worktree.read(cx).id();
         for adapter in language.lsp_adapters() {
-            let key = (worktree_id, adapter.name.clone());
-            if self.language_server_ids.contains_key(&key) {
-                continue;
-            }
-
-            let pending_server = match self.languages.start_language_server(
-                language.clone(),
-                adapter.clone(),
+            self.start_language_server(
+                worktree_id,
                 worktree_path.clone(),
-                self.client.http_client(),
+                adapter.clone(),
+                language.clone(),
                 cx,
-            ) {
-                Some(pending_server) => pending_server,
-                None => continue,
-            };
-
-            let project_settings = settings::get::<ProjectSettings>(cx);
-            let lsp = project_settings.lsp.get(&adapter.name.0);
-            let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
-
-            let mut initialization_options = adapter.initialization_options.clone();
-            match (&mut initialization_options, override_options) {
-                (Some(initialization_options), Some(override_options)) => {
-                    merge_json_value_into(override_options, initialization_options);
-                }
-                (None, override_options) => initialization_options = override_options,
-                _ => {}
-            }
-
-            let server_id = pending_server.server_id;
-            let state = LanguageServerState::Starting({
-                let server_name = adapter.name.0.clone();
-                let adapter = adapter.clone();
-                let language = language.clone();
-                let languages = self.languages.clone();
-                let key = key.clone();
-
-                cx.spawn_weak(|this, cx| async move {
-                    let result = Self::setup_and_insert_language_server(
-                        this,
-                        initialization_options,
-                        pending_server,
-                        adapter,
-                        languages,
-                        language,
-                        server_id,
-                        key,
-                        cx,
-                    )
-                    .await;
-
-                    match result {
-                        Ok(server) => Some(server),
-
-                        Err(err) => {
-                            log::warn!("Error starting language server {:?}: {}", server_name, err);
-                            // TODO: Prompt installation validity check LSP ERROR
-                            None
-                        }
-                    }
-                })
-            });
-
-            self.language_servers.insert(server_id, state);
-            self.language_server_ids.insert(key, server_id);
+            );
         }
+    }
+
+    fn start_language_server(
+        &mut self,
+        worktree_id: WorktreeId,
+        worktree_path: Arc<Path>,
+        adapter: Arc<CachedLspAdapter>,
+        language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let key = (worktree_id, adapter.name.clone());
+        if self.language_server_ids.contains_key(&key) {
+            return;
+        }
+
+        let pending_server = match self.languages.start_pending_language_server(
+            language.clone(),
+            adapter.clone(),
+            worktree_path,
+            self.client.http_client(),
+            cx,
+        ) {
+            Some(pending_server) => pending_server,
+            None => return,
+        };
+
+        let project_settings = settings::get::<ProjectSettings>(cx);
+        let lsp = project_settings.lsp.get(&adapter.name.0);
+        let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
+
+        let mut initialization_options = adapter.initialization_options.clone();
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                merge_json_value_into(override_options, initialization_options);
+            }
+            (None, override_options) => initialization_options = override_options,
+            _ => {}
+        }
+
+        let server_id = pending_server.server_id;
+        let state = LanguageServerState::Starting({
+            let server_name = adapter.name.0.clone();
+            let languages = self.languages.clone();
+            let key = key.clone();
+
+            cx.spawn_weak(|this, cx| async move {
+                let result = Self::setup_and_insert_language_server(
+                    this,
+                    initialization_options,
+                    pending_server,
+                    adapter,
+                    languages,
+                    language,
+                    server_id,
+                    key,
+                    cx,
+                )
+                .await;
+
+                match result {
+                    Ok(server) => Some(server),
+
+                    Err(err) => {
+                        log::warn!("Error starting language server {:?}: {}", server_name, err);
+                        // TODO: Prompt installation validity check LSP ERROR
+                        None
+                    }
+                }
+            })
+        });
+
+        self.language_servers.insert(server_id, state);
+        self.language_server_ids.insert(key, server_id);
     }
 
     fn reinstall_language_server(
@@ -2491,17 +2507,20 @@ impl Project {
             .await;
 
             this.update(&mut cx, |this, mut cx| {
-                for worktree in &this.worktrees {
-                    let root_path = match worktree.upgrade(cx) {
-                        Some(worktree) => worktree.read(cx).abs_path(),
+                let worktrees = this.worktrees.clone();
+                for worktree in worktrees {
+                    let worktree = match worktree.upgrade(cx) {
+                        Some(worktree) => worktree.read(cx),
                         None => continue,
                     };
+                    let worktree_id = worktree.id();
+                    let root_path = worktree.abs_path();
 
-                    this.languages.start_language_server(
-                        language.clone(),
-                        adapter.clone(),
+                    this.start_language_server(
+                        worktree_id,
                         root_path,
-                        this.client.http_client(),
+                        adapter.clone(),
+                        language.clone(),
                         &mut cx,
                     );
                 }

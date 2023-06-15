@@ -815,7 +815,7 @@ impl LanguageRegistry {
         self.state.read().languages.iter().cloned().collect()
     }
 
-    pub fn start_language_server(
+    pub fn start_pending_language_server(
         self: &Arc<Self>,
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
