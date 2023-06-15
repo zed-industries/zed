@@ -9,6 +9,6 @@ Welcome! These internal docs are a work in progress. You can contribute to them 
 - [The Company](./company-and-vision.md)
 - [Tools We Use](./tools.md)
 - [Building Zed](./building-zed.md)
-- [Reloease Process](./release-process.md)
+- [Release Process](./release-process.md)
 - [Backend Development](./backend-development.md)
 - [Design Tools & Links](design-tools.md)
