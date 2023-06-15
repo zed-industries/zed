@@ -472,6 +472,7 @@ impl InlayMap {
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let len = rng.gen_range(1..=5);
                 let text = util::RandomCharIter::new(&mut *rng)
+                    .filter(|ch| *ch != '\r')
                     .take(len)
                     .collect::<String>();
                 log::info!(
