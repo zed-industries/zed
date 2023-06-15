@@ -39,7 +39,12 @@ use std::{
     },
 };
 use unindent::Unindent as _;
-use workspace::{item::ItemHandle as _, shared_screen::SharedScreen, SplitDirection, Workspace};
+use workspace::{
+    dock::{test::TestPanel, DockPosition},
+    item::{test::TestItem, ItemHandle as _},
+    shared_screen::SharedScreen,
+    SplitDirection, Workspace,
+};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -6847,12 +6852,43 @@ async fn test_basic_following(
         )
     });
 
-    // Client B activates an external window again, and the previously-opened screen-sharing item
-    // gets activated.
-    active_call_b
-        .update(cx_b, |call, cx| call.set_location(None, cx))
-        .await
-        .unwrap();
+    // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
+    let panel = cx_b.add_view(workspace_b.window_id(), |_| {
+        TestPanel::new(DockPosition::Left)
+    });
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.add_panel(panel, cx);
+        workspace.toggle_panel_focus::<TestPanel>(cx);
+    });
+    deterministic.run_until_parked();
+    assert_eq!(
+        workspace_a.read_with(cx_a, |workspace, cx| workspace
+            .active_item(cx)
+            .unwrap()
+            .id()),
+        shared_screen.id()
+    );
+
+    // Toggling the focus back to the pane causes client A to return to the multibuffer.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.toggle_panel_focus::<TestPanel>(cx);
+    });
+    deterministic.run_until_parked();
+    workspace_a.read_with(cx_a, |workspace, cx| {
+        assert_eq!(
+            workspace.active_item(cx).unwrap().id(),
+            multibuffer_editor_a.id()
+        )
+    });
+
+    // Client B activates an item that doesn't implement following,
+    // so the previously-opened screen-sharing item gets activated.
+    let unfollowable_item = cx_b.add_view(workspace_b.window_id(), |_| TestItem::new());
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.add_item(Box::new(unfollowable_item), true, true, None, cx)
+        })
+    });
     deterministic.run_until_parked();
     assert_eq!(
         workspace_a.read_with(cx_a, |workspace, cx| workspace
