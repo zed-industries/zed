@@ -100,7 +100,7 @@ impl Bind for DockStructure {
 pub struct DockData {
     pub(crate) visible: bool,
     pub(crate) active_panel: Option<String>,
-    pub(crate) zoom: bool
+    pub(crate) zoom: bool,
 }
 
 impl Column for DockData {
@@ -112,7 +112,7 @@ impl Column for DockData {
             DockData {
                 visible: visible.unwrap_or(false),
                 active_panel,
-                zoom: zoom.unwrap_or(false)
+                zoom: zoom.unwrap_or(false),
             },
             next_index,
         ))

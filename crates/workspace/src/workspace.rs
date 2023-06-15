@@ -2918,7 +2918,6 @@ impl Workspace {
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
-
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
             let bottom_active_panel = bottom_dock.visible_panel().and_then(|panel| {
@@ -2932,22 +2931,21 @@ impl Workspace {
                 .map(|panel| panel.is_zoomed(cx))
                 .unwrap_or(false);
 
-
             DockStructure {
                 left: DockData {
                     visible: left_visible,
                     active_panel: left_active_panel,
-                    zoom: left_dock_zoom
+                    zoom: left_dock_zoom,
                 },
                 right: DockData {
                     visible: right_visible,
                     active_panel: right_active_panel,
-                    zoom: right_dock_zoom
+                    zoom: right_dock_zoom,
                 },
                 bottom: DockData {
                     visible: bottom_visible,
                     active_panel: bottom_active_panel,
-                    zoom: bottom_dock_zoom
+                    zoom: bottom_dock_zoom,
                 },
             }
         }
@@ -3058,24 +3056,25 @@ impl Workspace {
                         if let Some(active_panel) = docks.left.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
+                            }
                                 dock.active_panel()
                                     .map(|panel| {
                                         panel.set_zoomed(docks.left.zoom, cx)
                                     });
-                            }
                         }
                     });
+                    // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
                     workspace.right_dock.update(cx, |dock, cx| {
                         dock.set_open(docks.right.visible, cx);
                         if let Some(active_panel) = docks.right.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
+
+                            }
                                 dock.active_panel()
                                     .map(|panel| {
                                         panel.set_zoomed(docks.right.zoom, cx)
                                     });
-
-                            }
                         }
                     });
                     workspace.bottom_dock.update(cx, |dock, cx| {
@@ -3083,14 +3082,15 @@ impl Workspace {
                         if let Some(active_panel) = docks.bottom.active_panel {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
-                                dock.active_panel()
-                                    .map(|panel| {
-                                        panel.set_zoomed(docks.bottom.zoom, cx)
-                                    });
-
                             }
                         }
+
+                        dock.active_panel()
+                            .map(|panel| {
+                                panel.set_zoomed(docks.bottom.zoom, cx)
+                            });
                     });
+
 
                     cx.notify();
                 })?;
