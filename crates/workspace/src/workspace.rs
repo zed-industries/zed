@@ -3045,11 +3045,14 @@ impl Workspace {
                             if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
                                 dock.activate_panel(ix, cx);
                             }
+                        }
                                 dock.active_panel()
                                     .map(|panel| {
                                         panel.set_zoomed(docks.left.zoom, cx)
                                     });
-                        }
+                                if docks.left.visible && docks.left.zoom {
+                                    cx.focus_self()
+                                }
                     });
                     // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
                     workspace.right_dock.update(cx, |dock, cx| {
@@ -3059,11 +3062,15 @@ impl Workspace {
                                 dock.activate_panel(ix, cx);
 
                             }
+                        }
                                 dock.active_panel()
                                     .map(|panel| {
                                         panel.set_zoomed(docks.right.zoom, cx)
                                     });
-                        }
+
+                                if docks.right.visible && docks.right.zoom {
+                                    cx.focus_self()
+                                }
                     });
                     workspace.bottom_dock.update(cx, |dock, cx| {
                         dock.set_open(docks.bottom.visible, cx);
@@ -3077,6 +3084,10 @@ impl Workspace {
                             .map(|panel| {
                                 panel.set_zoomed(docks.bottom.zoom, cx)
                             });
+
+                        if docks.bottom.visible && docks.bottom.zoom {
+                            cx.focus_self()
+                        }
                     });
 
 
