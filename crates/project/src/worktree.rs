@@ -5,7 +5,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
-use collections::{BTreeSet, HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use fs::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     Fs, LineEnding,
@@ -89,10 +89,8 @@ enum ScanRequest {
         paths: Vec<PathBuf>,
         done: barrier::Sender,
     },
-    SetDirExpanded {
+    ExpandDir {
         entry_id: ProjectEntryId,
-        replica_id: ReplicaId,
-        is_expanded: bool,
     },
 }
 
@@ -226,7 +224,7 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
-    expanded_dirs: BTreeSet<(ProjectEntryId, ReplicaId)>,
+    expanded_dirs: HashSet<ProjectEntryId>,
     /// The ids of all of the entries that were removed from the snapshot
     /// as part of the current update. These entry ids may be re-used
     /// if the same inode is discovered at a new path, or if the given
@@ -1154,16 +1152,10 @@ impl LocalWorktree {
     pub fn mark_entry_expanded(
         &mut self,
         entry_id: ProjectEntryId,
-        is_expanded: bool,
-        replica_id: ReplicaId,
         _cx: &mut ModelContext<Worktree>,
     ) {
         self.scan_requests_tx
-            .try_send(ScanRequest::SetDirExpanded {
-                entry_id,
-                replica_id,
-                is_expanded,
-            })
+            .try_send(ScanRequest::ExpandDir { entry_id })
             .ok();
     }
 
@@ -2210,12 +2202,7 @@ impl LocalSnapshot {
 
 impl BackgroundScannerState {
     fn is_entry_expanded(&self, entry: &Entry) -> bool {
-        let expanded = self
-            .expanded_dirs
-            .range((entry.id, 0)..=(entry.id, ReplicaId::MAX))
-            .next()
-            .is_some();
-        expanded
+        self.expanded_dirs.contains(&entry.id)
     }
 
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
@@ -2976,18 +2963,10 @@ impl BackgroundScanner {
                 self.reload_entries_for_paths(paths, None).await;
                 self.send_status_update(false, Some(done))
             }
-            ScanRequest::SetDirExpanded {
-                entry_id,
-                replica_id,
-                is_expanded,
-            } => {
+            ScanRequest::ExpandDir { entry_id } => {
                 let path = {
                     let mut state = self.state.lock();
-                    if is_expanded {
-                        state.expanded_dirs.insert((entry_id, replica_id));
-                    } else {
-                        state.expanded_dirs.remove(&(entry_id, replica_id));
-                    }
+                    state.expanded_dirs.insert(entry_id);
                     state
                         .snapshot
                         .entry_for_id(entry_id)

@@ -51,7 +51,6 @@ use lsp_command::*;
 use postage::watch;
 use project_settings::ProjectSettings;
 use rand::prelude::*;
-use rpc::proto::PeerId;
 use search::SearchQuery;
 use serde::Serialize;
 use settings::SettingsStore;
@@ -480,7 +479,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
-        client.add_model_request_handler(Self::handle_collapse_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
@@ -5418,36 +5416,11 @@ impl Project {
                 worktree
                     .as_local_mut()
                     .unwrap()
-                    .mark_entry_expanded(entry_id, true, 0, cx);
+                    .mark_entry_expanded(entry_id, cx);
             });
         } else if let Some(project_id) = self.remote_id() {
             cx.background()
                 .spawn(self.client.request(proto::ExpandProjectEntry {
-                    project_id,
-                    entry_id: entry_id.to_proto(),
-                }))
-                .log_err();
-        }
-        Some(())
-    }
-
-    pub fn mark_entry_collapsed(
-        &mut self,
-        worktree_id: WorktreeId,
-        entry_id: ProjectEntryId,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-        if self.is_local() {
-            let worktree = self.worktree_for_id(worktree_id, cx)?;
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .mark_entry_expanded(entry_id, false, 0, cx);
-            });
-        } else if let Some(project_id) = self.remote_id() {
-            cx.background()
-                .spawn(self.client.request(proto::CollapseProjectEntry {
                     project_id,
                     entry_id: entry_id.to_proto(),
                 }))
@@ -5762,58 +5735,17 @@ impl Project {
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
         _: Arc<Client>,
-        cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        Self::handle_expand_or_collapse_project_entry(
-            this,
-            envelope.payload.entry_id,
-            envelope.original_sender_id,
-            true,
-            cx,
-        )
-        .await
-    }
-
-    async fn handle_collapse_project_entry(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::CollapseProjectEntry>,
-        _: Arc<Client>,
-        cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        Self::handle_expand_or_collapse_project_entry(
-            this,
-            envelope.payload.entry_id,
-            envelope.original_sender_id,
-            false,
-            cx,
-        )
-        .await
-    }
-
-    async fn handle_expand_or_collapse_project_entry(
-        this: ModelHandle<Self>,
-        entry_id: u64,
-        original_sender_id: Option<PeerId>,
-        is_expanded: bool,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
-        let entry_id = ProjectEntryId::from_proto(entry_id);
-        let (worktree, replica_id) = this
-            .read_with(&cx, |this, cx| {
-                let replica_id = original_sender_id
-                    .and_then(|peer_id| this.collaborators.get(&peer_id))?
-                    .replica_id;
-                let worktree = this.worktree_for_entry(entry_id, cx)?;
-                Some((worktree, replica_id))
-            })
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this
+            .read_with(&cx, |this, cx| this.worktree_for_entry(entry_id, cx))
             .ok_or_else(|| anyhow!("invalid request"))?;
         worktree.update(&mut cx, |worktree, cx| {
-            worktree.as_local_mut().unwrap().mark_entry_expanded(
-                entry_id,
-                is_expanded,
-                replica_id,
-                cx,
-            )
+            worktree
+                .as_local_mut()
+                .unwrap()
+                .mark_entry_expanded(entry_id, cx)
         });
         Ok(proto::Ack {})
     }

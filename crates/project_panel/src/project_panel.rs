@@ -451,9 +451,6 @@ impl ProjectPanel {
                     Ok(ix) => {
                         expanded_dir_ids.remove(ix);
                         self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                        self.project.update(cx, |project, cx| {
-                            project.mark_entry_collapsed(worktree_id, entry_id, cx);
-                        });
                         cx.notify();
                         break;
                     }
@@ -477,7 +474,6 @@ impl ProjectPanel {
                 self.project.update(cx, |project, cx| {
                     match expanded_dir_ids.binary_search(&entry_id) {
                         Ok(ix) => {
-                            project.mark_entry_collapsed(worktree_id, entry_id, cx);
                             expanded_dir_ids.remove(ix);
                         }
                         Err(ix) => {
