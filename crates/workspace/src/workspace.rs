@@ -919,6 +919,7 @@ impl Workspace {
                         this.zoomed = None;
                         this.zoomed_position = None;
                     }
+                    this.update_active_view_for_followers(cx);
                     cx.notify();
                 }
             }
@@ -1946,18 +1947,7 @@ impl Workspace {
             self.zoomed = None;
         }
         self.zoomed_position = None;
-
-        self.update_followers(
-            proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
-                id: self.active_item(cx).and_then(|item| {
-                    item.to_followable_item_handle(cx)?
-                        .remote_id(&self.app_state.client, cx)
-                        .map(|id| id.to_proto())
-                }),
-                leader_id: self.leader_for_pane(&pane),
-            }),
-            cx,
-        );
+        self.update_active_view_for_followers(cx);
 
         cx.notify();
     }
@@ -2646,6 +2636,30 @@ impl Workspace {
         Ok(())
     }
 
+    fn update_active_view_for_followers(&self, cx: &AppContext) {
+        if self.active_pane.read(cx).has_focus() {
+            self.update_followers(
+                proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+                    id: self.active_item(cx).and_then(|item| {
+                        item.to_followable_item_handle(cx)?
+                            .remote_id(&self.app_state.client, cx)
+                            .map(|id| id.to_proto())
+                    }),
+                    leader_id: self.leader_for_pane(&self.active_pane),
+                }),
+                cx,
+            );
+        } else {
+            self.update_followers(
+                proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+                    id: None,
+                    leader_id: None,
+                }),
+                cx,
+            );
+        }
+    }
+
     fn update_followers(
         &self,
         update: proto::update_followers::Variant,
@@ -2693,12 +2707,10 @@ impl Workspace {
                             .and_then(|id| state.items_by_leader_view_id.get(&id))
                         {
                             items_to_activate.push((pane.clone(), item.boxed_clone()));
-                        } else {
-                            if let Some(shared_screen) =
-                                self.shared_screen_for_peer(leader_id, pane, cx)
-                            {
-                                items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-                            }
+                        } else if let Some(shared_screen) =
+                            self.shared_screen_for_peer(leader_id, pane, cx)
+                        {
+                            items_to_activate.push((pane.clone(), Box::new(shared_screen)));
                         }
                     }
                 }
