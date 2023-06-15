@@ -6,12 +6,12 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    display_map::inlay_map::InlayProperties, inlay_cache::InlayId, Anchor, AnchorRangeExt,
-    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    inlay_cache::{Inlay, InlayId, InlayProperties},
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
-use fold_map::{FoldMap, FoldOffset};
+use fold_map::FoldMap;
 use gpui::{
     color::Color,
     fonts::{FontId, HighlightStyle},
@@ -26,6 +26,7 @@ pub use suggestion_map::Suggestion;
 use suggestion_map::SuggestionMap;
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
+use text::Rope;
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -244,33 +245,6 @@ impl DisplayMap {
         self.text_highlights.remove(&Some(type_id))
     }
 
-    pub fn has_suggestion(&self) -> bool {
-        self.suggestion_map.has_suggestion()
-    }
-
-    pub fn replace_suggestion<T>(
-        &mut self,
-        new_suggestion: Option<Suggestion<T>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Suggestion<FoldOffset>>
-    where
-        T: ToPoint,
-    {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits, old_suggestion) =
-            self.suggestion_map.replace(new_suggestion, snapshot, edits);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
-        old_suggestion
-    }
-
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_font(font_id, font_size, cx))
@@ -285,10 +259,10 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn splice_inlays(
+    pub fn splice_inlays<T: Into<Rope>>(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(InlayId, Anchor, project::InlayHint)>,
+        to_insert: Vec<(InlayId, InlayProperties<T>)>,
         cx: &mut ModelContext<Self>,
     ) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -303,28 +277,7 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
 
-        let new_inlays: Vec<(InlayId, InlayProperties<String>)> = to_insert
-            .into_iter()
-            .map(|(inlay_id, hint_anchor, hint)| {
-                let mut text = hint.text();
-                // TODO kb styling instead?
-                if hint.padding_right {
-                    text.push(' ');
-                }
-                if hint.padding_left {
-                    text.insert(0, ' ');
-                }
-
-                (
-                    inlay_id,
-                    InlayProperties {
-                        position: hint_anchor.bias_left(&buffer_snapshot),
-                        text,
-                    },
-                )
-            })
-            .collect();
-        let (snapshot, edits) = self.inlay_map.splice(to_remove, new_inlays);
+        let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map

@@ -14,6 +14,19 @@ use util::post_inc;
 
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 
+#[derive(Debug, Clone)]
+pub struct Inlay {
+    pub id: InlayId,
+    pub position: Anchor,
+    pub text: text::Rope,
+}
+
+#[derive(Debug, Clone)]
+pub struct InlayProperties<T> {
+    pub position: Anchor,
+    pub text: T,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum InlayRefreshReason {
     Settings(editor_settings::InlayHints),

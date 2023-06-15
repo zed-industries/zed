@@ -54,7 +54,9 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_cache::{InlayCache, InlayRefreshReason, InlaySplice, QueryInlaysRange};
+use inlay_cache::{
+    Inlay, InlayCache, InlayId, InlayProperties, InlayRefreshReason, InlaySplice, QueryInlaysRange,
+};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -95,6 +97,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
+use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
@@ -1061,6 +1064,7 @@ pub struct CopilotState {
     cycled: bool,
     completions: Vec<copilot::Completion>,
     active_completion_index: usize,
+    suggestion: Option<Inlay>,
 }
 
 impl Default for CopilotState {
@@ -1072,6 +1076,7 @@ impl Default for CopilotState {
             completions: Default::default(),
             active_completion_index: 0,
             cycled: false,
+            suggestion: None,
         }
     }
 }
@@ -2597,9 +2602,7 @@ impl Editor {
 
         if !settings::get::<EditorSettings>(cx).inlay_hints.enabled {
             let to_remove = self.inlay_cache.clear();
-            self.display_map.update(cx, |display_map, cx| {
-                display_map.splice_inlays(to_remove, Vec::new(), cx);
-            });
+            self.splice_inlay_hints(to_remove, Vec::new(), cx);
             return;
         }
 
@@ -2609,9 +2612,7 @@ impl Editor {
                     to_remove,
                     to_insert,
                 } = self.inlay_cache.apply_settings(new_settings);
-                self.display_map.update(cx, |display_map, cx| {
-                    display_map.splice_inlays(to_remove, to_insert, cx);
-                });
+                self.splice_inlay_hints(to_remove, to_insert, cx);
             }
             InlayRefreshReason::Regular => {
                 let buffer_handle = self.buffer().clone();
@@ -2652,14 +2653,46 @@ impl Editor {
                         .context("inlay cache hint fetch")?;
 
                     editor.update(&mut cx, |editor, cx| {
-                        editor.display_map.update(cx, |display_map, cx| {
-                            display_map.splice_inlays(to_remove, to_insert, cx);
-                        });
+                        editor.splice_inlay_hints(to_remove, to_insert, cx)
                     })
                 })
                 .detach_and_log_err(cx);
             }
         }
+    }
+
+    fn splice_inlay_hints(
+        &self,
+        to_remove: Vec<InlayId>,
+        to_insert: Vec<(InlayId, Anchor, project::InlayHint)>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffer = self.buffer.read(cx).read(cx);
+        let new_inlays: Vec<(InlayId, InlayProperties<String>)> = to_insert
+            .into_iter()
+            .map(|(inlay_id, hint_anchor, hint)| {
+                let mut text = hint.text();
+                // TODO kb styling instead?
+                if hint.padding_right {
+                    text.push(' ');
+                }
+                if hint.padding_left {
+                    text.insert(0, ' ');
+                }
+
+                (
+                    inlay_id,
+                    InlayProperties {
+                        position: hint_anchor.bias_left(&buffer),
+                        text,
+                    },
+                )
+            })
+            .collect();
+        drop(buffer);
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.splice_inlays(to_remove, new_inlays, cx);
+        });
     }
 
     fn trigger_on_type_formatting(
@@ -3312,10 +3345,7 @@ impl Editor {
     }
 
     fn accept_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if let Some(suggestion) = self
-            .display_map
-            .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx))
-        {
+        if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
             if let Some((copilot, completion)) =
                 Copilot::global(cx).zip(self.copilot_state.active_completion())
             {
@@ -3334,7 +3364,7 @@ impl Editor {
     }
 
     fn discard_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.has_active_copilot_suggestion(cx) {
+        if let Some(suggestion) = self.take_active_copilot_suggestion(cx) {
             if let Some(copilot) = Copilot::global(cx) {
                 copilot
                     .update(cx, |copilot, cx| {
@@ -3345,8 +3375,9 @@ impl Editor {
                 self.report_copilot_event(None, false, cx)
             }
 
-            self.display_map
-                .update(cx, |map, cx| map.replace_suggestion::<usize>(None, cx));
+            self.display_map.update(cx, |map, cx| {
+                map.splice_inlays::<&str>(vec![suggestion.id], Vec::new(), cx)
+            });
             cx.notify();
             true
         } else {
@@ -3367,7 +3398,26 @@ impl Editor {
     }
 
     fn has_active_copilot_suggestion(&self, cx: &AppContext) -> bool {
-        self.display_map.read(cx).has_suggestion()
+        if let Some(suggestion) = self.copilot_state.suggestion.as_ref() {
+            let buffer = self.buffer.read(cx).read(cx);
+            suggestion.position.is_valid(&buffer)
+        } else {
+            false
+        }
+    }
+
+    fn take_active_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<Inlay> {
+        let suggestion = self.copilot_state.suggestion.take()?;
+        self.display_map.update(cx, |map, cx| {
+            map.splice_inlays::<&str>(vec![suggestion.id], Default::default(), cx);
+        });
+        let buffer = self.buffer.read(cx).read(cx);
+
+        if suggestion.position.is_valid(&buffer) {
+            Some(suggestion)
+        } else {
+            None
+        }
     }
 
     fn update_visible_copilot_suggestion(&mut self, cx: &mut ViewContext<Self>) {
@@ -3384,14 +3434,28 @@ impl Editor {
             .copilot_state
             .text_for_active_completion(cursor, &snapshot)
         {
+            let text = Rope::from(text);
+            let mut to_remove = Vec::new();
+            if let Some(suggestion) = self.copilot_state.suggestion.take() {
+                to_remove.push(suggestion.id);
+            }
+
+            let to_insert = vec![(
+                // TODO kb check how can I get the unique id for the suggestion
+                // Move the generation of the id inside the map
+                InlayId(usize::MAX),
+                InlayProperties {
+                    position: cursor,
+                    text: text.clone(),
+                },
+            )];
             self.display_map.update(cx, move |map, cx| {
-                map.replace_suggestion(
-                    Some(Suggestion {
-                        position: cursor,
-                        text: text.trim_end().into(),
-                    }),
-                    cx,
-                )
+                map.splice_inlays(to_remove, to_insert, cx)
+            });
+            self.copilot_state.suggestion = Some(Inlay {
+                id: InlayId(usize::MAX),
+                position: cursor,
+                text,
             });
             cx.notify();
         } else {

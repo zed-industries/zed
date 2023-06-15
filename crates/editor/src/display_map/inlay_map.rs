@@ -5,7 +5,10 @@ use super::{
     },
     TextHighlights,
 };
-use crate::{inlay_cache::InlayId, Anchor, MultiBufferSnapshot, ToPoint};
+use crate::{
+    inlay_cache::{Inlay, InlayId, InlayProperties},
+    MultiBufferSnapshot, ToPoint,
+};
 use collections::{BTreeSet, HashMap};
 use gpui::fonts::HighlightStyle;
 use language::{Chunk, Edit, Point, Rope, TextSummary};
@@ -138,19 +141,6 @@ pub struct InlayChunks<'a> {
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_style: Option<HighlightStyle>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Inlay {
-    pub(super) id: InlayId,
-    pub(super) position: Anchor,
-    pub(super) text: Rope,
-}
-
-#[derive(Debug, Clone)]
-pub struct InlayProperties<T> {
-    pub position: Anchor,
-    pub text: T,
 }
 
 impl<'a> Iterator for InlayChunks<'a> {
@@ -431,6 +421,21 @@ impl InlayMap {
         snapshot.version += 1;
 
         let mut edits = BTreeSet::new();
+
+        self.inlays.retain(|inlay| !to_remove.contains(&inlay.id));
+        for inlay_id in to_remove {
+            if let Some(inlay) = self.inlays_by_id.remove(&inlay_id) {
+                let buffer_point = inlay.position.to_point(snapshot.buffer_snapshot());
+                let fold_point = snapshot
+                    .suggestion_snapshot
+                    .fold_snapshot
+                    .to_fold_point(buffer_point, Bias::Left);
+                let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
+                let suggestion_offset = snapshot.suggestion_snapshot.to_offset(suggestion_point);
+                edits.insert(suggestion_offset);
+            }
+        }
+
         for (id, properties) in to_insert {
             let inlay = Inlay {
                 id,
@@ -456,20 +461,6 @@ impl InlayMap {
             let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
             let suggestion_offset = snapshot.suggestion_snapshot.to_offset(suggestion_point);
             edits.insert(suggestion_offset);
-        }
-
-        self.inlays.retain(|inlay| !to_remove.contains(&inlay.id));
-        for inlay_id in to_remove {
-            if let Some(inlay) = self.inlays_by_id.remove(&inlay_id) {
-                let buffer_point = inlay.position.to_point(snapshot.buffer_snapshot());
-                let fold_point = snapshot
-                    .suggestion_snapshot
-                    .fold_snapshot
-                    .to_fold_point(buffer_point, Bias::Left);
-                let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
-                let suggestion_offset = snapshot.suggestion_snapshot.to_offset(suggestion_point);
-                edits.insert(suggestion_offset);
-            }
         }
 
         let suggestion_snapshot = snapshot.suggestion_snapshot.clone();
