@@ -763,25 +763,12 @@ impl WrapSnapshot {
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
                 let inlay_point = self.tab_snapshot.to_inlay_point(tab_point, Bias::Left).0;
-                let suggestion_point = self
-                    .tab_snapshot
-                    .inlay_snapshot
-                    .to_suggestion_point(inlay_point);
-                let fold_point = self
-                    .tab_snapshot
-                    .inlay_snapshot
-                    .suggestion_snapshot
-                    .to_fold_point(suggestion_point);
+                let fold_point = self.tab_snapshot.inlay_snapshot.to_fold_point(inlay_point);
                 if fold_point.row() == prev_fold_row && display_row != 0 {
                     expected_buffer_rows.push(None);
                 } else {
-                    let buffer_point = fold_point.to_buffer_point(
-                        &self
-                            .tab_snapshot
-                            .inlay_snapshot
-                            .suggestion_snapshot
-                            .fold_snapshot,
-                    );
+                    let buffer_point =
+                        fold_point.to_buffer_point(&self.tab_snapshot.inlay_snapshot.fold_snapshot);
                     expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
                     prev_fold_row = fold_point.row();
                 }
@@ -1045,9 +1032,7 @@ fn consolidate_wrap_edits(edits: &mut Vec<WrapEdit>) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{
-            fold_map::FoldMap, inlay_map::InlayMap, suggestion_map::SuggestionMap, tab_map::TabMap,
-        },
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         MultiBuffer,
     };
     use gpui::test::observe;
@@ -1100,9 +1085,7 @@ mod tests {
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
         let (mut fold_map, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(fold_snapshot.clone());
         log::info!("InlaysMap text: {:?}", inlay_snapshot.text());
         let (tab_map, _) = TabMap::new(inlay_snapshot.clone(), tab_size);
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
@@ -1133,6 +1116,7 @@ mod tests {
         );
         log::info!("Wrapped text: {:?}", actual_text);
 
+        let mut next_inlay_id = 0;
         let mut edits = Vec::new();
         for _i in 0..operations {
             log::info!("{} ==============================================", _i);
@@ -1150,10 +1134,8 @@ mod tests {
                 }
                 20..=39 => {
                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        let (suggestion_snapshot, suggestion_edits) =
-                            suggestion_map.sync(fold_snapshot, fold_edits);
                         let (inlay_snapshot, inlay_edits) =
-                            inlay_map.sync(suggestion_snapshot, suggestion_edits);
+                            inlay_map.sync(fold_snapshot, fold_edits);
                         let (tabs_snapshot, tab_edits) =
                             tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
                         let (mut snapshot, wrap_edits) =
@@ -1164,10 +1146,8 @@ mod tests {
                     }
                 }
                 40..=59 => {
-                    let (suggestion_snapshot, suggestion_edits) =
-                        suggestion_map.randomly_mutate(&mut rng);
                     let (inlay_snapshot, inlay_edits) =
-                        inlay_map.sync(suggestion_snapshot, suggestion_edits);
+                        inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     let (tabs_snapshot, tab_edits) =
                         tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
                     let (mut snapshot, wrap_edits) =
@@ -1190,11 +1170,8 @@ mod tests {
             log::info!("Buffer text: {:?}", buffer_snapshot.text());
             let (fold_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
             log::info!("FoldMap text: {:?}", fold_snapshot.text());
-            let (suggestion_snapshot, suggestion_edits) =
-                suggestion_map.sync(fold_snapshot, fold_edits);
-            log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(suggestion_snapshot, suggestion_edits);
+            let (inlay_snapshot, inlay_edits) = inlay_map.sync(fold_snapshot, fold_edits);
+            log::info!("InlayMap text: {:?}", inlay_snapshot.text());
             let (tabs_snapshot, tab_edits) = tab_map.sync(inlay_snapshot, inlay_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 

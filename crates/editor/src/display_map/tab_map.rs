@@ -316,27 +316,15 @@ impl TabSnapshot {
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
-        let fold_point = self
-            .inlay_snapshot
-            .suggestion_snapshot
-            .fold_snapshot
-            .to_fold_point(point, bias);
-        let suggestion_point = self
-            .inlay_snapshot
-            .suggestion_snapshot
-            .to_suggestion_point(fold_point);
-        let inlay_point = self.inlay_snapshot.to_inlay_point(suggestion_point);
+        let fold_point = self.inlay_snapshot.fold_snapshot.to_fold_point(point, bias);
+        let inlay_point = self.inlay_snapshot.to_inlay_point(fold_point);
         self.to_tab_point(inlay_point)
     }
 
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
         let inlay_point = self.to_inlay_point(point, bias).0;
-        let suggestion_point = self.inlay_snapshot.to_suggestion_point(inlay_point);
-        let fold_point = self
-            .inlay_snapshot
-            .suggestion_snapshot
-            .to_fold_point(suggestion_point);
-        fold_point.to_buffer_point(&self.inlay_snapshot.suggestion_snapshot.fold_snapshot)
+        let fold_point = self.inlay_snapshot.to_fold_point(inlay_point);
+        fold_point.to_buffer_point(&self.inlay_snapshot.fold_snapshot)
     }
 
     fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
@@ -579,7 +567,7 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, suggestion_map::SuggestionMap},
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
         MultiBuffer,
     };
     use rand::{prelude::StdRng, Rng};
@@ -589,8 +577,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(fold_snapshot);
         let (_, tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
@@ -607,8 +594,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(fold_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         tab_snapshot.max_expansion_column = max_expansion_column;
@@ -656,8 +642,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(fold_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         tab_snapshot.max_expansion_column = max_expansion_column;
@@ -671,8 +656,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(&input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot);
-        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot);
+        let (_, inlay_snapshot) = InlayMap::new(fold_snapshot);
         let (_, tab_snapshot) = TabMap::new(inlay_snapshot, 4.try_into().unwrap());
 
         assert_eq!(
@@ -734,10 +718,8 @@ mod tests {
         fold_map.randomly_mutate(&mut rng);
         let (fold_snapshot, _) = fold_map.read(buffer_snapshot, vec![]);
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (suggestion_map, _) = SuggestionMap::new(fold_snapshot);
-        let (suggestion_snapshot, _) = suggestion_map.randomly_mutate(&mut rng);
-        log::info!("SuggestionMap text: {:?}", suggestion_snapshot.text());
-        let (_, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, _) = InlayMap::new(fold_snapshot.clone());
+        let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
         let (tab_map, _) = TabMap::new(inlay_snapshot.clone(), tab_size);

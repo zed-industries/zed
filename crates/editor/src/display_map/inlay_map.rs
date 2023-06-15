@@ -1,8 +1,5 @@
 use super::{
-    suggestion_map::{
-        SuggestionBufferRows, SuggestionChunks, SuggestionEdit, SuggestionOffset, SuggestionPoint,
-        SuggestionSnapshot,
-    },
+    fold_map::{FoldBufferRows, FoldChunks, FoldEdit, FoldOffset, FoldPoint, FoldSnapshot},
     TextHighlights,
 };
 use crate::{
@@ -29,7 +26,7 @@ pub struct InlayMap {
 #[derive(Clone)]
 pub struct InlaySnapshot {
     // TODO kb merge these two together
-    pub suggestion_snapshot: SuggestionSnapshot,
+    pub fold_snapshot: FoldSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
 }
@@ -105,7 +102,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for SuggestionOffset {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.input.len;
     }
@@ -120,7 +117,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for SuggestionPoint {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.input.lines;
     }
@@ -128,15 +125,15 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for SuggestionPoint {
 
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
-    transforms: Cursor<'a, Transform, (InlayPoint, SuggestionPoint)>,
-    suggestion_rows: SuggestionBufferRows<'a>,
+    transforms: Cursor<'a, Transform, (InlayPoint, FoldPoint)>,
+    fold_rows: FoldBufferRows<'a>,
     inlay_row: u32,
 }
 
 pub struct InlayChunks<'a> {
-    transforms: Cursor<'a, Transform, (InlayOffset, SuggestionOffset)>,
-    suggestion_chunks: SuggestionChunks<'a>,
-    suggestion_chunk: Option<Chunk<'a>>,
+    transforms: Cursor<'a, Transform, (InlayOffset, FoldOffset)>,
+    fold_chunks: FoldChunks<'a>,
+    fold_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::Chunks<'a>>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
@@ -154,10 +151,10 @@ impl<'a> Iterator for InlayChunks<'a> {
         let chunk = match self.transforms.item()? {
             Transform::Isomorphic(_) => {
                 let chunk = self
-                    .suggestion_chunk
-                    .get_or_insert_with(|| self.suggestion_chunks.next().unwrap());
+                    .fold_chunk
+                    .get_or_insert_with(|| self.fold_chunks.next().unwrap());
                 if chunk.text.is_empty() {
-                    *chunk = self.suggestion_chunks.next().unwrap();
+                    *chunk = self.fold_chunks.next().unwrap();
                 }
 
                 let (prefix, suffix) = chunk.text.split_at(cmp::min(
@@ -204,11 +201,11 @@ impl<'a> Iterator for InlayBufferRows<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let buffer_row = if self.inlay_row == 0 {
-            self.suggestion_rows.next().unwrap()
+            self.fold_rows.next().unwrap()
         } else {
             match self.transforms.item()? {
                 Transform::Inlay(_) => None,
-                Transform::Isomorphic(_) => self.suggestion_rows.next().unwrap(),
+                Transform::Isomorphic(_) => self.fold_rows.next().unwrap(),
             }
         };
 
@@ -235,12 +232,12 @@ impl InlayPoint {
 }
 
 impl InlayMap {
-    pub fn new(suggestion_snapshot: SuggestionSnapshot) -> (Self, InlaySnapshot) {
+    pub fn new(fold_snapshot: FoldSnapshot) -> (Self, InlaySnapshot) {
         let snapshot = InlaySnapshot {
-            suggestion_snapshot: suggestion_snapshot.clone(),
+            fold_snapshot: fold_snapshot.clone(),
             version: 0,
             transforms: SumTree::from_item(
-                Transform::Isomorphic(suggestion_snapshot.text_summary()),
+                Transform::Isomorphic(fold_snapshot.text_summary()),
                 &(),
             ),
         };
@@ -257,45 +254,40 @@ impl InlayMap {
 
     pub fn sync(
         &mut self,
-        suggestion_snapshot: SuggestionSnapshot,
-        mut suggestion_edits: Vec<SuggestionEdit>,
+        fold_snapshot: FoldSnapshot,
+        mut fold_edits: Vec<FoldEdit>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let mut snapshot = self.snapshot.lock();
 
         let mut new_snapshot = snapshot.clone();
-        if new_snapshot.suggestion_snapshot.version != suggestion_snapshot.version {
+        if new_snapshot.fold_snapshot.version != fold_snapshot.version {
             new_snapshot.version += 1;
         }
 
-        if suggestion_snapshot
+        if fold_snapshot
             .buffer_snapshot()
             .trailing_excerpt_update_count()
             != snapshot
-                .suggestion_snapshot
+                .fold_snapshot
                 .buffer_snapshot()
                 .trailing_excerpt_update_count()
         {
-            if suggestion_edits.is_empty() {
-                suggestion_edits.push(Edit {
-                    old: snapshot.suggestion_snapshot.len()..snapshot.suggestion_snapshot.len(),
-                    new: suggestion_snapshot.len()..suggestion_snapshot.len(),
+            if fold_edits.is_empty() {
+                fold_edits.push(Edit {
+                    old: snapshot.fold_snapshot.len()..snapshot.fold_snapshot.len(),
+                    new: fold_snapshot.len()..fold_snapshot.len(),
                 });
             }
         }
 
         let mut inlay_edits = Patch::default();
         let mut new_transforms = SumTree::new();
-        let mut cursor = snapshot
-            .transforms
-            .cursor::<(SuggestionOffset, InlayOffset)>();
-        let mut suggestion_edits_iter = suggestion_edits.iter().peekable();
-        while let Some(suggestion_edit) = suggestion_edits_iter.next() {
-            new_transforms.push_tree(
-                cursor.slice(&suggestion_edit.old.start, Bias::Left, &()),
-                &(),
-            );
+        let mut cursor = snapshot.transforms.cursor::<(FoldOffset, InlayOffset)>();
+        let mut fold_edits_iter = fold_edits.iter().peekable();
+        while let Some(fold_edit) = fold_edits_iter.next() {
+            new_transforms.push_tree(cursor.slice(&fold_edit.old.start, Bias::Left, &()), &());
             if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                if cursor.end(&()).0 == suggestion_edit.old.start {
+                if cursor.end(&()).0 == fold_edit.old.start {
                     new_transforms.push(Transform::Isomorphic(transform.clone()), &());
                     cursor.next(&());
                 }
@@ -303,30 +295,30 @@ impl InlayMap {
 
             // Remove all the inlays and transforms contained by the edit.
             let old_start =
-                cursor.start().1 + InlayOffset(suggestion_edit.old.start.0 - cursor.start().0 .0);
-            cursor.seek(&suggestion_edit.old.end, Bias::Right, &());
-            let old_end =
-                cursor.start().1 + InlayOffset(suggestion_edit.old.end.0 - cursor.start().0 .0);
+                cursor.start().1 + InlayOffset(fold_edit.old.start.0 - cursor.start().0 .0);
+            cursor.seek(&fold_edit.old.end, Bias::Right, &());
+            let old_end = cursor.start().1 + InlayOffset(fold_edit.old.end.0 - cursor.start().0 .0);
 
             // Push the unchanged prefix.
-            let prefix_start = SuggestionOffset(new_transforms.summary().input.len);
-            let prefix_end = suggestion_edit.new.start;
+            let prefix_start = FoldOffset(new_transforms.summary().input.len);
+            let prefix_end = fold_edit.new.start;
             push_isomorphic(
                 &mut new_transforms,
-                suggestion_snapshot.text_summary_for_range(
-                    suggestion_snapshot.to_point(prefix_start)
-                        ..suggestion_snapshot.to_point(prefix_end),
+                fold_snapshot.text_summary_for_range(
+                    prefix_start.to_point(&fold_snapshot)..prefix_end.to_point(&fold_snapshot),
                 ),
             );
             let new_start = InlayOffset(new_transforms.summary().output.len);
 
-            let start_point = suggestion_snapshot
-                .to_fold_point(suggestion_snapshot.to_point(suggestion_edit.new.start))
-                .to_buffer_point(&suggestion_snapshot.fold_snapshot);
+            let start_point = fold_edit
+                .new
+                .start
+                .to_point(&fold_snapshot)
+                .to_buffer_point(&fold_snapshot);
             let start_ix = match self.inlays.binary_search_by(|probe| {
                 probe
                     .position
-                    .to_point(&suggestion_snapshot.buffer_snapshot())
+                    .to_point(&fold_snapshot.buffer_snapshot())
                     .cmp(&start_point)
                     .then(std::cmp::Ordering::Greater)
             }) {
@@ -334,43 +326,34 @@ impl InlayMap {
             };
 
             for inlay in &self.inlays[start_ix..] {
-                let buffer_point = inlay
-                    .position
-                    .to_point(suggestion_snapshot.buffer_snapshot());
-                let fold_point = suggestion_snapshot
-                    .fold_snapshot
-                    .to_fold_point(buffer_point, Bias::Left);
-                let suggestion_point = suggestion_snapshot.to_suggestion_point(fold_point);
-                let suggestion_offset = suggestion_snapshot.to_offset(suggestion_point);
-                if suggestion_offset > suggestion_edit.new.end {
+                let buffer_point = inlay.position.to_point(fold_snapshot.buffer_snapshot());
+                let fold_point = fold_snapshot.to_fold_point(buffer_point, Bias::Left);
+                let fold_offset = fold_point.to_offset(&fold_snapshot);
+                if fold_offset > fold_edit.new.end {
                     break;
                 }
 
-                let prefix_start = SuggestionOffset(new_transforms.summary().input.len);
-                let prefix_end = suggestion_offset;
+                let prefix_start = FoldOffset(new_transforms.summary().input.len);
+                let prefix_end = fold_offset;
                 push_isomorphic(
                     &mut new_transforms,
-                    suggestion_snapshot.text_summary_for_range(
-                        suggestion_snapshot.to_point(prefix_start)
-                            ..suggestion_snapshot.to_point(prefix_end),
+                    fold_snapshot.text_summary_for_range(
+                        prefix_start.to_point(&fold_snapshot)..prefix_end.to_point(&fold_snapshot),
                     ),
                 );
 
-                if inlay
-                    .position
-                    .is_valid(suggestion_snapshot.buffer_snapshot())
-                {
+                if inlay.position.is_valid(fold_snapshot.buffer_snapshot()) {
                     new_transforms.push(Transform::Inlay(inlay.clone()), &());
                 }
             }
 
             // Apply the rest of the edit.
-            let transform_start = SuggestionOffset(new_transforms.summary().input.len);
+            let transform_start = FoldOffset(new_transforms.summary().input.len);
             push_isomorphic(
                 &mut new_transforms,
-                suggestion_snapshot.text_summary_for_range(
-                    suggestion_snapshot.to_point(transform_start)
-                        ..suggestion_snapshot.to_point(suggestion_edit.new.end),
+                fold_snapshot.text_summary_for_range(
+                    transform_start.to_point(&fold_snapshot)
+                        ..fold_edit.new.end.to_point(&fold_snapshot),
                 ),
             );
             let new_end = InlayOffset(new_transforms.summary().output.len);
@@ -381,18 +364,17 @@ impl InlayMap {
 
             // If the next edit doesn't intersect the current isomorphic transform, then
             // we can push its remainder.
-            if suggestion_edits_iter
+            if fold_edits_iter
                 .peek()
                 .map_or(true, |edit| edit.old.start >= cursor.end(&()).0)
             {
-                let transform_start = SuggestionOffset(new_transforms.summary().input.len);
-                let transform_end =
-                    suggestion_edit.new.end + (cursor.end(&()).0 - suggestion_edit.old.end);
+                let transform_start = FoldOffset(new_transforms.summary().input.len);
+                let transform_end = fold_edit.new.end + (cursor.end(&()).0 - fold_edit.old.end);
                 push_isomorphic(
                     &mut new_transforms,
-                    suggestion_snapshot.text_summary_for_range(
-                        suggestion_snapshot.to_point(transform_start)
-                            ..suggestion_snapshot.to_point(transform_end),
+                    fold_snapshot.text_summary_for_range(
+                        transform_start.to_point(&fold_snapshot)
+                            ..transform_end.to_point(&fold_snapshot),
                     ),
                 );
                 cursor.next(&());
@@ -404,7 +386,7 @@ impl InlayMap {
             new_transforms.push(Transform::Isomorphic(Default::default()), &());
         }
         new_snapshot.transforms = new_transforms;
-        new_snapshot.suggestion_snapshot = suggestion_snapshot;
+        new_snapshot.fold_snapshot = fold_snapshot;
         new_snapshot.check_invariants();
         drop(cursor);
 
@@ -427,12 +409,10 @@ impl InlayMap {
             if let Some(inlay) = self.inlays_by_id.remove(&inlay_id) {
                 let buffer_point = inlay.position.to_point(snapshot.buffer_snapshot());
                 let fold_point = snapshot
-                    .suggestion_snapshot
                     .fold_snapshot
                     .to_fold_point(buffer_point, Bias::Left);
-                let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
-                let suggestion_offset = snapshot.suggestion_snapshot.to_offset(suggestion_point);
-                edits.insert(suggestion_offset);
+                let fold_offset = fold_point.to_offset(&snapshot.fold_snapshot);
+                edits.insert(fold_offset);
             }
         }
 
@@ -455,16 +435,14 @@ impl InlayMap {
 
             let buffer_point = inlay.position.to_point(snapshot.buffer_snapshot());
             let fold_point = snapshot
-                .suggestion_snapshot
                 .fold_snapshot
                 .to_fold_point(buffer_point, Bias::Left);
-            let suggestion_point = snapshot.suggestion_snapshot.to_suggestion_point(fold_point);
-            let suggestion_offset = snapshot.suggestion_snapshot.to_offset(suggestion_point);
-            edits.insert(suggestion_offset);
+            let fold_offset = fold_point.to_offset(&snapshot.fold_snapshot);
+            edits.insert(fold_offset);
         }
 
-        let suggestion_snapshot = snapshot.suggestion_snapshot.clone();
-        let suggestion_edits = edits
+        let fold_snapshot = snapshot.fold_snapshot.clone();
+        let fold_edits = edits
             .into_iter()
             .map(|offset| Edit {
                 old: offset..offset,
@@ -472,11 +450,11 @@ impl InlayMap {
             })
             .collect();
         drop(snapshot);
-        self.sync(suggestion_snapshot, suggestion_edits)
+        self.sync(fold_snapshot, fold_edits)
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn randomly_mutate(
+    pub(crate) fn randomly_mutate(
         &mut self,
         next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
@@ -522,22 +500,22 @@ impl InlayMap {
 
 impl InlaySnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        self.suggestion_snapshot.buffer_snapshot()
+        self.fold_snapshot.buffer_snapshot()
     }
 
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
         let mut cursor = self
             .transforms
-            .cursor::<(InlayOffset, (InlayPoint, SuggestionOffset))>();
+            .cursor::<(InlayOffset, (InlayPoint, FoldOffset))>();
         cursor.seek(&offset, Bias::Right, &());
         let overshoot = offset.0 - cursor.start().0 .0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let suggestion_offset_start = cursor.start().1 .1;
-                let suggestion_offset_end = SuggestionOffset(suggestion_offset_start.0 + overshoot);
-                let suggestion_start = self.suggestion_snapshot.to_point(suggestion_offset_start);
-                let suggestion_end = self.suggestion_snapshot.to_point(suggestion_offset_end);
-                InlayPoint(cursor.start().1 .0 .0 + (suggestion_end.0 - suggestion_start.0))
+                let fold_offset_start = cursor.start().1 .1;
+                let fold_offset_end = FoldOffset(fold_offset_start.0 + overshoot);
+                let fold_start = fold_offset_start.to_point(&self.fold_snapshot);
+                let fold_end = fold_offset_end.to_point(&self.fold_snapshot);
+                InlayPoint(cursor.start().1 .0 .0 + (fold_end.0 - fold_start.0))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.offset_to_point(overshoot);
@@ -558,16 +536,16 @@ impl InlaySnapshot {
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         let mut cursor = self
             .transforms
-            .cursor::<(InlayPoint, (InlayOffset, SuggestionPoint))>();
+            .cursor::<(InlayPoint, (InlayOffset, FoldPoint))>();
         cursor.seek(&point, Bias::Right, &());
         let overshoot = point.0 - cursor.start().0 .0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let suggestion_point_start = cursor.start().1 .1;
-                let suggestion_point_end = SuggestionPoint(suggestion_point_start.0 + overshoot);
-                let suggestion_start = self.suggestion_snapshot.to_offset(suggestion_point_start);
-                let suggestion_end = self.suggestion_snapshot.to_offset(suggestion_point_end);
-                InlayOffset(cursor.start().1 .0 .0 + (suggestion_end.0 - suggestion_start.0))
+                let fold_point_start = cursor.start().1 .1;
+                let fold_point_end = FoldPoint(fold_point_start.0 + overshoot);
+                let fold_start = fold_point_start.to_offset(&self.fold_snapshot);
+                let fold_end = fold_point_end.to_offset(&self.fold_snapshot);
+                InlayOffset(cursor.start().1 .0 .0 + (fold_end.0 - fold_start.0))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.point_to_offset(overshoot);
@@ -582,34 +560,34 @@ impl InlaySnapshot {
             .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn to_suggestion_point(&self, point: InlayPoint) -> SuggestionPoint {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+    pub fn to_fold_point(&self, point: InlayPoint) -> FoldPoint {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>();
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
                 let overshoot = point.0 - cursor.start().0 .0;
-                SuggestionPoint(cursor.start().1 .0 + overshoot)
+                FoldPoint(cursor.start().1 .0 + overshoot)
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.suggestion_snapshot.max_point(),
+            None => self.fold_snapshot.max_point(),
         }
     }
 
-    pub fn to_suggestion_offset(&self, offset: InlayOffset) -> SuggestionOffset {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, SuggestionOffset)>();
+    pub fn to_fold_offset(&self, offset: InlayOffset) -> FoldOffset {
+        let mut cursor = self.transforms.cursor::<(InlayOffset, FoldOffset)>();
         cursor.seek(&offset, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
                 let overshoot = offset - cursor.start().0;
-                cursor.start().1 + SuggestionOffset(overshoot.0)
+                cursor.start().1 + FoldOffset(overshoot.0)
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.suggestion_snapshot.len(),
+            None => self.fold_snapshot.len(),
         }
     }
 
-    pub fn to_inlay_point(&self, point: SuggestionPoint) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<(SuggestionPoint, InlayPoint)>();
+    pub fn to_inlay_point(&self, point: FoldPoint) -> InlayPoint {
+        let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>();
         cursor.seek(&point, Bias::Left, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -622,7 +600,7 @@ impl InlaySnapshot {
     }
 
     pub fn clip_point(&self, point: InlayPoint, bias: Bias) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+        let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>();
         cursor.seek(&point, Bias::Left, &());
 
         let mut bias = bias;
@@ -644,10 +622,9 @@ impl InlaySnapshot {
                     } else {
                         point.0 - cursor.start().0 .0
                     };
-                    let suggestion_point = SuggestionPoint(cursor.start().1 .0 + overshoot);
-                    let clipped_suggestion_point =
-                        self.suggestion_snapshot.clip_point(suggestion_point, bias);
-                    let clipped_overshoot = clipped_suggestion_point.0 - cursor.start().1 .0;
+                    let fold_point = FoldPoint(cursor.start().1 .0 + overshoot);
+                    let clipped_fold_point = self.fold_snapshot.clip_point(fold_point, bias);
+                    let clipped_overshoot = clipped_fold_point.0 - cursor.start().1 .0;
                     return InlayPoint(cursor.start().0 .0 + clipped_overshoot);
                 }
                 Some(Transform::Inlay(_)) => skipped_inlay = true,
@@ -668,20 +645,19 @@ impl InlaySnapshot {
     pub fn text_summary_for_range(&self, range: Range<InlayPoint>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+        let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>();
         cursor.seek(&range.start, Bias::Right, &());
 
         let overshoot = range.start.0 - cursor.start().0 .0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let suggestion_start = cursor.start().1 .0;
-                let suffix_start = SuggestionPoint(suggestion_start + overshoot);
-                let suffix_end = SuggestionPoint(
-                    suggestion_start
-                        + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0),
+                let fold_start = cursor.start().1 .0;
+                let suffix_start = FoldPoint(fold_start + overshoot);
+                let suffix_end = FoldPoint(
+                    fold_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0),
                 );
                 summary = self
-                    .suggestion_snapshot
+                    .fold_snapshot
                     .text_summary_for_range(suffix_start..suffix_end);
                 cursor.next(&());
             }
@@ -705,9 +681,9 @@ impl InlaySnapshot {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     let prefix_start = cursor.start().1;
-                    let prefix_end = SuggestionPoint(prefix_start.0 + overshoot);
+                    let prefix_end = FoldPoint(prefix_start.0 + overshoot);
                     summary += self
-                        .suggestion_snapshot
+                        .fold_snapshot
                         .text_summary_for_range(prefix_start..prefix_end);
                 }
                 Some(Transform::Inlay(inlay)) => {
@@ -722,30 +698,27 @@ impl InlaySnapshot {
     }
 
     pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
+        let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>();
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
-        let mut suggestion_point = cursor.start().1;
-        let suggestion_row = if row == 0 {
+        let mut fold_point = cursor.start().1;
+        let fold_row = if row == 0 {
             0
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
-                    suggestion_point.0 += inlay_point.0 - cursor.start().0 .0;
-                    suggestion_point.row()
+                    fold_point.0 += inlay_point.0 - cursor.start().0 .0;
+                    fold_point.row()
                 }
-                _ => cmp::min(
-                    suggestion_point.row() + 1,
-                    self.suggestion_snapshot.max_point().row(),
-                ),
+                _ => cmp::min(fold_point.row() + 1, self.fold_snapshot.max_point().row()),
             }
         };
 
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            suggestion_rows: self.suggestion_snapshot.buffer_rows(suggestion_row),
+            fold_rows: self.fold_snapshot.buffer_rows(fold_row),
         }
     }
 
@@ -764,28 +737,24 @@ impl InlaySnapshot {
         range: Range<InlayOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
-        suggestion_highlight: Option<HighlightStyle>,
+        inlay_highlight_style: Option<HighlightStyle>,
     ) -> InlayChunks<'a> {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, SuggestionOffset)>();
+        let mut cursor = self.transforms.cursor::<(InlayOffset, FoldOffset)>();
         cursor.seek(&range.start, Bias::Right, &());
 
-        let suggestion_range =
-            self.to_suggestion_offset(range.start)..self.to_suggestion_offset(range.end);
-        let suggestion_chunks = self.suggestion_snapshot.chunks(
-            suggestion_range,
-            language_aware,
-            text_highlights,
-            suggestion_highlight,
-        );
+        let fold_range = self.to_fold_offset(range.start)..self.to_fold_offset(range.end);
+        let fold_chunks = self
+            .fold_snapshot
+            .chunks(fold_range, language_aware, text_highlights);
 
         InlayChunks {
             transforms: cursor,
-            suggestion_chunks,
+            fold_chunks,
             inlay_chunks: None,
-            suggestion_chunk: None,
+            fold_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            highlight_style: suggestion_highlight,
+            highlight_style: inlay_highlight_style,
         }
     }
 
@@ -801,7 +770,7 @@ impl InlaySnapshot {
         {
             assert_eq!(
                 self.transforms.summary().input,
-                self.suggestion_snapshot.text_summary()
+                self.fold_snapshot.text_summary()
             );
         }
     }
@@ -830,10 +799,7 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        display_map::{fold_map::FoldMap, suggestion_map::SuggestionMap},
-        MultiBuffer,
-    };
+    use crate::{display_map::fold_map::FoldMap, MultiBuffer};
     use gpui::AppContext;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -846,8 +812,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (fold_map, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
-        let (suggestion_map, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(fold_snapshot.clone());
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
         let mut next_inlay_id = 0;
 
@@ -863,27 +828,27 @@ mod tests {
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
         assert_eq!(
-            inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 0)),
+            inlay_snapshot.to_inlay_point(FoldPoint::new(0, 0)),
             InlayPoint::new(0, 0)
         );
         assert_eq!(
-            inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 1)),
+            inlay_snapshot.to_inlay_point(FoldPoint::new(0, 1)),
             InlayPoint::new(0, 1)
         );
         assert_eq!(
-            inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 2)),
+            inlay_snapshot.to_inlay_point(FoldPoint::new(0, 2)),
             InlayPoint::new(0, 2)
         );
         assert_eq!(
-            inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 3)),
+            inlay_snapshot.to_inlay_point(FoldPoint::new(0, 3)),
             InlayPoint::new(0, 3)
         );
         assert_eq!(
-            inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 4)),
+            inlay_snapshot.to_inlay_point(FoldPoint::new(0, 4)),
             InlayPoint::new(0, 9)
         );
         assert_eq!(
-            inlay_snapshot.to_inlay_point(SuggestionPoint::new(0, 5)),
+            inlay_snapshot.to_inlay_point(FoldPoint::new(0, 5)),
             InlayPoint::new(0, 10)
         );
         assert_eq!(
@@ -919,9 +884,7 @@ mod tests {
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
         );
-        let (suggestion_snapshot, suggestion_edits) =
-            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
+        let (inlay_snapshot, _) = inlay_map.sync(fold_snapshot.clone(), fold_edits);
         assert_eq!(inlay_snapshot.text(), "abxy|123|dzefghi");
 
         // An edit surrounding the inlay should invalidate it.
@@ -930,9 +893,7 @@ mod tests {
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
         );
-        let (suggestion_snapshot, suggestion_edits) =
-            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
+        let (inlay_snapshot, _) = inlay_map.sync(fold_snapshot.clone(), fold_edits);
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
 
         let (inlay_snapshot, _) = inlay_map.splice(
@@ -962,9 +923,7 @@ mod tests {
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
         );
-        let (suggestion_snapshot, suggestion_edits) =
-            suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-        let (inlay_snapshot, _) = inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits);
+        let (inlay_snapshot, _) = inlay_map.sync(fold_snapshot.clone(), fold_edits);
         assert_eq!(inlay_snapshot.text(), "abx|123|JKL|456|yDzefghi");
 
         // The inlays can be manually removed.
@@ -977,8 +936,7 @@ mod tests {
     fn test_buffer_rows(cx: &mut AppContext) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
         let (_, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
-        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(fold_snapshot.clone());
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
 
         let (inlay_snapshot, _) = inlay_map.splice(
@@ -1035,12 +993,11 @@ mod tests {
         log::info!("buffer text: {:?}", buffer_snapshot.text());
 
         let (mut fold_map, mut fold_snapshot) = FoldMap::new(buffer_snapshot.clone());
-        let (suggestion_map, mut suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
-        let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(fold_snapshot.clone());
         let mut next_inlay_id = 0;
 
         for _ in 0..operations {
-            let mut suggestion_edits = Patch::default();
+            let mut fold_edits = Patch::default();
             let mut inlay_edits = Patch::default();
 
             let mut prev_inlay_text = inlay_snapshot.text();
@@ -1052,10 +1009,8 @@ mod tests {
                     inlay_edits = Patch::new(edits);
                 }
                 30..=59 => {
-                    for (new_fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
-                        fold_snapshot = new_fold_snapshot;
-                        let (_, edits) = suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-                        suggestion_edits = suggestion_edits.compose(edits);
+                    for (_, edits) in fold_map.randomly_mutate(&mut rng) {
+                        fold_edits = fold_edits.compose(edits);
                     }
                 }
                 _ => buffer.update(cx, |buffer, cx| {
@@ -1069,21 +1024,17 @@ mod tests {
                 }),
             };
 
-            let (new_fold_snapshot, fold_edits) =
+            let (new_fold_snapshot, new_fold_edits) =
                 fold_map.read(buffer_snapshot.clone(), buffer_edits);
             fold_snapshot = new_fold_snapshot;
-            let (new_suggestion_snapshot, new_suggestion_edits) =
-                suggestion_map.sync(fold_snapshot.clone(), fold_edits);
-            suggestion_snapshot = new_suggestion_snapshot;
-            suggestion_edits = suggestion_edits.compose(new_suggestion_edits);
+            fold_edits = fold_edits.compose(new_fold_edits);
             let (new_inlay_snapshot, new_inlay_edits) =
-                inlay_map.sync(suggestion_snapshot.clone(), suggestion_edits.into_inner());
+                inlay_map.sync(fold_snapshot.clone(), fold_edits.into_inner());
             inlay_snapshot = new_inlay_snapshot;
             inlay_edits = inlay_edits.compose(new_inlay_edits);
 
             log::info!("buffer text: {:?}", buffer_snapshot.text());
             log::info!("folds text: {:?}", fold_snapshot.text());
-            log::info!("suggestions text: {:?}", suggestion_snapshot.text());
             log::info!("inlay text: {:?}", inlay_snapshot.text());
 
             let inlays = inlay_map
@@ -1093,12 +1044,11 @@ mod tests {
                 .map(|inlay| {
                     let buffer_point = inlay.position.to_point(&buffer_snapshot);
                     let fold_point = fold_snapshot.to_fold_point(buffer_point, Bias::Left);
-                    let suggestion_point = suggestion_snapshot.to_suggestion_point(fold_point);
-                    let suggestion_offset = suggestion_snapshot.to_offset(suggestion_point);
-                    (suggestion_offset, inlay.clone())
+                    let fold_offset = fold_point.to_offset(&fold_snapshot);
+                    (fold_offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut expected_text = Rope::from(suggestion_snapshot.text().as_str());
+            let mut expected_text = Rope::from(fold_snapshot.text().as_str());
             for (offset, inlay) in inlays.into_iter().rev() {
                 expected_text.replace(offset.0..offset.0, &inlay.text.to_string());
             }
@@ -1172,11 +1122,11 @@ mod tests {
                     inlay_offset
                 );
                 assert_eq!(
-                    inlay_snapshot.to_inlay_point(inlay_snapshot.to_suggestion_point(inlay_point)),
+                    inlay_snapshot.to_inlay_point(inlay_snapshot.to_fold_point(inlay_point)),
                     inlay_snapshot.clip_point(inlay_point, Bias::Left),
-                    "to_suggestion_point({:?}) = {:?}",
+                    "to_fold_point({:?}) = {:?}",
                     inlay_point,
-                    inlay_snapshot.to_suggestion_point(inlay_point),
+                    inlay_snapshot.to_fold_point(inlay_point),
                 );
 
                 let mut bytes = [0; 4];

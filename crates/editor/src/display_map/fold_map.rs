@@ -11,7 +11,7 @@ use std::{
     any::TypeId,
     cmp::{self, Ordering},
     iter::{self, Peekable},
-    ops::{Range, Sub},
+    ops::{Add, AddAssign, Range, Sub},
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
     vec,
 };
@@ -506,6 +506,10 @@ impl FoldSnapshot {
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
         self.folds.items(&self.buffer_snapshot).len()
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.transforms.summary().output.clone()
     }
 
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> TextSummary {
@@ -1167,6 +1171,20 @@ impl FoldOffset {
             buffer_point - cursor.start().1.input.lines
         };
         FoldPoint(cursor.start().1.output.lines + overshoot)
+    }
+}
+
+impl Add for FoldOffset {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl AddAssign for FoldOffset {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
     }
 }
 
