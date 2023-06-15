@@ -213,28 +213,20 @@ impl<'a> Iterator for InlayBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut buffer_row = None;
-        while let Some(transform) = self.transforms.item() {
-            match transform {
-                Transform::Inlay(inlay) => {
-                    if self.inlay_row == self.transforms.end(&()).0.row() {
-                        self.transforms.next(&());
-                    } else {
-                        buffer_row = Some(None);
-                        break;
-                    }
-                }
-                Transform::Isomorphic(_) => {
-                    buffer_row = Some(self.suggestion_rows.next().unwrap());
-                    break;
-                }
+        let buffer_row = if self.inlay_row == 0 {
+            self.suggestion_rows.next().unwrap()
+        } else {
+            match self.transforms.item()? {
+                Transform::Inlay(_) => None,
+                Transform::Isomorphic(_) => self.suggestion_rows.next().unwrap(),
             }
-        }
+        };
+
         self.inlay_row += 1;
         self.transforms
-            .seek(&InlayPoint::new(self.inlay_row, 0), Bias::Right, &());
+            .seek_forward(&InlayPoint::new(self.inlay_row, 0), Bias::Left, &());
 
-        buffer_row
+        Some(buffer_row)
     }
 }
 
@@ -418,6 +410,9 @@ impl InlayMap {
         }
 
         new_transforms.push_tree(cursor.suffix(&()), &());
+        if new_transforms.first().is_none() {
+            new_transforms.push(Transform::Isomorphic(Default::default()), &());
+        }
         new_snapshot.transforms = new_transforms;
         new_snapshot.suggestion_snapshot = suggestion_snapshot;
         new_snapshot.check_invariants();
@@ -738,17 +733,28 @@ impl InlaySnapshot {
     pub fn buffer_rows<'a>(&'a self, row: u32) -> InlayBufferRows<'a> {
         let mut cursor = self.transforms.cursor::<(InlayPoint, SuggestionPoint)>();
         let inlay_point = InlayPoint::new(row, 0);
-        cursor.seek(&inlay_point, Bias::Right, &());
+        cursor.seek(&inlay_point, Bias::Left, &());
+
         let mut suggestion_point = cursor.start().1;
-        if let Some(Transform::Isomorphic(_)) = cursor.item() {
-            suggestion_point.0 += inlay_point.0 - cursor.start().0 .0;
-        }
+        let suggestion_row = if row == 0 {
+            0
+        } else {
+            match cursor.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    suggestion_point.0 += inlay_point.0 - cursor.start().0 .0;
+                    suggestion_point.row()
+                }
+                _ => cmp::min(
+                    suggestion_point.row() + 1,
+                    self.suggestion_snapshot.max_point().row(),
+                ),
+            }
+        };
 
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            suggestion_row,
-            suggestion_rows: self.suggestion_snapshot.buffer_rows(suggestion_point.row()),
+            suggestion_rows: self.suggestion_snapshot.buffer_rows(suggestion_row),
         }
     }
 
@@ -976,6 +982,47 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
     }
 
+    #[gpui::test]
+    fn test_buffer_rows(cx: &mut AppContext) {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
+        let (_, fold_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
+        let (_, suggestion_snapshot) = SuggestionMap::new(fold_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(suggestion_snapshot.clone());
+        assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
+
+        let (inlay_snapshot, _) = inlay_map.splice(
+            Vec::new(),
+            vec![
+                (
+                    InlayId(0),
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(0),
+                        text: "|123|\n",
+                    },
+                ),
+                (
+                    InlayId(1),
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(4),
+                        text: "|456|",
+                    },
+                ),
+                (
+                    InlayId(1),
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(7),
+                        text: "\n|567|\n",
+                    },
+                ),
+            ],
+        );
+        assert_eq!(inlay_snapshot.text(), "|123|\nabc\n|456|def\n|567|\n\nghi");
+        assert_eq!(
+            inlay_snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            vec![Some(0), None, Some(1), None, None, Some(2)]
+        );
+    }
+
     #[gpui::test(iterations = 100)]
     fn test_random_inlays(cx: &mut AppContext, mut rng: StdRng) {
         init_test(cx);
@@ -1067,7 +1114,10 @@ mod tests {
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
             let expected_buffer_rows = inlay_snapshot.buffer_rows(0).collect::<Vec<_>>();
-            dbg!(&expected_buffer_rows);
+            assert_eq!(
+                expected_buffer_rows.len() as u32,
+                expected_text.max_point().row + 1
+            );
             for row_start in 0..expected_buffer_rows.len() {
                 assert_eq!(
                     inlay_snapshot
