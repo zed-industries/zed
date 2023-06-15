@@ -31,7 +31,6 @@ use std::{
     ffi::OsStr,
     fs::OpenOptions,
     io::Write as _,
-    ops::Not,
     os::unix::prelude::OsStrExt,
     panic,
     path::{Path, PathBuf},
@@ -373,7 +372,6 @@ struct Panic {
     os_version: Option<String>,
     architecture: String,
     panicked_on: u128,
-    identifying_backtrace: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -401,61 +399,18 @@ fn init_panic_hook(app: &App) {
             .unwrap_or_else(|| "Box<Any>".to_string());
 
         let backtrace = Backtrace::new();
-        let backtrace = backtrace
+        let mut backtrace = backtrace
             .frames()
             .iter()
-            .filter_map(|frame| {
-                let symbol = frame.symbols().first()?;
-                let path = symbol.filename()?;
-                Some((path, symbol.lineno(), format!("{:#}", symbol.name()?)))
-            })
+            .filter_map(|frame| Some(format!("{:#}", frame.symbols().first()?.name()?)))
             .collect::<Vec<_>>();
 
-        let this_file_path = Path::new(file!());
-
-        // Find the first frame in the backtrace for this panic hook itself. Exclude
-        // that frame and all frames before it.
-        let mut start_frame_ix = 0;
-        let mut codebase_root_path = None;
-        for (ix, (path, _, _)) in backtrace.iter().enumerate() {
-            if path.ends_with(this_file_path) {
-                start_frame_ix = ix + 1;
-                codebase_root_path = path.ancestors().nth(this_file_path.components().count());
-                break;
-            }
-        }
-
-        // Exclude any subsequent frames inside of rust's panic handling system.
-        while let Some((path, _, _)) = backtrace.get(start_frame_ix) {
-            if path.starts_with("/rustc") {
-                start_frame_ix += 1;
-            } else {
-                break;
-            }
-        }
-
-        // Build two backtraces:
-        // * one for display, which includes symbol names for all frames, and files
-        //   and line numbers for symbols in this codebase
-        // * one for identification and de-duplication, which only includes symbol
-        //   names for symbols in this codebase.
-        let mut display_backtrace = Vec::new();
-        let mut identifying_backtrace = Vec::new();
-        for (path, line, symbol) in &backtrace[start_frame_ix..] {
-            display_backtrace.push(symbol.clone());
-
-            if let Some(codebase_root_path) = &codebase_root_path {
-                if let Ok(suffix) = path.strip_prefix(&codebase_root_path) {
-                    identifying_backtrace.push(symbol.clone());
-
-                    let display_path = suffix.to_string_lossy();
-                    if let Some(line) = line {
-                        display_backtrace.push(format!("    {display_path}:{line}"));
-                    } else {
-                        display_backtrace.push(format!("    {display_path}"));
-                    }
-                }
-            }
+        // Strip out leading stack frames for rust panic-handling.
+        if let Some(ix) = backtrace
+            .iter()
+            .position(|name| name == "rust_begin_unwind")
+        {
+            backtrace.drain(0..=ix);
         }
 
         let panic_data = Panic {
@@ -477,11 +432,7 @@ fn init_panic_hook(app: &App) {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
-            backtrace: display_backtrace,
-            identifying_backtrace: identifying_backtrace
-                .is_empty()
-                .not()
-                .then_some(identifying_backtrace),
+            backtrace,
         };
 
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
@@ -498,7 +449,7 @@ fn init_panic_hook(app: &App) {
                 .open(&panic_file_path)
                 .log_err();
             if let Some(mut panic_file) = panic_file {
-                write!(&mut panic_file, "{}", panic_data_json).log_err();
+                write!(&mut panic_file, "{}\n", panic_data_json).log_err();
                 panic_file.flush().log_err();
             }
         }
