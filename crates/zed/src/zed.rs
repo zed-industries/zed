@@ -357,6 +357,8 @@ pub fn initialize_workspace(
                 workspace.toggle_dock(project_panel_position, cx);
             }
 
+            cx.focus_self();
+
             workspace.add_panel(terminal_panel, cx);
             if let Some(assistant_panel) = assistant_panel {
                 workspace.add_panel(assistant_panel, cx);
