@@ -435,22 +435,24 @@ fn init_panic_hook(app: &App) {
             backtrace,
         };
 
-        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-            if is_pty {
+        if is_pty {
+            if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
                 eprintln!("{}", panic_data_json);
                 return;
             }
-
-            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
-            let panic_file = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&panic_file_path)
-                .log_err();
-            if let Some(mut panic_file) = panic_file {
-                write!(&mut panic_file, "{}\n", panic_data_json).log_err();
-                panic_file.flush().log_err();
+        } else {
+            if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+                let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+                let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
+                let panic_file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&panic_file_path)
+                    .log_err();
+                if let Some(mut panic_file) = panic_file {
+                    writeln!(&mut panic_file, "{}", panic_data_json).log_err();
+                    panic_file.flush().log_err();
+                }
             }
         }
     }));
@@ -482,23 +484,45 @@ fn upload_previous_panics(http: Arc<dyn HttpClient>, cx: &mut AppContext) {
                     }
 
                     if telemetry_settings.diagnostics {
-                        let panic_data_text = smol::fs::read_to_string(&child_path)
+                        let panic_file_content = smol::fs::read_to_string(&child_path)
                             .await
                             .context("error reading panic file")?;
 
-                        let body = serde_json::to_string(&PanicRequest {
-                            panic: serde_json::from_str(&panic_data_text)?,
-                            token: ZED_SECRET_CLIENT_TOKEN.into(),
-                        })
-                        .unwrap();
+                        let panic = serde_json::from_str(&panic_file_content)
+                            .ok()
+                            .or_else(|| {
+                                panic_file_content
+                                    .lines()
+                                    .next()
+                                    .and_then(|line| serde_json::from_str(line).ok())
+                            })
+                            .unwrap_or_else(|| {
+                                log::error!(
+                                    "failed to deserialize panic file {:?}",
+                                    panic_file_content
+                                );
+                                None
+                            });
 
-                        let request = Request::post(&panic_report_url)
-                            .redirect_policy(isahc::config::RedirectPolicy::Follow)
-                            .header("Content-Type", "application/json")
-                            .body(body.into())?;
-                        let response = http.send(request).await.context("error sending panic")?;
-                        if !response.status().is_success() {
-                            log::error!("Error uploading panic to server: {}", response.status());
+                        if let Some(panic) = panic {
+                            let body = serde_json::to_string(&PanicRequest {
+                                panic,
+                                token: ZED_SECRET_CLIENT_TOKEN.into(),
+                            })
+                            .unwrap();
+
+                            let request = Request::post(&panic_report_url)
+                                .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                                .header("Content-Type", "application/json")
+                                .body(body.into())?;
+                            let response =
+                                http.send(request).await.context("error sending panic")?;
+                            if !response.status().is_success() {
+                                log::error!(
+                                    "Error uploading panic to server: {}",
+                                    response.status()
+                                );
+                            }
                         }
                     }
 
