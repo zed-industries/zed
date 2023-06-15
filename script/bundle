@@ -86,7 +86,6 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    cat crates/zed/resources/zed.entitlements
     codesign --force --deep --entitlements crates/zed/resources/zed.entitlements --sign - "${app_path}" -v
 fi
 
