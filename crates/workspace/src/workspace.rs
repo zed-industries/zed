@@ -4453,7 +4453,7 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(cx));
-            assert!(!panel.has_focus(cx));
+            assert!(panel.has_focus(cx));
         });
 
         // Focus and zoom panel
@@ -4528,7 +4528,7 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             let pane = pane.read(cx);
             assert!(!pane.is_zoomed());
-            assert!(pane.has_focus());
+            assert!(!pane.has_focus());
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
         });
