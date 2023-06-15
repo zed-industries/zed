@@ -128,12 +128,12 @@ pub struct Titlebar {
     pub leader_avatar: AvatarStyle,
     pub follower_avatar: AvatarStyle,
     pub inactive_avatar_grayscale: bool,
-    pub sign_in_prompt: Interactive<ContainedText>,
+    pub sign_in_prompt: Toggleable<Interactive<ContainedText>>,
     pub outdated_warning: ContainedText,
-    pub share_button: Interactive<ContainedText>,
+    pub share_button: Toggleable<Interactive<ContainedText>>,
     pub call_control: Interactive<IconButton>,
     pub toggle_contacts_button: Toggleable<Interactive<IconButton>>,
-    pub user_menu_button: Interactive<IconButton>,
+    pub user_menu_button: Toggleable<Interactive<IconButton>>,
     pub toggle_contacts_badge: ContainerStyle,
 }
 
@@ -339,7 +339,7 @@ pub struct Toolbar {
     pub container: ContainerStyle,
     pub height: f32,
     pub item_spacing: f32,
-    pub nav_button: Toggleable<Interactive<IconButton>>,
+    pub nav_button: Interactive<IconButton>,
 }
 
 #[derive(Clone, Deserialize, Default)]

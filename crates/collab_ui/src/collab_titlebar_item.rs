@@ -491,7 +491,7 @@ impl CollabTitlebarItem {
                 .with_child(
                     MouseEventHandler::<ShareUnshare, Self>::new(0, cx, |state, _| {
                         //TODO: Ensure this button has consistent width for both text variations
-                        let style = titlebar.share_button.style_for(state);
+                        let style = titlebar.share_button.inactive_state().style_for(state);
                         Label::new(label, style.text.clone())
                             .contained()
                             .with_style(style.container)
@@ -567,7 +567,7 @@ impl CollabTitlebarItem {
     fn render_sign_in_button(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let titlebar = &theme.workspace.titlebar;
         MouseEventHandler::<SignIn, Self>::new(0, cx, |state, _| {
-            let style = titlebar.sign_in_prompt.style_for(state);
+            let style = titlebar.sign_in_prompt.inactive_state().style_for(state);
             Label::new("Sign In", style.text.clone())
                 .contained()
                 .with_style(style.container)

@@ -219,7 +219,7 @@ impl View for Toolbar {
 #[allow(clippy::too_many_arguments)]
 fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>)>(
     svg_path: &'static str,
-    style: theme::Toggleable<theme::Interactive<theme::IconButton>>,
+    style: theme::Interactive<theme::IconButton>,
     nav_button_height: f32,
     tooltip_style: TooltipStyle,
     enabled: bool,
@@ -231,9 +231,9 @@ fn nav_button<A: Action, F: 'static + Fn(&mut Toolbar, &mut ViewContext<Toolbar>
 ) -> AnyElement<Toolbar> {
     MouseEventHandler::<A, _>::new(0, cx, |state, _| {
         let style = if enabled {
-            style.inactive_state().style_for(state)
+            style.style_for(state)
         } else {
-            style.inactive_state().disabled_style()
+            style.disabled_style()
         };
         Svg::new(svg_path)
             .with_color(style.color)
