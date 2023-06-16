@@ -2218,17 +2218,23 @@ impl BackgroundScannerState {
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
         self.reuse_entry_id(&mut entry);
-        self.snapshot.insert_entry(entry, fs)
+        let entry = self.snapshot.insert_entry(entry, fs);
+        if entry.path.file_name() == Some(&DOT_GIT) {
+            let changed_paths = self.snapshot.build_repo(entry.path.clone(), fs);
+            if let Some(changed_paths) = changed_paths {
+                util::extend_sorted(&mut self.changed_paths, changed_paths, usize::MAX, Ord::cmp)
+            }
+        }
+        entry
     }
 
-    #[must_use = "Changed paths must be used for diffing later"]
     fn populate_dir(
         &mut self,
-        parent_path: Arc<Path>,
+        parent_path: &Arc<Path>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
         fs: &dyn Fs,
-    ) -> Option<Vec<Arc<Path>>> {
+    ) {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
             .entries_by_path
@@ -2240,15 +2246,13 @@ impl BackgroundScannerState {
                 "populating a directory {:?} that has been removed",
                 parent_path
             );
-            return None;
+            return;
         };
 
         match parent_entry.kind {
-            EntryKind::PendingDir => {
-                parent_entry.kind = EntryKind::Dir;
-            }
+            EntryKind::PendingDir => parent_entry.kind = EntryKind::Dir,
             EntryKind::Dir => {}
-            _ => return None,
+            _ => return,
         }
 
         if let Some(ignore) = ignore {
@@ -2260,8 +2264,13 @@ impl BackgroundScannerState {
 
         let mut entries_by_path_edits = vec![Edit::Insert(parent_entry)];
         let mut entries_by_id_edits = Vec::new();
+        let mut dotgit_path = None;
 
         for mut entry in entries {
+            if entry.path.file_name() == Some(&DOT_GIT) {
+                dotgit_path = Some(entry.path.clone());
+            }
+
             self.reuse_entry_id(&mut entry);
             entries_by_id_edits.push(Edit::Insert(PathEntry {
                 id: entry.id,
@@ -2277,10 +2286,15 @@ impl BackgroundScannerState {
             .edit(entries_by_path_edits, &());
         self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
 
-        if parent_path.file_name() == Some(&DOT_GIT) {
-            return self.snapshot.build_repo(parent_path, fs);
+        if let Some(dotgit_path) = dotgit_path {
+            let changed_paths = self.snapshot.build_repo(dotgit_path, fs);
+            if let Some(changed_paths) = changed_paths {
+                util::extend_sorted(&mut self.changed_paths, changed_paths, usize::MAX, Ord::cmp)
+            }
         }
-        None
+        if let Err(ix) = self.changed_paths.binary_search(parent_path) {
+            self.changed_paths.insert(ix, parent_path.clone());
+        }
     }
 
     fn remove_path(&mut self, path: &Path) {
@@ -3297,22 +3311,9 @@ impl BackgroundScanner {
             new_entries.push(child_entry);
         }
 
-        {
-            let mut state = self.state.lock();
-            let changed_paths =
-                state.populate_dir(job.path.clone(), new_entries, new_ignore, self.fs.as_ref());
-            if let Err(ix) = state.changed_paths.binary_search(&job.path) {
-                state.changed_paths.insert(ix, job.path.clone());
-            }
-            if let Some(changed_paths) = changed_paths {
-                util::extend_sorted(
-                    &mut state.changed_paths,
-                    changed_paths,
-                    usize::MAX,
-                    Ord::cmp,
-                )
-            }
-        }
+        self.state
+            .lock()
+            .populate_dir(&job.path, new_entries, new_ignore, self.fs.as_ref());
 
         for new_job in new_jobs {
             if let Some(new_job) = new_job {
