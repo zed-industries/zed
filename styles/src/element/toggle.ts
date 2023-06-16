@@ -1,16 +1,17 @@
 import merge from "ts-deepmerge"
+import { DeepPartial } from "utility-types"
 
 type ToggleState = "inactive" | "active"
 
 type Toggleable<T> = Record<ToggleState, T>
 
 export const NO_INACTIVE_OR_BASE_ERROR =
-    "A toggleable object must have an inactive state, or a base property."
+  "A toggleable object must have an inactive state, or a base property."
 export const NO_ACTIVE_ERROR = "A toggleable object must have an active state."
 
 interface ToggleableProps<T> {
-    base?: T
-    state: Partial<Record<ToggleState, T>>
+  base?: T
+  state: Partial<Record<ToggleState, DeepPartial<T>>>
 }
 
 /**
@@ -27,21 +28,20 @@ interface ToggleableProps<T> {
  * ```
  */
 export function toggleable<T extends object>(
-    props: ToggleableProps<T>
+  props: ToggleableProps<T>
 ): Toggleable<T> {
-    const { base, state } = props
+  const { base, state } = props
 
-    if (!base && !state.inactive) throw new Error(NO_INACTIVE_OR_BASE_ERROR)
-    if (!state.active) throw new Error(NO_ACTIVE_ERROR)
+  if (!base && !state.inactive) throw new Error(NO_INACTIVE_OR_BASE_ERROR)
+  if (!state.active) throw new Error(NO_ACTIVE_ERROR)
 
-    const inactiveState = base
-        ? ((state.inactive ? merge(base, state.inactive) : base) as T)
-        : (state.inactive as T)
+  const inactiveState = base
+    ? ((state.inactive ? merge(base, state.inactive) : base) as T)
+    : (state.inactive as T)
 
-    const toggleObj: Toggleable<T> = {
-        inactive: inactiveState,
-        active: merge(base ?? {}, state.active) as T,
-    }
-
-    return toggleObj
+  const toggleObj: Toggleable<T> = {
+    inactive: inactiveState,
+    active: merge(base ?? {}, state.active) as T,
+  }
+  return toggleObj
 }

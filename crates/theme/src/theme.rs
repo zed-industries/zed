@@ -498,7 +498,7 @@ pub struct ContextMenuItem {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct CommandPalette {
-    pub key: Toggleable<Interactive<ContainedLabel>>,
+    pub key: Toggleable<ContainedLabel>,
     pub keystroke_spacing: f32,
 }
 
@@ -805,7 +805,7 @@ pub struct DiffStyle {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Interactive<T> {
     pub default: T,
-    pub hover: Option<T>,
+    pub hovered: Option<T>,
     pub clicked: Option<T>,
     pub disabled: Option<T>,
 }
@@ -855,7 +855,7 @@ impl<T> Interactive<T> {
         if state.clicked() == Some(platform::MouseButton::Left) && self.clicked.is_some() {
             self.clicked.as_ref().unwrap()
         } else if state.hovered() {
-            self.hover.as_ref().unwrap_or(&self.default)
+            self.hovered.as_ref().unwrap_or(&self.default)
         } else {
             &self.default
         }
@@ -873,7 +873,7 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
         #[derive(Deserialize)]
         struct Helper {
             default: Value,
-            hover: Option<Value>,
+            hovered: Option<Value>,
             clicked: Option<Value>,
             disabled: Option<Value>,
         }
@@ -899,14 +899,14 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
             }
         };
 
-        let hover = deserialize_state(json.hover)?;
+        let hovered = deserialize_state(json.hovered)?;
         let clicked = deserialize_state(json.clicked)?;
         let disabled = deserialize_state(json.disabled)?;
         let default = serde_json::from_value(json.default).map_err(serde::de::Error::custom)?;
 
         Ok(Interactive {
             default,
-            hover,
+            hovered,
             clicked,
             disabled,
         })
