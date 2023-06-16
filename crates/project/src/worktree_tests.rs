@@ -160,7 +160,7 @@ async fn test_descendent_entries(cx: &mut TestAppContext) {
     // Expand gitignored directory.
     tree.update(cx, |tree, cx| {
         let tree = tree.as_local_mut().unwrap();
-        tree.expand_dir(tree.entry_for_path("i/j").unwrap().id, cx)
+        tree.expand_entry_for_path("i/j".as_ref(), cx)
     })
     .recv()
     .await;
@@ -341,7 +341,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // Expand one of the symlinked directories.
     tree.update(cx, |tree, cx| {
         let tree = tree.as_local_mut().unwrap();
-        tree.expand_dir(tree.entry_for_path("deps/dep-dir3").unwrap().id, cx)
+        tree.expand_entry_for_path("deps/dep-dir3".as_ref(), cx)
     })
     .recv()
     .await;
@@ -370,7 +370,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     // Expand a subdirectory of one of the symlinked directories.
     tree.update(cx, |tree, cx| {
         let tree = tree.as_local_mut().unwrap();
-        tree.expand_dir(tree.entry_for_path("deps/dep-dir3/src").unwrap().id, cx)
+        tree.expand_entry_for_path("deps/dep-dir3/src".as_ref(), cx)
     })
     .recv()
     .await;
@@ -394,6 +394,98 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 (Path::new("src/a.rs"), false),
                 (Path::new("src/b.rs"), false),
             ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_open_gitignored_files(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "node_modules\n",
+            "node_modules": {
+                "a": {
+                    "a1.js": "a1",
+                    "a2.js": "a2",
+                },
+                "b": {
+                    "b1.js": "b1",
+                    "b2.js": "b2",
+                },
+            },
+            "src": {
+                "x.js": "",
+                "y.js": "",
+            },
+        }),
+    )
+    .await;
+
+    let client = cx.read(|cx| Client::new(FakeHttpClient::with_404_response(), cx));
+    let tree = Worktree::local(
+        client,
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("node_modules"), true),
+                (Path::new("src"), false),
+                (Path::new("src/x.js"), false),
+                (Path::new("src/y.js"), false),
+            ]
+        );
+    });
+
+    let buffer = tree
+        .update(cx, |tree, cx| {
+            tree.as_local_mut()
+                .unwrap()
+                .load_buffer(0, "node_modules/b/b1.js".as_ref(), cx)
+        })
+        .await
+        .unwrap();
+
+    tree.read_with(cx, |tree, cx| {
+        assert_eq!(
+            tree.entries(true)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (Path::new(""), false),
+                (Path::new(".gitignore"), false),
+                (Path::new("node_modules"), true),
+                (Path::new("node_modules/a"), true),
+                (Path::new("node_modules/b"), true),
+                (Path::new("node_modules/b/b1.js"), true),
+                (Path::new("node_modules/b/b2.js"), true),
+                (Path::new("src"), false),
+                (Path::new("src/x.js"), false),
+                (Path::new("src/y.js"), false),
+            ]
+        );
+
+        let buffer = buffer.read(cx);
+        assert_eq!(
+            buffer.file().unwrap().path().as_ref(),
+            Path::new("node_modules/b/b1.js")
         );
     });
 }
@@ -435,7 +527,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 
     tree.update(cx, |tree, cx| {
         let tree = tree.as_local_mut().unwrap();
-        tree.expand_dir(tree.entry_for_path("ignored-dir").unwrap().id, cx)
+        tree.expand_entry_for_path("ignored-dir".as_ref(), cx)
     })
     .recv()
     .await;
