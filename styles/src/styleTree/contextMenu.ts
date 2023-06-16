@@ -1,6 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, borderColor, text } from "./components"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 import { toggleable } from "./toggle"
 
 export default function contextMenu(colorScheme: ColorScheme) {

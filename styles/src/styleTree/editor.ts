@@ -4,7 +4,7 @@ import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
 import { buildSyntax } from "../theme/syntax"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 import { toggleable } from "./toggle"
 
 export default function editor(colorScheme: ColorScheme) {

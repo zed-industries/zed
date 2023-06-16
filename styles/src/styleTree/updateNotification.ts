@@ -1,6 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { foreground, text } from "./components"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 
 const headerPadding = 8
 

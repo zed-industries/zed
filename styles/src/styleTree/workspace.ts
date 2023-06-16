@@ -11,7 +11,7 @@ import {
 } from "./components"
 import statusBar from "./statusBar"
 import tabBar from "./tabBar"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 import merge from 'ts-deepmerge';
 export default function workspace(colorScheme: ColorScheme) {
     const layer = colorScheme.lowest

@@ -1,6 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, foreground, svg, text } from "./components"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 export default function copilot(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
 

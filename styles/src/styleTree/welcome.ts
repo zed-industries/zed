@@ -8,7 +8,7 @@ import {
     TextProperties,
     svg,
 } from "./components"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 
 export default function welcome(colorScheme: ColorScheme) {
     let layer = colorScheme.highest

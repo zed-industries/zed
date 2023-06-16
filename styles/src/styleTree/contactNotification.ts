@@ -1,6 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, foreground, text } from "./components"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 const avatarSize = 12
 const headerPadding = 8
 

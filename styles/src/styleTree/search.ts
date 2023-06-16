@@ -1,7 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
-import { interactive } from "../element/interactive"
+import { interactive } from "../element"
 import { toggleable } from "./toggle"
 
 export default function search(colorScheme: ColorScheme) {
