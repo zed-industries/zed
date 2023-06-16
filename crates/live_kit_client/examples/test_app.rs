@@ -1,9 +1,10 @@
-
 use std::time::Duration;
 
 use futures::StreamExt;
 use gpui::{actions, keymap_matcher::Binding, Menu, MenuItem};
-use live_kit_client::{LocalVideoTrack, RemoteVideoTrackUpdate, Room, LocalAudioTrack, RemoteAudioTrackUpdate};
+use live_kit_client::{
+    LocalAudioTrack, LocalVideoTrack, RemoteAudioTrackUpdate, RemoteVideoTrackUpdate, Room,
+};
 use live_kit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -14,7 +15,6 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::App::new(()).unwrap().run(|cx| {
-
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
@@ -63,7 +63,9 @@ fn main() {
             let audio_track = LocalAudioTrack::create();
             let audio_track_publication = room_a.publish_audio_track(&audio_track).await.unwrap();
 
-            if let RemoteAudioTrackUpdate::Subscribed(track) = audio_track_updates.next().await.unwrap() {
+            if let RemoteAudioTrackUpdate::Subscribed(track) =
+                audio_track_updates.next().await.unwrap()
+            {
                 let remote_tracks = room_b.remote_audio_tracks("test-participant-1");
                 assert_eq!(remote_tracks.len(), 1);
                 assert_eq!(remote_tracks[0].publisher_id(), "test-participant-1");
@@ -98,9 +100,14 @@ fn main() {
             let display = displays.into_iter().next().unwrap();
 
             let local_video_track = LocalVideoTrack::screen_share_for_display(&display);
-            let local_video_track_publication = room_a.publish_video_track(&local_video_track).await.unwrap();
+            let local_video_track_publication = room_a
+                .publish_video_track(&local_video_track)
+                .await
+                .unwrap();
 
-            if let RemoteVideoTrackUpdate::Subscribed(track) = video_track_updates.next().await.unwrap() {
+            if let RemoteVideoTrackUpdate::Subscribed(track) =
+                video_track_updates.next().await.unwrap()
+            {
                 let remote_video_tracks = room_b.remote_video_tracks("test-participant-1");
                 assert_eq!(remote_video_tracks.len(), 1);
                 assert_eq!(remote_video_tracks[0].publisher_id(), "test-participant-1");
