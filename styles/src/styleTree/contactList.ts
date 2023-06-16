@@ -71,8 +71,8 @@ export default function contactsPanel(colorScheme: ColorScheme) {
         },
         rowHeight: 28,
         sectionIconSize: 8,
-        headerRow: toggleable(
-            interactive({
+        headerRow: toggleable({
+            base: interactive({
                 base: {
                     ...text(layer, "mono", { size: "sm" }),
                     margin: { top: 14 },
@@ -86,13 +86,15 @@ export default function contactsPanel(colorScheme: ColorScheme) {
                     hovered: { background: background(layer, "default") },
                 }, // hack, we want headerRow to be interactive for whatever reason. It probably shouldn't be interactive in the first place.
             }),
-            {
-                default: {
-                    ...text(layer, "mono", "active", { size: "sm" }),
-                    background: background(layer, "active"),
-                },
+            state: {
+                active: {
+                    default: {
+                        ...text(layer, "mono", "active", { size: "sm" }),
+                        background: background(layer, "active"),
+                    },
+                }
             }
-        ),
+        }),
         leaveCall: interactive({
             base: {
                 background: background(layer),
