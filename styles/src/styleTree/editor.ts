@@ -50,23 +50,26 @@ export default function editor(colorScheme: ColorScheme) {
         // Inline autocomplete suggestions, Co-pilot suggestions, etc.
         suggestion: syntax.predictive,
         codeActions: {
-            indicator: toggleable(interactive({
-                base: {
-                    color: foreground(layer, "variant"),
-                }, state: {
-                    clicked: {
-                        color: foreground(layer, "base"),
+            indicator: toggleable(
+                interactive({
+                    base: {
+                        color: foreground(layer, "variant"),
                     },
-                    hovered: {
-                        color: foreground(layer, "on"),
+                    state: {
+                        clicked: {
+                            color: foreground(layer, "base"),
+                        },
+                        hovered: {
+                            color: foreground(layer, "on"),
+                        },
                     },
-                }
-            }),
+                }),
                 {
                     default: {
                         color: foreground(layer, "on"),
-                    }
-                }),
+                    },
+                }
+            ),
 
             verticalScale: 0.55,
         },
@@ -74,29 +77,34 @@ export default function editor(colorScheme: ColorScheme) {
             iconMarginScale: 2.5,
             foldedIcon: "icons/chevron_right_8.svg",
             foldableIcon: "icons/chevron_down_8.svg",
-            indicator: toggleable(interactive({
-                base: {
-                    color: foreground(layer, "variant"),
-                }, state: {
-                    clicked: {
-                        color: foreground(layer, "base"),
+            indicator: toggleable(
+                interactive({
+                    base: {
+                        color: foreground(layer, "variant"),
                     },
-                    hovered: {
-                        color: foreground(layer, "on"),
+                    state: {
+                        clicked: {
+                            color: foreground(layer, "base"),
+                        },
+                        hovered: {
+                            color: foreground(layer, "on"),
+                        },
                     },
-                }
-            }),
+                }),
                 {
                     default: {
                         color: foreground(layer, "on"),
-                    }
-                }),
+                    },
+                }
+            ),
             ellipses: {
                 textColor: colorScheme.ramps.neutral(0.71).hex(),
                 cornerRadiusFactor: 0.15,
                 background: {
                     // Copied from hover_popover highlight
-                    default: { color: colorScheme.ramps.neutral(0.5).alpha(0.0).hex() },
+                    default: {
+                        color: colorScheme.ramps.neutral(0.5).alpha(0.0).hex(),
+                    },
 
                     hover: {
                         color: colorScheme.ramps.neutral(0.5).alpha(0.5).hex(),
@@ -245,12 +253,13 @@ export default function editor(colorScheme: ColorScheme) {
                     bottom: 6,
                     left: 6,
                     right: 6,
-                }
-            }, state: {
+                },
+            },
+            state: {
                 hovered: {
                     background: background(layer, "on", "hovered"),
-                }
-            }
+                },
+            },
         }),
 
         scrollbar: {

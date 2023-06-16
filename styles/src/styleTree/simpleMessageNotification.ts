@@ -26,13 +26,14 @@ export default function simpleMessageNotification(
                 },
 
                 margin: { left: headerPadding, top: 6, bottom: 6 },
-            }, state: {
+            },
+            state: {
                 hovered: {
                     ...text(layer, "sans", "default", { size: "xs" }),
                     background: background(layer, "hovered"),
                     border: border(layer, "active"),
                 },
-            }
+            },
         }),
         dismissButton: interactive({
             base: {
@@ -41,11 +42,12 @@ export default function simpleMessageNotification(
                 iconHeight: 8,
                 buttonWidth: 8,
                 buttonHeight: 8,
-            }, state: {
+            },
+            state: {
                 hovered: {
                     color: foreground(layer, "hovered"),
                 },
-            }
-        })
+            },
+        }),
     }
 }

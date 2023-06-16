@@ -21,22 +21,21 @@ export default function contactNotification(colorScheme: ColorScheme): Object {
             ...text(layer, "sans", { size: "xs" }),
             margin: { left: avatarSize + headerPadding, top: 6, bottom: 6 },
         },
-        button:
-            interactive({
-                base: {
-                    ...text(layer, "sans", "on", { size: "xs" }),
-                    background: background(layer, "on"),
-                    padding: 4,
-                    cornerRadius: 6,
-                    margin: { left: 6 }
-                },
+        button: interactive({
+            base: {
+                ...text(layer, "sans", "on", { size: "xs" }),
+                background: background(layer, "on"),
+                padding: 4,
+                cornerRadius: 6,
+                margin: { left: 6 },
+            },
 
-                state: {
-                    hovered: {
-                        background: background(layer, "on", "hovered"),
-                    }
-                }
-            }),
+            state: {
+                hovered: {
+                    background: background(layer, "on", "hovered"),
+                },
+            },
+        }),
 
         dismissButton: {
             default: {
@@ -48,7 +47,7 @@ export default function contactNotification(colorScheme: ColorScheme): Object {
                 hover: {
                     color: foreground(layer, "hovered"),
                 },
-            }
+            },
         },
     }
 }

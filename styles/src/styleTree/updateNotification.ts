@@ -14,12 +14,13 @@ export default function updateNotification(colorScheme: ColorScheme): Object {
         actionMessage: interactive({
             base: {
                 ...text(layer, "sans", { size: "xs" }),
-                margin: { left: headerPadding, top: 6, bottom: 6 }
-            }, state: {
+                margin: { left: headerPadding, top: 6, bottom: 6 },
+            },
+            state: {
                 hovered: {
                     color: foreground(layer, "hovered"),
-                }
-            }
+                },
+            },
         }),
         dismissButton: interactive({
             base: {
@@ -27,13 +28,13 @@ export default function updateNotification(colorScheme: ColorScheme): Object {
                 iconWidth: 8,
                 iconHeight: 8,
                 buttonWidth: 8,
-                buttonHeight: 8
-            }, state: {
+                buttonHeight: 8,
+            },
+            state: {
                 hovered: {
                     color: foreground(layer, "hovered"),
                 },
             },
-        })
-
+        }),
     }
 }

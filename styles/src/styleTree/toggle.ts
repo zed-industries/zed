@@ -1,41 +1,47 @@
-import { DeepPartial } from 'utility-types';
-import merge from 'ts-deepmerge';
+import merge from "ts-deepmerge"
 
-interface Toggleable<T> {
-    inactive: T
-    active: T,
+type ToggleState = "inactive" | "active"
+
+type Toggleable<T> = Record<ToggleState, T>
+
+const NO_INACTIVE_OR_BASE_ERROR =
+    "A toggleable object must have an inactive state, or a base property."
+const NO_ACTIVE_ERROR = "A toggleable object must have an active state."
+
+interface ToggleableProps<T> {
+    base?: T
+    state: Partial<Record<ToggleState, T>>
 }
 
 /**
  * Helper function for creating Toggleable objects.
  * @template T The type of the object being toggled.
- * @param inactive The initial state of the toggleable object.
- * @param modifications The modifications to be applied to the initial state to create the active state.
+ * @param props Object containing the base (inactive) state and state modifications to create the active state.
  * @returns A Toggleable object containing both the inactive and active states.
  * @example
  * ```
- * toggleable({day: 1, month: "January"}, {day: 3})
- * ```
- * This returns the following object:
- * ```
- *  Toggleable<_>{
- *    inactive: { day: 1, month: "January" },
- *    active: { day: 3, month: "January" }
- *  }
- * ```
- * The function also works for nested structures:
- * ```
- *   toggleable({first_level: "foo", second_level: {nested_member: "nested"}}, {second_level: {nested_member: "another nested thing"}})
- * ```
- * Which returns:
- * ```
- *   Toggleable<_> {
- *     inactive: {first_level: "foo", second_level: {nested_member: "nested"}},
- *     active: { first_level: "foo", second_level: {nested_member: "another nested thing"}}
- *   }
+ * toggleable({
+ *   base: { background: "#000000", text: "#CCCCCC" },
+ *   state: { active: { text: "#CCCCCC" } },
+ * })
  * ```
  */
-export function toggleable<T extends Object>(inactive: T, modifications: DeepPartial<T>): Toggleable<T> {
-    let active: T = merge(inactive, modifications) as T;
-    return { active: active, inactive: inactive };
+export function toggleable<T extends object>(
+    props: ToggleableProps<T>
+): Toggleable<T> {
+    const { base, state } = props
+
+    if (!base && !state.inactive) throw new Error(NO_INACTIVE_OR_BASE_ERROR)
+    if (!state.active) throw new Error(NO_ACTIVE_ERROR)
+
+    const inactiveState = base
+        ? ((state.inactive ? merge(base, state.inactive) : base) as T)
+        : (state.inactive as T)
+
+    const toggleObj: Toggleable<T> = {
+        inactive: inactiveState,
+        active: merge(base ?? {}, state.active) as T,
+    }
+
+    return toggleObj
 }

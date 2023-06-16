@@ -1,20 +1,27 @@
 import merge from "ts-deepmerge"
 
-type InteractiveState = "default" | "hovered" | "clicked" | "selected" | "disabled";
+type InteractiveState =
+    | "default"
+    | "hovered"
+    | "clicked"
+    | "selected"
+    | "disabled"
 
 type Interactive<T> = {
-    default: T,
-    hovered?: T,
-    clicked?: T,
-    selected?: T,
-    disabled?: T,
-};
+    default: T
+    hovered?: T
+    clicked?: T
+    selected?: T
+    disabled?: T
+}
 
-export const NO_DEFAULT_OR_BASE_ERROR = "An interactive object must have a default state, or a base property."
-export const NOT_ENOUGH_STATES_ERROR = "An interactive object must have a default and at least one other state."
+export const NO_DEFAULT_OR_BASE_ERROR =
+    "An interactive object must have a default state, or a base property."
+export const NOT_ENOUGH_STATES_ERROR =
+    "An interactive object must have a default and at least one other state."
 
 interface InteractiveProps<T> {
-    base?: T,
+    base?: T
     state: Partial<Record<InteractiveState, T>>
 }
 
@@ -29,46 +36,61 @@ interface InteractiveProps<T> {
  * @param state Object containing optional modified fields to be included in the resulting object for each state.
  * @returns Interactive<T> object with fields from `base` and `state`.
  */
-export function interactive<T extends Object>({ base, state }: InteractiveProps<T>): Interactive<T> {
-    if (!base && !state.default) throw new Error(NO_DEFAULT_OR_BASE_ERROR);
+export function interactive<T extends Object>({
+    base,
+    state,
+}: InteractiveProps<T>): Interactive<T> {
+    if (!base && !state.default) throw new Error(NO_DEFAULT_OR_BASE_ERROR)
 
-    let defaultState: T;
+    let defaultState: T
 
     if (state.default && base) {
-        defaultState = merge(base, state.default) as T;
+        defaultState = merge(base, state.default) as T
     } else {
-        defaultState = base ? base : state.default as T;
+        defaultState = base ? base : (state.default as T)
     }
 
     let interactiveObj: Interactive<T> = {
         default: defaultState,
-    };
+    }
 
-    let stateCount = 0;
+    let stateCount = 0
 
     if (state.hovered !== undefined) {
-        interactiveObj.hovered = merge(interactiveObj.default, state.hovered) as T;
-        stateCount++;
+        interactiveObj.hovered = merge(
+            interactiveObj.default,
+            state.hovered
+        ) as T
+        stateCount++
     }
 
     if (state.clicked !== undefined) {
-        interactiveObj.clicked = merge(interactiveObj.default, state.clicked) as T;
-        stateCount++;
+        interactiveObj.clicked = merge(
+            interactiveObj.default,
+            state.clicked
+        ) as T
+        stateCount++
     }
 
     if (state.selected !== undefined) {
-        interactiveObj.selected = merge(interactiveObj.default, state.selected) as T;
-        stateCount++;
+        interactiveObj.selected = merge(
+            interactiveObj.default,
+            state.selected
+        ) as T
+        stateCount++
     }
 
     if (state.disabled !== undefined) {
-        interactiveObj.disabled = merge(interactiveObj.default, state.disabled) as T;
-        stateCount++;
+        interactiveObj.disabled = merge(
+            interactiveObj.default,
+            state.disabled
+        ) as T
+        stateCount++
     }
 
     if (stateCount < 1) {
-        throw new Error(NOT_ENOUGH_STATES_ERROR);
+        throw new Error(NOT_ENOUGH_STATES_ERROR)
     }
 
-    return interactiveObj;
+    return interactiveObj
 }

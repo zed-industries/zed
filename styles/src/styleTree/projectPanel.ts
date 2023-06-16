@@ -29,18 +29,19 @@ export default function projectPanel(colorScheme: ColorScheme) {
         },
     }
 
-    let entry = toggleable(interactive({
-        base: {
-            ...baseEntry,
-            text: text(layer, "mono", "variant", { size: "sm" }),
-            status,
-        }, state:
-        {
-            hovered: {
-                background: background(layer, "variant", "hovered"),
-            }
-        }
-    }),
+    let entry = toggleable(
+        interactive({
+            base: {
+                ...baseEntry,
+                text: text(layer, "mono", "variant", { size: "sm" }),
+                status,
+            },
+            state: {
+                hovered: {
+                    background: background(layer, "variant", "hovered"),
+                },
+            },
+        }),
         {
             default: {
                 /*background: colorScheme.isLight
@@ -52,8 +53,8 @@ export default function projectPanel(colorScheme: ColorScheme) {
                 //background: background(layer, "active"),
                 text: text(layer, "mono", "active", { size: "sm" }),
             },
-
-        });
+        }
+    )
 
     return {
         openProjectButton: interactive({
@@ -72,14 +73,15 @@ export default function projectPanel(colorScheme: ColorScheme) {
                     left: 7,
                     right: 7,
                 },
-                ...text(layer, "sans", "default", { size: "sm" })
-            }, state: {
+                ...text(layer, "sans", "default", { size: "sm" }),
+            },
+            state: {
                 hovered: {
                     ...text(layer, "sans", "default", { size: "sm" }),
                     background: background(layer, "hovered"),
                     border: border(layer, "active"),
                 },
-            }
+            },
         }),
         background: background(layer),
         padding: { left: 6, right: 6, top: 0, bottom: 6 },
@@ -111,7 +113,6 @@ export default function projectPanel(colorScheme: ColorScheme) {
                     background: background(layer, "active"),
                     text: text(layer, "mono", "disabled", { size: "sm" }),
                 },
-
             },
         },
         filenameEditor: {

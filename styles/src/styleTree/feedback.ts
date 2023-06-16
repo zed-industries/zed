@@ -20,8 +20,9 @@ export default function feedback(colorScheme: ColorScheme) {
                     left: 10,
                     right: 10,
                     top: 2,
-                }
-            }, state: {
+                },
+            },
+            state: {
                 clicked: {
                     ...text(layer, "mono", "on", "pressed"),
                     background: background(layer, "on", "pressed"),
@@ -32,7 +33,7 @@ export default function feedback(colorScheme: ColorScheme) {
                     background: background(layer, "on", "hovered"),
                     border: border(layer, "on", "hovered"),
                 },
-            }
+            },
         }),
         button_margin: 8,
         info_text_default: text(layer, "sans", "default", { size: "xs" }),

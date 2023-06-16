@@ -1,3 +1,3 @@
-import { interactive } from "./interactive";
+import { interactive } from "./interactive"
 
 export { interactive }

@@ -40,29 +40,35 @@ export default function picker(colorScheme: ColorScheme): any {
             ...container,
             padding: {},
         },
-        item: toggleable(interactive({
-            base: {
-                padding: {
-                    bottom: 4,
-                    left: 12,
-                    right: 12,
-                    top: 4,
+        item: toggleable(
+            interactive({
+                base: {
+                    padding: {
+                        bottom: 4,
+                        left: 12,
+                        right: 12,
+                        top: 4,
+                    },
+                    margin: {
+                        top: 1,
+                        left: 4,
+                        right: 4,
+                    },
+                    cornerRadius: 8,
+                    text: text(layer, "sans", "variant"),
+                    highlightText: text(layer, "sans", "accent", {
+                        weight: "bold",
+                    }),
                 },
-                margin: {
-                    top: 1,
-                    left: 4,
-                    right: 4,
+                state: {
+                    hovered: {
+                        background: withOpacity(
+                            background(layer, "hovered"),
+                            0.5
+                        ),
+                    },
                 },
-                cornerRadius: 8,
-                text: text(layer, "sans", "variant"),
-                highlightText: text(layer, "sans", "accent", { weight: "bold" }),
-            }
-            , state: {
-                hovered: {
-                    background: withOpacity(background(layer, "hovered"), 0.5),
-                }
-            }
-        }),
+            }),
             {
                 default: {
                     background: withOpacity(
@@ -70,9 +76,9 @@ export default function picker(colorScheme: ColorScheme): any {
                         0.5
                     ),
                     //text: text(layer, "sans", "base", "active"),
-                }
-            }),
-
+                },
+            }
+        ),
 
         inputEditor,
         emptyInputEditor,

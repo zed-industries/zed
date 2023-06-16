@@ -8,10 +8,12 @@ export default function commandPalette(colorScheme: ColorScheme) {
     let layer = colorScheme.highest
     return {
         keystrokeSpacing: 8,
-        key:
-            toggleable(interactive({
+        key: toggleable(
+            interactive({
                 base: {
-                    text: text(layer, "mono", "variant", "default", { size: "xs" }),
+                    text: text(layer, "mono", "variant", "default", {
+                        size: "xs",
+                    }),
                     cornerRadius: 2,
                     background: background(layer, "on"),
                     padding: {
@@ -25,15 +27,15 @@ export default function commandPalette(colorScheme: ColorScheme) {
                         bottom: 1,
                         left: 2,
                     },
-                }, state: { hovered: { cornerRadius: 4, padding: { top: 17 } } }
-            }), {
+                },
+                state: { hovered: { cornerRadius: 4, padding: { top: 17 } } },
+            }),
+            {
                 default: {
                     text: text(layer, "mono", "on", "default", { size: "xs" }),
                     background: withOpacity(background(layer, "on"), 0.2),
-                }
-
-            })
-        ,
-
+                },
+            }
+        ),
     }
 }

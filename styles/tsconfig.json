@@ -23,30 +23,14 @@
         "skipLibCheck": true,
         "baseUrl": ".",
         "paths": {
-            "@/*": [
-                "./*"
-            ],
-            "@element/*": [
-                "./src/element/*"
-            ],
-            "@component/*": [
-                "./src/component/*"
-            ],
-            "@styleTree/*": [
-                "./src/styleTree/*"
-            ],
-            "@theme/*": [
-                "./src/theme/*"
-            ],
-            "@themes/*": [
-                "./src/themes/*"
-            ],
-            "@util/*": [
-                "./src/util/*"
-            ]
+            "@/*": ["./*"],
+            "@element/*": ["./src/element/*"],
+            "@component/*": ["./src/component/*"],
+            "@styleTree/*": ["./src/styleTree/*"],
+            "@theme/*": ["./src/theme/*"],
+            "@themes/*": ["./src/themes/*"],
+            "@util/*": ["./src/util/*"]
         }
     },
-    "exclude": [
-        "node_modules"
-    ]
+    "exclude": ["node_modules"]
 }

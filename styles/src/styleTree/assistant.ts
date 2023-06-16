@@ -16,17 +16,27 @@ export default function assistant(colorScheme: ColorScheme) {
             background: editor(colorScheme).background,
         },
         userSender: {
-            default:
-                { ...text(layer, "sans", "default", { size: "sm", weight: "bold" }) },
+            default: {
+                ...text(layer, "sans", "default", {
+                    size: "sm",
+                    weight: "bold",
+                }),
+            },
         },
         assistantSender: {
             default: {
-                ...text(layer, "sans", "accent", { size: "sm", weight: "bold" })
+                ...text(layer, "sans", "accent", {
+                    size: "sm",
+                    weight: "bold",
+                }),
             },
         },
         systemSender: {
             default: {
-                ...text(layer, "sans", "variant", { size: "sm", weight: "bold" })
+                ...text(layer, "sans", "variant", {
+                    size: "sm",
+                    weight: "bold",
+                }),
             },
         },
         sentAt: {
@@ -43,11 +53,12 @@ export default function assistant(colorScheme: ColorScheme) {
                 padding: 4,
                 cornerRadius: 4,
                 ...text(layer, "sans", "default", { size: "xs" }),
-            }, state: {
+            },
+            state: {
                 hovered: {
                     background: background(layer, "on", "hovered"),
-                }
-            }
+                },
+            },
         }),
         remainingTokens: {
             background: background(layer, "on"),

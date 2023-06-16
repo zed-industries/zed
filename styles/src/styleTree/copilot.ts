@@ -25,7 +25,7 @@ export default function copilot(colorScheme: ColorScheme) {
                     left: 7,
                     right: 7,
                 },
-                ...text(layer, "sans", "default", { size: "sm" })
+                ...text(layer, "sans", "default", { size: "sm" }),
             },
             state: {
                 hovered: {
@@ -33,39 +33,37 @@ export default function copilot(colorScheme: ColorScheme) {
                     background: background(layer, "hovered"),
                     border: border(layer, "active"),
                 },
-            }
-        });
+            },
+        })
 
     return {
-        outLinkIcon:
-            interactive({
-                base: {
-                    icon: svg(
-                        foreground(layer, "variant"),
-                        "icons/link_out_12.svg",
-                        12,
-                        12
-                    ),
-                    container: {
-                        cornerRadius: 6,
-                        padding: { left: 6 },
+        outLinkIcon: interactive({
+            base: {
+                icon: svg(
+                    foreground(layer, "variant"),
+                    "icons/link_out_12.svg",
+                    12,
+                    12
+                ),
+                container: {
+                    cornerRadius: 6,
+                    padding: { left: 6 },
+                },
+            },
+            state: {
+                hovered: {
+                    icon: {
+                        color: foreground(layer, "hovered"),
                     },
                 },
-                state: {
-                    hovered: {
-                        icon: {
-                            color:
-                                foreground(layer, "hovered")
-                        }
-                    },
-                }
-            }),
+            },
+        }),
 
         modal: {
             titleText: {
                 default: {
-                    ...text(layer, "sans", { size: "xs", weight: "bold" })
-                }
+                    ...text(layer, "sans", { size: "xs", weight: "bold" }),
+                },
             },
             titlebar: {
                 background: background(colorScheme.lowest),
@@ -87,8 +85,7 @@ export default function copilot(colorScheme: ColorScheme) {
                 },
             },
             closeIcon: interactive({
-                base:
-                {
+                base: {
                     icon: svg(
                         foreground(layer, "variant"),
                         "icons/x_mark_8.svg",
@@ -106,7 +103,7 @@ export default function copilot(colorScheme: ColorScheme) {
                         margin: {
                             right: 0,
                         },
-                    }
+                    },
                 },
                 state: {
                     hovered: {
@@ -125,7 +122,7 @@ export default function copilot(colorScheme: ColorScheme) {
                             8
                         ),
                     },
-                }
+                },
             }),
             dimensions: {
                 width: 280,
@@ -214,8 +211,9 @@ export default function copilot(colorScheme: ColorScheme) {
                                 bottom: 5,
                                 left: 8,
                                 right: 0,
-                            }
-                        }, state: {
+                            },
+                        },
+                        state: {
                             hovered: {
                                 border: border(layer, "active", {
                                     bottom: false,
@@ -224,8 +222,8 @@ export default function copilot(colorScheme: ColorScheme) {
                                     left: true,
                                 }),
                             },
-                        }
-                    })
+                        },
+                    }),
                 },
             },
 

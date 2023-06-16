@@ -79,13 +79,14 @@ export default function welcome(colorScheme: ColorScheme) {
                     left: 7,
                     right: 7,
                 },
-                ...text(layer, "sans", "default", interactive_text_size)
-            }, state: {
+                ...text(layer, "sans", "default", interactive_text_size),
+            },
+            state: {
                 hovered: {
                     ...text(layer, "sans", "default", interactive_text_size),
                     background: background(layer, "hovered"),
-                }
-            }
+                },
+            },
         }),
 
         usageNote: {
