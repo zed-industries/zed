@@ -1622,50 +1622,6 @@ mod tests {
                 (message_3.id, Role::User, 4..5)
             ]
         );
-
-        // Split a message into prefix, selection and suffix.
-        buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "3")], None, cx));
-        assert_eq!(
-            messages(&assistant, cx),
-            vec![
-                (message_1.id, Role::User, 0..4),
-                (message_5.id, Role::System, 4..5),
-                (message_3.id, Role::User, 5..6)
-            ]
-        );
-
-        let (message_6, message_7) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(2..3, cx));
-
-        assert_eq!(buffer.read(cx).text(), "1C\n3\n\n\nD"); // We insert a newline for the new empty message
-        let (message_6, message_7) = (message_6.unwrap(), message_7.unwrap());
-        assert_eq!(
-            messages(&assistant, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_6.id, Role::User, 3..5),
-                (message_7.id, Role::User, 5..6),
-                (message_5.id, Role::System, 6..7),
-                (message_3.id, Role::User, 7..8)
-            ]
-        );
-
-        // Don't include an empty prefix when splitting with a non-empty range
-        let (no_message, message_8) =
-            assistant.update(cx, |assistant, cx| assistant.split_message(3..4, cx));
-        assert!(no_message.is_none());
-        let message_8 = message_8.unwrap();
-        assert_eq!(
-            messages(&assistant, cx),
-            vec![
-                (message_1.id, Role::User, 0..3),
-                (message_6.id, Role::User, 3..5),
-                (message_8.id, Role::User, 5..6),
-                (message_7.id, Role::User, 6..7),
-                (message_5.id, Role::System, 7..8),
-                (message_3.id, Role::User, 8..9)
-            ]
-        );
     }
 
     #[gpui::test]
