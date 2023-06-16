@@ -1031,7 +1031,7 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) = WrapMap::new(tab_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
@@ -1277,7 +1277,7 @@ mod tests {
 
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tab_snapshot, font_id, font_size, wrap_width, cx);

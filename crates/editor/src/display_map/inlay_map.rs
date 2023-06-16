@@ -108,6 +108,22 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct InlayPoint(pub Point);
 
+impl Add for InlayPoint {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Sub for InlayPoint {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.lines;
@@ -142,6 +158,23 @@ pub struct InlayChunks<'a> {
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_style: Option<HighlightStyle>,
+    snapshot: &'a InlaySnapshot,
+}
+
+impl<'a> InlayChunks<'a> {
+    pub fn seek(&mut self, offset: InlayOffset) {
+        self.transforms.seek(&offset, Bias::Right, &());
+
+        let buffer_offset = self.snapshot.to_buffer_offset(offset);
+        self.buffer_chunks.seek(buffer_offset);
+        self.inlay_chunks = None;
+        self.buffer_chunk = None;
+        self.output_offset = offset;
+    }
+
+    pub fn offset(&self) -> InlayOffset {
+        self.output_offset
+    }
 }
 
 impl<'a> Iterator for InlayChunks<'a> {
@@ -470,7 +503,7 @@ impl InlayMap {
 
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
-        let mut snapshot = self.snapshot.lock();
+        let snapshot = self.snapshot.lock();
         for _ in 0..rng.gen_range(1..=5) {
             if self.inlays.is_empty() || rng.gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
@@ -768,6 +801,7 @@ impl InlaySnapshot {
             output_offset: range.start,
             max_output_offset: range.end,
             highlight_style: inlay_highlight_style,
+            snapshot: self,
         }
     }
 
@@ -1079,7 +1113,7 @@ mod tests {
                 );
 
                 assert_eq!(
-                    inlay_snapshot.text_summary_for_range(start..end),
+                    inlay_snapshot.text_summary_for_range(InlayOffset(start)..InlayOffset(end)),
                     expected_text.slice(start..end).summary()
                 );
             }
