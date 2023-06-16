@@ -13,11 +13,12 @@ use gpui::{
     scene::MouseClick,
     Action, Element, EventContext, MouseState, View, ViewContext,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{ContainedText, Interactive};
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct CheckboxStyle {
     pub icon: SvgStyle,
     pub label: ContainedText,
@@ -93,14 +94,14 @@ where
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct SvgStyle {
     pub color: Color,
     pub asset: String,
     pub dimensions: Dimensions,
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct Dimensions {
     pub width: f32,
     pub height: f32,
@@ -120,7 +121,7 @@ pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
         .with_height(style.dimensions.height)
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct IconStyle {
     icon: SvgStyle,
     container: ContainerStyle,
@@ -182,7 +183,7 @@ where
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
-#[derive(Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default, JsonSchema)]
 pub struct ModalStyle {
     close_icon: Interactive<IconStyle>,
     container: ContainerStyle,
