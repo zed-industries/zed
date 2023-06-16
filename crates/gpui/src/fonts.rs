@@ -15,11 +15,8 @@ use schemars::JsonSchema;
 use serde::{de, Deserialize, Serialize};
 use serde_json::Value;
 use std::{cell::RefCell, sync::Arc};
-use ts_rs::TS;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[derive(TS)]
-#[ts(export, export_to = "theme/types/")]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, JsonSchema)]
 pub struct FontId(pub usize);
 
 pub type GlyphId = u32;
@@ -62,22 +59,52 @@ pub struct Features {
     pub zero: Option<bool>,
 }
 
-#[derive(Clone, Debug)]
-#[derive(TS)]
-#[ts(export, export_to = "theme/types/")]
+#[derive(Clone, Debug, JsonSchema)]
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
     pub font_family_id: FamilyId,
     pub font_id: FontId,
     pub font_size: f32,
+    #[serde(with = "PropertiesDef")]
     pub font_properties: Properties,
     pub underline: Underline,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(JsonSchema)]
+#[serde(remote = "Properties")]
+pub struct PropertiesDef {
+    /// The font style, as defined in CSS.
+    pub style: StyleDef,
+    /// The font weight, as defined in CSS.
+    pub weight: WeightDef,
+    /// The font stretchiness, as defined in CSS.
+    pub stretch: StretchDef,
+}
+
+#[derive(JsonSchema)]
+#[serde(remote = "Style")]
+pub enum StyleDef {
+    /// A face that is neither italic not obliqued.
+    Normal,
+    /// A form that is generally cursive in nature.
+    Italic,
+    /// A typically-sloped version of the regular face.
+    Oblique,
+}
+
+#[derive(JsonSchema)]
+#[serde(remote = "Weight")]
+pub struct WeightDef(pub f32);
+
+#[derive(JsonSchema)]
+#[serde(remote = "Stretch")]
+pub struct StretchDef(pub f32);
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, JsonSchema)]
 pub struct HighlightStyle {
     pub color: Option<Color>,
+    #[serde(with = "WeightDef")]
     pub weight: Option<Weight>,
     pub italic: Option<bool>,
     pub underline: Option<Underline>,
@@ -86,14 +113,17 @@ pub struct HighlightStyle {
 
 impl Eq for HighlightStyle {}
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-#[derive(TS)]
-#[ts(export, export_to = "theme/types/")]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
 pub struct Underline {
     pub color: Option<Color>,
+    #[serde(with = "OrderedFloatDef::<f32>")]
     pub thickness: OrderedFloat<f32>,
     pub squiggly: bool,
 }
+
+#[derive(JsonSchema)]
+#[serde(remote = "OrderedFloat")]
+pub struct OrderedFloatDef<T>(pub T);
 
 #[allow(non_camel_case_types)]
 #[derive(Deserialize)]

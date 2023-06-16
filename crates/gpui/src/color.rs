@@ -6,17 +6,19 @@ use std::{
 
 use crate::json::ToJson;
 use pathfinder_color::{ColorF, ColorU};
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::{
     de::{self, Unexpected},
     Deserialize, Deserializer,
 };
 use serde_json::json;
-use ts_rs::TS;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
-#[derive(TS)]
-#[ts(export, export_to = "theme/types/")]
 pub struct Color(ColorU);
 
 impl Color {
@@ -128,5 +130,18 @@ impl DerefMut for Color {
 impl fmt::Debug for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl JsonSchema for Color {
+    fn schema_name() -> String {
+        "Color".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        schema.instance_type = Some(InstanceType::Integer.into());
+        schema.format = Some("uint".to_owned());
+        Schema::Object(schema)
     }
 }

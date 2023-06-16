@@ -12,6 +12,11 @@ use crate::{
     scene::{self, Border, CursorRegion, Quad},
     AnyElement, Element, LayoutContext, SceneBuilder, SizeConstraint, View, ViewContext,
 };
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -329,6 +334,19 @@ impl ToJson for ContainerStyle {
             "corner_radius": self.corner_radius,
             "shadow": self.shadow.to_json(),
         })
+    }
+}
+
+impl JsonSchema for ContainerStyle {
+    fn schema_name() -> String {
+        "ContainerStyle".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        let mut schema = SchemaObject::default();
+        schema.instance_type = Some(InstanceType::Integer.into());
+        schema.format = Some("uint".to_owned());
+        Schema::Object(schema)
     }
 }
 
