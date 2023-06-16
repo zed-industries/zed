@@ -5413,10 +5413,7 @@ impl Project {
         if self.is_local() {
             let worktree = self.worktree_for_id(worktree_id, cx)?;
             worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .mark_entry_expanded(entry_id, cx);
+                worktree.as_local_mut().unwrap().expand_dir(entry_id, cx);
             });
         } else if let Some(project_id) = self.remote_id() {
             cx.background()
@@ -5742,10 +5739,7 @@ impl Project {
             .read_with(&cx, |this, cx| this.worktree_for_entry(entry_id, cx))
             .ok_or_else(|| anyhow!("invalid request"))?;
         worktree.update(&mut cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .mark_entry_expanded(entry_id, cx)
+            worktree.as_local_mut().unwrap().expand_dir(entry_id, cx)
         });
         Ok(proto::Ack {})
     }

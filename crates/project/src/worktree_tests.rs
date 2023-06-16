@@ -8,6 +8,7 @@ use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
 use gpui::{executor::Deterministic, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
+use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use serde_json::json;
@@ -154,7 +155,17 @@ async fn test_descendent_entries(cx: &mut TestAppContext) {
                 .collect::<Vec<_>>(),
             vec![Path::new("g"), Path::new("g/h"),]
         );
+    });
 
+    // Expand gitignored directory.
+    tree.update(cx, |tree, cx| {
+        let tree = tree.as_local_mut().unwrap();
+        tree.expand_dir(tree.entry_for_path("i/j").unwrap().id, cx)
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.descendent_entries(false, false, Path::new("i"))
                 .map(|entry| entry.path.as_ref())

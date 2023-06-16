@@ -91,6 +91,7 @@ enum ScanRequest {
     },
     ExpandDir {
         entry_id: ProjectEntryId,
+        done: barrier::Sender,
     },
 }
 
@@ -1149,14 +1150,16 @@ impl LocalWorktree {
         }))
     }
 
-    pub fn mark_entry_expanded(
+    pub fn expand_dir(
         &mut self,
         entry_id: ProjectEntryId,
         _cx: &mut ModelContext<Worktree>,
-    ) {
+    ) -> barrier::Receiver {
+        let (tx, rx) = barrier::channel();
         self.scan_requests_tx
-            .try_send(ScanRequest::ExpandDir { entry_id })
+            .try_send(ScanRequest::ExpandDir { entry_id, done: tx })
             .ok();
+        rx
     }
 
     fn refresh_entry(
@@ -2963,7 +2966,7 @@ impl BackgroundScanner {
                 self.reload_entries_for_paths(paths, None).await;
                 self.send_status_update(false, Some(done))
             }
-            ScanRequest::ExpandDir { entry_id } => {
+            ScanRequest::ExpandDir { entry_id, done } => {
                 let path = {
                     let mut state = self.state.lock();
                     state.expanded_dirs.insert(entry_id);
@@ -2978,7 +2981,7 @@ impl BackgroundScanner {
                         .await;
                     if let Some(job) = scan_job_rx.next().await {
                         self.scan_dir(&job).await.log_err();
-                        self.send_status_update(false, None);
+                        self.send_status_update(false, Some(done));
                     }
                 }
                 true
