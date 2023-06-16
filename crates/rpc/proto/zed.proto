@@ -1011,7 +1011,8 @@ message Entry {
     Timestamp mtime = 5;
     bool is_symlink = 6;
     bool is_ignored = 7;
-    optional GitStatus git_status = 8;
+    bool is_external = 8;
+    optional GitStatus git_status = 9;
 }
 
 message RepositoryEntry {

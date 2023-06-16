@@ -267,7 +267,7 @@ async fn test_circular_symlinks(executor: Arc<Deterministic>, cx: &mut TestAppCo
     });
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test]
 async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -289,14 +289,17 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 }
             },
             "dir3": {
+                "deps": {},
                 "src": {
                     "e.rs": "",
                     "f.rs": "",
-                }
+                },
             }
         }),
     )
     .await;
+
+    // These symlinks point to directories outside of the worktree's root, dir1.
     fs.insert_symlink("/root/dir1/deps/dep-dir2", "../../dir2".into())
         .await;
     fs.insert_symlink("/root/dir1/deps/dep-dir3", "../../dir3".into())
@@ -317,19 +320,79 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
+    // The symlinked directories are not scanned by default.
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(false)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
-                Path::new(""),
-                Path::new("deps"),
-                Path::new("deps/dep-dir2"),
-                Path::new("deps/dep-dir3"),
-                Path::new("src"),
-                Path::new("src/a.rs"),
-                Path::new("src/b.rs"),
+                (Path::new(""), false),
+                (Path::new("deps"), false),
+                (Path::new("deps/dep-dir2"), true),
+                (Path::new("deps/dep-dir3"), true),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
+            ]
+        );
+    });
+
+    // Expand one of the symlinked directories.
+    tree.update(cx, |tree, cx| {
+        let tree = tree.as_local_mut().unwrap();
+        tree.expand_dir(tree.entry_for_path("deps/dep-dir3").unwrap().id, cx)
+    })
+    .recv()
+    .await;
+
+    // The expanded directory's contents are loaded. Subdirectories are
+    // not scanned yet.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(false)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (Path::new(""), false),
+                (Path::new("deps"), false),
+                (Path::new("deps/dep-dir2"), true),
+                (Path::new("deps/dep-dir3"), true),
+                (Path::new("deps/dep-dir3/deps"), true),
+                (Path::new("deps/dep-dir3/src"), true),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
+            ]
+        );
+    });
+
+    // Expand a subdirectory of one of the symlinked directories.
+    tree.update(cx, |tree, cx| {
+        let tree = tree.as_local_mut().unwrap();
+        tree.expand_dir(tree.entry_for_path("deps/dep-dir3/src").unwrap().id, cx)
+    })
+    .recv()
+    .await;
+
+    // The expanded subdirectory's contents are loaded.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(false)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (Path::new(""), false),
+                (Path::new("deps"), false),
+                (Path::new("deps/dep-dir2"), true),
+                (Path::new("deps/dep-dir3"), true),
+                (Path::new("deps/dep-dir3/deps"), true),
+                (Path::new("deps/dep-dir3/src"), true),
+                (Path::new("deps/dep-dir3/src/e.rs"), true),
+                (Path::new("deps/dep-dir3/src/f.rs"), true),
+                (Path::new("src"), false),
+                (Path::new("src/a.rs"), false),
+                (Path::new("src/b.rs"), false),
             ]
         );
     });

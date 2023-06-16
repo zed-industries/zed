@@ -1022,6 +1022,7 @@ impl ProjectPanel {
                         mtime: entry.mtime,
                         is_symlink: false,
                         is_ignored: false,
+                        is_external: false,
                         git_status: entry.git_status,
                     });
                 }
