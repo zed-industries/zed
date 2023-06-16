@@ -3338,7 +3338,19 @@ impl BackgroundScanner {
         let metadata = futures::future::join_all(
             abs_paths
                 .iter()
-                .map(|abs_path| self.fs.metadata(&abs_path))
+                .map(|abs_path| async move {
+                    let metadata = self.fs.metadata(&abs_path).await?;
+                    anyhow::Ok(if let Some(metadata) = metadata {
+                        let canonical_path = if metadata.is_symlink {
+                            self.fs.canonicalize(&abs_path).await?
+                        } else {
+                            abs_path.clone()
+                        };
+                        Some((metadata, canonical_path))
+                    } else {
+                        None
+                    })
+                })
                 .collect::<Vec<_>>(),
         )
         .await;
@@ -3376,7 +3388,7 @@ impl BackgroundScanner {
             let abs_path: Arc<Path> = root_abs_path.join(&path).into();
 
             match metadata {
-                Ok(Some(metadata)) => {
+                Ok(Some((metadata, canonical_path))) => {
                     let ignore_stack = state
                         .snapshot
                         .ignore_stack_for_abs_path(&abs_path, metadata.is_dir);
@@ -3411,7 +3423,7 @@ impl BackgroundScanner {
                     if let Some(scan_queue_tx) = &scan_queue_tx {
                         let mut ancestor_inodes = state.snapshot.ancestor_inodes_for_path(&path);
                         if metadata.is_dir && !ancestor_inodes.contains(&metadata.inode) {
-                            let is_outside_root = !abs_path.starts_with(&root_canonical_path);
+                            let is_outside_root = !canonical_path.starts_with(&root_canonical_path);
                             ancestor_inodes.insert(metadata.inode);
                             smol::block_on(scan_queue_tx.send(ScanJob {
                                 abs_path,
