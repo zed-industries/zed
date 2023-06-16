@@ -1119,7 +1119,6 @@ mod tests {
         );
         log::info!("Wrapped text: {:?}", actual_text);
 
-        let mut next_inlay_id = 0;
         let mut edits = Vec::new();
         for _i in 0..operations {
             log::info!("{} ==============================================", _i);
@@ -1147,8 +1146,7 @@ mod tests {
                     }
                 }
                 40..=59 => {
-                    let (inlay_snapshot, inlay_edits) =
-                        inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                    let (inlay_snapshot, inlay_edits) = inlay_map.randomly_mutate(&mut rng);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tabs_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);

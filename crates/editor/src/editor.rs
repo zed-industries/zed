@@ -2709,13 +2709,13 @@ impl Editor {
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(InlayId, Anchor, project::InlayHint)>,
+        to_insert: Vec<(Anchor, project::InlayHint)>,
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.buffer.read(cx).read(cx);
-        let new_inlays: Vec<(InlayId, InlayProperties<String>)> = to_insert
+        let new_inlays = to_insert
             .into_iter()
-            .map(|(inlay_id, hint_anchor, hint)| {
+            .map(|(hint_anchor, hint)| {
                 let mut text = hint.text();
                 // TODO kb styling instead?
                 if hint.padding_right {
@@ -2725,13 +2725,10 @@ impl Editor {
                     text.insert(0, ' ');
                 }
 
-                (
-                    inlay_id,
-                    InlayProperties {
-                        position: hint_anchor.bias_left(&buffer),
-                        text,
-                    },
-                )
+                InlayProperties {
+                    position: hint_anchor.bias_left(&buffer),
+                    text,
+                }
             })
             .collect();
         drop(buffer);
@@ -3485,15 +3482,10 @@ impl Editor {
                 to_remove.push(suggestion.id);
             }
 
-            let to_insert = vec![(
-                // TODO kb check how can I get the unique id for the suggestion
-                // Move the generation of the id inside the map
-                InlayId(usize::MAX),
-                InlayProperties {
-                    position: cursor,
-                    text: text.clone(),
-                },
-            )];
+            let to_insert = vec![InlayProperties {
+                position: cursor,
+                text: text.clone(),
+            }];
             self.display_map.update(cx, move |map, cx| {
                 map.splice_inlays(to_remove, to_insert, cx)
             });
@@ -7664,7 +7656,6 @@ fn inlay_hint_query(
     cx: &mut ViewContext<'_, '_, Editor>,
 ) -> Option<InlayHintQuery> {
     let buffer = buffer.read(cx);
-    let buffer_snapshot = buffer.snapshot();
     let max_buffer_len = buffer.len();
     let visible_offset_range_len = excerpt_visible_offset_range.len();
 
@@ -7677,7 +7668,6 @@ fn inlay_hint_query(
             .saturating_add(visible_offset_range_len),
     );
     Some(InlayHintQuery {
-        buffer_path: buffer_snapshot.resolve_file_path(cx, true)?,
         buffer_id: buffer.remote_id(),
         buffer_version: buffer.version().clone(),
         excerpt_id,

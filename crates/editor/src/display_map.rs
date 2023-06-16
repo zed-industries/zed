@@ -246,11 +246,11 @@ impl DisplayMap {
     pub fn splice_inlays<T: Into<Rope>>(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(InlayId, InlayProperties<T>)>,
+        to_insert: Vec<InlayProperties<T>>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Vec<InlayId> {
         if to_remove.is_empty() && to_insert.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -264,13 +264,14 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
 
-        let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
+        let (snapshot, edits, new_inlay_ids) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+        new_inlay_ids
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
