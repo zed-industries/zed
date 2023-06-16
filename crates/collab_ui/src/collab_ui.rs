@@ -15,7 +15,7 @@ use gpui::{actions, AppContext, Task};
 use std::sync::Arc;
 use workspace::AppState;
 
-actions!(collab, [ToggleScreenSharing]);
+actions!(collab, [ToggleScreenSharing, ToggleMute, ToggleDeafen]);
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_titlebar_item::init(cx);
@@ -27,6 +27,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     sharing_status_indicator::init(cx);
 
     cx.add_global_action(toggle_screen_sharing);
+    cx.add_global_action(toggle_mute);
+    cx.add_global_action(toggle_deafen);
 }
 
 pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
@@ -39,5 +41,27 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
             }
         });
         toggle_screen_sharing.detach_and_log_err(cx);
+    }
+}
+
+pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
+    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        let toggle_mut = room.update(cx, |room, cx| {
+            if room.is_sharing_mic() {
+                room.toggle_mute(cx)
+            } else {
+                room.share_mic(cx)
+            }
+        });
+        toggle_mut.detach_and_log_err(cx);
+    }
+}
+
+pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
+    if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+        let toggle_deafan = room.update(cx, |room, cx| {
+            room.toggle_deafen(cx)
+        });
+        toggle_deafan.detach_and_log_err(cx);
     }
 }

@@ -1143,6 +1143,17 @@ impl Room {
         })
     }
 
+    pub fn toggle_mute(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        // https://docs.livekit.io/client/publish/
+        // Should be acessible from local participant / publication
+        todo!();
+    }
+
+    pub fn toggle_deafen(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        // iterate through publications and mute (?????)
+        todo!();
+    }
+
     pub fn unshare_screen(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
         if self.status.is_offline() {
             return Err(anyhow!("room is offline"));
