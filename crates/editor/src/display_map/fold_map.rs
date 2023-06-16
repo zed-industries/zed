@@ -301,7 +301,7 @@ impl FoldMap {
 
     fn sync(&self, inlay_snapshot: InlaySnapshot, inlay_edits: Vec<InlayEdit>) -> Vec<FoldEdit> {
         let buffer = &inlay_snapshot.buffer;
-        let mut snapshot = self.inlay_snapshot.lock();
+        let snapshot = self.inlay_snapshot.lock();
 
         let mut new_snapshot = snapshot.clone();
         if new_snapshot.version != inlay_snapshot.version {
@@ -315,7 +315,14 @@ impl FoldMap {
         let mut cursor = transforms.cursor::<usize>();
         cursor.seek(&0, Bias::Right, &());
 
-        while let Some(mut edit) = inlay_edits_iter.next() {
+        while let Some(inlay_edit) = inlay_edits_iter.next() {
+            // TODO kb is this right?
+            let mut edit = Edit {
+                old: inlay_snapshot.to_buffer_offset(inlay_edit.old.start)
+                    ..inlay_snapshot.to_buffer_offset(inlay_edit.old.end),
+                new: inlay_snapshot.to_buffer_offset(inlay_edit.new.start)
+                    ..inlay_snapshot.to_buffer_offset(inlay_edit.new.end),
+            };
             new_transforms.append(cursor.slice(&edit.old.start, Bias::Left, &()), &());
             edit.new.start -= edit.old.start - cursor.start();
             edit.old.start = *cursor.start();
@@ -327,12 +334,18 @@ impl FoldMap {
             loop {
                 edit.old.end = *cursor.start();
 
-                if let Some(next_edit) = inlay_edits_iter.peek() {
-                    if next_edit.old.start > edit.old.end {
+                if let Some(next_inlay_edit) = inlay_edits_iter.peek() {
+                    if next_inlay_edit.old.start > inlay_snapshot.to_inlay_offset(edit.old.end) {
                         break;
                     }
 
-                    let next_edit = inlay_edits_iter.next().unwrap();
+                    let next_inlay_edit = inlay_edits_iter.next().unwrap();
+                    let next_edit = Edit {
+                        old: inlay_snapshot.to_buffer_offset(next_inlay_edit.old.start)
+                            ..inlay_snapshot.to_buffer_offset(next_inlay_edit.old.end),
+                        new: inlay_snapshot.to_buffer_offset(next_inlay_edit.new.start)
+                            ..inlay_snapshot.to_buffer_offset(next_inlay_edit.new.end),
+                    };
                     delta += next_edit.new.len() as isize - next_edit.old.len() as isize;
 
                     if next_edit.old.end >= edit.old.end {
@@ -347,12 +360,12 @@ impl FoldMap {
 
             edit.new.end = ((edit.new.start + edit.old.len()) as isize + delta) as usize;
 
-            let anchor = buffer.anchor_before(inlay_snapshot.to_buffer_offset(edit.new.start));
+            let anchor = buffer.anchor_before(edit.new.start);
             let mut folds_cursor = self.folds.cursor::<Fold>();
             folds_cursor.seek(&Fold(anchor..Anchor::max()), Bias::Left, &buffer);
 
             let mut folds = iter::from_fn({
-                move || {
+                || {
                     let item = folds_cursor.item().map(|f| {
                         let fold_buffer_start = f.0.start.to_offset(buffer);
                         let fold_buffer_end = f.0.end.to_offset(buffer);
@@ -366,11 +379,13 @@ impl FoldMap {
             })
             .peekable();
 
-            while folds.peek().map_or(false, |fold| fold.start < edit.new.end) {
+            while folds.peek().map_or(false, |fold| {
+                inlay_snapshot.to_buffer_offset(fold.start) < edit.new.end
+            }) {
                 let mut fold = folds.next().unwrap();
                 let sum = new_transforms.summary();
 
-                assert!(fold.start >= sum.input.len);
+                assert!(inlay_snapshot.to_buffer_offset(fold.start) >= sum.input.len);
 
                 while folds
                     .peek()
@@ -382,9 +397,10 @@ impl FoldMap {
                     }
                 }
 
-                if fold.start > sum.input.len {
-                    let text_summary =
-                        buffer.text_summary_for_range::<TextSummary, _>(sum.input.len..fold.start);
+                if inlay_snapshot.to_buffer_offset(fold.start) > sum.input.len {
+                    let text_summary = buffer.text_summary_for_range::<TextSummary, _>(
+                        sum.input.len..inlay_snapshot.to_buffer_offset(fold.start),
+                    );
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
@@ -403,7 +419,10 @@ impl FoldMap {
                         Transform {
                             summary: TransformSummary {
                                 output: TextSummary::from(output_text),
-                                input: buffer.text_summary_for_range(fold.start..fold.end),
+                                input: inlay_snapshot.text_summary_for_range(
+                                    inlay_snapshot.to_point(fold.start)
+                                        ..inlay_snapshot.to_point(fold.end),
+                                ),
                             },
                             output_text: Some(output_text),
                         },
@@ -414,7 +433,8 @@ impl FoldMap {
 
             let sum = new_transforms.summary();
             if sum.input.len < edit.new.end {
-                let text_summary = buffer.text_summary_for_range(sum.input.len..edit.new.end);
+                let text_summary: TextSummary =
+                    buffer.text_summary_for_range(sum.input.len..edit.new.end);
                 new_transforms.push(
                     Transform {
                         summary: TransformSummary {
@@ -450,7 +470,13 @@ impl FoldMap {
             let mut old_transforms = transforms.cursor::<(usize, FoldOffset)>();
             let mut new_transforms = new_transforms.cursor::<(usize, FoldOffset)>();
 
-            for mut edit in inlay_edits {
+            for inlay_edit in inlay_edits {
+                let mut edit = Edit {
+                    old: inlay_snapshot.to_buffer_offset(inlay_edit.old.start)
+                        ..inlay_snapshot.to_buffer_offset(inlay_edit.old.end),
+                    new: inlay_snapshot.to_buffer_offset(inlay_edit.new.start)
+                        ..inlay_snapshot.to_buffer_offset(inlay_edit.new.end),
+                };
                 old_transforms.seek(&edit.old.start, Bias::Left, &());
                 if old_transforms.item().map_or(false, |t| t.is_fold()) {
                     edit.old.start = old_transforms.start().0;
@@ -580,10 +606,11 @@ impl FoldSnapshot {
             }
         } else {
             let overshoot = InlayPoint(point.0 - cursor.start().0 .0);
-            FoldPoint(cmp::min(
-                cursor.start().1 .0 + overshoot,
-                cursor.end(&()).1 .0,
-            ))
+            // TODO kb is this right?
+            cmp::min(
+                FoldPoint(cursor.start().1 .0 + overshoot.0),
+                cursor.end(&()).1,
+            )
         }
     }
 
@@ -674,6 +701,7 @@ impl FoldSnapshot {
         range: Range<FoldOffset>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        // TODO kb need to call inlay chunks and style them
         inlay_highlights: Option<HighlightStyle>,
     ) -> FoldChunks<'a> {
         let mut highlight_endpoints = Vec::new();
@@ -1355,7 +1383,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
 
         {
             let mut map = FoldMap::new(inlay_snapshot.clone()).0;
@@ -1529,8 +1557,9 @@ mod tests {
                 }),
             };
 
-            let (inlay_snapshot, inlay_edits) = inlay_map.sync(buffer_snapshot, buffer_edits);
-            let (snapshot, edits) = map.read(inlay_snapshot, inlay_edits);
+            let (inlay_snapshot, inlay_edits) =
+                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (snapshot, edits) = map.read(inlay_snapshot.clone(), inlay_edits);
             snapshot_edits.push((snapshot.clone(), edits));
 
             let mut expected_text: String = buffer_snapshot.text().to_string();

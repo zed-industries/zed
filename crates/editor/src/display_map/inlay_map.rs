@@ -282,8 +282,7 @@ impl InlayMap {
         } else {
             let mut inlay_edits = Patch::default();
             let mut new_transforms = SumTree::new();
-            // TODO kb something is wrong with how we store it?
-            let mut transforms = self.transforms;
+            let transforms = &mut self.transforms;
             let mut cursor = transforms.cursor::<(usize, InlayOffset)>();
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
@@ -377,13 +376,14 @@ impl InlayMap {
             }
 
             let new_snapshot = InlaySnapshot {
-                buffer: buffer_snapshot,
+                buffer: buffer_snapshot.clone(),
                 transforms: new_transforms,
                 version: post_inc(&mut self.version),
             };
             new_snapshot.check_invariants();
             drop(cursor);
 
+            // TODO kb remove the 2nd buffer here, leave it in snapshot only?
             *buffer = buffer_snapshot.clone();
             (new_snapshot, inlay_edits.into_inner())
         }
@@ -434,7 +434,10 @@ impl InlayMap {
                 new: offset..offset,
             })
             .collect();
-        self.sync(buffer_snapshot.clone(), buffer_edits)
+        // TODO kb fugly
+        let buffer_snapshot_to_sync = buffer_snapshot.clone();
+        drop(buffer_snapshot);
+        self.sync(buffer_snapshot_to_sync, buffer_edits)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -567,11 +570,14 @@ impl InlaySnapshot {
 
     pub fn to_inlay_offset(&self, offset: usize) -> InlayOffset {
         let mut cursor = self.transforms.cursor::<(Point, InlayOffset)>();
-        cursor.seek(&offset, Bias::Left, &());
+        // TODO kb is this right?
+        let buffer_point = self.buffer.offset_to_point(offset);
+        cursor.seek(&buffer_point, Bias::Left, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let overshoot = offset - cursor.start().0;
-                InlayOffset(cursor.start().1 .0 + overshoot)
+                let overshoot = buffer_point - cursor.start().0;
+                let overshoot_offset = self.to_inlay_offset(self.buffer.point_to_offset(overshoot));
+                cursor.start().1 + overshoot_offset
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
             None => self.len(),
@@ -635,7 +641,7 @@ impl InlaySnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.transforms.summary().output
+        self.transforms.summary().output.clone()
     }
 
     pub fn text_summary_for_range(&self, range: Range<InlayPoint>) -> TextSummary {
