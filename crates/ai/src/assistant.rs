@@ -736,8 +736,13 @@ impl Assistant {
             }
 
             let role = metadata.role;
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.edit([(range.end..range.end, "\n")], None, cx)
+            let is_newline = self.buffer.update(cx, |buffer, cx| {
+                if buffer.chars_at(range.end).next() != Some('\n') {
+                    buffer.edit([(range.end..range.end, "\n")], None, cx);
+                    false
+                } else {
+                    true
+                }
             });
             let suffix = Message {
                 id: MessageId(post_inc(&mut self.next_message_id.0)),
@@ -752,7 +757,9 @@ impl Assistant {
                     error: None,
                 },
             );
-
+            if is_newline {
+                cx.emit(AssistantEvent::MessagesEdited);
+            }
             if range.start == range.end || range.start == message_range.start {
                 (None, Some(suffix))
             } else {
