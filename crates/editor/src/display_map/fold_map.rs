@@ -622,22 +622,31 @@ impl FoldSnapshot {
     }
 
     pub fn is_line_folded(&self, buffer_row: u32) -> bool {
-        let inlay_point = self
+        let mut inlay_point = self
             .inlay_snapshot
             .to_inlay_point(Point::new(buffer_row, 0));
         let mut cursor = self.transforms.cursor::<InlayPoint>();
         cursor.seek(&inlay_point, Bias::Right, &());
-        while let Some(transform) = cursor.item() {
-            if transform.output_text.is_some() {
-                return true;
+        loop {
+            match cursor.item() {
+                Some(transform) => {
+                    let buffer_point = self.inlay_snapshot.to_buffer_point(inlay_point);
+                    if buffer_point.row != buffer_row {
+                        return false;
+                    } else if transform.output_text.is_some() {
+                        return true;
+                    }
+                }
+                None => return false,
             }
+
             if cursor.end(&()).row() == inlay_point.row() {
-                cursor.next(&())
+                cursor.next(&());
             } else {
-                break;
+                inlay_point.0 += Point::new(1, 0);
+                cursor.seek(&inlay_point, Bias::Right, &());
             }
         }
-        false
     }
 
     pub fn chunks<'a>(
@@ -1491,6 +1500,8 @@ mod tests {
 
             let (inlay_snapshot, new_inlay_edits) =
                 inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            log::info!("inlay text {:?}", inlay_snapshot.text());
+
             let inlay_edits = Patch::new(inlay_edits)
                 .compose(new_inlay_edits)
                 .into_inner();
@@ -1511,27 +1522,31 @@ mod tests {
                 expected_text.matches('\n').count() + 1
             );
 
-            // let mut prev_row = 0;
-            // let mut expected_buffer_rows = Vec::new();
-            // for fold_range in map.merged_fold_ranges().into_iter() {
-            //     let fold_start = buffer_snapshot.offset_to_point(fold_range.start).row;
-            //     let fold_end = buffer_snapshot.offset_to_point(fold_range.end).row;
-            //     expected_buffer_rows.extend(
-            //         buffer_snapshot
-            //             .buffer_rows(prev_row)
-            //             .take((1 + fold_start - prev_row) as usize),
-            //     );
-            //     prev_row = 1 + fold_end;
-            // }
-            // expected_buffer_rows.extend(buffer_snapshot.buffer_rows(prev_row));
+            let mut prev_row = 0;
+            let mut expected_buffer_rows = Vec::new();
+            for fold_range in map.merged_fold_ranges().into_iter() {
+                let fold_start = inlay_snapshot
+                    .to_point(inlay_snapshot.to_inlay_offset(fold_range.start))
+                    .row();
+                let fold_end = inlay_snapshot
+                    .to_point(inlay_snapshot.to_inlay_offset(fold_range.end))
+                    .row();
+                expected_buffer_rows.extend(
+                    inlay_snapshot
+                        .buffer_rows(prev_row)
+                        .take((1 + fold_start - prev_row) as usize),
+                );
+                prev_row = 1 + fold_end;
+            }
+            expected_buffer_rows.extend(inlay_snapshot.buffer_rows(prev_row));
 
-            // assert_eq!(
-            //     expected_buffer_rows.len(),
-            //     expected_text.matches('\n').count() + 1,
-            //     "wrong expected buffer rows {:?}. text: {:?}",
-            //     expected_buffer_rows,
-            //     expected_text
-            // );
+            assert_eq!(
+                expected_buffer_rows.len(),
+                expected_text.matches('\n').count() + 1,
+                "wrong expected buffer rows {:?}. text: {:?}",
+                expected_buffer_rows,
+                expected_text
+            );
 
             for (output_row, line) in expected_text.lines().enumerate() {
                 let line_len = snapshot.line_len(output_row as u32);
@@ -1609,28 +1624,43 @@ mod tests {
                 );
             }
 
-            // let mut fold_row = 0;
-            // while fold_row < expected_buffer_rows.len() as u32 {
-            //     fold_row = snapshot
-            //         .clip_point(FoldPoint::new(fold_row, 0), Bias::Right)
-            //         .row();
-            //     assert_eq!(
-            //         snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
-            //         expected_buffer_rows[(fold_row as usize)..],
-            //         "wrong buffer rows starting at fold row {}",
-            //         fold_row,
-            //     );
-            //     fold_row += 1;
-            // }
+            let mut fold_row = 0;
+            while fold_row < expected_buffer_rows.len() as u32 {
+                assert_eq!(
+                    snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
+                    expected_buffer_rows[(fold_row as usize)..],
+                    "wrong buffer rows starting at fold row {}",
+                    fold_row,
+                );
+                fold_row += 1;
+            }
 
-            // let fold_start_rows = map
-            //     .merged_fold_ranges()
-            //     .iter()
-            //     .map(|range| range.start.to_point(&buffer_snapshot).row)
-            //     .collect::<HashSet<_>>();
-            // for row in fold_start_rows {
-            //     assert!(snapshot.is_line_folded(row));
-            // }
+            let folded_buffer_rows = map
+                .merged_fold_ranges()
+                .iter()
+                .flat_map(|range| {
+                    let start_row = range.start.to_point(&buffer_snapshot).row;
+                    let end = range.end.to_point(&buffer_snapshot);
+                    if end.column == 0 {
+                        start_row..end.row
+                    } else {
+                        start_row..end.row + 1
+                    }
+                })
+                .collect::<HashSet<_>>();
+            for row in 0..=buffer_snapshot.max_point().row {
+                assert_eq!(
+                    snapshot.is_line_folded(row),
+                    folded_buffer_rows.contains(&row),
+                    "expected buffer row {}{} to be folded",
+                    row,
+                    if folded_buffer_rows.contains(&row) {
+                        ""
+                    } else {
+                        " not"
+                    }
+                );
+            }
 
             for _ in 0..5 {
                 let end =
