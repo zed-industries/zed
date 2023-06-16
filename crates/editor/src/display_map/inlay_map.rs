@@ -9,7 +9,7 @@ use language::{Chunk, Edit, Point, Rope, TextSummary};
 use parking_lot::Mutex;
 use std::{
     cmp,
-    ops::{Add, AddAssign, Range, Sub},
+    ops::{Add, AddAssign, Range, Sub, SubAssign},
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
@@ -93,6 +93,12 @@ impl AddAssign for InlayOffset {
     }
 }
 
+impl SubAssign for InlayOffset {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.len;
@@ -125,6 +131,7 @@ pub struct InlayBufferRows<'a> {
     transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
     buffer_rows: MultiBufferRows<'a>,
     inlay_row: u32,
+    max_buffer_row: u32,
 }
 
 pub struct InlayChunks<'a> {
@@ -190,6 +197,28 @@ impl<'a> Iterator for InlayChunks<'a> {
         }
 
         Some(chunk)
+    }
+}
+
+impl<'a> InlayBufferRows<'a> {
+    pub fn seek(&mut self, row: u32) {
+        let inlay_point = InlayPoint::new(row, 0);
+        self.transforms.seek(&inlay_point, Bias::Left, &());
+
+        let mut buffer_point = self.transforms.start().1;
+        let buffer_row = if row == 0 {
+            0
+        } else {
+            match self.transforms.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    buffer_point += inlay_point.0 - self.transforms.start().0 .0;
+                    buffer_point.row
+                }
+                _ => cmp::min(buffer_point.row + 1, self.max_buffer_row),
+            }
+        };
+        self.inlay_row = inlay_point.row();
+        self.buffer_rows.seek(buffer_row);
     }
 }
 
@@ -632,10 +661,10 @@ impl InlaySnapshot {
         self.transforms.summary().output.clone()
     }
 
-    pub fn text_summary_for_range(&self, range: Range<InlayPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>();
+        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
 
         let overshoot = range.start.0 - cursor.start().0 .0;
@@ -649,10 +678,8 @@ impl InlaySnapshot {
                 cursor.next(&());
             }
             Some(Transform::Inlay(inlay)) => {
-                let suffix_start = inlay.text.point_to_offset(overshoot);
-                let suffix_end = inlay.text.point_to_offset(
-                    cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0,
-                );
+                let suffix_start = overshoot;
+                let suffix_end = cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0;
                 summary = inlay.text.cursor(suffix_start).summary(suffix_end);
                 cursor.next(&());
             }
@@ -671,10 +698,10 @@ impl InlaySnapshot {
                     let prefix_end = prefix_start + overshoot;
                     summary += self
                         .buffer
-                        .text_summary_for_range::<TextSummary, Point>(prefix_start..prefix_end);
+                        .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
                 }
                 Some(Transform::Inlay(inlay)) => {
-                    let prefix_end = inlay.text.point_to_offset(overshoot);
+                    let prefix_end = overshoot;
                     summary += inlay.text.cursor(0).summary::<TextSummary>(prefix_end);
                 }
                 None => {}
@@ -689,6 +716,7 @@ impl InlaySnapshot {
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
+        let max_buffer_row = self.buffer.max_point().row;
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
             0
@@ -698,7 +726,7 @@ impl InlaySnapshot {
                     buffer_point += inlay_point.0 - cursor.start().0 .0;
                     buffer_point.row
                 }
-                _ => cmp::min(buffer_point.row + 1, self.buffer.max_point().row),
+                _ => cmp::min(buffer_point.row + 1, max_buffer_row),
             }
         };
 
@@ -706,6 +734,7 @@ impl InlaySnapshot {
             transforms: cursor,
             inlay_row: inlay_point.row(),
             buffer_rows: self.buffer.buffer_rows(buffer_row),
+            max_buffer_row,
         }
     }
 
@@ -1049,10 +1078,8 @@ mod tests {
                     start..end
                 );
 
-                let start_point = InlayPoint(expected_text.offset_to_point(start));
-                let end_point = InlayPoint(expected_text.offset_to_point(end));
                 assert_eq!(
-                    inlay_snapshot.text_summary_for_range(start_point..end_point),
+                    inlay_snapshot.text_summary_for_range(start..end),
                     expected_text.slice(start..end).summary()
                 );
             }
