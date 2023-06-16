@@ -22,7 +22,7 @@ use gpui::{
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use isahc::{http::StatusCode, Request, RequestExt};
-use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, Selection, ToOffset as _};
 use serde::Deserialize;
 use settings::SettingsStore;
 use std::{
@@ -589,7 +589,11 @@ impl Assistant {
         cx.notify();
     }
 
-    fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<(MessageAnchor, MessageAnchor)> {
+    fn assist(
+        &mut self,
+        selection: Selection<usize>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<(MessageAnchor, MessageAnchor)> {
         let request = OpenAIRequest {
             model: self.model.clone(),
             messages: self.open_ai_request_messages(cx),
@@ -598,9 +602,13 @@ impl Assistant {
 
         let api_key = self.api_key.borrow().clone()?;
         let stream = stream_completion(api_key, cx.background().clone(), request);
-        let assistant_message =
-            self.insert_message_after(self.message_anchors.last()?.id, Role::Assistant, cx)?;
+        let assistant_message = self.insert_message_after(
+            self.message_for_offset(selection.head(), cx)?.id,
+            Role::Assistant,
+            cx,
+        )?;
         let user_message = self.insert_message_after(assistant_message.id, Role::User, cx)?;
+
         let task = cx.spawn_weak({
             |this, mut cx| async move {
                 let assistant_message_id = assistant_message.id;
@@ -979,8 +987,9 @@ impl AssistantEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
+        let selection = self.editor.read(cx).selections.newest(cx);
         let user_message = self.assistant.update(cx, |assistant, cx| {
-            let (_, user_message) = assistant.assist(cx)?;
+            let (_, user_message) = assistant.assist(selection, cx)?;
             Some(user_message)
         });
 
