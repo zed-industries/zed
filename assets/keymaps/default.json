@@ -201,7 +201,8 @@
     "bindings": {
       "cmd-enter": "assistant::Assist",
       "cmd->": "assistant::QuoteSelection",
-      "shift-enter": "assistant::Split"
+      "shift-enter": "assistant::Split",
+      "ctrl-r": "assistant::CycleMessageRole"
     }
   },
   {
