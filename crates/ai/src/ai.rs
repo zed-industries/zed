@@ -14,6 +14,13 @@ struct OpenAIRequest {
     stream: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SavedConversation {
+    zed: String,
+    version: String,
+    messages: Vec<RequestMessage>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 struct RequestMessage {
     role: Role,

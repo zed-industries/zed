@@ -1,6 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
-    OpenAIRequest, OpenAIResponseStreamEvent, RequestMessage, Role,
+    OpenAIRequest, OpenAIResponseStreamEvent, RequestMessage, Role, SavedConversation,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -29,11 +29,14 @@ use std::{
     borrow::Cow, cell::RefCell, cmp, fmt::Write, io, iter, ops::Range, rc::Rc, sync::Arc,
     time::Duration,
 };
-use util::{channel::ReleaseChannel, post_inc, truncate_and_trailoff, ResultExt, TryFutureExt};
+use util::{
+    channel::ReleaseChannel, paths::CONVERSATIONS_DIR, post_inc, truncate_and_trailoff, ResultExt,
+    TryFutureExt,
+};
 use workspace::{
     dock::{DockPosition, Panel},
     item::Item,
-    pane, Pane, Workspace,
+    pane, Pane, Save, Workspace,
 };
 
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
@@ -47,7 +50,7 @@ actions!(
         CycleMessageRole,
         QuoteSelection,
         ToggleFocus,
-        ResetKey
+        ResetKey,
     ]
 );
 
@@ -70,6 +73,7 @@ pub fn init(cx: &mut AppContext) {
     );
     cx.add_action(AssistantEditor::assist);
     cx.capture_action(AssistantEditor::cancel_last_assist);
+    cx.capture_action(AssistantEditor::save);
     cx.add_action(AssistantEditor::quote_selection);
     cx.capture_action(AssistantEditor::copy);
     cx.capture_action(AssistantEditor::split);
@@ -215,8 +219,14 @@ impl AssistantPanel {
 
     fn add_context(&mut self, cx: &mut ViewContext<Self>) {
         let focus = self.has_focus(cx);
-        let editor = cx
-            .add_view(|cx| AssistantEditor::new(self.api_key.clone(), self.languages.clone(), cx));
+        let editor = cx.add_view(|cx| {
+            AssistantEditor::new(
+                self.api_key.clone(),
+                self.languages.clone(),
+                self.fs.clone(),
+                cx,
+            )
+        });
         self.subscriptions
             .push(cx.subscribe(&editor, Self::handle_assistant_editor_event));
         self.pane.update(cx, |pane, cx| {
@@ -922,6 +932,33 @@ impl Assistant {
             None
         })
     }
+
+    fn save(&self, fs: Arc<dyn Fs>, cx: &mut ModelContext<Assistant>) -> Task<Result<()>> {
+        let conversation = SavedConversation {
+            zed: "conversation".into(),
+            version: "0.1".into(),
+            messages: self.open_ai_request_messages(cx),
+        };
+
+        let mut path = CONVERSATIONS_DIR.join(self.summary.as_deref().unwrap_or("conversation-1"));
+
+        cx.background().spawn(async move {
+            while fs.is_file(&path).await {
+                let file_name = path.file_name().ok_or_else(|| anyhow!("no filename"))?;
+                let file_name = file_name.to_string_lossy();
+
+                if let Some((prefix, suffix)) = file_name.rsplit_once('-') {
+                    let new_version = suffix.parse::<u32>().ok().unwrap_or(1) + 1;
+                    path.set_file_name(format!("{}-{}", prefix, new_version));
+                };
+            }
+
+            fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
+            fs.atomic_write(path, serde_json::to_string(&conversation).unwrap())
+                .await?;
+            Ok(())
+        })
+    }
 }
 
 struct PendingCompletion {
@@ -941,6 +978,7 @@ struct ScrollPosition {
 
 struct AssistantEditor {
     assistant: ModelHandle<Assistant>,
+    fs: Arc<dyn Fs>,
     editor: ViewHandle<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
@@ -951,6 +989,7 @@ impl AssistantEditor {
     fn new(
         api_key: Rc<RefCell<Option<String>>>,
         language_registry: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let assistant = cx.add_model(|cx| Assistant::new(api_key, language_registry, cx));
@@ -972,6 +1011,7 @@ impl AssistantEditor {
             editor,
             blocks: Default::default(),
             scroll_position: None,
+            fs,
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -1296,6 +1336,12 @@ impl AssistantEditor {
         self.assistant.update(cx, |assistant, cx| {
             let range = self.editor.read(cx).selections.newest::<usize>(cx).range();
             assistant.split_message(range, cx);
+        });
+    }
+
+    fn save(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
+        self.assistant.update(cx, |assistant, cx| {
+            assistant.save(self.fs.clone(), cx).detach_and_log_err(cx);
         });
     }
 
