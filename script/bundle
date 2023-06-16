@@ -23,7 +23,7 @@ done
 export ZED_BUNDLE=true
 export MACOSX_DEPLOYMENT_TARGET=10.15.7
 
-which cargo-bundle > /dev/null || cargo install cargo-bundle --version 0.5.0
+cargo install cargo-bundle --version 0.5.0
 rustup target add wasm32-wasi
 
 # Deal with versions of macOS that don't include libstdc++ headers
