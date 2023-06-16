@@ -4,10 +4,7 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{
-    inlay_cache::{InlayId, InlayProperties},
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
-};
+use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
@@ -30,6 +27,8 @@ pub use block_map::{
     BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
+
+pub use self::inlay_map::{Inlay, InlayId, InlayProperties};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -243,10 +242,14 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+        self.inlay_map.current_inlays()
+    }
+
     pub fn splice_inlays<T: Into<Rope>>(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<InlayProperties<T>>,
+        to_insert: Vec<(Option<InlayId>, InlayProperties<T>)>,
         cx: &mut ModelContext<Self>,
     ) -> Vec<InlayId> {
         if to_remove.is_empty() && to_insert.is_empty() {

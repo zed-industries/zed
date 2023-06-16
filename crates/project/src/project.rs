@@ -37,7 +37,7 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version,
     },
-    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
+    range_from_lsp, range_to_lsp, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
     Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
     Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, OffsetRangeExt,
     Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
@@ -76,6 +76,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
+use text::Anchor;
 use util::{
     debug_panic, defer, http::HttpClient, merge_json_value_into,
     paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
@@ -330,7 +331,7 @@ pub struct Location {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InlayHint {
     pub buffer_id: u64,
-    pub position: Anchor,
+    pub position: language::Anchor,
     pub label: InlayHintLabel,
     pub kind: Option<InlayHintKind>,
     pub padding_left: bool,

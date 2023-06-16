@@ -1,7 +1,6 @@
 use crate::{
-    inlay_cache::{Inlay, InlayId, InlayProperties},
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
-    MultiBufferSnapshot, ToOffset,
+    Anchor, MultiBufferSnapshot, ToOffset,
 };
 use collections::{BTreeSet, HashMap};
 use gpui::fonts::HighlightStyle;
@@ -33,6 +32,22 @@ pub struct InlaySnapshot {
 enum Transform {
     Isomorphic(TextSummary),
     Inlay(Inlay),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InlayId(usize);
+
+#[derive(Debug, Clone)]
+pub struct Inlay {
+    pub id: InlayId,
+    pub position: Anchor,
+    pub text: text::Rope,
+}
+
+#[derive(Debug, Clone)]
+pub struct InlayProperties<T> {
+    pub position: Anchor,
+    pub text: T,
 }
 
 impl sum_tree::Item for Transform {
@@ -446,7 +461,7 @@ impl InlayMap {
     pub fn splice<T: Into<Rope>>(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<InlayProperties<T>>,
+        to_insert: Vec<(Option<InlayId>, InlayProperties<T>)>,
     ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
         let snapshot = self.snapshot.lock();
         let mut edits = BTreeSet::new();
@@ -460,13 +475,15 @@ impl InlayMap {
         }
 
         let mut new_inlay_ids = Vec::with_capacity(to_insert.len());
-        for properties in to_insert {
+        for (existing_id, properties) in to_insert {
             let inlay = Inlay {
-                id: InlayId(post_inc(&mut self.next_inlay_id)),
+                id: existing_id.unwrap_or_else(|| InlayId(post_inc(&mut self.next_inlay_id))),
                 position: properties.position,
                 text: properties.text.into(),
             };
-            new_inlay_ids.push(inlay.id);
+            if existing_id.is_none() {
+                new_inlay_ids.push(inlay.id);
+            }
             self.inlays_by_id.insert(inlay.id, inlay.clone());
             match self
                 .inlays
@@ -494,6 +511,10 @@ impl InlayMap {
         (snapshot, edits, new_inlay_ids)
     }
 
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+        self.inlays.iter()
+    }
+
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
@@ -519,10 +540,13 @@ impl InlayMap {
                     bias,
                     text
                 );
-                to_insert.push(InlayProperties {
-                    position: snapshot.buffer.anchor_at(position, bias),
-                    text,
-                });
+                to_insert.push((
+                    None,
+                    InlayProperties {
+                        position: snapshot.buffer.anchor_at(position, bias),
+                        text,
+                    },
+                ));
             } else {
                 to_remove.push(*self.inlays_by_id.keys().choose(rng).unwrap());
             }
@@ -852,10 +876,13 @@ mod tests {
 
         let (inlay_snapshot, _, _) = inlay_map.splice(
             Vec::new(),
-            vec![InlayProperties {
-                position: buffer.read(cx).snapshot(cx).anchor_after(3),
-                text: "|123|",
-            }],
+            vec![(
+                None,
+                InlayProperties {
+                    position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                    text: "|123|",
+                },
+            )],
         );
         assert_eq!(inlay_snapshot.text(), "abc|123|defghi");
         assert_eq!(
@@ -928,14 +955,20 @@ mod tests {
         let (inlay_snapshot, _, _) = inlay_map.splice(
             Vec::new(),
             vec![
-                InlayProperties {
-                    position: buffer.read(cx).snapshot(cx).anchor_before(3),
-                    text: "|123|",
-                },
-                InlayProperties {
-                    position: buffer.read(cx).snapshot(cx).anchor_after(3),
-                    text: "|456|",
-                },
+                (
+                    None,
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(3),
+                        text: "|123|",
+                    },
+                ),
+                (
+                    None,
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_after(3),
+                        text: "|456|",
+                    },
+                ),
             ],
         );
         assert_eq!(inlay_snapshot.text(), "abx|123||456|yDzefghi");
@@ -963,18 +996,27 @@ mod tests {
         let (inlay_snapshot, _, _) = inlay_map.splice(
             Vec::new(),
             vec![
-                InlayProperties {
-                    position: buffer.read(cx).snapshot(cx).anchor_before(0),
-                    text: "|123|\n",
-                },
-                InlayProperties {
-                    position: buffer.read(cx).snapshot(cx).anchor_before(4),
-                    text: "|456|",
-                },
-                InlayProperties {
-                    position: buffer.read(cx).snapshot(cx).anchor_before(7),
-                    text: "\n|567|\n",
-                },
+                (
+                    None,
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(0),
+                        text: "|123|\n",
+                    },
+                ),
+                (
+                    None,
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(4),
+                        text: "|456|",
+                    },
+                ),
+                (
+                    None,
+                    InlayProperties {
+                        position: buffer.read(cx).snapshot(cx).anchor_before(7),
+                        text: "\n|567|\n",
+                    },
+                ),
             ],
         );
         assert_eq!(inlay_snapshot.text(), "|123|\nabc\n|456|def\n|567|\n\nghi");

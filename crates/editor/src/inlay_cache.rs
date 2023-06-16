@@ -1,25 +1,15 @@
 use std::ops::Range;
 
-use crate::{editor_settings, scroll::ScrollAnchor, Anchor, Editor, ExcerptId, MultiBuffer};
+use crate::{
+    display_map::InlayId, editor_settings, scroll::ScrollAnchor, Anchor, Editor, ExcerptId,
+    MultiBuffer,
+};
 use clock::Global;
 use gpui::{ModelHandle, Task, ViewContext};
+use language::Buffer;
 use project::{InlayHint, InlayHintKind};
 
 use collections::{HashMap, HashSet};
-
-// TODO kb move to inlay_map along with the next one?
-#[derive(Debug, Clone)]
-pub struct Inlay {
-    pub id: InlayId,
-    pub position: Anchor,
-    pub text: text::Rope,
-}
-
-#[derive(Debug, Clone)]
-pub struct InlayProperties<T> {
-    pub position: Anchor,
-    pub text: T,
-}
 
 #[derive(Debug, Copy, Clone)]
 pub enum InlayRefreshReason {
@@ -30,23 +20,21 @@ pub enum InlayRefreshReason {
 
 #[derive(Debug, Clone, Default)]
 pub struct InlayCache {
-    inlays_per_buffer: HashMap<u64, BufferInlays>,
+    inlay_hints: HashMap<InlayId, InlayHint>,
+    inlays_in_buffers: HashMap<u64, BufferInlays>,
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct BufferInlays {
     buffer_version: Global,
-    ordered_by_anchor_inlays: Vec<(Anchor, InlayId, InlayHint)>,
+    ordered_by_anchor_inlays: Vec<(Anchor, InlayId)>,
 }
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InlayId(pub usize);
 
 #[derive(Debug, Default)]
 pub struct InlaySplice {
     pub to_remove: Vec<InlayId>,
-    pub to_insert: Vec<(Anchor, InlayHint)>,
+    pub to_insert: Vec<(Option<InlayId>, Anchor, InlayHint)>,
 }
 
 pub struct InlayHintQuery {
@@ -60,82 +48,99 @@ impl InlayCache {
     pub fn new(inlay_hint_settings: editor_settings::InlayHints) -> Self {
         Self {
             allowed_hint_kinds: allowed_inlay_hint_types(inlay_hint_settings),
-            inlays_per_buffer: HashMap::default(),
+            inlays_in_buffers: HashMap::default(),
+            inlay_hints: HashMap::default(),
         }
     }
 
     pub fn apply_settings(
         &mut self,
+        multi_buffer: ModelHandle<MultiBuffer>,
         inlay_hint_settings: editor_settings::InlayHints,
-    ) -> InlaySplice {
-        let new_allowed_inlay_hint_types = allowed_inlay_hint_types(inlay_hint_settings);
+        currently_visible_ranges: Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)>,
+        currently_shown_inlays: Vec<(Anchor, InlayId)>,
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<InlaySplice> {
+        let new_allowed_hint_kinds = allowed_inlay_hint_types(inlay_hint_settings);
+        if new_allowed_hint_kinds == self.allowed_hint_kinds {
+            None
+        } else {
+            self.allowed_hint_kinds = new_allowed_hint_kinds;
+            let mut to_remove = Vec::new();
+            let mut to_insert = Vec::new();
 
-        let new_allowed_hint_kinds = new_allowed_inlay_hint_types
-            .difference(&self.allowed_hint_kinds)
-            .copied()
-            .collect::<HashSet<_>>();
-        let removed_hint_kinds = self
-            .allowed_hint_kinds
-            .difference(&new_allowed_inlay_hint_types)
-            .collect::<HashSet<_>>();
-        let mut to_remove = Vec::new();
-        let mut to_insert = Vec::new();
-        for (_, inlay_id, inlay_hint) in self
-            .inlays_per_buffer
-            .iter()
-            .map(|(_, buffer_inlays)| buffer_inlays.ordered_by_anchor_inlays.iter())
-            .flatten()
-        {
-            if removed_hint_kinds.contains(&inlay_hint.kind) {
-                to_remove.push(*inlay_id);
-            } else if new_allowed_hint_kinds.contains(&inlay_hint.kind) {
-                todo!("TODO kb: agree with InlayMap how splice works")
-                // to_insert.push((*inlay_id, *anchor, inlay_hint.to_owned()));
+            let mut considered_inlay_ids = HashSet::default();
+            for (_, shown_inlay_id) in currently_shown_inlays {
+                if let Some(inlay_hint) = self.inlay_hints.get(&shown_inlay_id) {
+                    if !self.allowed_hint_kinds.contains(&inlay_hint.kind) {
+                        to_remove.push(shown_inlay_id);
+                    }
+                    considered_inlay_ids.insert(shown_inlay_id);
+                }
             }
-        }
 
-        self.allowed_hint_kinds = new_allowed_hint_kinds;
+            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            for (inlay_id, inlay_hint) in &self.inlay_hints {
+                if self.allowed_hint_kinds.contains(&inlay_hint.kind)
+                    && !considered_inlay_ids.contains(inlay_id)
+                {
+                    if let Some(hint_to_readd) = currently_visible_ranges.iter()
+                        .filter(|(_, visible_range, _)| visible_range.contains(&inlay_hint.position.offset))
+                        .find_map(|(_, _, excerpt_id)| {
+                            let Some(anchor) = multi_buffer_snapshot
+                                .find_anchor_in_excerpt(*excerpt_id, inlay_hint.position) else { return None; };
+                            Some((Some(*inlay_id), anchor, inlay_hint.clone()))
+                        },
+                    ) {
+                        to_insert.push(hint_to_readd);
+                    }
+                }
+            }
 
-        InlaySplice {
-            to_remove,
-            to_insert,
+            Some(InlaySplice {
+                to_remove,
+                to_insert,
+            })
         }
     }
 
     pub fn clear(&mut self) -> Vec<InlayId> {
-        self.inlays_per_buffer
-            .drain()
-            .flat_map(|(_, buffer_inlays)| {
-                buffer_inlays
-                    .ordered_by_anchor_inlays
-                    .into_iter()
-                    .map(|(_, id, _)| id)
-            })
-            .collect()
+        let ids_to_remove = self.inlay_hints.drain().map(|(id, _)| id).collect();
+        self.inlays_in_buffers.clear();
+        ids_to_remove
     }
 
     pub fn append_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         ranges_to_add: impl Iterator<Item = InlayHintQuery>,
+        currently_shown_inlays: Vec<(Anchor, InlayId)>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        self.fetch_inlays(multi_buffer, ranges_to_add, false, cx)
+        self.fetch_inlays(
+            multi_buffer,
+            ranges_to_add,
+            currently_shown_inlays,
+            false,
+            cx,
+        )
     }
 
     pub fn replace_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         new_ranges: impl Iterator<Item = InlayHintQuery>,
+        currently_shown_inlays: Vec<(Anchor, InlayId)>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        self.fetch_inlays(multi_buffer, new_ranges, true, cx)
+        self.fetch_inlays(multi_buffer, new_ranges, currently_shown_inlays, true, cx)
     }
 
     fn fetch_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         inlay_fetch_ranges: impl Iterator<Item = InlayHintQuery>,
+        currently_shown_inlays: Vec<(Anchor, InlayId)>,
         replace_old: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
