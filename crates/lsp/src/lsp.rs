@@ -103,14 +103,14 @@ struct Notification<'a, T> {
     params: T,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
     #[serde(default)]
     id: Option<usize>,
     #[serde(borrow)]
     method: &'a str,
-    #[serde(borrow)]
-    params: &'a RawValue,
+    #[serde(borrow, default)]
+    params: Option<&'a RawValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -157,9 +157,12 @@ impl LanguageServer {
                     "unhandled notification {}:\n{}",
                     notification.method,
                     serde_json::to_string_pretty(
-                        &Value::from_str(notification.params.get()).unwrap()
+                        &notification
+                            .params
+                            .and_then(|params| Value::from_str(params.get()).ok())
+                            .unwrap_or(Value::Null)
                     )
-                    .unwrap()
+                    .unwrap(),
                 );
             },
         );
@@ -279,7 +282,11 @@ impl LanguageServer {
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
                 if let Some(handler) = notification_handlers.lock().get_mut(msg.method) {
-                    handler(msg.id, msg.params.get(), cx.clone());
+                    handler(
+                        msg.id,
+                        &msg.params.map(|params| params.get()).unwrap_or("null"),
+                        cx.clone(),
+                    );
                 } else {
                     on_unhandled_notification(msg);
                 }
@@ -828,7 +835,13 @@ impl LanguageServer {
                 cx,
                 move |msg| {
                     notifications_tx
-                        .try_send((msg.method.to_string(), msg.params.get().to_string()))
+                        .try_send((
+                            msg.method.to_string(),
+                            msg.params
+                                .map(|raw_value| raw_value.get())
+                                .unwrap_or("null")
+                                .to_string(),
+                        ))
                         .ok();
                 },
             )),
