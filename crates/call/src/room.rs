@@ -13,12 +13,13 @@ use futures::{FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::LanguageRegistry;
 use live_kit_client::{
-    LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteVideoTrackUpdate, RemoteAudioTrackUpdate,
+    LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
+    RemoteVideoTrackUpdate,
 };
 use postage::stream::Stream;
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{channel::ReleaseChannel, post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -218,11 +219,12 @@ impl Room {
                 None
             };
 
-            let share_mic = room.update(&mut cx, |room, cx| {
-                room.share_mic(cx)
-            });
-
-            cx.background().spawn(share_mic).detach();
+            if option_env!("START_MIC").is_some()
+                || &*util::channel::RELEASE_CHANNEL != &ReleaseChannel::Dev
+            {
+                let share_mic = room.update(&mut cx, |room, cx| room.share_mic(cx));
+                cx.background().spawn(share_mic).detach();
+            }
 
             match room
                 .update(&mut cx, |room, cx| {
@@ -653,7 +655,8 @@ impl Room {
                             if let Some(live_kit) = this.live_kit.as_ref() {
                                 let video_tracks =
                                     live_kit.room.remote_video_tracks(&user.id.to_string());
-                                let audio_tracks = live_kit.room.remote_audio_tracks(&user.id.to_string());
+                                let audio_tracks =
+                                    live_kit.room.remote_audio_tracks(&user.id.to_string());
                                 for track in video_tracks {
                                     this.remote_video_track_updated(
                                         RemoteVideoTrackUpdate::Subscribed(track),
@@ -662,8 +665,11 @@ impl Room {
                                     .log_err();
                                 }
                                 for track in audio_tracks {
-                                    this.remote_audio_track_updated(RemoteAudioTrackUpdate::Subscribed(track), cx)
-                                        .log_err();
+                                    this.remote_audio_track_updated(
+                                        RemoteAudioTrackUpdate::Subscribed(track),
+                                        cx,
+                                    )
+                                    .log_err();
                                 }
                             }
                         }
@@ -782,10 +788,7 @@ impl Room {
                     .remote_participants
                     .get_mut(&user_id)
                     .ok_or_else(|| anyhow!("subscribed to track by unknown participant"))?;
-                participant.audio_tracks.insert(
-                    track_id.clone(),
-                    track,
-                );
+                participant.audio_tracks.insert(track_id.clone(), track);
                 cx.emit(Event::RemoteAudioTracksChanged {
                     participant_id: participant.peer_id,
                 });
