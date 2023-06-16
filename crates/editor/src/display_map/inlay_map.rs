@@ -13,7 +13,6 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
-use util::post_inc;
 
 pub struct InlayMap {
     snapshot: Mutex<InlaySnapshot>,
@@ -284,10 +283,6 @@ impl InlayPoint {
     pub fn row(self) -> u32 {
         self.0.row
     }
-
-    pub fn column(self) -> u32 {
-        self.0.column
-    }
 }
 
 impl InlayMap {
@@ -493,13 +488,14 @@ impl InlayMap {
         self.sync(buffer_snapshot, buffer_edits)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
         next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         use rand::prelude::*;
+        use util::post_inc;
 
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
@@ -588,11 +584,6 @@ impl InlaySnapshot {
             }
             None => self.len(),
         }
-    }
-
-    pub fn chars_at(&self, start: InlayPoint) -> impl '_ + Iterator<Item = char> {
-        self.chunks(self.to_offset(start)..self.len(), false, None)
-            .flat_map(|chunk| chunk.text.chars())
     }
 
     pub fn to_buffer_point(&self, point: InlayPoint) -> Point {

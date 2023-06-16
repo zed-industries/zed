@@ -31,7 +31,7 @@ pub struct InlayProperties<T> {
 pub enum InlayRefreshReason {
     SettingsChange(editor_settings::InlayHints),
     Scroll(ScrollAnchor),
-    OpenExcerptsChange,
+    VisibleExcerptsChange,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -89,7 +89,7 @@ pub struct InlaySplice {
     pub to_insert: Vec<(InlayId, Anchor, InlayHint)>,
 }
 
-pub struct InlayFetchRange {
+pub struct InlayHintQuery {
     pub buffer_id: u64,
     pub buffer_path: PathBuf,
     pub buffer_version: Global,
@@ -109,7 +109,7 @@ impl InlayCache {
     pub fn append_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        ranges_to_add: impl Iterator<Item = InlayFetchRange>,
+        ranges_to_add: impl Iterator<Item = InlayHintQuery>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
         self.fetch_inlays(multi_buffer, ranges_to_add, false, cx)
@@ -118,7 +118,7 @@ impl InlayCache {
     pub fn replace_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        new_ranges: impl Iterator<Item = InlayFetchRange>,
+        new_ranges: impl Iterator<Item = InlayHintQuery>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
         self.fetch_inlays(multi_buffer, new_ranges, true, cx)
@@ -127,7 +127,7 @@ impl InlayCache {
     fn fetch_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        inlay_fetch_ranges: impl Iterator<Item = InlayFetchRange>,
+        inlay_fetch_ranges: impl Iterator<Item = InlayHintQuery>,
         replace_old: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {

@@ -1169,6 +1169,7 @@ impl FoldOffset {
         FoldPoint(cursor.start().1.output.lines + overshoot)
     }
 
+    #[cfg(test)]
     pub fn to_inlay_offset(self, snapshot: &FoldSnapshot) -> InlayOffset {
         let mut cursor = snapshot.transforms.cursor::<(FoldOffset, InlayOffset)>();
         cursor.seek(&self, Bias::Right, &());
