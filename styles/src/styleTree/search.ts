@@ -1,8 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
-import { interactive } from "../element"
-import { toggleable } from "./toggle"
+import { interactive, toggleable } from "../element"
 
 export default function search(colorScheme: ColorScheme) {
     let layer = colorScheme.highest

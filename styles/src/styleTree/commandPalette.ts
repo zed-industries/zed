@@ -1,8 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { text, background } from "./components"
-import { toggleable } from "./toggle"
-import { interactive } from "../element"
+import { interactive, toggleable } from "../element"
 
 export default function commandPalette(colorScheme: ColorScheme) {
     let layer = colorScheme.highest

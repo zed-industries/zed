@@ -1,7 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, borderColor, foreground, text } from "./components"
-import { toggleable } from "./toggle"
-import { interactive } from "../element"
+import { interactive, toggleable } from "../element"
 export default function contactsPanel(colorScheme: ColorScheme) {
     const nameMargin = 8
     const sidePadding = 12

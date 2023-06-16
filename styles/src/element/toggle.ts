@@ -4,9 +4,9 @@ type ToggleState = "inactive" | "active"
 
 type Toggleable<T> = Record<ToggleState, T>
 
-const NO_INACTIVE_OR_BASE_ERROR =
+export const NO_INACTIVE_OR_BASE_ERROR =
     "A toggleable object must have an inactive state, or a base property."
-const NO_ACTIVE_ERROR = "A toggleable object must have an active state."
+export const NO_ACTIVE_ERROR = "A toggleable object must have an active state."
 
 interface ToggleableProps<T> {
     base?: T

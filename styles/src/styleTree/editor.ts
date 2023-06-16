@@ -4,8 +4,7 @@ import { background, border, borderColor, foreground, text } from "./components"
 import hoverPopover from "./hoverPopover"
 
 import { buildSyntax } from "../theme/syntax"
-import { interactive } from "../element"
-import { toggleable } from "./toggle"
+import { interactive, toggleable } from "../element"
 
 export default function editor(colorScheme: ColorScheme) {
     const { isLight } = colorScheme

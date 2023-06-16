@@ -1,8 +1,7 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
 import { text, border, background, foreground } from "./components"
-import { toggleable } from "./toggle"
-import { interactive } from "../element"
+import { interactive, toggleable } from "../element"
 
 export default function tabBar(colorScheme: ColorScheme) {
     const height = 32

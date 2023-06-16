@@ -1,6 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { withOpacity } from "../theme/color"
-import { toggleable } from "./toggle"
+import { toggleable } from "../element"
 import {
     background,
     border,

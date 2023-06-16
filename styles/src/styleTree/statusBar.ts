@@ -1,7 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, foreground, text } from "./components"
-import { interactive } from "../element"
-import { toggleable } from "./toggle"
+import { interactive, toggleable } from "../element"
 export default function statusBar(colorScheme: ColorScheme) {
     let layer = colorScheme.lowest
 

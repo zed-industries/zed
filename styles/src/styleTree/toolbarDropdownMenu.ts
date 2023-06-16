@@ -1,7 +1,6 @@
 import { ColorScheme } from "../theme/colorScheme"
 import { background, border, text } from "./components"
-import { interactive } from "../element"
-import { toggleable } from "./toggle"
+import { interactive, toggleable } from "../element"
 export default function dropdownMenu(colorScheme: ColorScheme) {
     let layer = colorScheme.middle
 
