@@ -3,6 +3,7 @@ use client::{proto, User};
 use collections::HashMap;
 use gpui::WeakModelHandle;
 pub use live_kit_client::Frame;
+use live_kit_client::RemoteAudioTrack;
 use project::Project;
 use std::{fmt, sync::Arc};
 
@@ -42,7 +43,8 @@ pub struct RemoteParticipant {
     pub peer_id: proto::PeerId,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
-    pub tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
+    pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,
+    pub audio_tracks: HashMap<live_kit_client::Sid, Arc<RemoteAudioTrack>>,
 }
 
 #[derive(Clone)]

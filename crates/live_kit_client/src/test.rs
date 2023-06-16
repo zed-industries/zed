@@ -517,6 +517,7 @@ impl RemoteVideoTrack {
     }
 }
 
+#[derive(Debug)]
 pub struct RemoteAudioTrack {
     sid: Sid,
     publisher_id: Sid,

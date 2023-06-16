@@ -257,7 +257,7 @@ async fn test_basic_calls(
         room_b.read_with(cx_b, |room, _| {
             assert_eq!(
                 room.remote_participants()[&client_a.user_id().unwrap()]
-                    .tracks
+                    .video_tracks
                     .len(),
                 1
             );
@@ -274,7 +274,7 @@ async fn test_basic_calls(
         room_c.read_with(cx_c, |room, _| {
             assert_eq!(
                 room.remote_participants()[&client_a.user_id().unwrap()]
-                    .tracks
+                    .video_tracks
                     .len(),
                 1
             );
@@ -6993,7 +6993,7 @@ async fn test_join_call_after_screen_was_shared(
             room.remote_participants()
                 .get(&client_a.user_id().unwrap())
                 .unwrap()
-                .tracks
+                .video_tracks
                 .len(),
             1
         );

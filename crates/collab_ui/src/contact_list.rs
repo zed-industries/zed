@@ -514,10 +514,10 @@ impl ContactList {
                         project_id: project.id,
                         worktree_root_names: project.worktree_root_names.clone(),
                         host_user_id: participant.user.id,
-                        is_last: projects.peek().is_none() && participant.tracks.is_empty(),
+                        is_last: projects.peek().is_none() && participant.video_tracks.is_empty(),
                     });
                 }
-                if !participant.tracks.is_empty() {
+                if !participant.video_tracks.is_empty() {
                     participant_entries.push(ContactEntry::ParticipantScreen {
                         peer_id: participant.peer_id,
                         is_last: true,
