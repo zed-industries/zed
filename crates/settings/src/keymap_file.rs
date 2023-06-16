@@ -62,12 +62,15 @@ impl KeymapFile {
                     // deserialize the action itself dynamically directly from the JSON
                     // string. But `RawValue` currently does not work inside of an untagged enum.
                     if let Value::Array(items) = action {
-                        let [Value::String(name), data] = &items[..] else {
-                            return Some(Err(anyhow!("Expected array of length 2, got array of length {}", items.len())));
+                        let Ok([name, data]): Result<[serde_json::Value; 2], _> = items.try_into() else {
+                            return Some(Err(anyhow!("Expected array of length 2")));
+                        };
+                        let serde_json::Value::String(name) = name else {
+                            return Some(Err(anyhow!("Expected first item in array to be a string.")))
                         };
                         cx.deserialize_action(
                             &name,
-                            serde_json_lenient::to_string(&data).ok().as_deref(),
+                            Some(data),
                         )
                     } else if let Value::String(name) = action {
                         cx.deserialize_action(&name, None)
