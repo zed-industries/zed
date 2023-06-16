@@ -369,7 +369,14 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     .unwrap();
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
-    tree.flush_fs_events(cx).await;
+
+    tree.update(cx, |tree, cx| {
+        let tree = tree.as_local_mut().unwrap();
+        tree.expand_dir(tree.entry_for_path("ignored-dir").unwrap().id, cx)
+    })
+    .recv()
+    .await;
+
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert!(

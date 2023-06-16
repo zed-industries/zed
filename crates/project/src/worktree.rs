@@ -86,7 +86,7 @@ pub struct LocalWorktree {
 
 enum ScanRequest {
     RescanPaths {
-        paths: Vec<PathBuf>,
+        relative_paths: Vec<Arc<Path>>,
         done: barrier::Sender,
     },
     ExpandDir {
@@ -1051,14 +1051,10 @@ impl LocalWorktree {
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
-        let abs_path = self.abs_path.clone();
+        let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
         let delete = cx.background().spawn(async move {
-            let mut abs_path = fs.canonicalize(&abs_path).await?;
-            if entry.path.file_name().is_some() {
-                abs_path = abs_path.join(&entry.path);
-            }
             if entry.is_file() {
                 fs.remove_file(&abs_path, Default::default()).await?;
             } else {
@@ -1071,18 +1067,18 @@ impl LocalWorktree {
                 )
                 .await?;
             }
-            anyhow::Ok(abs_path)
+            anyhow::Ok(entry.path)
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            let abs_path = delete.await?;
+            let path = delete.await?;
             let (tx, mut rx) = barrier::channel();
             this.update(&mut cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
                     .scan_requests_tx
                     .try_send(ScanRequest::RescanPaths {
-                        paths: vec![abs_path],
+                        relative_paths: vec![path],
                         done: tx,
                     })
             })?;
@@ -1168,27 +1164,19 @@ impl LocalWorktree {
         old_path: Option<Arc<Path>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Entry>> {
-        let fs = self.fs.clone();
-        let abs_root_path = self.abs_path.clone();
         let path_changes_tx = self.scan_requests_tx.clone();
         cx.spawn_weak(move |this, mut cx| async move {
-            let abs_path = fs.canonicalize(&abs_root_path).await?;
-            let mut paths = Vec::with_capacity(2);
-            paths.push(if path.file_name().is_some() {
-                abs_path.join(&path)
+            let relative_paths = if let Some(old_path) = old_path.as_ref() {
+                vec![old_path.clone(), path.clone()]
             } else {
-                abs_path.clone()
-            });
-            if let Some(old_path) = old_path {
-                paths.push(if old_path.file_name().is_some() {
-                    abs_path.join(&old_path)
-                } else {
-                    abs_path.clone()
-                });
-            }
+                vec![path.clone()]
+            };
 
             let (tx, mut rx) = barrier::channel();
-            path_changes_tx.try_send(ScanRequest::RescanPaths { paths, done: tx })?;
+            path_changes_tx.try_send(ScanRequest::RescanPaths {
+                relative_paths,
+                done: tx,
+            })?;
             rx.recv().await;
             this.upgrade(&cx)
                 .ok_or_else(|| anyhow!("worktree was dropped"))?
@@ -2975,38 +2963,81 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, request: ScanRequest) -> bool {
+        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_canonical_path = match self.fs.canonicalize(&root_path).await {
+            Ok(path) => path,
+            Err(err) => {
+                log::error!("failed to canonicalize root path: {}", err);
+                return false;
+            }
+        };
+
         match request {
-            ScanRequest::RescanPaths { paths, done } => {
-                self.reload_entries_for_paths(paths, None).await;
+            ScanRequest::RescanPaths {
+                relative_paths,
+                done,
+            } => {
+                let abs_paths = relative_paths
+                    .into_iter()
+                    .map(|path| {
+                        if path.file_name().is_some() {
+                            root_canonical_path.join(path)
+                        } else {
+                            root_canonical_path.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                self.reload_entries_for_paths(root_path, root_canonical_path, abs_paths, None)
+                    .await;
                 self.send_status_update(false, Some(done))
             }
             ScanRequest::ExpandDir { entry_id, done } => {
-                let path = {
+                let abs_path;
+                {
                     let mut state = self.state.lock();
-                    state.expanded_dirs.insert(entry_id);
-                    state
-                        .snapshot
-                        .entry_for_id(entry_id)
-                        .map(|e| state.snapshot.absolutize(&e.path))
-                };
-                if let Some(path) = path {
-                    let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
-                    self.reload_entries_for_paths(vec![path.clone()], Some(scan_job_tx))
-                        .await;
-                    if let Some(job) = scan_job_rx.next().await {
-                        self.scan_dir(&job).await.log_err();
-                        self.send_status_update(false, Some(done));
+                    if let Some(entry) = state.snapshot.entry_for_id(entry_id) {
+                        abs_path = root_canonical_path.join(&entry.path);
+                        state.expanded_dirs.insert(entry_id);
+                    } else {
+                        return true;
                     }
+                };
+
+                let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
+                self.reload_entries_for_paths(
+                    root_path,
+                    root_canonical_path,
+                    vec![abs_path],
+                    Some(scan_job_tx),
+                )
+                .await;
+                if let Some(job) = scan_job_rx.next().await {
+                    self.scan_dir(&job).await.log_err();
+                    self.send_status_update(false, Some(done));
                 }
                 true
             }
         }
     }
 
-    async fn process_events(&mut self, paths: Vec<PathBuf>) {
+    async fn process_events(&mut self, abs_paths: Vec<PathBuf>) {
+        let root_path = self.state.lock().snapshot.abs_path.clone();
+        let root_canonical_path = match self.fs.canonicalize(&root_path).await {
+            Ok(path) => path,
+            Err(err) => {
+                log::error!("failed to canonicalize root path: {}", err);
+                return;
+            }
+        };
+
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         let paths = self
-            .reload_entries_for_paths(paths, Some(scan_job_tx.clone()))
+            .reload_entries_for_paths(
+                root_path,
+                root_canonical_path,
+                abs_paths,
+                Some(scan_job_tx.clone()),
+            )
             .await;
         drop(scan_job_tx);
         self.scan_dirs(false, scan_job_rx).await;
@@ -3152,6 +3183,7 @@ impl BackgroundScanner {
             if job.is_outside_root || job.ignore_stack.is_all() {
                 if let Some(entry) = state.snapshot.entry_for_path(&job.path) {
                     if !state.is_entry_expanded(entry) {
+                        log::debug!("defer scanning directory {:?}", job.path);
                         return Ok(());
                     }
                 }
@@ -3167,6 +3199,8 @@ impl BackgroundScanner {
                     .map(|(work_dir, repo)| (work_dir, repo.clone())),
             )
         };
+
+        log::debug!("scan directory {:?}", job.path);
 
         let mut root_canonical_path = None;
         let mut child_paths = self.fs.read_dir(&job.abs_path).await?;
@@ -3326,16 +3360,15 @@ impl BackgroundScanner {
 
     async fn reload_entries_for_paths(
         &self,
+        root_abs_path: Arc<Path>,
+        root_canonical_path: PathBuf,
         mut abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
     ) -> Option<Vec<Arc<Path>>> {
         let doing_recursive_update = scan_queue_tx.is_some();
-
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(&b));
 
-        let root_abs_path = self.state.lock().snapshot.abs_path.clone();
-        let root_canonical_path = self.fs.canonicalize(&root_abs_path).await.log_err()?;
         let metadata = futures::future::join_all(
             abs_paths
                 .iter()
