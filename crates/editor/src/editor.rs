@@ -185,6 +185,9 @@ pub struct GutterHover {
     pub hovered: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InlayId(usize);
+
 actions!(
     editor,
     [
@@ -541,6 +544,7 @@ pub struct Editor {
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
     inlay_hint_cache: InlayHintCache,
+    next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1339,6 +1343,7 @@ impl Editor {
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             completion_tasks: Default::default(),
             next_completion_id: 0,
+            next_inlay_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
             document_highlights_task: Default::default(),
@@ -2664,7 +2669,7 @@ impl Editor {
                             to_insert,
                         } = editor
                             .update(&mut cx, |editor, cx| {
-                                editor.inlay_hint_cache.append_inlays(
+                                editor.inlay_hint_cache.append_hints(
                                     multi_buffer_handle,
                                     std::iter::once(updated_range_query),
                                     cx,
@@ -2693,7 +2698,7 @@ impl Editor {
                         to_insert,
                     } = editor
                         .update(&mut cx, |editor, cx| {
-                            editor.inlay_hint_cache.replace_inlays(
+                            editor.inlay_hint_cache.replace_hints(
                                 multi_buffer_handle,
                                 replacement_queries.into_iter(),
                                 currently_shown_inlay_hints,
@@ -2738,7 +2743,7 @@ impl Editor {
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(Option<InlayId>, Anchor, project::InlayHint)>,
+        to_insert: Vec<(InlayId, Anchor, project::InlayHint)>,
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.buffer.read(cx).read(cx);
@@ -3514,23 +3519,19 @@ impl Editor {
                 to_remove.push(suggestion.id);
             }
 
+            let suggestion_inlay_id = self.next_inlay_id();
             let to_insert = vec![(
-                None,
+                suggestion_inlay_id,
                 InlayProperties {
                     position: cursor,
                     text: text.clone(),
                 },
             )];
-            let new_inlay_ids = self.display_map.update(cx, move |map, cx| {
+            self.display_map.update(cx, move |map, cx| {
                 map.splice_inlays(to_remove, to_insert, cx)
             });
-            assert_eq!(
-                new_inlay_ids.len(),
-                1,
-                "Expecting only copilot suggestion id generated"
-            );
             self.copilot_state.suggestion = Some(Inlay {
-                id: new_inlay_ids.into_iter().next().unwrap(),
+                id: suggestion_inlay_id,
                 position: cursor,
                 text,
             });
@@ -7686,6 +7687,10 @@ impl Editor {
 
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else { return; };
         cx.write_to_clipboard(ClipboardItem::new(lines));
+    }
+
+    pub fn next_inlay_id(&mut self) -> InlayId {
+        InlayId(post_inc(&mut self.next_inlay_id))
     }
 }
 

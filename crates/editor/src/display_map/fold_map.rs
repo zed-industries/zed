@@ -1475,6 +1475,7 @@ mod tests {
             Arc::new((HighlightStyle::default(), highlight_ranges)),
         );
 
+        let mut next_inlay_id = 0;
         for _ in 0..operations {
             log::info!("text: {:?}", buffer_snapshot.text());
             let mut buffer_edits = Vec::new();
@@ -1484,7 +1485,7 @@ mod tests {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng));
                 }
                 40..=59 => {
-                    let (_, edits) = inlay_map.randomly_mutate(&mut rng);
+                    let (_, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     inlay_edits = edits;
                 }
                 _ => buffer.update(cx, |buffer, cx| {

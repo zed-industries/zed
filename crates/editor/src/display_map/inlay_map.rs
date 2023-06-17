@@ -1,6 +1,6 @@
 use crate::{
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
-    Anchor, MultiBufferSnapshot, ToOffset,
+    Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
 use collections::{BTreeSet, HashMap};
 use gpui::fonts::HighlightStyle;
@@ -12,13 +12,11 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
-use util::post_inc;
 
 pub struct InlayMap {
     snapshot: Mutex<InlaySnapshot>,
     inlays_by_id: HashMap<InlayId, Inlay>,
     inlays: Vec<Inlay>,
-    next_inlay_id: usize,
 }
 
 #[derive(Clone)]
@@ -33,9 +31,6 @@ enum Transform {
     Isomorphic(TextSummary),
     Inlay(Inlay),
 }
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InlayId(usize);
 
 #[derive(Debug, Clone)]
 pub struct Inlay {
@@ -316,7 +311,6 @@ impl InlayMap {
                 snapshot: Mutex::new(snapshot.clone()),
                 inlays_by_id: HashMap::default(),
                 inlays: Vec::new(),
-                next_inlay_id: 0,
             },
             snapshot,
         )
@@ -461,8 +455,8 @@ impl InlayMap {
     pub fn splice<T: Into<Rope>>(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(Option<InlayId>, InlayProperties<T>)>,
-    ) -> (InlaySnapshot, Vec<InlayEdit>, Vec<InlayId>) {
+        to_insert: Vec<(InlayId, InlayProperties<T>)>,
+    ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = self.snapshot.lock();
         let mut edits = BTreeSet::new();
 
@@ -474,16 +468,12 @@ impl InlayMap {
             }
         }
 
-        let mut new_inlay_ids = Vec::with_capacity(to_insert.len());
         for (existing_id, properties) in to_insert {
             let inlay = Inlay {
-                id: existing_id.unwrap_or_else(|| InlayId(post_inc(&mut self.next_inlay_id))),
+                id: existing_id,
                 position: properties.position,
                 text: properties.text.into(),
             };
-            if existing_id.is_none() {
-                new_inlay_ids.push(inlay.id);
-            }
             self.inlays_by_id.insert(inlay.id, inlay.clone());
             match self
                 .inlays
@@ -508,7 +498,7 @@ impl InlayMap {
         let buffer_snapshot = snapshot.buffer.clone();
         drop(snapshot);
         let (snapshot, edits) = self.sync(buffer_snapshot, buffer_edits);
-        (snapshot, edits, new_inlay_ids)
+        (snapshot, edits)
     }
 
     pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
@@ -518,9 +508,11 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
+        next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         use rand::prelude::*;
+        use util::post_inc;
 
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
@@ -541,7 +533,7 @@ impl InlayMap {
                     text
                 );
                 to_insert.push((
-                    None,
+                    InlayId(post_inc(next_inlay_id)),
                     InlayProperties {
                         position: snapshot.buffer.anchor_at(position, bias),
                         text,
@@ -554,7 +546,7 @@ impl InlayMap {
         log::info!("removing inlays: {:?}", to_remove);
 
         drop(snapshot);
-        let (snapshot, edits, _) = self.splice(to_remove, to_insert);
+        let (snapshot, edits) = self.splice(to_remove, to_insert);
         (snapshot, edits)
     }
 }
@@ -860,12 +852,13 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MultiBuffer;
+    use crate::{InlayId, MultiBuffer};
     use gpui::AppContext;
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
     use text::Patch;
+    use util::post_inc;
 
     #[gpui::test]
     fn test_basic_inlays(cx: &mut AppContext) {
@@ -873,11 +866,12 @@ mod tests {
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
+        let mut next_inlay_id = 0;
 
-        let (inlay_snapshot, _, _) = inlay_map.splice(
+        let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
             vec![(
-                None,
+                InlayId(post_inc(&mut next_inlay_id)),
                 InlayProperties {
                     position: buffer.read(cx).snapshot(cx).anchor_after(3),
                     text: "|123|",
@@ -952,18 +946,18 @@ mod tests {
         );
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
 
-        let (inlay_snapshot, _, _) = inlay_map.splice(
+        let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
             vec![
                 (
-                    None,
+                    InlayId(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(3),
                         text: "|123|",
                     },
                 ),
                 (
-                    None,
+                    InlayId(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_after(3),
                         text: "|456|",
@@ -982,7 +976,7 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abx|123|JKL|456|yDzefghi");
 
         // The inlays can be manually removed.
-        let (inlay_snapshot, _, _) = inlay_map
+        let (inlay_snapshot, _) = inlay_map
             .splice::<String>(inlay_map.inlays_by_id.keys().copied().collect(), Vec::new());
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
     }
@@ -992,26 +986,27 @@ mod tests {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
+        let mut next_inlay_id = 0;
 
-        let (inlay_snapshot, _, _) = inlay_map.splice(
+        let (inlay_snapshot, _) = inlay_map.splice(
             Vec::new(),
             vec![
                 (
-                    None,
+                    InlayId(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(0),
                         text: "|123|\n",
                     },
                 ),
                 (
-                    None,
+                    InlayId(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(4),
                         text: "|456|",
                     },
                 ),
                 (
-                    None,
+                    InlayId(post_inc(&mut next_inlay_id)),
                     InlayProperties {
                         position: buffer.read(cx).snapshot(cx).anchor_before(7),
                         text: "\n|567|\n",
@@ -1044,6 +1039,7 @@ mod tests {
             MultiBuffer::build_random(&mut rng, cx)
         };
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let mut next_inlay_id = 0;
         log::info!("buffer text: {:?}", buffer_snapshot.text());
 
         let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1054,7 +1050,7 @@ mod tests {
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=50 => {
-                    let (snapshot, edits) = inlay_map.randomly_mutate(&mut rng);
+                    let (snapshot, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     log::info!("mutated text: {:?}", snapshot.text());
                     inlay_edits = Patch::new(edits);
                 }

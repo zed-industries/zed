@@ -4,7 +4,7 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{Anchor, AnchorRangeExt, InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
@@ -28,7 +28,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::inlay_map::{Inlay, InlayId, InlayProperties};
+pub use self::inlay_map::{Inlay, InlayProperties};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -249,11 +249,11 @@ impl DisplayMap {
     pub fn splice_inlays<T: Into<Rope>>(
         &mut self,
         to_remove: Vec<InlayId>,
-        to_insert: Vec<(Option<InlayId>, InlayProperties<T>)>,
+        to_insert: Vec<(InlayId, InlayProperties<T>)>,
         cx: &mut ModelContext<Self>,
-    ) -> Vec<InlayId> {
+    ) {
         if to_remove.is_empty() && to_insert.is_empty() {
-            return Vec::new();
+            return;
         }
 
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -267,14 +267,13 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
 
-        let (snapshot, edits, new_inlay_ids) = self.inlay_map.splice(to_remove, to_insert);
+        let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        new_inlay_ids
     }
 
     fn tab_size(buffer: &ModelHandle<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
