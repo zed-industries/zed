@@ -3,7 +3,7 @@ mod blink_manager;
 pub mod display_map;
 mod editor_settings;
 mod element;
-mod inlay_cache;
+mod inlay_hint_cache;
 
 mod git;
 mod highlight_matching_bracket;
@@ -54,7 +54,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use inlay_cache::{InlayCache, InlayHintQuery, InlayRefreshReason, InlaySplice};
+use inlay_hint_cache::{InlayHintCache, InlayHintQuery, InlayRefreshReason, InlaySplice};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 pub use language::{char_kind, CharKind};
@@ -540,7 +540,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_cache: InlayCache,
+    inlay_cache: InlayHintCache,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1355,7 +1355,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_cache: InlayCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
+            inlay_cache: InlayHintCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2604,23 +2604,37 @@ impl Editor {
         }
 
         let multi_buffer_handle = self.buffer().clone();
+        let multi_buffer_snapshot = multi_buffer_handle.read(cx).snapshot(cx);
         let currently_visible_ranges = self.excerpt_visible_offsets(&multi_buffer_handle, cx);
-        let currently_shown_inlays = self
-            .display_map
-            .read(cx)
-            .current_inlays()
-            .map(|inlay| (inlay.position, inlay.id))
-            .collect::<Vec<_>>();
+        let currently_shown_inlay_hints = self.display_map.read(cx).current_inlays().fold(
+            HashMap::<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>::default(),
+            |mut current_hints, inlay| {
+                if let Some(buffer_id) = inlay.position.buffer_id {
+                    let excerpt_hints = current_hints
+                        .entry(buffer_id)
+                        .or_default()
+                        .entry(inlay.position.excerpt_id)
+                        .or_default();
+                    match excerpt_hints.binary_search_by(|probe| {
+                        inlay.position.cmp(&probe.0, &multi_buffer_snapshot)
+                    }) {
+                        Ok(ix) | Err(ix) => {
+                            excerpt_hints.insert(ix, (inlay.position, inlay.id));
+                        }
+                    }
+                }
+                current_hints
+            },
+        );
         match reason {
             InlayRefreshReason::SettingsChange(new_settings) => {
                 if let Some(InlaySplice {
                     to_remove,
                     to_insert,
                 }) = self.inlay_cache.apply_settings(
-                    multi_buffer_handle,
                     new_settings,
                     currently_visible_ranges,
-                    currently_shown_inlays,
+                    currently_shown_inlay_hints,
                     cx,
                 ) {
                     self.splice_inlay_hints(to_remove, to_insert, cx);
@@ -2653,7 +2667,7 @@ impl Editor {
                                 editor.inlay_cache.append_inlays(
                                     multi_buffer_handle,
                                     std::iter::once(updated_range_query),
-                                    currently_shown_inlays,
+                                    currently_shown_inlay_hints,
                                     cx,
                                 )
                             })?
@@ -2683,7 +2697,7 @@ impl Editor {
                             editor.inlay_cache.replace_inlays(
                                 multi_buffer_handle,
                                 replacement_queries.into_iter(),
-                                currently_shown_inlays,
+                                currently_shown_inlay_hints,
                                 cx,
                             )
                         })?

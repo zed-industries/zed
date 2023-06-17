@@ -18,7 +18,7 @@ use workspace::WorkspaceId;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    inlay_cache::InlayRefreshReason,
+    inlay_hint_cache::InlayRefreshReason,
     persistence::DB,
     Anchor, DisplayPoint, Editor, EditorMode, Event, MultiBufferSnapshot, ToPoint,
 };

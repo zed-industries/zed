@@ -9,7 +9,7 @@ use gpui::{ModelHandle, Task, ViewContext};
 use language::Buffer;
 use project::{InlayHint, InlayHintKind};
 
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 
 #[derive(Debug, Copy, Clone)]
 pub enum InlayRefreshReason {
@@ -19,16 +19,25 @@ pub enum InlayRefreshReason {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct InlayCache {
+pub struct InlayHintCache {
     inlay_hints: HashMap<InlayId, InlayHint>,
-    inlays_in_buffers: HashMap<u64, BufferInlays>,
+    inlays_in_buffers: HashMap<u64, BufferInlays<(Anchor, InlayId)>>,
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
 }
 
 #[derive(Clone, Debug, Default)]
-struct BufferInlays {
+struct BufferInlays<I> {
     buffer_version: Global,
-    ordered_by_anchor_inlays: Vec<(Anchor, InlayId)>,
+    excerpt_inlays: HashMap<ExcerptId, Vec<I>>,
+}
+
+impl<I> BufferInlays<I> {
+    fn new(buffer_version: Global) -> Self {
+        Self {
+            buffer_version,
+            excerpt_inlays: HashMap::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -44,7 +53,7 @@ pub struct InlayHintQuery {
     pub excerpt_offset_query_range: Range<usize>,
 }
 
-impl InlayCache {
+impl InlayHintCache {
     pub fn new(inlay_hint_settings: editor_settings::InlayHints) -> Self {
         Self {
             allowed_hint_kinds: allowed_inlay_hint_types(inlay_hint_settings),
@@ -55,10 +64,9 @@ impl InlayCache {
 
     pub fn apply_settings(
         &mut self,
-        multi_buffer: ModelHandle<MultiBuffer>,
         inlay_hint_settings: editor_settings::InlayHints,
         currently_visible_ranges: Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)>,
-        currently_shown_inlays: Vec<(Anchor, InlayId)>,
+        mut currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<InlaySplice> {
         let new_allowed_hint_kinds = allowed_inlay_hint_types(inlay_hint_settings);
@@ -69,33 +77,88 @@ impl InlayCache {
             let mut to_remove = Vec::new();
             let mut to_insert = Vec::new();
 
-            let mut considered_inlay_ids = HashSet::default();
-            for (_, shown_inlay_id) in currently_shown_inlays {
-                if let Some(inlay_hint) = self.inlay_hints.get(&shown_inlay_id) {
-                    if !self.allowed_hint_kinds.contains(&inlay_hint.kind) {
-                        to_remove.push(shown_inlay_id);
+            let mut considered_hints =
+                HashMap::<u64, HashMap<ExcerptId, HashSet<InlayId>>>::default();
+            for (visible_buffer, _, visible_excerpt_id) in currently_visible_ranges {
+                let visible_buffer = visible_buffer.read(cx);
+                let visible_buffer_id = visible_buffer.remote_id();
+                match currently_shown_inlay_hints.entry(visible_buffer_id) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        let shown_hints_per_excerpt = o.get_mut();
+                        for (_, shown_hint_id) in shown_hints_per_excerpt
+                            .remove(&visible_excerpt_id)
+                            .unwrap_or_default()
+                        {
+                            considered_hints
+                                .entry(visible_buffer_id)
+                                .or_default()
+                                .entry(visible_excerpt_id)
+                                .or_default()
+                                .insert(shown_hint_id);
+                            match self.inlay_hints.get(&shown_hint_id) {
+                                Some(shown_hint) => {
+                                    if !self.allowed_hint_kinds.contains(&shown_hint.kind) {
+                                        to_remove.push(shown_hint_id);
+                                    }
+                                }
+                                None => to_remove.push(shown_hint_id),
+                            }
+                        }
+                        if shown_hints_per_excerpt.is_empty() {
+                            o.remove();
+                        }
                     }
-                    considered_inlay_ids.insert(shown_inlay_id);
+                    hash_map::Entry::Vacant(_) => {}
                 }
             }
 
-            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-            for (inlay_id, inlay_hint) in &self.inlay_hints {
-                if self.allowed_hint_kinds.contains(&inlay_hint.kind)
-                    && !considered_inlay_ids.contains(inlay_id)
-                {
-                    if let Some(hint_to_readd) = currently_visible_ranges.iter()
-                        .filter(|(_, visible_range, _)| visible_range.contains(&inlay_hint.position.offset))
-                        .find_map(|(_, _, excerpt_id)| {
-                            let Some(anchor) = multi_buffer_snapshot
-                                .find_anchor_in_excerpt(*excerpt_id, inlay_hint.position) else { return None; };
-                            Some((Some(*inlay_id), anchor, inlay_hint.clone()))
-                        },
-                    ) {
-                        to_insert.push(hint_to_readd);
-                    }
-                }
-            }
+            let reenabled_hints = self
+                .inlays_in_buffers
+                .iter()
+                .filter_map(|(cached_buffer_id, cached_hints_per_excerpt)| {
+                    let considered_hints_in_excerpts = considered_hints.get(cached_buffer_id)?;
+                    let not_considered_cached_inlays = cached_hints_per_excerpt
+                        .excerpt_inlays
+                        .iter()
+                        .filter_map(|(cached_excerpt_id, cached_hints)| {
+                            let considered_excerpt_hints =
+                                considered_hints_in_excerpts.get(&cached_excerpt_id)?;
+                            let not_considered_cached_inlays = cached_hints
+                                .iter()
+                                .filter(|(_, cached_hint_id)| {
+                                    !considered_excerpt_hints.contains(cached_hint_id)
+                                })
+                                .copied();
+                            Some(not_considered_cached_inlays)
+                        })
+                        .flatten();
+                    Some(not_considered_cached_inlays)
+                })
+                .flatten()
+                .filter_map(|(cached_anchor, cached_inlay_id)| {
+                    Some((
+                        cached_anchor,
+                        cached_inlay_id,
+                        self.inlay_hints.get(&cached_inlay_id)?,
+                    ))
+                })
+                .filter(|(_, _, cached_inlay)| self.allowed_hint_kinds.contains(&cached_inlay.kind))
+                .map(|(cached_anchor, cached_inlay_id, reenabled_inlay)| {
+                    (
+                        Some(cached_inlay_id),
+                        cached_anchor,
+                        reenabled_inlay.clone(),
+                    )
+                });
+            to_insert.extend(reenabled_hints);
+
+            to_remove.extend(
+                currently_shown_inlay_hints
+                    .into_iter()
+                    .flat_map(|(_, hints_by_excerpt)| hints_by_excerpt)
+                    .flat_map(|(_, excerpt_hints)| excerpt_hints)
+                    .map(|(_, hint_id)| hint_id),
+            );
 
             Some(InlaySplice {
                 to_remove,
@@ -114,13 +177,13 @@ impl InlayCache {
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         ranges_to_add: impl Iterator<Item = InlayHintQuery>,
-        currently_shown_inlays: Vec<(Anchor, InlayId)>,
+        currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
         self.fetch_inlays(
             multi_buffer,
             ranges_to_add,
-            currently_shown_inlays,
+            currently_shown_inlay_hints,
             false,
             cx,
         )
@@ -130,21 +193,52 @@ impl InlayCache {
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         new_ranges: impl Iterator<Item = InlayHintQuery>,
-        currently_shown_inlays: Vec<(Anchor, InlayId)>,
+        currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        self.fetch_inlays(multi_buffer, new_ranges, currently_shown_inlays, true, cx)
+        self.fetch_inlays(
+            multi_buffer,
+            new_ranges,
+            currently_shown_inlay_hints,
+            true,
+            cx,
+        )
     }
 
     fn fetch_inlays(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        inlay_fetch_ranges: impl Iterator<Item = InlayHintQuery>,
-        currently_shown_inlays: Vec<(Anchor, InlayId)>,
+        inlay_queries: impl Iterator<Item = InlayHintQuery>,
+        mut currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         replace_old: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        // TODO kb
+        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+        let inlay_queries_per_buffer = inlay_queries.fold(
+            HashMap::<u64, BufferInlays<InlayHintQuery>>::default(),
+            |mut queries, new_query| {
+                let mut buffer_queries = queries
+                    .entry(new_query.buffer_id)
+                    .or_insert_with(|| BufferInlays::new(new_query.buffer_version.clone()));
+                assert_eq!(buffer_queries.buffer_version, new_query.buffer_version);
+                let queries = buffer_queries
+                    .excerpt_inlays
+                    .entry(new_query.excerpt_id)
+                    .or_default();
+                // let z = multi_buffer_snapshot.anchor_in_excerpt(new_query.excerpt_id, text_anchor);
+                // .push(new_query);
+                // match queries
+                //     .binary_search_by(|probe| inlay.position.cmp(&probe.0, &multi_buffer_snapshot))
+                // {
+                //     Ok(ix) | Err(ix) => {
+                //         excerpt_hints.insert(ix, (inlay.position, inlay.id));
+                //     }
+                // }
+                // queries
+                todo!("TODO kb")
+            },
+        );
+
         todo!("TODO kb")
     }
 

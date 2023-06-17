@@ -2617,15 +2617,6 @@ impl MultiBufferSnapshot {
     }
 
     pub fn anchor_in_excerpt(&self, excerpt_id: ExcerptId, text_anchor: text::Anchor) -> Anchor {
-        self.find_anchor_in_excerpt(excerpt_id, text_anchor)
-            .unwrap_or_else(|| panic!("excerpt not found"))
-    }
-
-    pub fn find_anchor_in_excerpt(
-        &self,
-        excerpt_id: ExcerptId,
-        text_anchor: text::Anchor,
-    ) -> Option<Anchor> {
         let locator = self.excerpt_locator_for_id(excerpt_id);
         let mut cursor = self.excerpts.cursor::<Option<&Locator>>();
         cursor.seek(locator, Bias::Left, &());
@@ -2633,15 +2624,15 @@ impl MultiBufferSnapshot {
             if excerpt.id == excerpt_id {
                 let text_anchor = excerpt.clip_anchor(text_anchor);
                 drop(cursor);
-                return Some(Anchor {
+                return Anchor {
                     buffer_id: Some(excerpt.buffer_id),
                     excerpt_id,
                     text_anchor,
-                });
+                };
             }
         }
 
-        None
+        panic!("excerpt not found")
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
