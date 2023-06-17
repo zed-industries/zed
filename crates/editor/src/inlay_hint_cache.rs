@@ -28,18 +28,18 @@ pub struct InlayHintCache {
 }
 
 #[derive(Clone, Debug)]
-struct BufferHints<I> {
+struct BufferHints<H> {
     buffer_version: Global,
-    hints_per_excerpt: HashMap<ExcerptId, ExcerptHints<I>>,
+    hints_per_excerpt: HashMap<ExcerptId, ExcerptHints<H>>,
 }
 
 #[derive(Clone, Debug)]
-struct ExcerptHints<I> {
+struct ExcerptHints<H> {
     cached_excerpt_offsets: Vec<Range<usize>>,
-    hints: Vec<I>,
+    hints: Vec<H>,
 }
 
-impl<I> Default for ExcerptHints<I> {
+impl<H> Default for ExcerptHints<H> {
     fn default() -> Self {
         Self {
             cached_excerpt_offsets: Vec::new(),
@@ -48,7 +48,7 @@ impl<I> Default for ExcerptHints<I> {
     }
 }
 
-impl<I> BufferHints<I> {
+impl<H> BufferHints<H> {
     fn new(buffer_version: Global) -> Self {
         Self {
             buffer_version,
@@ -93,7 +93,6 @@ impl InlayHintCache {
             self.allowed_hint_kinds = new_allowed_hint_kinds;
             let mut to_remove = Vec::new();
             let mut to_insert = Vec::new();
-
             let mut considered_hints =
                 HashMap::<u64, HashMap<ExcerptId, HashSet<InlayId>>>::default();
             for (visible_buffer, _, visible_excerpt_id) in currently_visible_ranges {
@@ -193,29 +192,10 @@ impl InlayHintCache {
         ranges_to_add: impl Iterator<Item = InlayHintQuery>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        let queries = ranges_to_add.filter_map(|additive_query| {
-            let Some(cached_buffer_hints) = self.hints_in_buffers.get(&additive_query.buffer_id)
-                else { return Some(vec![additive_query]) };
-            if cached_buffer_hints.buffer_version.changed_since(&additive_query.buffer_version) {
-                return None
-            }
-            let Some(excerpt_hints) = cached_buffer_hints.hints_per_excerpt.get(&additive_query.excerpt_id)
-                else { return Some(vec![additive_query]) };
-            let non_cached_ranges = missing_subranges(&excerpt_hints.cached_excerpt_offsets, &additive_query.excerpt_offset_query_range);
-            if non_cached_ranges.is_empty() {
-                None
-            } else {
-                Some(non_cached_ranges.into_iter().map(|non_cached_range| InlayHintQuery {
-                    buffer_id: additive_query.buffer_id,
-                    buffer_version: additive_query.buffer_version.clone(),
-                    excerpt_id: additive_query.excerpt_id,
-                    excerpt_offset_query_range: non_cached_range,
-                }).collect())
-            }
-        }).flatten();
+        let queries = filter_queries(ranges_to_add, &self.hints_in_buffers, false);
 
         let task_multi_buffer = multi_buffer.clone();
-        let fetch_queries_task = fetch_queries(multi_buffer, queries, cx);
+        let fetch_queries_task = fetch_queries(multi_buffer, queries.into_iter(), cx);
         cx.spawn(|editor, mut cx| async move {
             let new_hints = fetch_queries_task.await?;
             editor.update(&mut cx, |editor, cx| {
@@ -289,38 +269,183 @@ impl InlayHintCache {
     pub fn replace_hints(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        new_ranges: impl Iterator<Item = InlayHintQuery>,
-        currently_shown_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
+        mut range_updates: impl Iterator<Item = InlayHintQuery>,
+        mut currently_shown_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        // let inlay_queries_per_buffer = inlay_queries.fold(
-        //     HashMap::<u64, BufferInlays<InlayHintQuery>>::default(),
-        //     |mut queries, new_query| {
-        //         let mut buffer_queries = queries
-        //             .entry(new_query.buffer_id)
-        //             .or_insert_with(|| BufferInlays::new(new_query.buffer_version.clone()));
-        //         assert_eq!(buffer_queries.buffer_version, new_query.buffer_version);
-        //         let queries = buffer_queries
-        //             .excerpt_inlays
-        //             .entry(new_query.excerpt_id)
-        //             .or_default();
-        //         // let z = multi_buffer_snapshot.anchor_in_excerpt(new_query.excerpt_id, text_anchor);
-        //         // .push(new_query);
-        //         // match queries
-        //         //     .binary_search_by(|probe| inlay.position.cmp(&probe.0, &multi_buffer_snapshot))
-        //         // {
-        //         //     Ok(ix) | Err(ix) => {
-        //         //         excerpt_hints.insert(ix, (inlay.position, inlay.id));
-        //         //     }
-        //         // }
-        //         // queries
-        //         todo!("TODO kb")
-        //     },
-        // );
+        let conflicts_with_cache = range_updates.any(|update_query| {
+            let Some(cached_buffer_hints) = self.hints_in_buffers.get(&update_query.buffer_id)
+                else { return false };
+            if cached_buffer_hints
+                .buffer_version
+                .changed_since(&update_query.buffer_version)
+            {
+                false
+            } else if update_query
+                .buffer_version
+                .changed_since(&cached_buffer_hints.buffer_version)
+            {
+                true
+            } else {
+                cached_buffer_hints
+                    .hints_per_excerpt
+                    .contains_key(&update_query.excerpt_id)
+            }
+        });
 
-        todo!("TODO kb")
+        let queries = filter_queries(range_updates, &self.hints_in_buffers, conflicts_with_cache);
+        let task_multi_buffer = multi_buffer.clone();
+        let fetch_queries_task = fetch_queries(multi_buffer, queries.into_iter(), cx);
+        let mut to_remove = Vec::new();
+        let mut to_insert = Vec::new();
+        cx.spawn(|editor, mut cx| async move {
+            let new_hints = fetch_queries_task.await?;
+            editor.update(&mut cx, |editor, cx| {
+                let multi_buffer_snapshot = task_multi_buffer.read(cx).snapshot(cx);
+                for (new_buffer_id, new_hints_per_buffer) in new_hints {
+                    let cached_buffer_hints = editor
+                        .inlay_hint_cache
+                        .hints_in_buffers
+                        .entry(new_buffer_id)
+                        .or_insert_with(|| {
+                            BufferHints::new(new_hints_per_buffer.buffer_version.clone())
+                        });
+                    let mut shown_buffer_hints = currently_shown_hints
+                        .remove(&new_buffer_id)
+                        .unwrap_or_default();
+                    if cached_buffer_hints
+                        .buffer_version
+                        .changed_since(&new_hints_per_buffer.buffer_version)
+                    {
+                        continue;
+                    } else {
+                        cached_buffer_hints.buffer_version = new_hints_per_buffer.buffer_version;
+                    }
+
+                    for (new_excerpt_id, new_hints_per_excerpt) in
+                        new_hints_per_buffer.hints_per_excerpt
+                    {
+                        let cached_excerpt_hints = cached_buffer_hints
+                            .hints_per_excerpt
+                            .entry(new_excerpt_id)
+                            .or_default();
+                        let shown_excerpt_hints = shown_buffer_hints
+                            .remove(&new_excerpt_id)
+                            .unwrap_or_default();
+
+                        if conflicts_with_cache {
+                            cached_excerpt_hints.cached_excerpt_offsets.clear();
+                            // TODO kb need to add such into to_delete and do not cause extra changes
+                            // cached_excerpt_hints.hints.clear();
+                            // editor.inlay_hint_cache.inlay_hints.clear();
+                            todo!("TODO kb")
+                        } else {
+                            for new_range in new_hints_per_excerpt.cached_excerpt_offsets {
+                                insert_and_merge_ranges(
+                                    &mut cached_excerpt_hints.cached_excerpt_offsets,
+                                    &new_range,
+                                )
+                            }
+                            for new_hint in new_hints_per_excerpt.hints {
+                                let hint_anchor = multi_buffer_snapshot
+                                    .anchor_in_excerpt(new_excerpt_id, new_hint.position);
+                                let insert_ix =
+                                    match cached_excerpt_hints.hints.binary_search_by(|probe| {
+                                        hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
+                                    }) {
+                                        Ok(ix) | Err(ix) => ix,
+                                    };
+
+                                let new_hint_id = InlayId(post_inc(&mut editor.next_inlay_id));
+                                cached_excerpt_hints
+                                    .hints
+                                    .insert(insert_ix, (hint_anchor, new_hint_id));
+                                editor
+                                    .inlay_hint_cache
+                                    .inlay_hints
+                                    .insert(new_hint_id, new_hint.clone());
+                                if editor
+                                    .inlay_hint_cache
+                                    .allowed_hint_kinds
+                                    .contains(&new_hint.kind)
+                                {
+                                    to_insert.push((new_hint_id, hint_anchor, new_hint));
+                                }
+                            }
+                        }
+
+                        if cached_excerpt_hints.hints.is_empty() {
+                            cached_buffer_hints
+                                .hints_per_excerpt
+                                .remove(&new_excerpt_id);
+                        }
+                    }
+
+                    if shown_buffer_hints.is_empty() {
+                        currently_shown_hints.remove(&new_buffer_id);
+                    }
+                }
+
+                to_remove.extend(
+                    currently_shown_hints
+                        .into_iter()
+                        .flat_map(|(_, hints_by_excerpt)| hints_by_excerpt)
+                        .flat_map(|(_, excerpt_hints)| excerpt_hints)
+                        .map(|(_, hint_id)| hint_id),
+                );
+                InlaySplice {
+                    to_remove,
+                    to_insert,
+                }
+            })
+        })
     }
+}
+
+fn filter_queries(
+    queries: impl Iterator<Item = InlayHintQuery>,
+    cached_hints: &HashMap<u64, BufferHints<(Anchor, InlayId)>>,
+    invalidate_cache: bool,
+) -> Vec<InlayHintQuery> {
+    queries
+        .filter_map(|query| {
+            let Some(cached_buffer_hints) = cached_hints.get(&query.buffer_id)
+                else { return Some(vec![query]) };
+            if cached_buffer_hints
+                .buffer_version
+                .changed_since(&query.buffer_version)
+            {
+                return None;
+            }
+            let Some(excerpt_hints) = cached_buffer_hints.hints_per_excerpt.get(&query.excerpt_id)
+                else { return Some(vec![query]) };
+
+            if invalidate_cache {
+                Some(vec![query])
+            } else {
+                let non_cached_ranges = missing_subranges(
+                    &excerpt_hints.cached_excerpt_offsets,
+                    &query.excerpt_offset_query_range,
+                );
+                if non_cached_ranges.is_empty() {
+                    None
+                } else {
+                    Some(
+                        non_cached_ranges
+                            .into_iter()
+                            .map(|non_cached_range| InlayHintQuery {
+                                buffer_id: query.buffer_id,
+                                buffer_version: query.buffer_version.clone(),
+                                excerpt_id: query.excerpt_id,
+                                excerpt_offset_query_range: non_cached_range,
+                            })
+                            .collect(),
+                    )
+                }
+            }
+        })
+        .flatten()
+        .collect()
 }
 
 fn allowed_hint_types(
