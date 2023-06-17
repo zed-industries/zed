@@ -4,9 +4,11 @@ use crate::{
     display_map::InlayId, editor_settings, scroll::ScrollAnchor, Anchor, Editor, ExcerptId,
     MultiBuffer,
 };
+use anyhow::Context;
 use clock::Global;
 use gpui::{ModelHandle, Task, ViewContext};
 use language::Buffer;
+use log::error;
 use project::{InlayHint, InlayHintKind};
 
 use collections::{hash_map, HashMap, HashSet};
@@ -28,6 +30,7 @@ pub struct InlayHintCache {
 #[derive(Clone, Debug, Default)]
 struct BufferInlays<I> {
     buffer_version: Global,
+    cached_ranges: HashMap<ExcerptId, Vec<Range<usize>>>,
     excerpt_inlays: HashMap<ExcerptId, Vec<I>>,
 }
 
@@ -36,6 +39,7 @@ impl<I> BufferInlays<I> {
         Self {
             buffer_version,
             excerpt_inlays: HashMap::default(),
+            cached_ranges: HashMap::default(),
         }
     }
 }
@@ -177,16 +181,95 @@ impl InlayHintCache {
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         ranges_to_add: impl Iterator<Item = InlayHintQuery>,
-        currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        self.fetch_inlays(
-            multi_buffer,
-            ranges_to_add,
-            currently_shown_inlay_hints,
-            false,
-            cx,
-        )
+        let queries = ranges_to_add.filter_map(|additive_query| {
+            let Some(cached_buffer_inlays) = self.inlays_in_buffers.get(&additive_query.buffer_id)
+                else { return Some(vec![additive_query]) };
+            if cached_buffer_inlays.buffer_version.changed_since(&additive_query.buffer_version) {
+                return None
+            }
+            let Some(excerpt_cached_ranges) = cached_buffer_inlays.cached_ranges.get(&additive_query.excerpt_id)
+                else { return Some(vec![additive_query]) };
+            let non_cached_ranges = missing_subranges(&excerpt_cached_ranges, &additive_query.excerpt_offset_query_range);
+            if non_cached_ranges.is_empty() {
+                None
+            } else {
+                Some(non_cached_ranges.into_iter().map(|non_cached_range| InlayHintQuery {
+                    buffer_id: additive_query.buffer_id,
+                    buffer_version: additive_query.buffer_version.clone(),
+                    excerpt_id: additive_query.excerpt_id,
+                    excerpt_offset_query_range: non_cached_range,
+                }).collect())
+            }
+        }).flatten();
+
+        let task_multi_buffer = multi_buffer.clone();
+        let fetch_queries_task = fetch_queries(multi_buffer, queries, cx);
+        cx.spawn(|editor, mut cx| async move {
+            let new_hints = fetch_queries_task.await?;
+            editor.update(&mut cx, |editor, cx| {
+                let multi_buffer_snapshot = task_multi_buffer.read(cx).snapshot(cx);
+                let inlay_hint_cache = &mut editor.inlay_hint_cache;
+                let mut to_insert = Vec::new();
+                for (new_buffer_id, new_hints_per_buffer) in new_hints {
+                    let cached_buffer_inlays = inlay_hint_cache
+                        .inlays_in_buffers
+                        .entry(new_buffer_id)
+                        .or_insert_with(|| {
+                            BufferInlays::new(new_hints_per_buffer.buffer_version.clone())
+                        });
+                    if cached_buffer_inlays
+                        .buffer_version
+                        .changed_since(&new_hints_per_buffer.buffer_version)
+                    {
+                        continue;
+                    }
+
+                    for (new_excerpt_id, new_ranges) in new_hints_per_buffer.cached_ranges {
+                        let cached_ranges = cached_buffer_inlays
+                            .cached_ranges
+                            .entry(new_excerpt_id)
+                            .or_default();
+                        for new_range in new_ranges {
+                            insert_and_merge_ranges(cached_ranges, &new_range)
+                        }
+                    }
+                    for (new_excerpt_id, new_hints) in new_hints_per_buffer.excerpt_inlays {
+                        let cached_inlays = cached_buffer_inlays
+                            .excerpt_inlays
+                            .entry(new_excerpt_id)
+                            .or_default();
+                        for new_inlay_hint in new_hints {
+                            let new_inlay_id = todo!("TODO kb");
+                            let hint_anchor = multi_buffer_snapshot
+                                .anchor_in_excerpt(new_excerpt_id, new_inlay_hint.position);
+                            match cached_inlays.binary_search_by(|probe| {
+                                hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
+                            }) {
+                                Ok(ix) | Err(ix) => {
+                                    cached_inlays.insert(ix, (hint_anchor, new_inlay_id))
+                                }
+                            }
+                            inlay_hint_cache
+                                .inlay_hints
+                                .insert(new_inlay_id, new_inlay_hint.clone());
+                            if inlay_hint_cache
+                                .allowed_hint_kinds
+                                .contains(&new_inlay_hint.kind)
+                            {
+                                to_insert.push((Some(new_inlay_id), hint_anchor, new_inlay_hint));
+                            }
+                        }
+                    }
+                }
+
+                InlaySplice {
+                    to_remove: Vec::new(),
+                    to_insert,
+                }
+            })
+        })
     }
 
     pub fn replace_inlays(
@@ -196,331 +279,34 @@ impl InlayHintCache {
         currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        self.fetch_inlays(
-            multi_buffer,
-            new_ranges,
-            currently_shown_inlay_hints,
-            true,
-            cx,
-        )
-    }
-
-    fn fetch_inlays(
-        &mut self,
-        multi_buffer: ModelHandle<MultiBuffer>,
-        inlay_queries: impl Iterator<Item = InlayHintQuery>,
-        mut currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
-        replace_old: bool,
-        cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<InlaySplice>> {
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let inlay_queries_per_buffer = inlay_queries.fold(
-            HashMap::<u64, BufferInlays<InlayHintQuery>>::default(),
-            |mut queries, new_query| {
-                let mut buffer_queries = queries
-                    .entry(new_query.buffer_id)
-                    .or_insert_with(|| BufferInlays::new(new_query.buffer_version.clone()));
-                assert_eq!(buffer_queries.buffer_version, new_query.buffer_version);
-                let queries = buffer_queries
-                    .excerpt_inlays
-                    .entry(new_query.excerpt_id)
-                    .or_default();
-                // let z = multi_buffer_snapshot.anchor_in_excerpt(new_query.excerpt_id, text_anchor);
-                // .push(new_query);
-                // match queries
-                //     .binary_search_by(|probe| inlay.position.cmp(&probe.0, &multi_buffer_snapshot))
-                // {
-                //     Ok(ix) | Err(ix) => {
-                //         excerpt_hints.insert(ix, (inlay.position, inlay.id));
-                //     }
-                // }
-                // queries
-                todo!("TODO kb")
-            },
-        );
+        // let inlay_queries_per_buffer = inlay_queries.fold(
+        //     HashMap::<u64, BufferInlays<InlayHintQuery>>::default(),
+        //     |mut queries, new_query| {
+        //         let mut buffer_queries = queries
+        //             .entry(new_query.buffer_id)
+        //             .or_insert_with(|| BufferInlays::new(new_query.buffer_version.clone()));
+        //         assert_eq!(buffer_queries.buffer_version, new_query.buffer_version);
+        //         let queries = buffer_queries
+        //             .excerpt_inlays
+        //             .entry(new_query.excerpt_id)
+        //             .or_default();
+        //         // let z = multi_buffer_snapshot.anchor_in_excerpt(new_query.excerpt_id, text_anchor);
+        //         // .push(new_query);
+        //         // match queries
+        //         //     .binary_search_by(|probe| inlay.position.cmp(&probe.0, &multi_buffer_snapshot))
+        //         // {
+        //         //     Ok(ix) | Err(ix) => {
+        //         //         excerpt_hints.insert(ix, (inlay.position, inlay.id));
+        //         //     }
+        //         // }
+        //         // queries
+        //         todo!("TODO kb")
+        //     },
+        // );
 
         todo!("TODO kb")
     }
-
-    // fn fetch_inlays(
-    //     &mut self,
-    //     multi_buffer: ModelHandle<MultiBuffer>,
-    //     inlay_fetch_ranges: impl Iterator<Item = InlayHintQuery>,
-    //     replace_old: bool,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> Task<anyhow::Result<InlaySplice>> {
-    //     let mut inlay_fetch_tasks = Vec::new();
-    //     for inlay_fetch_range in inlay_fetch_ranges {
-    //         let inlays_up_to_date = self.inlays_up_to_date(
-    //             &inlay_fetch_range.buffer_path,
-    //             &inlay_fetch_range.buffer_version,
-    //             inlay_fetch_range.excerpt_id,
-    //         );
-    //         let task_multi_buffer = multi_buffer.clone();
-    //         let task = cx.spawn(|editor, mut cx| async move {
-    //             if inlays_up_to_date {
-    //                 anyhow::Ok((inlay_fetch_range, None))
-    //             } else {
-    //                 let Some(buffer_handle) = cx.read(|cx| task_multi_buffer.read(cx).buffer(inlay_fetch_range.buffer_id))
-    //                     else { return Ok((inlay_fetch_range, Some(Vec::new()))) };
-    //                 let task = editor
-    //                     .update(&mut cx, |editor, cx| {
-    //                         editor.project.as_ref().map(|project| {
-    //                             project.update(cx, |project, cx| {
-    //                                 project.query_inlay_hints_for_buffer(
-    //                                     buffer_handle,
-    //                                     inlay_fetch_range.excerpt_offset_query_range.clone(),
-    //                                     cx,
-    //                                 )
-    //                             })
-    //                         })
-    //                     })
-    //                     .context("inlays fecth task spawn")?;
-
-    //                 Ok((inlay_fetch_range, match task {
-    //                     Some(task) => task.await.context("inlays for buffer task")?,
-    //                     None => Some(Vec::new()),
-    //                 }))
-    //             }
-    //         });
-    //         inlay_fetch_tasks.push(task);
-    //     }
-
-    //     let final_task = cx.spawn(|editor, mut cx| async move {
-    //         let mut inlay_updates: HashMap<
-    //             PathBuf,
-    //             (
-    //                 Global,
-    //                 HashMap<ExcerptId, Option<(Range<usize>, OrderedByAnchorOffset<InlayHint>)>>,
-    //             ),
-    //         > = HashMap::default();
-    //         let multi_buffer_snapshot =
-    //             editor.read_with(&cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
-
-    //         for task_result in futures::future::join_all(inlay_fetch_tasks).await {
-    //             match task_result {
-    //                 Ok((inlay_fetch_range, response_inlays)) => {
-    //                     // TODO kb different caching now
-    //                     let inlays_per_excerpt = HashMap::from_iter([(
-    //                         inlay_fetch_range.excerpt_id,
-    //                         response_inlays
-    //                             .map(|excerpt_inlays| {
-    //                                 excerpt_inlays.into_iter().fold(
-    //                                     OrderedByAnchorOffset::default(),
-    //                                     |mut ordered_inlays, inlay| {
-    //                                         let anchor = multi_buffer_snapshot.anchor_in_excerpt(
-    //                                             inlay_fetch_range.excerpt_id,
-    //                                             inlay.position,
-    //                                         );
-    //                                         ordered_inlays.add(anchor, inlay);
-    //                                         ordered_inlays
-    //                                     },
-    //                                 )
-    //                             })
-    //                             .map(|inlays| {
-    //                                 (inlay_fetch_range.excerpt_offset_query_range, inlays)
-    //                             }),
-    //                     )]);
-    //                     match inlay_updates.entry(inlay_fetch_range.buffer_path) {
-    //                         hash_map::Entry::Occupied(mut o) => {
-    //                             o.get_mut().1.extend(inlays_per_excerpt);
-    //                         }
-    //                         hash_map::Entry::Vacant(v) => {
-    //                             v.insert((inlay_fetch_range.buffer_version, inlays_per_excerpt));
-    //                         }
-    //                     }
-    //                 }
-    //                 Err(e) => error!("Failed to update inlays for buffer: {e:#}"),
-    //             }
-    //         }
-
-    //         let updates = if !inlay_updates.is_empty() {
-    //             let inlays_update = editor.update(&mut cx, |editor, _| {
-    //                 editor.inlay_cache.apply_fetch_inlays(inlay_updates)
-    //             })?;
-    //             inlays_update
-    //         } else {
-    //             InlaySplice::default()
-    //         };
-
-    //         anyhow::Ok(updates)
-    //     });
-
-    //     final_task
-    // }
-
-    // fn inlays_up_to_date(
-    //     &self,
-    //     buffer_path: &Path,
-    //     buffer_version: &Global,
-    //     excerpt_id: ExcerptId,
-    // ) -> bool {
-    //     let Some(buffer_inlays) = self.inlays_per_buffer.get(buffer_path) else { return false };
-    //     let buffer_up_to_date = buffer_version == &buffer_inlays.buffer_version
-    //         || buffer_inlays.buffer_version.changed_since(&buffer_version);
-    //     buffer_up_to_date && buffer_inlays.inlays_per_excerpts.contains_key(&excerpt_id)
-    // }
-
-    // fn apply_fetch_inlays(
-    //     &mut self,
-    //     fetched_inlays: HashMap<
-    //         PathBuf,
-    //         (
-    //             Global,
-    //             HashMap<ExcerptId, Option<(Range<usize>, OrderedByAnchorOffset<InlayHint>)>>,
-    //         ),
-    //     >,
-    // ) -> InlaySplice {
-    //     let mut old_inlays = self.inlays_per_buffer.clone();
-    //     let mut to_remove = Vec::new();
-    //     let mut to_insert = Vec::new();
-
-    //     for (buffer_path, (buffer_version, new_buffer_inlays)) in fetched_inlays {
-    //         match old_inlays.remove(&buffer_path) {
-    //             Some(mut old_buffer_inlays) => {
-    //                 for (excerpt_id, new_excerpt_inlays) in new_buffer_inlays {
-    //                     let (_, mut new_excerpt_inlays) = match new_excerpt_inlays {
-    //                         Some((excerpt_offset_range, new_inlays)) => (
-    //                             excerpt_offset_range,
-    //                             new_inlays.into_ordered_elements().fuse().peekable(),
-    //                         ),
-    //                         None => continue,
-    //                     };
-    //                     if self.inlays_up_to_date(&buffer_path, &buffer_version, excerpt_id) {
-    //                         continue;
-    //                     }
-
-    //                     let self_inlays_per_buffer = self
-    //                         .inlays_per_buffer
-    //                         .get_mut(&buffer_path)
-    //                         .expect("element expected: `old_inlays.remove` returned `Some`");
-
-    //                     if old_buffer_inlays
-    //                         .inlays_per_excerpts
-    //                         .remove(&excerpt_id)
-    //                         .is_some()
-    //                     {
-    //                         let self_excerpt_inlays = self_inlays_per_buffer
-    //                             .inlays_per_excerpts
-    //                             .get_mut(&excerpt_id)
-    //                             .expect("element expected: `old_excerpt_inlays` is `Some`");
-    //                         let mut hints_to_add = Vec::<(Anchor, (InlayId, InlayHint))>::new();
-    //                         // TODO kb update inner buffer_id and version with the new data?
-    //                         self_excerpt_inlays.0.retain(
-    //                             |_, (old_anchor, (old_inlay_id, old_inlay))| {
-    //                                 let mut retain = false;
-
-    //                                 while let Some(new_offset) = new_excerpt_inlays
-    //                                     .peek()
-    //                                     .map(|(new_anchor, _)| new_anchor.text_anchor.offset)
-    //                                 {
-    //                                     let old_offset = old_anchor.text_anchor.offset;
-    //                                     match new_offset.cmp(&old_offset) {
-    //                                         cmp::Ordering::Less => {
-    //                                             let (new_anchor, new_inlay) =
-    //                                                 new_excerpt_inlays.next().expect(
-    //                                                     "element expected: `peek` returned `Some`",
-    //                                                 );
-    //                                             hints_to_add.push((
-    //                                                 new_anchor,
-    //                                                 (
-    //                                                     InlayId(post_inc(&mut self.next_inlay_id)),
-    //                                                     new_inlay,
-    //                                                 ),
-    //                                             ));
-    //                                         }
-    //                                         cmp::Ordering::Equal => {
-    //                                             let (new_anchor, new_inlay) =
-    //                                                 new_excerpt_inlays.next().expect(
-    //                                                     "element expected: `peek` returned `Some`",
-    //                                                 );
-    //                                             if &new_inlay == old_inlay {
-    //                                                 retain = true;
-    //                                             } else {
-    //                                                 hints_to_add.push((
-    //                                                     new_anchor,
-    //                                                     (
-    //                                                         InlayId(post_inc(
-    //                                                             &mut self.next_inlay_id,
-    //                                                         )),
-    //                                                         new_inlay,
-    //                                                     ),
-    //                                                 ));
-    //                                             }
-    //                                         }
-    //                                         cmp::Ordering::Greater => break,
-    //                                     }
-    //                                 }
-
-    //                                 if !retain {
-    //                                     to_remove.push(*old_inlay_id);
-    //                                 }
-    //                                 retain
-    //                             },
-    //                         );
-
-    //                         for (new_anchor, (id, new_inlay)) in hints_to_add {
-    //                             self_excerpt_inlays.add(new_anchor, (id, new_inlay.clone()));
-    //                             to_insert.push((id, new_anchor, new_inlay));
-    //                         }
-    //                     }
-
-    //                     for (new_anchor, new_inlay) in new_excerpt_inlays {
-    //                         let id = InlayId(post_inc(&mut self.next_inlay_id));
-    //                         self_inlays_per_buffer
-    //                             .inlays_per_excerpts
-    //                             .entry(excerpt_id)
-    //                             .or_default()
-    //                             .add(new_anchor, (id, new_inlay.clone()));
-    //                         to_insert.push((id, new_anchor, new_inlay));
-    //                     }
-    //                 }
-    //             }
-    //             None => {
-    //                 let mut inlays_per_excerpts: HashMap<
-    //                     ExcerptId,
-    //                     OrderedByAnchorOffset<(InlayId, InlayHint)>,
-    //                 > = HashMap::default();
-    //                 for (new_excerpt_id, new_ordered_inlays) in new_buffer_inlays {
-    //                     if let Some((_, new_ordered_inlays)) = new_ordered_inlays {
-    //                         for (new_anchor, new_inlay) in
-    //                             new_ordered_inlays.into_ordered_elements()
-    //                         {
-    //                             let id = InlayId(post_inc(&mut self.next_inlay_id));
-    //                             inlays_per_excerpts
-    //                                 .entry(new_excerpt_id)
-    //                                 .or_default()
-    //                                 .add(new_anchor, (id, new_inlay.clone()));
-    //                             to_insert.push((id, new_anchor, new_inlay));
-    //                         }
-    //                     }
-    //                 }
-    //                 self.inlays_per_buffer.insert(
-    //                     buffer_path,
-    //                     BufferInlays {
-    //                         buffer_version,
-    //                         inlays_per_excerpts,
-    //                     },
-    //                 );
-    //             }
-    //         }
-    //     }
-
-    //     for (_, old_buffer_inlays) in old_inlays {
-    //         for (_, old_excerpt_inlays) in old_buffer_inlays.inlays_per_excerpts {
-    //             for (_, (id_to_remove, _)) in old_excerpt_inlays.into_ordered_elements() {
-    //                 to_remove.push(id_to_remove);
-    //             }
-    //         }
-    //     }
-
-    //     to_insert.retain(|(_, _, new_hint)| self.allowed_hint_kinds.contains(&new_hint.kind));
-
-    //     InlaySplice {
-    //         to_remove,
-    //         to_insert,
-    //     }
-    // }
 }
 
 fn allowed_inlay_hint_types(
@@ -537,4 +323,151 @@ fn allowed_inlay_hint_types(
         new_allowed_inlay_hint_types.insert(None);
     }
     new_allowed_inlay_hint_types
+}
+
+fn missing_subranges(cache: &[Range<usize>], input: &Range<usize>) -> Vec<Range<usize>> {
+    let mut missing = Vec::new();
+
+    // Find where the input range would fit in the cache
+    let index = match cache.binary_search_by_key(&input.start, |probe| probe.start) {
+        Ok(pos) | Err(pos) => pos,
+    };
+
+    // Check for a gap from the start of the input range to the first range in the cache
+    if index == 0 {
+        if input.start < cache[index].start {
+            missing.push(input.start..cache[index].start);
+        }
+    } else {
+        let prev_end = cache[index - 1].end;
+        if input.start < prev_end {
+            missing.push(input.start..prev_end);
+        }
+    }
+
+    // Iterate through the cache ranges starting from index
+    for i in index..cache.len() {
+        let start = if i > 0 { cache[i - 1].end } else { input.start };
+        let end = cache[i].start;
+
+        if start < end {
+            missing.push(start..end);
+        }
+    }
+
+    // Check for a gap from the last range in the cache to the end of the input range
+    if let Some(last_range) = cache.last() {
+        if last_range.end < input.end {
+            missing.push(last_range.end..input.end);
+        }
+    } else {
+        // If cache is empty, the entire input range is missing
+        missing.push(input.start..input.end);
+    }
+
+    missing
+}
+
+fn insert_and_merge_ranges(cache: &mut Vec<Range<usize>>, new_range: &Range<usize>) {
+    if cache.is_empty() {
+        cache.push(new_range.clone());
+        return;
+    }
+
+    // Find the index to insert the new range
+    let index = match cache.binary_search_by_key(&new_range.start, |probe| probe.start) {
+        Ok(pos) | Err(pos) => pos,
+    };
+
+    // Check if the new range overlaps with the previous range in the cache
+    if index > 0 && cache[index - 1].end >= new_range.start {
+        // Merge with the previous range
+        cache[index - 1].end = std::cmp::max(cache[index - 1].end, new_range.end);
+    } else {
+        // Insert the new range, as it doesn't overlap with the previous range
+        cache.insert(index, new_range.clone());
+    }
+
+    // Merge overlaps with subsequent ranges
+    let mut i = index;
+    while i + 1 < cache.len() && cache[i].end >= cache[i + 1].start {
+        cache[i].end = std::cmp::max(cache[i].end, cache[i + 1].end);
+        cache.remove(i + 1);
+        i += 1;
+    }
+}
+
+fn fetch_queries<'a, 'b>(
+    multi_buffer: ModelHandle<MultiBuffer>,
+    queries: impl Iterator<Item = InlayHintQuery>,
+    cx: &mut ViewContext<'a, 'b, Editor>,
+) -> Task<anyhow::Result<HashMap<u64, BufferInlays<InlayHint>>>> {
+    let mut inlay_fetch_tasks = Vec::new();
+    for query in queries {
+        let task_multi_buffer = multi_buffer.clone();
+        let task = cx.spawn(|editor, mut cx| async move {
+            let Some(buffer_handle) = cx.read(|cx| task_multi_buffer.read(cx).buffer(query.buffer_id))
+                else { return anyhow::Ok((query, Some(Vec::new()))) };
+            let task = editor
+                .update(&mut cx, |editor, cx| {
+                    editor.project.as_ref().map(|project| {
+                        project.update(cx, |project, cx| {
+                            project.query_inlay_hints_for_buffer(
+                                buffer_handle,
+                                query.excerpt_offset_query_range.clone(),
+                                cx,
+                            )
+                        })
+                    })
+                })
+                .context("inlays fecth task spawn")?;
+            Ok((
+                query,
+                match task {
+                    Some(task) => task.await.context("inlays for buffer task")?,
+                    None => Some(Vec::new()),
+                },
+            ))
+        });
+
+        inlay_fetch_tasks.push(task);
+    }
+
+    cx.spawn(|editor, cx| async move {
+        let mut inlay_updates: HashMap<u64, BufferInlays<InlayHint>> = HashMap::default();
+        for task_result in futures::future::join_all(inlay_fetch_tasks).await {
+            match task_result {
+                Ok((query, Some(response_inlays))) => {
+                    let Some(buffer_snapshot) = editor.read_with(&cx, |editor, cx| {
+                        editor.buffer().read(cx).buffer(query.buffer_id).map(|buffer| buffer.read(cx).snapshot())
+                    })? else { continue; };
+                    let buffer_inlays = inlay_updates
+                        .entry(query.buffer_id)
+                        .or_insert_with(|| BufferInlays::new(query.buffer_version.clone()));
+                    assert_eq!(buffer_inlays.buffer_version, query.buffer_version);
+                    {
+                        let cached_ranges = buffer_inlays
+                            .cached_ranges
+                            .entry(query.excerpt_id)
+                            .or_default();
+                        insert_and_merge_ranges(cached_ranges, &query.excerpt_offset_query_range);
+                        let excerpt_inlays = buffer_inlays
+                            .excerpt_inlays
+                            .entry(query.excerpt_id)
+                            .or_default();
+                        for inlay in response_inlays {
+                            match excerpt_inlays.binary_search_by(|probe| {
+                                inlay.position.cmp(&probe.position, &buffer_snapshot)
+                            }) {
+                                Ok(ix) | Err(ix) => excerpt_inlays.insert(ix, inlay),
+                            }
+                        }
+                    }
+                }
+                Ok((_, None)) => {}
+                Err(e) => error!("Failed to update inlays for buffer: {e:#}"),
+            }
+        }
+        Ok(inlay_updates)
+    })
 }

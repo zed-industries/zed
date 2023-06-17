@@ -540,7 +540,7 @@ pub struct Editor {
     gutter_hovered: bool,
     link_go_to_definition_state: LinkGoToDefinitionState,
     copilot_state: CopilotState,
-    inlay_cache: InlayHintCache,
+    inlay_hint_cache: InlayHintCache,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1355,7 +1355,7 @@ impl Editor {
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
             copilot_state: Default::default(),
-            inlay_cache: InlayHintCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
+            inlay_hint_cache: InlayHintCache::new(settings::get::<EditorSettings>(cx).inlay_hints),
             gutter_hovered: false,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -2598,7 +2598,7 @@ impl Editor {
         }
 
         if !settings::get::<EditorSettings>(cx).inlay_hints.enabled {
-            let to_remove = self.inlay_cache.clear();
+            let to_remove = self.inlay_hint_cache.clear();
             self.splice_inlay_hints(to_remove, Vec::new(), cx);
             return;
         }
@@ -2631,7 +2631,7 @@ impl Editor {
                 if let Some(InlaySplice {
                     to_remove,
                     to_insert,
-                }) = self.inlay_cache.apply_settings(
+                }) = self.inlay_hint_cache.apply_settings(
                     new_settings,
                     currently_visible_ranges,
                     currently_shown_inlay_hints,
@@ -2664,10 +2664,9 @@ impl Editor {
                             to_insert,
                         } = editor
                             .update(&mut cx, |editor, cx| {
-                                editor.inlay_cache.append_inlays(
+                                editor.inlay_hint_cache.append_inlays(
                                     multi_buffer_handle,
                                     std::iter::once(updated_range_query),
-                                    currently_shown_inlay_hints,
                                     cx,
                                 )
                             })?
@@ -2694,7 +2693,7 @@ impl Editor {
                         to_insert,
                     } = editor
                         .update(&mut cx, |editor, cx| {
-                            editor.inlay_cache.replace_inlays(
+                            editor.inlay_hint_cache.replace_inlays(
                                 multi_buffer_handle,
                                 replacement_queries.into_iter(),
                                 currently_shown_inlay_hints,
