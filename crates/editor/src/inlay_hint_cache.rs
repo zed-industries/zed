@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp, ops::Range};
 
 use crate::{
     editor_settings, scroll::ScrollAnchor, Anchor, Editor, ExcerptId, InlayId, MultiBuffer,
@@ -63,6 +63,7 @@ pub struct InlaySplice {
     pub to_insert: Vec<(InlayId, Anchor, InlayHint)>,
 }
 
+#[derive(Debug)]
 pub struct InlayHintQuery {
     pub buffer_id: u64,
     pub buffer_version: Global,
@@ -186,6 +187,7 @@ impl InlayHintCache {
         ids_to_remove
     }
 
+    // TODO kb deduplicate into replace_hints?
     pub fn append_hints(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
@@ -230,29 +232,44 @@ impl InlayHintCache {
                             )
                         }
                         for new_hint in new_excerpt_hints.hints {
-                            let hint_anchor = multi_buffer_snapshot
+                            let new_hint_anchor = multi_buffer_snapshot
                                 .anchor_in_excerpt(new_excerpt_id, new_hint.position);
                             let insert_ix =
                                 match cached_excerpt_hints.hints.binary_search_by(|probe| {
-                                    hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
+                                    new_hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
                                 }) {
-                                    Ok(ix) | Err(ix) => ix,
+                                    Ok(ix) => {
+                                        let (_, cached_inlay_id) = cached_excerpt_hints.hints[ix];
+                                        let cached_hint = editor
+                                            .inlay_hint_cache
+                                            .inlay_hints
+                                            .get(&cached_inlay_id)
+                                            .unwrap();
+                                        if cached_hint == &new_hint {
+                                            None
+                                        } else {
+                                            Some(ix)
+                                        }
+                                    }
+                                    Err(ix) => Some(ix),
                                 };
 
-                            let new_hint_id = InlayId(post_inc(&mut editor.next_inlay_id));
-                            cached_excerpt_hints
-                                .hints
-                                .insert(insert_ix, (hint_anchor, new_hint_id));
-                            editor
-                                .inlay_hint_cache
-                                .inlay_hints
-                                .insert(new_hint_id, new_hint.clone());
-                            if editor
-                                .inlay_hint_cache
-                                .allowed_hint_kinds
-                                .contains(&new_hint.kind)
-                            {
-                                to_insert.push((new_hint_id, hint_anchor, new_hint));
+                            if let Some(insert_ix) = insert_ix {
+                                let new_hint_id = InlayId(post_inc(&mut editor.next_inlay_id));
+                                cached_excerpt_hints
+                                    .hints
+                                    .insert(insert_ix, (new_hint_anchor, new_hint_id));
+                                editor
+                                    .inlay_hint_cache
+                                    .inlay_hints
+                                    .insert(new_hint_id, new_hint.clone());
+                                if editor
+                                    .inlay_hint_cache
+                                    .allowed_hint_kinds
+                                    .contains(&new_hint.kind)
+                                {
+                                    to_insert.push((new_hint_id, new_hint_anchor, new_hint));
+                                }
                             }
                         }
                     }
@@ -269,11 +286,11 @@ impl InlayHintCache {
     pub fn replace_hints(
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
-        mut range_updates: impl Iterator<Item = InlayHintQuery>,
+        range_updates: Vec<InlayHintQuery>,
         mut currently_shown_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
-        let conflicts_with_cache = range_updates.any(|update_query| {
+        let conflicts_with_cache = range_updates.iter().any(|update_query| {
             let Some(cached_buffer_hints) = self.hints_in_buffers.get(&update_query.buffer_id)
                 else { return false };
             if cached_buffer_hints
@@ -293,7 +310,11 @@ impl InlayHintCache {
             }
         });
 
-        let queries = filter_queries(range_updates, &self.hints_in_buffers, conflicts_with_cache);
+        let queries = filter_queries(
+            range_updates.into_iter(),
+            &self.hints_in_buffers,
+            conflicts_with_cache,
+        );
         let task_multi_buffer = multi_buffer.clone();
         let fetch_queries_task = fetch_queries(multi_buffer, queries.into_iter(), cx);
         let mut to_remove = Vec::new();
@@ -329,37 +350,115 @@ impl InlayHintCache {
                             .hints_per_excerpt
                             .entry(new_excerpt_id)
                             .or_default();
-                        let shown_excerpt_hints = shown_buffer_hints
+                        let mut shown_excerpt_hints = shown_buffer_hints
                             .remove(&new_excerpt_id)
-                            .unwrap_or_default();
-
+                            .unwrap_or_default()
+                            .into_iter()
+                            .fuse()
+                            .peekable();
                         if conflicts_with_cache {
                             cached_excerpt_hints.cached_excerpt_offsets.clear();
-                            // TODO kb need to add such into to_delete and do not cause extra changes
-                            // cached_excerpt_hints.hints.clear();
-                            // editor.inlay_hint_cache.inlay_hints.clear();
-                            todo!("TODO kb")
-                        } else {
-                            for new_range in new_hints_per_excerpt.cached_excerpt_offsets {
-                                insert_and_merge_ranges(
-                                    &mut cached_excerpt_hints.cached_excerpt_offsets,
-                                    &new_range,
-                                )
-                            }
-                            for new_hint in new_hints_per_excerpt.hints {
-                                let hint_anchor = multi_buffer_snapshot
-                                    .anchor_in_excerpt(new_excerpt_id, new_hint.position);
+                            cached_excerpt_hints.hints.clear();
+                        }
+
+                        for new_hint in new_hints_per_excerpt.hints {
+                            let new_hint_anchor = multi_buffer_snapshot
+                                .anchor_in_excerpt(new_excerpt_id, new_hint.position);
+
+                            let insert_ix = if conflicts_with_cache {
+                                let mut no_matching_inlay_displayed = true;
+                                loop {
+                                    match shown_excerpt_hints.peek() {
+                                        Some((shown_anchor, shown_id)) => {
+                                            match shown_anchor
+                                                .cmp(&new_hint_anchor, &multi_buffer_snapshot)
+                                            {
+                                                cmp::Ordering::Less => {
+                                                    editor
+                                                        .inlay_hint_cache
+                                                        .inlay_hints
+                                                        .remove(shown_id);
+                                                    to_remove.push(*shown_id);
+                                                    shown_excerpt_hints.next();
+                                                }
+                                                cmp::Ordering::Equal => {
+                                                    match editor
+                                                        .inlay_hint_cache
+                                                        .inlay_hints
+                                                        .get(shown_id)
+                                                    {
+                                                        Some(cached_hint)
+                                                            if cached_hint == &new_hint =>
+                                                        {
+                                                            no_matching_inlay_displayed = false;
+                                                        }
+                                                        _ => to_remove.push(*shown_id),
+                                                    }
+                                                    shown_excerpt_hints.next();
+                                                    break;
+                                                }
+                                                cmp::Ordering::Greater => break,
+                                            }
+                                        }
+                                        None => break,
+                                    }
+                                }
+
+                                if no_matching_inlay_displayed {
+                                    let insert_ix =
+                                        match cached_excerpt_hints.hints.binary_search_by(|probe| {
+                                            new_hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
+                                        }) {
+                                            Ok(ix) => {
+                                                let (_, cached_inlay_id) =
+                                                    cached_excerpt_hints.hints[ix];
+                                                let cached_hint = editor
+                                                    .inlay_hint_cache
+                                                    .inlay_hints
+                                                    .get(&cached_inlay_id)
+                                                    .unwrap();
+                                                if cached_hint == &new_hint {
+                                                    None
+                                                } else {
+                                                    Some(ix)
+                                                }
+                                            }
+                                            Err(ix) => Some(ix),
+                                        };
+                                    insert_ix
+                                } else {
+                                    None
+                                }
+                            } else {
                                 let insert_ix =
                                     match cached_excerpt_hints.hints.binary_search_by(|probe| {
-                                        hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
+                                        new_hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
                                     }) {
-                                        Ok(ix) | Err(ix) => ix,
+                                        Ok(ix) => {
+                                            let (_, cached_inlay_id) =
+                                                cached_excerpt_hints.hints[ix];
+                                            let cached_hint = editor
+                                                .inlay_hint_cache
+                                                .inlay_hints
+                                                .get(&cached_inlay_id)
+                                                .unwrap();
+                                            if cached_hint == &new_hint {
+                                                None
+                                            } else {
+                                                Some(ix)
+                                            }
+                                        }
+                                        Err(ix) => Some(ix),
                                     };
 
+                                insert_ix
+                            };
+
+                            if let Some(insert_ix) = insert_ix {
                                 let new_hint_id = InlayId(post_inc(&mut editor.next_inlay_id));
                                 cached_excerpt_hints
                                     .hints
-                                    .insert(insert_ix, (hint_anchor, new_hint_id));
+                                    .insert(insert_ix, (new_hint_anchor, new_hint_id));
                                 editor
                                     .inlay_hint_cache
                                     .inlay_hints
@@ -369,9 +468,16 @@ impl InlayHintCache {
                                     .allowed_hint_kinds
                                     .contains(&new_hint.kind)
                                 {
-                                    to_insert.push((new_hint_id, hint_anchor, new_hint));
+                                    to_insert.push((new_hint_id, new_hint_anchor, new_hint));
                                 }
                             }
+                        }
+
+                        for new_range in new_hints_per_excerpt.cached_excerpt_offsets {
+                            insert_and_merge_ranges(
+                                &mut cached_excerpt_hints.cached_excerpt_offsets,
+                                &new_range,
+                            )
                         }
 
                         if cached_excerpt_hints.hints.is_empty() {
@@ -521,7 +627,7 @@ fn insert_and_merge_ranges(cache: &mut Vec<Range<usize>>, new_range: &Range<usiz
     // Check if the new range overlaps with the previous range in the cache
     if index > 0 && cache[index - 1].end >= new_range.start {
         // Merge with the previous range
-        cache[index - 1].end = std::cmp::max(cache[index - 1].end, new_range.end);
+        cache[index - 1].end = cmp::max(cache[index - 1].end, new_range.end);
     } else {
         // Insert the new range, as it doesn't overlap with the previous range
         cache.insert(index, new_range.clone());
@@ -530,7 +636,7 @@ fn insert_and_merge_ranges(cache: &mut Vec<Range<usize>>, new_range: &Range<usiz
     // Merge overlaps with subsequent ranges
     let mut i = index;
     while i + 1 < cache.len() && cache[i].end >= cache[i + 1].start {
-        cache[i].end = std::cmp::max(cache[i].end, cache[i + 1].end);
+        cache[i].end = cmp::max(cache[i].end, cache[i + 1].end);
         cache.remove(i + 1);
         i += 1;
     }

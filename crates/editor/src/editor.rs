@@ -2700,7 +2700,7 @@ impl Editor {
                         .update(&mut cx, |editor, cx| {
                             editor.inlay_hint_cache.replace_hints(
                                 multi_buffer_handle,
-                                replacement_queries.into_iter(),
+                                replacement_queries,
                                 currently_shown_inlay_hints,
                                 cx,
                             )
