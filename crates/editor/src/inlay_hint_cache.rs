@@ -73,7 +73,7 @@ pub struct InlayHintQuery {
 impl InlayHintCache {
     pub fn new(inlay_hint_settings: editor_settings::InlayHints) -> Self {
         Self {
-            allowed_hint_kinds: allowed_inlay_hint_types(inlay_hint_settings),
+            allowed_hint_kinds: allowed_hint_types(inlay_hint_settings),
             hints_in_buffers: HashMap::default(),
             inlay_hints: HashMap::default(),
         }
@@ -83,10 +83,10 @@ impl InlayHintCache {
         &mut self,
         inlay_hint_settings: editor_settings::InlayHints,
         currently_visible_ranges: Vec<(ModelHandle<Buffer>, Range<usize>, ExcerptId)>,
-        mut currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
+        mut currently_shown_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<InlaySplice> {
-        let new_allowed_hint_kinds = allowed_inlay_hint_types(inlay_hint_settings);
+        let new_allowed_hint_kinds = allowed_hint_types(inlay_hint_settings);
         if new_allowed_hint_kinds == self.allowed_hint_kinds {
             None
         } else {
@@ -99,7 +99,7 @@ impl InlayHintCache {
             for (visible_buffer, _, visible_excerpt_id) in currently_visible_ranges {
                 let visible_buffer = visible_buffer.read(cx);
                 let visible_buffer_id = visible_buffer.remote_id();
-                match currently_shown_inlay_hints.entry(visible_buffer_id) {
+                match currently_shown_hints.entry(visible_buffer_id) {
                     hash_map::Entry::Occupied(mut o) => {
                         let shown_hints_per_excerpt = o.get_mut();
                         for (_, shown_hint_id) in shown_hints_per_excerpt
@@ -153,21 +153,21 @@ impl InlayHintCache {
                     Some(not_considered_cached_hints)
                 })
                 .flatten()
-                .filter_map(|(cached_anchor, cached_inlay_id)| {
+                .filter_map(|(cached_anchor, cached_hint_id)| {
                     Some((
                         cached_anchor,
-                        cached_inlay_id,
-                        self.inlay_hints.get(&cached_inlay_id)?,
+                        cached_hint_id,
+                        self.inlay_hints.get(&cached_hint_id)?,
                     ))
                 })
-                .filter(|(_, _, cached_inlay)| self.allowed_hint_kinds.contains(&cached_inlay.kind))
-                .map(|(cached_anchor, cached_inlay_id, reenabled_inlay)| {
-                    (cached_inlay_id, cached_anchor, reenabled_inlay.clone())
+                .filter(|(_, _, cached_hint)| self.allowed_hint_kinds.contains(&cached_hint.kind))
+                .map(|(cached_anchor, cached_hint_id, reenabled_hint)| {
+                    (cached_hint_id, cached_anchor, reenabled_hint.clone())
                 });
             to_insert.extend(reenabled_hints);
 
             to_remove.extend(
-                currently_shown_inlay_hints
+                currently_shown_hints
                     .into_iter()
                     .flat_map(|(_, hints_by_excerpt)| hints_by_excerpt)
                     .flat_map(|(_, excerpt_hints)| excerpt_hints)
@@ -249,9 +249,9 @@ impl InlayHintCache {
                                 &new_range,
                             )
                         }
-                        for new_inlay_hint in new_excerpt_hints.hints {
+                        for new_hint in new_excerpt_hints.hints {
                             let hint_anchor = multi_buffer_snapshot
-                                .anchor_in_excerpt(new_excerpt_id, new_inlay_hint.position);
+                                .anchor_in_excerpt(new_excerpt_id, new_hint.position);
                             let insert_ix =
                                 match cached_excerpt_hints.hints.binary_search_by(|probe| {
                                     hint_anchor.cmp(&probe.0, &multi_buffer_snapshot)
@@ -259,20 +259,20 @@ impl InlayHintCache {
                                     Ok(ix) | Err(ix) => ix,
                                 };
 
-                            let new_inlay_id = InlayId(post_inc(&mut editor.next_inlay_id));
+                            let new_hint_id = InlayId(post_inc(&mut editor.next_inlay_id));
                             cached_excerpt_hints
                                 .hints
-                                .insert(insert_ix, (hint_anchor, new_inlay_id));
+                                .insert(insert_ix, (hint_anchor, new_hint_id));
                             editor
                                 .inlay_hint_cache
                                 .inlay_hints
-                                .insert(new_inlay_id, new_inlay_hint.clone());
+                                .insert(new_hint_id, new_hint.clone());
                             if editor
                                 .inlay_hint_cache
                                 .allowed_hint_kinds
-                                .contains(&new_inlay_hint.kind)
+                                .contains(&new_hint.kind)
                             {
-                                to_insert.push((new_inlay_id, hint_anchor, new_inlay_hint));
+                                to_insert.push((new_hint_id, hint_anchor, new_hint));
                             }
                         }
                     }
@@ -290,7 +290,7 @@ impl InlayHintCache {
         &mut self,
         multi_buffer: ModelHandle<MultiBuffer>,
         new_ranges: impl Iterator<Item = InlayHintQuery>,
-        currently_shown_inlay_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
+        currently_shown_hints: HashMap<u64, HashMap<ExcerptId, Vec<(Anchor, InlayId)>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<InlaySplice>> {
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -323,20 +323,20 @@ impl InlayHintCache {
     }
 }
 
-fn allowed_inlay_hint_types(
+fn allowed_hint_types(
     inlay_hint_settings: editor_settings::InlayHints,
 ) -> HashSet<Option<InlayHintKind>> {
-    let mut new_allowed_inlay_hint_types = HashSet::default();
+    let mut new_allowed_hint_types = HashSet::default();
     if inlay_hint_settings.show_type_hints {
-        new_allowed_inlay_hint_types.insert(Some(InlayHintKind::Type));
+        new_allowed_hint_types.insert(Some(InlayHintKind::Type));
     }
     if inlay_hint_settings.show_parameter_hints {
-        new_allowed_inlay_hint_types.insert(Some(InlayHintKind::Parameter));
+        new_allowed_hint_types.insert(Some(InlayHintKind::Parameter));
     }
     if inlay_hint_settings.show_other_hints {
-        new_allowed_inlay_hint_types.insert(None);
+        new_allowed_hint_types.insert(None);
     }
-    new_allowed_inlay_hint_types
+    new_allowed_hint_types
 }
 
 fn missing_subranges(cache: &[Range<usize>], input: &Range<usize>) -> Vec<Range<usize>> {
