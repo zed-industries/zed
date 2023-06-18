@@ -295,8 +295,12 @@ impl Editor {
         self.scroll_manager.visible_line_count
     }
 
-    pub(crate) fn set_visible_line_count(&mut self, lines: f32) {
-        self.scroll_manager.visible_line_count = Some(lines)
+    pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
+        let had_no_visibles = self.scroll_manager.visible_line_count.is_none();
+        self.scroll_manager.visible_line_count = Some(lines);
+        if had_no_visibles {
+            self.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
+        }
     }
 
     pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {

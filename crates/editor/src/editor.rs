@@ -1385,7 +1385,6 @@ impl Editor {
         }
 
         this.report_editor_event("open", None, cx);
-        this.refresh_inlays(InlayRefreshReason::VisibleExcerptsChange, cx);
         this
     }
 

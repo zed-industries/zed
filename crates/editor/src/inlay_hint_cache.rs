@@ -331,18 +331,19 @@ impl InlayHintCache {
                         .or_insert_with(|| {
                             BufferHints::new(new_hints_per_buffer.buffer_version.clone())
                         });
-                    let mut shown_buffer_hints = currently_shown_hints
-                        .remove(&new_buffer_id)
-                        .unwrap_or_default();
+
                     if cached_buffer_hints
                         .buffer_version
                         .changed_since(&new_hints_per_buffer.buffer_version)
                     {
+                        currently_shown_hints.remove(&new_buffer_id);
                         continue;
                     } else {
                         cached_buffer_hints.buffer_version = new_hints_per_buffer.buffer_version;
                     }
 
+                    let shown_buffer_hints =
+                        currently_shown_hints.entry(new_buffer_id).or_default();
                     for (new_excerpt_id, new_hints_per_excerpt) in
                         new_hints_per_buffer.hints_per_excerpt
                     {
@@ -489,6 +490,13 @@ impl InlayHintCache {
 
                     if shown_buffer_hints.is_empty() {
                         currently_shown_hints.remove(&new_buffer_id);
+                    } else {
+                        to_remove.extend(
+                            shown_buffer_hints
+                                .iter()
+                                .flat_map(|(_, hints_by_excerpt)| hints_by_excerpt.iter())
+                                .map(|(_, hint_id)| *hint_id),
+                        );
                     }
                 }
 
