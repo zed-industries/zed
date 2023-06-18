@@ -2668,9 +2668,11 @@ impl Editor {
                             to_insert,
                         } = editor
                             .update(&mut cx, |editor, cx| {
-                                editor.inlay_hint_cache.append_hints(
+                                editor.inlay_hint_cache.update_hints(
                                     multi_buffer_handle,
-                                    std::iter::once(updated_range_query),
+                                    vec![updated_range_query],
+                                    currently_shown_inlay_hints,
+                                    false,
                                     cx,
                                 )
                             })?
@@ -2697,10 +2699,11 @@ impl Editor {
                         to_insert,
                     } = editor
                         .update(&mut cx, |editor, cx| {
-                            editor.inlay_hint_cache.replace_hints(
+                            editor.inlay_hint_cache.update_hints(
                                 multi_buffer_handle,
                                 replacement_queries,
                                 currently_shown_inlay_hints,
+                                true,
                                 cx,
                             )
                         })?
