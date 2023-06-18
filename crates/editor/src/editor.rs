@@ -2749,7 +2749,7 @@ impl Editor {
         let buffer = self.buffer.read(cx).read(cx);
         let new_inlays = to_insert
             .into_iter()
-            .map(|(id, hint_anchor, hint)| {
+            .map(|(id, position, hint)| {
                 let mut text = hint.text();
                 // TODO kb styling instead?
                 if hint.padding_right {
@@ -2758,14 +2758,7 @@ impl Editor {
                 if hint.padding_left {
                     text.insert(0, ' ');
                 }
-
-                (
-                    id,
-                    InlayProperties {
-                        position: hint_anchor.bias_left(&buffer),
-                        text,
-                    },
-                )
+                (id, InlayProperties { position, text })
             })
             .collect();
         drop(buffer);
@@ -7355,7 +7348,7 @@ impl Editor {
             }
             multi_buffer::Event::DirtyChanged => {
                 cx.emit(Event::DirtyChanged);
-                true
+                false
             }
             multi_buffer::Event::Saved => {
                 cx.emit(Event::Saved);
@@ -7363,11 +7356,11 @@ impl Editor {
             }
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(Event::TitleChanged);
-                true
+                false
             }
             multi_buffer::Event::Reloaded => {
                 cx.emit(Event::TitleChanged);
-                true
+                false
             }
             multi_buffer::Event::DiffBaseChanged => {
                 cx.emit(Event::DiffBaseChanged);
