@@ -25,6 +25,7 @@ use anyhow::{anyhow, bail, Result};
 use async_task::Runnable;
 pub use event::*;
 use postage::oneshot;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -282,7 +283,7 @@ pub enum PromptLevel {
     Critical,
 }
 
-#[derive(Copy, Clone, Debug, Deserialize)]
+#[derive(Copy, Clone, Debug, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     Arrow,
     ResizeLeftRight,

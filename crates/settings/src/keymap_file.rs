@@ -3,9 +3,8 @@ use anyhow::{Context, Result};
 use collections::BTreeMap;
 use gpui::{keymap_matcher::Binding, AppContext};
 use schemars::{
-    gen::SchemaSettings,
-    schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
-    JsonSchema,
+    gen::{SchemaGenerator, SchemaSettings},
+    schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation}, JsonSchema,
 };
 use serde::Deserialize;
 use serde_json::{value::RawValue, Value};
@@ -22,9 +21,19 @@ pub struct KeymapBlock {
     bindings: BTreeMap<String, KeymapAction>,
 }
 
-#[derive(Deserialize, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Default, Clone)]
 #[serde(transparent)]
 pub struct KeymapAction(Box<RawValue>);
+
+impl JsonSchema for KeymapAction {
+    fn schema_name() -> String {
+        "KeymapAction".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        Schema::Bool(true)
+    }
+}
 
 #[derive(Deserialize)]
 struct ActionWithData(Box<str>, Box<RawValue>);

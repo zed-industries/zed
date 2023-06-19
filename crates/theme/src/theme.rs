@@ -901,7 +901,7 @@ impl Editor {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, JsonSchema)]
 pub struct SyntaxTheme {
     pub highlights: Vec<(String, HighlightStyle)>,
 }

@@ -193,10 +193,10 @@ mod tests {
     fn export_schema() {
         let theme_settings_content = schema_for!(ThemeSettingsContent);
         let output1 = serde_json::to_string_pretty(&theme_settings_content).unwrap();
-        std::fs::write("schemas/theme_settings_content.json", output1);
+        std::fs::write("schemas/theme_settings_content.json", output1).ok();
 
         let theme_settings = schema_for!(ThemeSettings);
         let output2 = serde_json::to_string_pretty(&theme_settings).unwrap();
-        std::fs::write("schemas/theme_settings.json", output2);
+        std::fs::write("schemas/theme_settings.json", output2).ok();
     }
 }
