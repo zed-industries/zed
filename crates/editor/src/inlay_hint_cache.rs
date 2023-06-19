@@ -102,27 +102,29 @@ impl InlayHintCache {
         multi_buffer: ModelHandle<MultiBuffer>,
         queries: Vec<InlayHintQuery>,
         current_inlays: Vec<Inlay>,
+        conflicts_invalidate_cache: bool,
         cx: &mut ViewContext<Editor>,
     ) {
-        let conflicts_with_cache = queries.iter().any(|update_query| {
-            let Some(cached_buffer_hints) = self.hints_in_buffers.get(&update_query.buffer_id)
+        let conflicts_with_cache = conflicts_invalidate_cache
+            && queries.iter().any(|update_query| {
+                let Some(cached_buffer_hints) = self.hints_in_buffers.get(&update_query.buffer_id)
                 else { return false };
-            if cached_buffer_hints
-                .buffer_version
-                .changed_since(&update_query.buffer_version)
-            {
-                false
-            } else if update_query
-                .buffer_version
-                .changed_since(&cached_buffer_hints.buffer_version)
-            {
-                true
-            } else {
-                cached_buffer_hints
-                    .hints_per_excerpt
-                    .contains_key(&update_query.excerpt_id)
-            }
-        });
+                if cached_buffer_hints
+                    .buffer_version
+                    .changed_since(&update_query.buffer_version)
+                {
+                    false
+                } else if update_query
+                    .buffer_version
+                    .changed_since(&cached_buffer_hints.buffer_version)
+                {
+                    true
+                } else {
+                    cached_buffer_hints
+                        .hints_per_excerpt
+                        .contains_key(&update_query.excerpt_id)
+                }
+            });
 
         let queries_per_buffer = queries
             .into_iter()
@@ -569,7 +571,6 @@ fn allowed_hint_types(
 }
 
 // TODO kb wrong, query and update the editor separately
-// TODO kb need to react on react on scrolling too, for multibuffer excerpts
 fn fetch_queries(
     multi_buffer: ModelHandle<MultiBuffer>,
     queries: impl Iterator<Item = InlayHintQuery>,

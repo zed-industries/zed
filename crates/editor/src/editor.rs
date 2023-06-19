@@ -1196,6 +1196,7 @@ enum GotoDefinitionKind {
 #[derive(Debug, Copy, Clone)]
 enum InlayRefreshReason {
     SettingsChange(editor_settings::InlayHints),
+    Scroll(ScrollAnchor),
     VisibleExcerptsChange,
 }
 
@@ -2624,6 +2625,34 @@ impl Editor {
             InlayRefreshReason::SettingsChange(new_settings) => self
                 .inlay_hint_cache
                 .spawn_settings_update(multi_buffer_handle, new_settings, current_inlays),
+            InlayRefreshReason::Scroll(scrolled_to) => {
+                if let Some(new_query) = self
+                    .excerpt_visible_offsets(&multi_buffer_handle, cx)
+                    .into_iter()
+                    .find_map(|(buffer, _, excerpt_id)| {
+                        let buffer_id = scrolled_to.anchor.buffer_id?;
+                        if buffer_id == buffer.read(cx).remote_id()
+                            && scrolled_to.anchor.excerpt_id == excerpt_id
+                        {
+                            Some(InlayHintQuery {
+                                buffer_id,
+                                buffer_version: buffer.read(cx).version(),
+                                excerpt_id,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                {
+                    self.inlay_hint_cache.spawn_hints_update(
+                        multi_buffer_handle,
+                        vec![new_query],
+                        current_inlays,
+                        false,
+                        cx,
+                    )
+                }
+            }
             InlayRefreshReason::VisibleExcerptsChange => {
                 let replacement_queries = self
                     .excerpt_visible_offsets(&multi_buffer_handle, cx)
@@ -2632,7 +2661,7 @@ impl Editor {
                         let buffer = buffer.read(cx);
                         InlayHintQuery {
                             buffer_id: buffer.remote_id(),
-                            buffer_version: buffer.version.clone(),
+                            buffer_version: buffer.version(),
                             excerpt_id,
                         }
                     })
@@ -2641,6 +2670,7 @@ impl Editor {
                     multi_buffer_handle,
                     replacement_queries,
                     current_inlays,
+                    true,
                     cx,
                 )
             }
