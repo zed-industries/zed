@@ -66,7 +66,7 @@ pub struct TextStyle {
     pub font_family_id: FamilyId,
     pub font_id: FontId,
     pub font_size: f32,
-    #[serde(with = "PropertiesDef")]
+    #[schemars(with = "PropertiesDef")]
     pub font_properties: Properties,
     pub underline: Underline,
 }
@@ -77,13 +77,13 @@ pub struct PropertiesDef {
     /// The font style, as defined in CSS.
     pub style: StyleDef,
     /// The font weight, as defined in CSS.
-    pub weight: WeightDef,
+    pub weight: f32,
     /// The font stretchiness, as defined in CSS.
-    pub stretch: StretchDef,
+    pub stretch: f32,
 }
 
 #[derive(JsonSchema)]
-#[serde(remote = "Style")]
+#[schemars(remote = "Style")]
 pub enum StyleDef {
     /// A face that is neither italic not obliqued.
     Normal,
@@ -93,18 +93,10 @@ pub enum StyleDef {
     Oblique,
 }
 
-#[derive(JsonSchema)]
-#[serde(remote = "Weight")]
-pub struct WeightDef(pub f32);
-
-#[derive(JsonSchema)]
-#[serde(remote = "Stretch")]
-pub struct StretchDef(pub f32);
-
 #[derive(Copy, Clone, Debug, Default, PartialEq, JsonSchema)]
 pub struct HighlightStyle {
     pub color: Option<Color>,
-    #[serde(with = "WeightDef")]
+    #[schemars(with = "Option::<f32>")]
     pub weight: Option<Weight>,
     pub italic: Option<bool>,
     pub underline: Option<Underline>,
@@ -116,14 +108,10 @@ impl Eq for HighlightStyle {}
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, JsonSchema)]
 pub struct Underline {
     pub color: Option<Color>,
-    #[serde(with = "OrderedFloatDef::<f32>")]
+    #[schemars(with = "f32")]
     pub thickness: OrderedFloat<f32>,
     pub squiggly: bool,
 }
-
-#[derive(JsonSchema)]
-#[serde(remote = "OrderedFloat")]
-pub struct OrderedFloatDef<T>(pub T);
 
 #[allow(non_camel_case_types)]
 #[derive(Deserialize)]
