@@ -8,7 +8,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint},
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor,
+    Anchor, Editor, ToOffset,
 };
 use fs::Fs;
 use futures::{io::BufReader, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
@@ -1303,8 +1303,14 @@ impl AssistantEditor {
 
     fn split(&mut self, _: &Split, cx: &mut ViewContext<Self>) {
         self.assistant.update(cx, |assistant, cx| {
-            let range = self.editor.read(cx).selections.newest::<usize>(cx).range();
-            assistant.split_message(range, cx);
+            let selections = self.editor.read(cx).selections.disjoint_anchors();
+            for selection in selections.into_iter() {
+                let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+                let range = selection
+                    .map(|endpoint| endpoint.to_offset(&buffer))
+                    .range();
+                assistant.split_message(range, cx);
+            }
         });
     }
 
