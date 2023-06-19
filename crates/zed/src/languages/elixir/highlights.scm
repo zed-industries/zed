@@ -36,8 +36,6 @@
 
 (char) @constant
 
-(interpolation "#{" @punctuation.special "}" @punctuation.special) @embedded
-
 (escape_sequence) @string.escape
 
 [
@@ -146,3 +144,10 @@
   "<<"
   ">>"
 ] @punctuation.bracket
+
+(interpolation "#{" @punctuation.special "}" @punctuation.special) @embedded
+
+((sigil
+  (sigil_name) @_sigil_name
+  (quoted_content) @embedded)
+ (#eq? @_sigil_name "H"))
