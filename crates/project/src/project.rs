@@ -252,7 +252,7 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, String),
-    LanguageServerNotification(String),
+    Notification(String),
     ActiveEntryChanged(Option<ProjectEntryId>),
     WorktreeAdded,
     WorktreeRemoved(WorktreeId),
@@ -7205,9 +7205,8 @@ impl ProjectLspAdapterDelegate {
 
 impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut AppContext) {
-        self.project.update(cx, |_, cx| {
-            cx.emit(Event::LanguageServerNotification(message.to_owned()))
-        });
+        self.project
+            .update(cx, |_, cx| cx.emit(Event::Notification(message.to_owned())));
     }
 
     fn http_client(&self) -> Arc<dyn HttpClient> {

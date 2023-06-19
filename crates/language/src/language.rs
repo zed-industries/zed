@@ -130,6 +130,14 @@ impl CachedLspAdapter {
         self.adapter.fetch_latest_server_version(delegate).await
     }
 
+    pub fn will_fetch_server_binary(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        self.adapter.will_fetch_server_binary(delegate, cx)
+    }
+
     pub async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
@@ -203,6 +211,14 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>>;
+
+    fn will_fetch_server_binary(
+        &self,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        None
+    }
 
     async fn fetch_server_binary(
         &self,
@@ -971,13 +987,17 @@ async fn get_binary(
     delegate: Arc<dyn LspAdapterDelegate>,
     download_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
-    _cx: AsyncAppContext,
+    mut cx: AsyncAppContext,
 ) -> Result<LanguageServerBinary> {
     let container_dir = download_dir.join(adapter.name.0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
             .context("failed to create container directory")?;
+    }
+
+    if let Some(task) = adapter.will_fetch_server_binary(&delegate, &mut cx) {
+        task.await?;
     }
 
     let binary = fetch_latest_binary(

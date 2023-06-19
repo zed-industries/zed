@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
+use gpui::{AsyncAppContext, Task};
 pub use language::*;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -45,6 +46,24 @@ impl super::LspAdapter for GoLspAdapter {
             );
         }
         Ok(Box::new(version) as Box<_>)
+    }
+
+    fn will_fetch_server_binary(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Task<Result<()>>> {
+        let delegate = delegate.clone();
+        Some(cx.spawn(|mut cx| async move {
+            let install_output = process::Command::new("go").args(["version"]).output().await;
+            if install_output.is_err() {
+                cx.update(|cx| {
+                    delegate
+                        .show_notification("go is not installed. gopls will not be available.", cx);
+                })
+            }
+            Ok(())
+        }))
     }
 
     async fn fetch_server_binary(
