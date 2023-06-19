@@ -5573,7 +5573,7 @@ mod tests {
         let action1 = cx
             .deserialize_action(
                 "test::something::ComplexAction",
-                Some(r#"{"arg": "a", "count": 5}"#.into()),
+                Some(serde_json::from_str(r#"{"arg": "a", "count": 5}"#).unwrap()),
             )
             .unwrap();
         let action2 = cx
