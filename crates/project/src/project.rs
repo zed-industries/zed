@@ -2528,6 +2528,13 @@ impl Project {
             _ => return None,
         };
 
+        for worktree in &self.worktrees {
+            if let Some(worktree) = worktree.upgrade(cx) {
+                let key = (worktree.read(cx).id(), adapter.name.clone());
+                self.language_server_ids.remove(&key);
+            }
+        }
+
         Some(cx.spawn(move |this, mut cx| async move {
             if let Some(task) = server.and_then(|server| server.shutdown()) {
                 println!("shutting down existing server");
