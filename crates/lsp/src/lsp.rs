@@ -65,7 +65,7 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     root_path: PathBuf,
     server: Option<Mutex<Child>>,
-    test_installation_binary: Option<LanguageServerBinary>,
+    installation_test_binary: Option<LanguageServerBinary>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -190,7 +190,7 @@ impl LanguageServer {
         stdin: Stdin,
         stdout: Stdout,
         server: Option<Child>,
-        test_installation_binary: Option<LanguageServerBinary>,
+        installation_test_binary: Option<LanguageServerBinary>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         cx: AsyncAppContext,
@@ -245,7 +245,7 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             root_path: root_path.to_path_buf(),
             server: server.map(|server| Mutex::new(server)),
-            test_installation_binary,
+            installation_test_binary,
         }
     }
 
@@ -262,8 +262,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn test_installation_binary(&self) -> &Option<LanguageServerBinary> {
-        &self.test_installation_binary
+    pub fn installation_test_binary(&self) -> &Option<LanguageServerBinary> {
+        &self.installation_test_binary
     }
 
     pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {

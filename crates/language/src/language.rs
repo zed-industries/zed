@@ -141,7 +141,7 @@ impl CachedLspAdapter {
         self.adapter.cached_server_binary(container_dir).await
     }
 
-    async fn installation_test_binary(
+    pub async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
@@ -544,6 +544,7 @@ struct LanguageRegistryState {
 pub struct PendingLanguageServer {
     pub server_id: LanguageServerId,
     pub task: Task<Result<lsp::LanguageServer>>,
+    pub container_dir: Option<Arc<Path>>,
 }
 
 impl LanguageRegistry {
@@ -824,8 +825,8 @@ impl LanguageRegistry {
         cx: &mut AppContext,
     ) -> Option<PendingLanguageServer> {
         let server_id = self.state.write().next_language_server_id();
-        log::info!(
-            "starting language server name:{}, path:{root_path:?}, id:{server_id}",
+        println!(
+            "starting language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
         );
 
@@ -858,7 +859,11 @@ impl LanguageRegistry {
                 Ok(server)
             });
 
-            return Some(PendingLanguageServer { server_id, task });
+            return Some(PendingLanguageServer {
+                server_id,
+                task,
+                container_dir: None,
+            });
         }
 
         let download_dir = self
@@ -869,46 +874,54 @@ impl LanguageRegistry {
         let this = self.clone();
         let language = language.clone();
         let http_client = http_client.clone();
-        let download_dir = download_dir.clone();
+        let container_dir: Arc<Path> = Arc::from(download_dir.join(adapter.name.0.as_ref()));
         let root_path = root_path.clone();
         let adapter = adapter.clone();
         let lsp_binary_statuses = self.lsp_binary_statuses_tx.clone();
         let login_shell_env_loaded = self.login_shell_env_loaded.clone();
 
-        let task = cx.spawn(|cx| async move {
-            login_shell_env_loaded.await;
+        let task = {
+            let container_dir = container_dir.clone();
+            cx.spawn(|cx| async move {
+                login_shell_env_loaded.await;
 
-            let mut lock = this.lsp_binary_paths.lock();
-            let entry = lock
-                .entry(adapter.name.clone())
-                .or_insert_with(|| {
-                    get_binary(
-                        adapter.clone(),
-                        language.clone(),
-                        http_client,
-                        download_dir,
-                        lsp_binary_statuses,
-                    )
-                    .map_err(Arc::new)
-                    .boxed()
-                    .shared()
-                })
-                .clone();
-            drop(lock);
+                let mut lock = this.lsp_binary_paths.lock();
+                let entry = lock
+                    .entry(adapter.name.clone())
+                    .or_insert_with(|| {
+                        get_binaries(
+                            adapter.clone(),
+                            language.clone(),
+                            http_client,
+                            container_dir,
+                            lsp_binary_statuses,
+                        )
+                        .map_err(Arc::new)
+                        .boxed()
+                        .shared()
+                    })
+                    .clone();
+                drop(lock);
 
-            let binary = entry.clone().map_err(|e| anyhow!(e)).await?;
-            let server = lsp::LanguageServer::new(
-                server_id,
-                binary,
-                &root_path,
-                adapter.code_action_kinds(),
-                cx,
-            )?;
+                let binaries = entry.clone().map_err(|e| anyhow!(e)).await?;
+                println!("starting server");
+                let server = lsp::LanguageServer::new(
+                    server_id,
+                    binaries,
+                    &root_path,
+                    adapter.code_action_kinds(),
+                    cx,
+                )?;
 
-            Ok(server)
-        });
+                Ok(server)
+            })
+        };
 
-        Some(PendingLanguageServer { server_id, task })
+        Some(PendingLanguageServer {
+            server_id,
+            task,
+            container_dir: Some(container_dir),
+        })
     }
 
     pub fn language_server_binary_statuses(
@@ -922,6 +935,7 @@ impl LanguageRegistry {
         adapter: Arc<CachedLspAdapter>,
         cx: &mut AppContext,
     ) -> Task<()> {
+        println!("deleting server container");
         let mut lock = self.lsp_binary_paths.lock();
         lock.remove(&adapter.name);
 
@@ -984,20 +998,20 @@ impl Default for LanguageRegistry {
     }
 }
 
-async fn get_binary(
+async fn get_binaries(
     adapter: Arc<CachedLspAdapter>,
     language: Arc<Language>,
     http_client: Arc<dyn HttpClient>,
-    download_dir: Arc<Path>,
+    container_dir: Arc<Path>,
     statuses: async_broadcast::Sender<(Arc<Language>, LanguageServerBinaryStatus)>,
 ) -> Result<LanguageServerBinaries> {
-    let container_dir = download_dir.join(adapter.name.0.as_ref());
     if !container_dir.exists() {
         smol::fs::create_dir_all(&container_dir)
             .await
             .context("failed to create container directory")?;
     }
 
+    println!("fetching binary");
     let binary = fetch_latest_binary(
         adapter.clone(),
         language.clone(),
@@ -1008,11 +1022,16 @@ async fn get_binary(
     .await;
 
     if let Err(error) = binary.as_ref() {
-        if let Some(binary) = adapter.cached_server_binary(container_dir.clone()).await {
+        if let Some(binary) = adapter
+            .cached_server_binary(container_dir.to_path_buf())
+            .await
+        {
             statuses
                 .broadcast((language.clone(), LanguageServerBinaryStatus::Cached))
                 .await?;
-            let installation_test_binary = adapter.installation_test_binary(container_dir).await;
+            let installation_test_binary = adapter
+                .installation_test_binary(container_dir.to_path_buf())
+                .await;
             return Ok(LanguageServerBinaries {
                 binary,
                 installation_test_binary,

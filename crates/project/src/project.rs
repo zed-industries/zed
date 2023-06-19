@@ -45,7 +45,7 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerId, OneOf,
+    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId, OneOf,
 };
 use lsp_command::*;
 use postage::watch;
@@ -2442,22 +2442,23 @@ impl Project {
         }
 
         let server_id = pending_server.server_id;
+        let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
             let server_name = adapter.name.0.clone();
             let languages = self.languages.clone();
             let key = key.clone();
 
-            cx.spawn_weak(|this, cx| async move {
+            cx.spawn_weak(|this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this,
                     initialization_options,
                     pending_server,
-                    adapter,
+                    adapter.clone(),
                     languages,
                     language,
                     server_id,
                     key,
-                    cx,
+                    &mut cx,
                 )
                 .await;
 
@@ -2465,8 +2466,24 @@ impl Project {
                     Ok(server) => Some(server),
 
                     Err(err) => {
-                        log::warn!("Error starting language server {:?}: {}", server_name, err);
-                        // TODO: Prompt installation validity check LSP ERROR
+                        println!("failed to start language server {:?}: {}", server_name, err);
+
+                        if let Some(this) = this.upgrade(&cx) {
+                            if let Some(container_dir) = container_dir {
+                                let installation_test_binary = adapter
+                                    .installation_test_binary(container_dir.to_path_buf())
+                                    .await;
+
+                                this.update(&mut cx, |_, cx| {
+                                    Self::check_errored_server_id(
+                                        server_id,
+                                        installation_test_binary,
+                                        cx,
+                                    )
+                                });
+                            }
+                        }
+
                         None
                     }
                 }
@@ -2482,6 +2499,7 @@ impl Project {
         server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<()>> {
+        println!("starting to reinstall server");
         let (adapter, language, server) = match self.language_servers.remove(&server_id) {
             Some(LanguageServerState::Running {
                 adapter,
@@ -2495,6 +2513,7 @@ impl Project {
 
         Some(cx.spawn(move |this, mut cx| async move {
             if let Some(task) = server.shutdown() {
+                println!("shutting down existing server");
                 task.await;
             }
 
@@ -2516,6 +2535,7 @@ impl Project {
                     let worktree_id = worktree.id();
                     let root_path = worktree.abs_path();
 
+                    println!("prompting server start: {:?}", &adapter.name.0);
                     this.start_language_server(
                         worktree_id,
                         root_path,
@@ -2537,7 +2557,7 @@ impl Project {
         language: Arc<Language>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
-        mut cx: AsyncAppContext,
+        cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
         let language_server = Self::setup_pending_language_server(
             this,
@@ -2546,16 +2566,16 @@ impl Project {
             adapter.clone(),
             languages,
             server_id,
-            &mut cx,
+            cx,
         )
         .await?;
 
-        let this = match this.upgrade(&mut cx) {
+        let this = match this.upgrade(cx) {
             Some(this) => this,
             None => return Err(anyhow!("failed to upgrade project handle")),
         };
 
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             this.insert_newly_running_language_server(
                 language,
                 adapter,
@@ -3012,32 +3032,39 @@ impl Project {
         .detach();
     }
 
-    fn check_errored_lsp_installation(
+    fn check_errored_language_server(
         &self,
         language_server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) {
-        cx.spawn(|this, mut cx| async move {
-            if !language_server.is_dead() {
-                return;
-            }
-            let server_id = language_server.server_id();
+        if !language_server.is_dead() {
+            return;
+        }
 
+        let server_id = language_server.server_id();
+        let installation_test_binary = language_server.installation_test_binary().clone();
+        Self::check_errored_server_id(server_id, installation_test_binary, cx);
+    }
+
+    fn check_errored_server_id(
+        server_id: LanguageServerId,
+        installation_test_binary: Option<LanguageServerBinary>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.spawn(|this, mut cx| async move {
+            println!("About to spawn test binary");
             // A lack of test binary counts as a failure
-            let process = language_server
-                .test_installation_binary()
-                .as_ref()
-                .and_then(|binary| {
-                    smol::process::Command::new(&binary.path)
-                        .current_dir(&binary.path)
-                        .args(&binary.arguments)
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::inherit())
-                        .kill_on_drop(true)
-                        .spawn()
-                        .ok()
-                });
+            let process = installation_test_binary.and_then(|binary| {
+                smol::process::Command::new(&binary.path)
+                    .current_dir(&binary.path)
+                    .args(binary.arguments)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
+                    .kill_on_drop(true)
+                    .spawn()
+                    .ok()
+            });
 
             const PROCESS_TIMEOUT: Duration = Duration::from_secs(5);
             let mut timeout = cx.background().timer(PROCESS_TIMEOUT).fuse();
@@ -3046,13 +3073,14 @@ impl Project {
             if let Some(mut process) = process {
                 futures::select! {
                     status = process.status().fuse() => match status {
-                        Ok(status) => errored = !status.success(),
+                        Ok(status) => errored = !dbg!(status.success()),
                         Err(_) => errored = true,
                     },
 
-                    _ = timeout => {}
+                    _ = timeout => { println!("test binary time-ed out"); }
                 }
             } else {
+                println!("test binary failed to launch");
                 errored = true;
             }
 
@@ -3883,7 +3911,7 @@ impl Project {
                 );
 
                 this.update(cx, |this, cx| {
-                    this.check_errored_lsp_installation(language_server.clone(), cx);
+                    this.check_errored_language_server(language_server.clone(), cx);
                 });
 
                 None
