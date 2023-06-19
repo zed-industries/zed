@@ -280,7 +280,13 @@ pub enum Event {
 
 pub enum LanguageServerState {
     Validating(Task<Option<Arc<LanguageServer>>>),
-    Starting(Task<Option<Arc<LanguageServer>>>),
+
+    Starting {
+        language: Arc<Language>,
+        adapter: Arc<CachedLspAdapter>,
+        task: Task<Option<Arc<LanguageServer>>>,
+    },
+
     Running {
         language: Arc<Language>,
         adapter: Arc<CachedLspAdapter>,
@@ -2443,9 +2449,11 @@ impl Project {
 
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
-        let state = LanguageServerState::Starting({
+        let task = {
+            let adapter = adapter.clone();
             let server_name = adapter.name.0.clone();
             let languages = self.languages.clone();
+            let language = language.clone();
             let key = key.clone();
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -2488,7 +2496,12 @@ impl Project {
                     }
                 }
             })
-        });
+        };
+        let state = LanguageServerState::Starting {
+            language,
+            adapter,
+            task,
+        };
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids.insert(key, server_id);
@@ -2500,19 +2513,23 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<()>> {
         println!("starting to reinstall server");
-        let (adapter, language, server) = match self.language_servers.remove(&server_id) {
+        let (language, adapter, server) = match self.language_servers.remove(&server_id) {
             Some(LanguageServerState::Running {
-                adapter,
                 language,
+                adapter,
                 server,
                 ..
-            }) => (adapter.clone(), language.clone(), server),
+            }) => (language.clone(), adapter.clone(), Some(server)),
+
+            Some(LanguageServerState::Starting {
+                language, adapter, ..
+            }) => (language.clone(), adapter.clone(), None),
 
             _ => return None,
         };
 
         Some(cx.spawn(move |this, mut cx| async move {
-            if let Some(task) = server.shutdown() {
+            if let Some(task) = server.and_then(|server| server.shutdown()) {
                 println!("shutting down existing server");
                 task.await;
             }
@@ -2921,7 +2938,7 @@ impl Project {
 
                 let server = match server_state {
                     Some(LanguageServerState::Validating(task)) => task.await,
-                    Some(LanguageServerState::Starting(task)) => task.await,
+                    Some(LanguageServerState::Starting { task, .. }) => task.await,
                     Some(LanguageServerState::Running { server, .. }) => Some(server),
                     None => None,
                 };
@@ -7425,7 +7442,7 @@ impl Entity for Project {
                 use LanguageServerState::*;
                 match server_state {
                     Running { server, .. } => server.shutdown()?.await,
-                    Starting(task) | Validating(task) => task.await?.shutdown()?.await,
+                    Starting { task, .. } | Validating(task) => task.await?.shutdown()?.await,
                 }
             })
             .collect::<Vec<_>>();
